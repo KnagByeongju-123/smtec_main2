@@ -40,9 +40,6 @@
     .guide-item{font-size:11px;color:#90a4ae;line-height:1.9;display:flex;gap:8px}
     .guide-item span{color:#42a5f5;font-weight:700;flex-shrink:0}
 
-    .notice{width:100%;max-width:380px;background:rgba(255,152,0,.08);border:1px solid rgba(255,152,0,.2);border-radius:10px;padding:10px 14px;font-size:11px;color:#ffb74d;line-height:1.6}
-    .notice b{color:#ffa726}
-
     .recent-rooms{width:100%;max-width:380px}
     .recent-title{font-size:11px;font-weight:600;color:#546e7a;margin-bottom:8px}
     .recent-list{display:flex;flex-direction:column;gap:6px}
@@ -51,13 +48,12 @@
     .ri-time{font-size:10px;color:#546e7a;flex-shrink:0}
     .ri-del{width:20px;height:20px;border:none;border-radius:4px;background:rgba(244,67,54,.1);color:#ef5350;font-size:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0}
 
-    /* 회의 화면: 완전 전체화면 */
+    /* 회의 화면 */
     .meeting{position:fixed;top:0;left:0;right:0;bottom:0;display:none;flex-direction:column;z-index:200;background:#000}
     .meeting.active{display:flex}
-    #jitsiContainer{flex:1;min-height:0}
-    #jitsiContainer iframe{width:100%!important;height:100%!important;border:none!important}
+    .meeting iframe{flex:1;width:100%;border:none}
 
-    /* 나가기 플로팅 버튼 */
+    /* 나가기 플로팅 */
     .float-leave{
       position:fixed;top:8px;right:8px;z-index:300;
       padding:6px 14px;border:none;border-radius:20px;
@@ -90,27 +86,25 @@
   <div class="lobby-form">
     <div class="fg"><label>회의방 이름</label><input type="text" id="roomName" placeholder="예: 생산팀-회의" autocomplete="off" spellcheck="false"></div>
     <div class="fg"><label>참가자 이름</label><input type="text" id="userName" placeholder="예: 홍길동" autocomplete="off"></div>
-    <div class="fg"><label>Jitsi 서버</label>
+    <div class="fg"><label>서버 선택</label>
       <select id="serverSelect">
-        <option value="8x8.vc">8x8.vc (시간제한 없음 ✅)</option>
-        <option value="meet.jit.si">meet.jit.si (5분 제한⚠️)</option>
+        <option value="meet.element.io">Element (로그인 불필요 ✅)</option>
+        <option value="meet.init7.net">Init7 (로그인 불필요 ✅)</option>
+        <option value="jitsi.member.fsf.org">FSF (로그인 불필요 ✅)</option>
+        <option value="meet.jit.si">meet.jit.si (로그인 필요⚠️)</option>
       </select>
     </div>
     <button class="btn-join" onclick="joinMeeting()">🎥 회의 참여</button>
   </div>
 
-  <div class="notice">
-    <b>⚠️ 서버 안내:</b> meet.jit.si는 게스트 5분 제한이 있습니다.<br>
-    <b>8x8.vc</b>를 선택하면 시간제한 없이 무료로 사용 가능합니다.
-  </div>
-
   <div class="guide">
-    <div class="guide-title">📌 회의 중 사용법 (Jitsi 하단 툴바)</div>
-    <div class="guide-item"><span>🖥️</span>화면공유 — 하단 ··· 메뉴 → '화면 공유' 선택</div>
-    <div class="guide-item"><span>🎤</span>마이크 — 하단 마이크 아이콘 터치</div>
-    <div class="guide-item"><span>📷</span>카메라 — 하단 카메라 아이콘 터치</div>
-    <div class="guide-item"><span>💬</span>채팅 — 하단 말풍선 아이콘 터치</div>
-    <div class="guide-item"><span>···</span>더보기 — 타일뷰, 손들기, 배경효과 등</div>
+    <div class="guide-title">📌 회의 중 사용법</div>
+    <div class="guide-item"><span>🖥️</span>화면공유 — 하단 ··· (더보기) → 화면 공유</div>
+    <div class="guide-item"><span>🎤</span>마이크 ON/OFF — 하단 마이크 아이콘</div>
+    <div class="guide-item"><span>📷</span>카메라 ON/OFF — 하단 카메라 아이콘</div>
+    <div class="guide-item"><span>💬</span>채팅 — 하단 말풍선 아이콘</div>
+    <div class="guide-item"><span>👥</span>타일뷰/손들기 — 하단 ··· 메뉴 내</div>
+    <div class="guide-item"><span>🔴</span>나가기 — 우측상단 빨간 버튼 또는 하단 전화끊기</div>
   </div>
 
   <div class="recent-rooms" id="recentSection" style="display:none">
@@ -119,31 +113,17 @@
   </div>
 </div>
 
-<!-- 회의 화면 -->
+<!-- 회의 화면: 직접 iframe -->
 <div class="meeting" id="meeting">
-  <div id="jitsiContainer"></div>
+  <iframe id="jitsiFrame" allow="camera;microphone;display-capture;autoplay;clipboard-write" allowfullscreen></iframe>
 </div>
 
-<!-- 나가기 플로팅 버튼 -->
 <button class="float-leave" id="floatLeave" onclick="leaveMeeting()">✕ 나가기</button>
 
 <div class="toast" id="toast"></div>
 
-<script src="https://8x8.vc/external_api.js" id="jitsiScript"></script>
 <script>
-let api=null,timerInterval=null,startTime=null;
 let recentRooms=JSON.parse(localStorage.getItem('MEET_RECENT')||'[]');
-let currentServer='8x8.vc';
-
-// 서버 변경 시 API 스크립트 교체
-document.getElementById('serverSelect').addEventListener('change',function(){
-  const script=document.getElementById('jitsiScript');
-  if(this.value==='meet.jit.si'){
-    script.src='https://meet.jit.si/external_api.js';
-  }else{
-    script.src='https://8x8.vc/external_api.js';
-  }
-});
 
 (function init(){
   const saved=localStorage.getItem('MEET_USER_NAME');
@@ -163,78 +143,44 @@ function joinMeeting(roomOverride){
   localStorage.setItem('MEET_USER_NAME',user);
   addRecent(room);
 
+  // 방 이름 정리
   const jitsiRoom='smtech-'+room.replace(/[^a-zA-Z0-9가-힣\-_]/g,'-').replace(/-+/g,'-');
-  currentServer=document.getElementById('serverSelect').value;
+  const server=document.getElementById('serverSelect').value;
 
-  // UI 전환: 완전 전체화면
+  // Jitsi URL 구성 (직접 iframe)
+  const config=[
+    'config.prejoinPageEnabled=false',
+    'config.startWithAudioMuted=false',
+    'config.startWithVideoMuted=false',
+    'config.defaultLanguage="ko"',
+    'config.disableDeepLinking=true',
+    'config.hideConferenceSubject=false',
+    'interfaceConfig.SHOW_JITSI_WATERMARK=false',
+    'interfaceConfig.SHOW_BRAND_WATERMARK=false',
+    'interfaceConfig.MOBILE_APP_PROMO=false',
+    'interfaceConfig.TOOLBAR_ALWAYS_VISIBLE=true',
+    'userInfo.displayName="'+encodeURIComponent(user)+'"'
+  ].join('&');
+
+  const url='https://'+server+'/'+encodeURIComponent(jitsiRoom)+'#'+config;
+
+  // UI 전환
   document.getElementById('hdr').classList.add('hide');
   document.getElementById('lobby').classList.add('hidden');
   document.getElementById('meeting').classList.add('active');
   document.getElementById('floatLeave').classList.add('show');
 
-  const container=document.getElementById('jitsiContainer');
-  container.innerHTML='';
-
-  try{
-    api=new JitsiMeetExternalAPI(currentServer,{
-      roomName:jitsiRoom,
-      width:'100%',
-      height:'100%',
-      parentNode:container,
-      userInfo:{displayName:user},
-      configOverwrite:{
-        startWithAudioMuted:false,
-        startWithVideoMuted:false,
-        prejoinConfig:{enabled:false},
-        prejoinPageEnabled:false,
-        disableDeepLinking:true,
-        defaultLanguage:'ko',
-        // Jitsi 자체 툴바 전부 표시 (화면공유 포함)
-        toolbarButtons:[
-          'microphone','camera','desktop','chat',
-          'raisehand','participants-pane','tileview',
-          'fullscreen','settings','shareaudio','filmstrip',
-          'hangup','select-background'
-        ],
-        disableThirdPartyRequests:true,
-        enableClosePage:false,
-        enableWelcomePage:false,
-        hideConferenceSubject:false,
-        hideConferenceTimer:false,
-      },
-      interfaceConfigOverwrite:{
-        SHOW_JITSI_WATERMARK:false,
-        SHOW_WATERMARK_FOR_GUESTS:false,
-        SHOW_BRAND_WATERMARK:false,
-        SHOW_POWERED_BY:false,
-        DEFAULT_BACKGROUND:'#000',
-        TOOLBAR_ALWAYS_VISIBLE:true,
-        MOBILE_APP_PROMO:false,
-        HIDE_INVITE_MORE_HEADER:true,
-        DISABLE_JOIN_LEAVE_NOTIFICATIONS:false,
-        filmStripOnly:false,
-      }
-    });
-
-    api.addListener('videoConferenceJoined',()=>{showToast('✅ 회의 참여 완료')});
-    api.addListener('videoConferenceLeft',()=>{leaveMeeting()});
-    api.addListener('participantJoined',p=>{showToast('👋 '+(p.displayName||'참가자')+' 입장')});
-    api.addListener('participantLeft',()=>{showToast('🚪 참가자 퇴장')});
-
-  }catch(e){
-    showToast('⚠ 연결 실패: '+e.message);
-    console.error('Jitsi error:',e);
-    leaveMeeting();
-  }
+  // iframe 로드
+  document.getElementById('jitsiFrame').src=url;
+  showToast('회의 연결 중...');
 }
 
 function leaveMeeting(){
-  if(api){try{api.dispose()}catch(e){} api=null}
+  document.getElementById('jitsiFrame').src='about:blank';
   document.getElementById('meeting').classList.remove('active');
   document.getElementById('lobby').classList.remove('hidden');
   document.getElementById('hdr').classList.remove('hide');
   document.getElementById('floatLeave').classList.remove('show');
-  document.getElementById('jitsiContainer').innerHTML='';
   showToast('회의를 종료했습니다');
 }
 
@@ -261,7 +207,11 @@ function esc(s){return s.replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,
 let tt;
 function showToast(m){const el=document.getElementById('toast');el.textContent=m;el.classList.add('show');clearTimeout(tt);tt=setTimeout(()=>el.classList.remove('show'),2500)}
 
-window.addEventListener('beforeunload',e=>{if(api){e.preventDefault();e.returnValue='회의 중입니다. 나가시겠습니까?'}});
+window.addEventListener('beforeunload',e=>{
+  if(document.getElementById('meeting').classList.contains('active')){
+    e.preventDefault();e.returnValue='회의 중입니다. 나가시겠습니까?';
+  }
+});
 </script>
 </body>
 </html>
