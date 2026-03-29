@@ -184,10 +184,18 @@ body{font-family:'Noto Sans KR',sans-serif;background:#f0f2f5;color:#1a1a2e;min-
     <div class="set-add" style="margin-top:10px"><input type="text" id="newType" placeholder="새 회의유형"><button onclick="addType()">유형 추가</button></div>
   </div>
   <div class="card">
-    <div class="card-tit">🔧 DB 초기화</div>
+    <div class="card-tit">🔧 NocoDB 연결 설정</div>
     <div id="dbStatus" class="status-bar">확인 중...</div>
-    <button class="btn btn-sm btn-primary" onclick="initTables()" style="margin-top:8px">테이블 자동 생성</button>
-    <p style="font-size:11px;color:#888;margin-top:6px">처음 사용 시 한번만 실행하세요.</p>
+    <div class="fg" style="margin-top:8px"><label>API Token</label><input type="password" id="cfgToken" placeholder="xc-token"></div>
+    <div class="fg"><label>Base ID</label><input type="text" id="cfgBaseId" placeholder="p..."></div>
+    <div class="fg"><label>회의록 테이블 ID <span style="font-size:10px;color:#888">(자동감지)</span></label><input type="text" id="cfgTblMeeting" placeholder="자동감지 또는 직접입력"></div>
+    <div class="fg"><label>설정 테이블 ID <span style="font-size:10px;color:#888">(자동감지)</span></label><input type="text" id="cfgTblSetting" placeholder="자동감지 또는 직접입력"></div>
+    <div style="display:flex;gap:6px">
+      <button class="btn btn-sm btn-primary" onclick="saveMeetingCfg()">💾 저장</button>
+      <button class="btn btn-sm btn-green" onclick="testMeetingConn()">🔌 테스트</button>
+      <button class="btn btn-sm" onclick="initTables()" style="background:#fff3e0;color:#e65100;border:1px solid #ffcc80">🚀 테이블 생성</button>
+    </div>
+    <p style="font-size:10px;color:#888;margin-top:6px">처음 사용 시 Token/Base ID 입력 후 저장 → 테이블 생성 클릭</p>
   </div>
 </div>
 
@@ -210,12 +218,51 @@ body{font-family:'Noto Sans KR',sans-serif;background:#f0f2f5;color:#1a1a2e;min-
 <div class="toast" id="toast"></div>
 
 <script>
-const API='https://app.nocodb.com/api/v2',TOKEN='mi9vXBv5w9h10RcshLNFexjEqzXhU0EUtYlNXAmw',BASE_ID='p7ex9mwekhxgjsi';
+// ===== 설정 관리 =====
+const DEFAULT_MT_CFG={token:'mi9vXBv5w9h10RcshLNFexjEqzXhU0EUtYlNXAmw',baseId:'p7ex9mwekhxgjsi',tblMeeting:'',tblSetting:''};
+function getMtCfg(){return JSON.parse(localStorage.getItem('MEETING_CFG')||'null')||{...DEFAULT_MT_CFG}}
+function saveMtCfg(c){localStorage.setItem('MEETING_CFG',JSON.stringify(c))}
+function getMtToken(){return getMtCfg().token}
+function getMtBaseId(){return getMtCfg().baseId}
+
+const API='https://app.nocodb.com/api/v2';
 let TBL={회의록:'',설정:''};
-const H={'xc-token':TOKEN,'Content-Type':'application/json'};
+function getH(){return{'xc-token':getMtToken(),'Content-Type':'application/json'}}
+
+function loadMtCfgToUI(){
+  const c=getMtCfg();
+  document.getElementById('cfgToken').value=c.token||'';
+  document.getElementById('cfgBaseId').value=c.baseId||'';
+  document.getElementById('cfgTblMeeting').value=c.tblMeeting||TBL['회의록']||'';
+  document.getElementById('cfgTblSetting').value=c.tblSetting||TBL['설정']||'';
+}
+function saveMeetingCfg(){
+  const c={
+    token:document.getElementById('cfgToken').value.trim(),
+    baseId:document.getElementById('cfgBaseId').value.trim(),
+    tblMeeting:document.getElementById('cfgTblMeeting').value.trim(),
+    tblSetting:document.getElementById('cfgTblSetting').value.trim()
+  };
+  saveMtCfg(c);
+  // TBL 동기화
+  if(c.tblMeeting)TBL['회의록']=c.tblMeeting;
+  if(c.tblSetting)TBL['설정']=c.tblSetting;
+  showToast('✅ 설정 저장');
+}
+async function testMeetingConn(){
+  const st=document.getElementById('dbStatus');
+  const c=getMtCfg();
+  if(!c.baseId){st.textContent='⚠ Base ID 필요';st.className='status-bar err';return}
+  st.textContent='테스트 중...';st.className='status-bar';
+  try{
+    const r=await api('GET','/meta/bases/'+c.baseId+'/tables');
+    const names=(r.list||[]).map(t=>t.title);
+    st.textContent='✅ 연결 성공 — '+names.join(', ');st.className='status-bar';
+  }catch(e){st.textContent='❌ 연결 실패: '+e.message;st.className='status-bar err'}
+}
 
 async function api(m,p,b){
-  const o={method:m,headers:H};if(b)o.body=JSON.stringify(b);
+  const o={method:m,headers:getH()};if(b)o.body=JSON.stringify(b);
   let url=API+p;
   if(m==='GET'&&p.includes('?')){const[base,qs]=p.split('?',2);const params=new URLSearchParams();qs.split('&').forEach(kv=>{const i=kv.indexOf('=');if(i>0)params.append(kv.substring(0,i),kv.substring(i+1));else params.append(kv,'')});url=API+base+'?'+params.toString()}
   const r=await fetch(url,o);if(!r.ok){const t=await r.text();throw new Error(r.status+': '+t.substring(0,200))}
@@ -226,8 +273,20 @@ function extractId(o){if(!o||typeof o!=='object')return null;for(const k of['Id'
 
 // ===== 테이블 =====
 async function detectTables(){
-  try{const r=await api('GET','/meta/bases/'+BASE_ID+'/tables');(r.list||[]).forEach(t=>{if(TBL.hasOwnProperty(t.title))TBL[t.title]=t.id});updateDbStatus();return true}
-  catch(e){console.error('detectTables:',e);document.getElementById('dbStatus').textContent='DB 연결 실패: '+e.message;document.getElementById('dbStatus').className='status-bar err';return false}
+  try{
+    // localStorage에서 수동 입력된 ID 우선 적용
+    const c=getMtCfg();
+    if(c.tblMeeting)TBL['회의록']=c.tblMeeting;
+    if(c.tblSetting)TBL['설정']=c.tblSetting;
+    // 자동감지
+    const r=await api('GET','/meta/bases/'+getMtBaseId()+'/tables');
+    (r.list||[]).forEach(t=>{if(TBL.hasOwnProperty(t.title)&&!TBL[t.title])TBL[t.title]=t.id});
+    // 감지된 ID를 설정에 저장
+    const upd=getMtCfg();
+    if(TBL['회의록']&&!upd.tblMeeting){upd.tblMeeting=TBL['회의록'];saveMtCfg(upd)}
+    if(TBL['설정']&&!upd.tblSetting){upd.tblSetting=TBL['설정'];saveMtCfg(upd)}
+    updateDbStatus();return true;
+  }catch(e){console.error('detectTables:',e);document.getElementById('dbStatus').textContent='DB 연결 실패: '+e.message;document.getElementById('dbStatus').className='status-bar err';return false}
 }
 function updateDbStatus(){const el=document.getElementById('dbStatus'),ms=Object.entries(TBL).filter(([,v])=>!v).map(([k])=>k);if(!ms.length){el.textContent='✅ 모든 테이블 정상';el.className='status-bar'}else{el.textContent='⚠ 누락: '+ms.join(', ');el.className='status-bar err'}}
 
@@ -236,7 +295,7 @@ async function initTables(){
   const st=document.getElementById('dbStatus');st.textContent='생성 중...';st.className='status-bar';
   try{
     await detectTables();
-    if(!TBL['회의록']){const r=await api('POST','/meta/bases/'+BASE_ID+'/tables',{title:'회의록',columns:[
+    if(!TBL['회의록']){const r=await api('POST','/meta/bases/'+getMtBaseId()+'/tables',{title:'회의록',columns:[
       {title:'회의제목',uidt:'SingleLineText'},{title:'회의일시',uidt:'DateTime'},{title:'회의장소',uidt:'SingleLineText'},
       {title:'회의유형',uidt:'SingleLineText'},{title:'중분류',uidt:'SingleLineText'},{title:'소분류',uidt:'SingleLineText'},
       {title:'사업장',uidt:'SingleLineText'},{title:'상태',uidt:'SingleLineText'},
@@ -245,7 +304,7 @@ async function initTables(){
       {title:'첨부사진',uidt:'Attachment'},{title:'작성자',uidt:'SingleLineText'},
       {title:'작성일',uidt:'Date'},{title:'비고',uidt:'LongText'}
     ]});TBL['회의록']=r.id}
-    if(!TBL['설정']){const r=await api('POST','/meta/bases/'+BASE_ID+'/tables',{title:'설정',columns:[
+    if(!TBL['설정']){const r=await api('POST','/meta/bases/'+getMtBaseId()+'/tables',{title:'설정',columns:[
       {title:'구분',uidt:'SingleLineText'},{title:'상위값',uidt:'SingleLineText'},{title:'코드값',uidt:'SingleLineText'},
       {title:'표시명',uidt:'SingleLineText'},{title:'정렬순서',uidt:'Number'},{title:'사용여부',uidt:'Checkbox'}
     ]});TBL['설정']=r.id;
@@ -262,7 +321,10 @@ async function initTables(){
         {구분:'중분류',상위값:'프로젝트회의',코드값:'킥오프',표시명:'킥오프',정렬순서:1,사용여부:true},
         {구분:'중분류',상위값:'프로젝트회의',코드값:'진행점검',표시명:'진행점검',정렬순서:2,사용여부:true},
       ])}
-    await detectTables();updateDbStatus();showToast('✅ 테이블 생성 완료');loadSettings();
+    await detectTables();updateDbStatus();
+    // 설정에 테이블 ID 저장
+    const cfg2=getMtCfg();cfg2.tblMeeting=TBL['회의록'];cfg2.tblSetting=TBL['설정'];saveMtCfg(cfg2);loadMtCfgToUI();
+    showToast('✅ 테이블 생성 완료');loadSettings();
   }catch(e){st.textContent='❌ '+e.message;st.className='status-bar err'}
 }
 
@@ -320,7 +382,7 @@ async function addSub(tn,mn){const inp=document.getElementById('aS_'+tn+'_'+mn);
 async function removeSub(tn,mn,sn){if(!confirm(sn+' 삭제?'))return;await delRecs('소분류',mn,sn);await loadSettings()}
 
 // ===== 탭 =====
-function swTab(n){document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('on',i===n));document.querySelectorAll('.pnl').forEach((p,i)=>p.classList.toggle('on',i===n));if(n===0)loadList();if(n===1&&!document.getElementById('editId').value)resetForm();if(n===2)loadStats();if(n===3)loadSettings()}
+function swTab(n){document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('on',i===n));document.querySelectorAll('.pnl').forEach((p,i)=>p.classList.toggle('on',i===n));if(n===0)loadList();if(n===1&&!document.getElementById('editId').value)resetForm();if(n===2)loadStats();if(n===3){loadMtCfgToUI();loadSettings()}}
 
 // ===== 목록 =====
 async function loadList(){
@@ -504,7 +566,7 @@ function showImg(u){document.getElementById('imgModalSrc').src=u;document.getEle
 let tt;function showToast(m){const el=document.getElementById('toast');el.textContent=m;el.classList.add('show');clearTimeout(tt);tt=setTimeout(()=>el.classList.remove('show'),2500)}
 
 // ===== 시작 =====
-(async function(){await detectTables();await loadSettings();const a=localStorage.getItem('MT_AU');if(a)document.getElementById('iAuthor').value=a;const n=new Date();n.setMinutes(n.getMinutes()-n.getTimezoneOffset());document.getElementById('iDate').value=n.toISOString().slice(0,16);loadList()})();
+(async function(){loadMtCfgToUI();await detectTables();await loadSettings();const a=localStorage.getItem('MT_AU');if(a)document.getElementById('iAuthor').value=a;const n=new Date();n.setMinutes(n.getMinutes()-n.getTimezoneOffset());document.getElementById('iDate').value=n.toISOString().slice(0,16);loadList()})();
 </script>
 </body>
 </html>
