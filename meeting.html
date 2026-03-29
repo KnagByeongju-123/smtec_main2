@@ -503,14 +503,39 @@ async function saveMeeting(){
     let sid;
     if(eid){rec.Id=parseInt(eid);await api('PATCH','/tables/'+TBL['회의록']+'/records',rec);sid=eid;
       if(TBL['후속조치']){try{const old=await api('GET','/tables/'+TBL['후속조치']+'/records?limit=500');const matched=(old.list||[]).filter(a=>String(fv(a,'회의록ID'))===String(eid));for(const a of matched)await api('DELETE','/tables/'+TBL['후속조치']+'/records',{Id:a.Id})}catch(e){console.log('기존 후속조치 삭제 실패:',e)}}
-    }else{const res=await api('POST','/tables/'+TBL['회의록']+'/records',rec);console.log('회의록 POST 응답 전체:',res);
-      // NocoDB v2: 단건 POST 시 {Id:N, ...} 반환
+    }else{
+      const res=await api('POST','/tables/'+TBL['회의록']+'/records',rec);
+      console.log('회의록 POST 응답:', JSON.stringify(res).substring(0,500));
+      // ID 추출 시도 1: 응답에서 직접
       sid=res.Id||res.id||res.ID;
       if(!sid&&typeof res==='object'){
-        // 키 순회로 id 찾기
         for(const k of Object.keys(res)){if(k.toLowerCase()==='id'&&typeof res[k]==='number'){sid=res[k];break}}
       }
-      console.log('추출된 sid:', sid, '타입:', typeof sid);
+      // ID 추출 시도 2: 응답 실패 시 최신 레코드 조회
+      if(!sid){
+        console.log('POST 응답에서 ID 추출 실패, 최신 레코드 조회...');
+        try{
+          const latest=await api('GET','/tables/'+TBL['회의록']+'/records?limit=1&sort=-Id');
+          const rows=latest.list||[];
+          if(rows.length){sid=rows[0].Id||rows[0].id;console.log('최신 레코드에서 ID 추출:',sid)}
+        }catch(e2){console.log('최신 레코드 조회 실패:',e2)}
+      }
+      // ID 추출 시도 3: CreatedAt 기준 조회
+      if(!sid){
+        try{
+          const latest2=await api('GET','/tables/'+TBL['회의록']+'/records?limit=1&sort=-CreatedAt');
+          const rows2=latest2.list||[];
+          if(rows2.length){
+            const r2=rows2[0];
+            for(const k of Object.keys(r2)){if(k.toLowerCase()==='id'&&typeof r2[k]==='number'){sid=r2[k];break}}
+            console.log('CreatedAt 기준 ID 추출:',sid);
+          }
+        }catch(e3){console.log('CreatedAt 조회 실패:',e3)}
+      }
+      console.log('최종 sid:',sid,'타입:',typeof sid);
+      if(!sid&&pActions.length){
+        alert('⚠ 회의록은 저장되었으나 ID를 가져오지 못했습니다.\n후속조치가 저장되지 않습니다.\n\nPOST 응답: '+JSON.stringify(res).substring(0,300));
+      }
     }
     console.log('savedId:',sid,'타입:',typeof sid,'pActions:',pActions.length,'TBL후속:',TBL['후속조치']);
     if(TBL['후속조치']&&pActions.length&&sid){
