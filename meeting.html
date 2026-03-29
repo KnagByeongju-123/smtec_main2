@@ -514,18 +514,36 @@ async function saveMeeting(){
     }
     console.log('savedId:',sid,'타입:',typeof sid,'pActions:',pActions.length,'TBL후속:',TBL['후속조치']);
     if(TBL['후속조치']&&pActions.length&&sid){
-      let okCnt=0,failCnt=0;
+      let okCnt=0,failCnt=0,lastErr='';
       for(const a of pActions){
-        const actRec={회의록ID:String(sid),회의제목:title,조치내용:a.text,담당자:a.person||'',완료여부:a.done||false,진행상태:a.status||'대기'};
+        // 최소 필드만 전송 (Checkbox/SingleSelect 문제 방지)
+        const actRec={'회의록ID':String(sid),'회의제목':title,'조치내용':a.text};
+        if(a.person)actRec['담당자']=a.person;
         if(a.due)actRec['기한']=a.due;
-        try{const r=await api('POST','/tables/'+TBL['후속조치']+'/records',actRec);console.log('후속조치 저장 성공:',a.text,'응답:',r);okCnt++}
-        catch(ae){console.error('후속조치 저장 실패:',ae.message,'데이터:',actRec);failCnt++}
+        // 완료여부: 체크된 경우만 전송 (false 전송 시 에러 가능)
+        if(a.done)actRec['완료여부']=true;
+        // 진행상태: 값이 있을 때만
+        if(a.status&&a.status!=='대기')actRec['진행상태']=a.status;
+        try{
+          console.log('후속조치 POST 데이터:',JSON.stringify(actRec));
+          const r=await api('POST','/tables/'+TBL['후속조치']+'/records',actRec);
+          console.log('후속조치 POST 성공:',r);okCnt++;
+        }catch(ae){
+          console.error('후속조치 POST 실패:',ae.message);
+          lastErr=ae.message;failCnt++;
+        }
       }
-      if(failCnt)showToast('⚠ 후속조치 '+okCnt+'건 성공, '+failCnt+'건 실패');
-      else if(okCnt)showToast('✅ 회의록 + 후속조치 '+okCnt+'건 저장');
+      if(failCnt){
+        showToast('⚠ 후속조치 '+failCnt+'건 저장 실패');
+        alert('후속조치 저장 실패 ('+failCnt+'건)\n\n에러: '+lastErr+'\n\n후속조치 테이블의 필드명을 확인하세요:\n회의록ID, 회의제목, 조치내용, 담당자, 기한, 완료여부, 진행상태');
+      }else{
+        showToast('✅ 회의록 + 후속조치 '+okCnt+'건 저장');
+      }
     } else {
-      if(!sid)console.error('회의록 ID를 가져오지 못함! POST 응답 확인 필요');
-      showToast('✅ '+(eid?'수정':'등록')+' 완료'+(pActions.length&&!sid?' (⚠후속조치 ID오류)':''));
+      if(pActions.length&&!sid){
+        alert('⚠ 회의록 ID를 가져오지 못했습니다.\n후속조치가 저장되지 않았습니다.\n\n콘솔(F12)에서 "회의록 POST 응답" 로그를 확인하세요.');
+      }
+      showToast('✅ '+(eid?'수정':'등록')+' 완료');
     }resetForm();swTab(0);
   }catch(e){showToast('저장 실패: '+e.message)}finally{document.getElementById('btnSave').disabled=false;document.getElementById('btnSave').textContent='💾 저장'}
 }
