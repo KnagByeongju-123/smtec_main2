@@ -4,7 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>불량관리 시스템</title>
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&display=swap');
     *{box-sizing:border-box;margin:0;padding:0}
@@ -184,61 +183,12 @@ function toggleDrawMode(on){
 }
 
 function showTempZone(x,y,w,h){
-  tempZone={x,y,w,h,ocrText:'',ocrStatus:'인식 중...'};
-  drawModeOn=false; // 그리기 비활성 (조정 모드)
+  tempZone={x,y,w,h};
+  drawModeOn=false;
   document.getElementById('dtDraw').classList.remove('active');
   document.getElementById('dtView').classList.remove('active');
   const c=document.getElementById('zoneCanvas');if(c)c.style.pointerEvents='none';
   renderTempZone();
-  // 자동 OCR 실행
-  ocrCropZone(x,y,w,h);
-}
-
-async function ocrCropZone(x,y,w,h){
-  try{
-    const img=document.getElementById('zoneImg');
-    if(!img||!img.src||!img.naturalWidth){tempZone.ocrStatus='이미지 없음';updateTempLabel();return}
-    // 이미지에서 해당 영역 크롭
-    const cv=document.createElement('canvas');const ctx=cv.getContext('2d');
-    const sx=Math.round(x/100*img.naturalWidth), sy=Math.round(y/100*img.naturalHeight);
-    const sw=Math.round(w/100*img.naturalWidth), sh=Math.round(h/100*img.naturalHeight);
-    if(sw<5||sh<5){tempZone.ocrStatus='영역 너무 작음';updateTempLabel();return}
-    // 해상도 2배 확대 (OCR 정확도 향상)
-    const scale=2;
-    cv.width=sw*scale;cv.height=sh*scale;
-    ctx.drawImage(img,sx,sy,sw,sh,0,0,sw*scale,sh*scale);
-    // 이진화 전처리
-    const id=ctx.getImageData(0,0,cv.width,cv.height),d=id.data;
-    for(let i=0;i<d.length;i+=4){const g=d[i]*.299+d[i+1]*.587+d[i+2]*.114;const bw=g>130?255:0;d[i]=bw;d[i+1]=bw;d[i+2]=bw}
-    ctx.putImageData(id,0,0);
-    // Tesseract OCR (영문+숫자만)
-    const result=await Tesseract.recognize(cv,'eng',{
-      logger:m=>{if(m.status==='recognizing text'&&tempZone){tempZone.ocrStatus='인식 '+Math.round(m.progress*100)+'%';updateTempLabel()}}
-    });
-    let text=result.data.text.trim().replace(/\n/g,' ').replace(/\s+/g,' ');
-    // 부품번호 패턴 추출 (R1, C23, U5, Q1, D12, L3, FB1 등)
-    const parts=text.match(/[A-Z]{1,3}\d{1,4}/gi)||[];
-    const cleaned=parts.length?parts.join(' '):text.replace(/[^A-Za-z0-9\- ]/g,'').trim();
-    if(cleaned){
-      tempZone.ocrText=cleaned;
-      tempZone.ocrStatus='✅ 인식: '+cleaned;
-    }else{
-      tempZone.ocrText='';
-      tempZone.ocrStatus='인식 결과 없음';
-    }
-  }catch(e){
-    tempZone.ocrStatus='OCR 오류';
-    console.error('OCR error:',e);
-  }
-  updateTempLabel();
-}
-
-function updateTempLabel(){
-  const el=document.querySelector('.zone-editing span');
-  if(el&&tempZone)el.textContent=tempZone.ocrText||tempZone.ocrStatus||'조정 중';
-  // 확정바 OCR 상태 표시
-  const ocrInfo=document.getElementById('ocrInfoLabel');
-  if(ocrInfo&&tempZone)ocrInfo.textContent=tempZone.ocrStatus;
 }
 
 function renderTempZone(){
@@ -253,8 +203,7 @@ function renderTempZone(){
 
   // 확정/취소 바
   const bar=document.createElement('div');bar.className='zone-confirm-bar';
-  bar.style.flexWrap='wrap';
-  bar.innerHTML='<div id="ocrInfoLabel" style="width:100%;text-align:center;font-size:11px;color:var(--accent);font-weight:600;margin-bottom:4px">'+(tempZone.ocrStatus||'OCR 대기')+'</div><button style="background:var(--accent-light);color:var(--accent)" onclick="reOcr()">🔄 재인식</button><button style="background:var(--ok);color:#fff" onclick="confirmTempZone()">✅ 확정</button><button style="background:var(--primary-light);color:var(--primary)" onclick="cancelTempZone()">✕ 취소</button>';
+  bar.innerHTML='<button style="background:var(--ok);color:#fff" onclick="confirmTempZone()">✅ 확정</button><button style="background:var(--primary-light);color:var(--primary)" onclick="cancelTempZone()">✕ 취소</button>';
   // zoneEditor 아래 (board-wrap 다음)
   const wrap=document.getElementById('zoneBoardWrap');
   wrap.parentNode.insertBefore(bar,wrap.nextSibling);
@@ -341,22 +290,18 @@ function setupTempInteraction(el){
   };
 }
 
-function reOcr(){
-  if(!tempZone)return;
-  tempZone.ocrText='';tempZone.ocrStatus='재인식 중...';updateTempLabel();
-  ocrCropZone(tempZone.x,tempZone.y,tempZone.w,tempZone.h);
-}
-
 function confirmTempZone(){
   if(!tempZone)return;
-  const name=tempZone.ocrText||('Z'+(editZones.length+1));
-  editZones.push({id:null,name:name,x:+tempZone.x.toFixed(2),y:+tempZone.y.toFixed(2),w:+tempZone.w.toFixed(2),h:+tempZone.h.toFixed(2),color:'#ff5252',order:editZones.length+1});
-  // 정리
+  const defaultName='Z'+(editZones.length+1);
+  const name=prompt('위치번호를 입력하세요\n(예: R1, C23, U5, IC1)',defaultName);
+  if(name===null)return; // 취소
+  const finalName=name.trim()||defaultName;
+  editZones.push({id:null,name:finalName,x:+tempZone.x.toFixed(2),y:+tempZone.y.toFixed(2),w:+tempZone.w.toFixed(2),h:+tempZone.h.toFixed(2),color:'#ff5252',order:editZones.length+1});
   const el=document.querySelector('.zone-editing');if(el&&el._cleanup)el._cleanup();
   tempZone=null;tempAction=null;tempActionStart=null;
   document.querySelectorAll('.zone-editing,.zone-confirm-bar').forEach(e=>e.remove());
   renderEditZones();
-  showToast('✅ 영역 확정: '+name+' — ✏️ 그리기로 추가 가능');
+  showToast('✅ '+finalName+' 확정 — ✏️ 그리기로 추가 가능');
 }
 
 function cancelTempZone(){
