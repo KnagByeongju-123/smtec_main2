@@ -409,7 +409,11 @@ async function showDetail(id){
     [['📋 안건',fv(r,'안건')],['📝 회의내용',fv(r,'회의내용')],['✅ 결정사항',fv(r,'결정사항')],['📎 비고',fv(r,'비고')]].forEach(([l,v])=>{if(v)h+='<div class="card"><div class="card-tit">'+l+'</div><div style="font-size:13px;line-height:1.8;white-space:pre-wrap;color:#333">'+esc(String(v))+'</div></div>'});
     const photos=fv(r,'첨부사진');
     if(photos&&Array.isArray(photos)&&photos.length){h+='<div class="card"><div class="card-tit">📷 첨부사진 ('+photos.length+'장)</div><div class="photo-grid">';photos.forEach(p=>{const u=p.signedUrl||p.url||p.path||'';if(u)h+='<img src="'+u+'" onclick="showImg(\''+u+'\')" loading="lazy">'});h+='</div></div>'}
-    if(TBL['후속조치']){try{const ar=await api('GET','/tables/'+TBL['후속조치']+'/records?where=(회의록ID,eq,'+id+')&sort=기한');const acts=ar.list||[];
+    if(TBL['후속조치']){try{
+      const ar=await api('GET','/tables/'+TBL['후속조치']+'/records?limit=500');
+      const allActs=ar.list||[];
+      const acts=allActs.filter(a=>{const mid=fv(a,'회의록ID');return String(mid)===String(id)});
+      console.log('상세 후속조치 조회 - 전체:',allActs.length,'매칭:',acts.length,'id:',id);
       if(acts.length){h+='<div class="card"><div class="card-tit">📌 후속조치 ('+acts.length+'건)</div>';
         acts.forEach(a=>{const done=fv(a,'완료여부'),txt=fv(a,'조치내용'),per=fv(a,'담당자'),due=fv(a,'기한'),st=fv(a,'진행상태')||(done?'완료':'대기');
           const dStr=due?new Date(due).toLocaleDateString('ko-KR'):'',ov=due&&!done&&new Date(due)<new Date();
@@ -417,7 +421,7 @@ async function showDetail(id){
             +'<div class="action-body '+(done?'done-text':'')+'"><div class="a-text">'+esc(txt)+'</div>'
             +'<div class="a-meta">'+(per?'👤'+esc(per):'')+(dStr?' 📅'+dStr:'')+' <span style="color:'+(st==='완료'?'#00b894':ov?'#e63946':'#f39c12')+';font-weight:600">'+st+'</span></div></div></div>'});
         h+='</div>'}
-    }catch(e){}}
+    }catch(e){console.error('후속조치 조회 실패:',e)}}
     body.innerHTML=h;
   }catch(e){body.innerHTML='<div class="empty" style="color:#e63946">'+e.message+'</div>'}
 }
@@ -438,13 +442,14 @@ async function editFromDetail(){
     document.getElementById('iType').value=type;onITypeChg();
     if(mid){document.getElementById('iMid').value=mid;onIMidChg()}
     if(sub)document.getElementById('iSub').value=sub;
-    pActions=[];if(TBL['후속조치']){const ar=await api('GET','/tables/'+TBL['후속조치']+'/records?where=(회의록ID,eq,'+curId+')&sort=기한');
-      pActions=(ar.list||[]).map(a=>({id:a.Id,text:fv(a,'조치내용'),person:fv(a,'담당자'),due:fv(a,'기한')?fv(a,'기한').split('T')[0]:'',done:!!fv(a,'완료여부'),status:fv(a,'진행상태')||'대기'}))}
+    pActions=[];if(TBL['후속조치']){const ar=await api('GET','/tables/'+TBL['후속조치']+'/records?limit=500');
+      const allA=ar.list||[];const matched=allA.filter(a=>String(fv(a,'회의록ID'))===String(curId));
+      pActions=matched.map(a=>({id:a.Id,text:fv(a,'조치내용'),person:fv(a,'담당자'),due:fv(a,'기한')?fv(a,'기한').split('T')[0]:'',done:!!fv(a,'완료여부'),status:fv(a,'진행상태')||'대기'}))}
     renderActs();photoFiles=[];existPhotos=[];const ph=fv(r,'첨부사진');if(ph&&Array.isArray(ph))existPhotos=ph;renderPhotos();
     closeDetail();swTab(1);
   }catch(e){showToast('실패: '+e.message)}
 }
-async function deleteFromDetail(){if(!curId||!confirm('삭제하시겠습니까?'))return;try{if(TBL['후속조치']){const ar=await api('GET','/tables/'+TBL['후속조치']+'/records?where=(회의록ID,eq,'+curId+')');for(const a of(ar.list||[]))await api('DELETE','/tables/'+TBL['후속조치']+'/records',{Id:a.Id})}await api('DELETE','/tables/'+TBL['회의록']+'/records',{Id:curId});closeDetail();showToast('✅ 삭제');loadList()}catch(e){showToast('실패: '+e.message)}}
+async function deleteFromDetail(){if(!curId||!confirm('삭제하시겠습니까?'))return;try{if(TBL['후속조치']){const ar=await api('GET','/tables/'+TBL['후속조치']+'/records?limit=500');const matched=(ar.list||[]).filter(a=>String(fv(a,'회의록ID'))===String(curId));for(const a of matched)await api('DELETE','/tables/'+TBL['후속조치']+'/records',{Id:a.Id})}await api('DELETE','/tables/'+TBL['회의록']+'/records',{Id:curId});closeDetail();showToast('✅ 삭제');loadList()}catch(e){showToast('실패: '+e.message)}}
 async function togAct(id,v){if(!TBL['후속조치'])return;try{const u={Id:id,완료여부:v,진행상태:v?'완료':'대기'};if(v)u['완료일']=new Date().toISOString().split('T')[0];await api('PATCH','/tables/'+TBL['후속조치']+'/records',u);showToast(v?'✅ 완료':'↩ 미완료');if(curId)showDetail(curId)}catch(e){showToast('실패')}}
 
 // ===== 작성 =====
@@ -484,7 +489,7 @@ async function saveMeeting(){
     if(pd.length)rec['첨부사진']=pd;
     let sid;
     if(eid){rec.Id=parseInt(eid);await api('PATCH','/tables/'+TBL['회의록']+'/records',rec);sid=eid;
-      if(TBL['후속조치']){try{const old=await api('GET','/tables/'+TBL['후속조치']+'/records?where=(회의록ID,eq,'+eid+')');for(const a of(old.list||[]))await api('DELETE','/tables/'+TBL['후속조치']+'/records',{Id:a.Id})}catch(e){console.log('기존 후속조치 삭제 실패:',e)}}
+      if(TBL['후속조치']){try{const old=await api('GET','/tables/'+TBL['후속조치']+'/records?limit=500');const matched=(old.list||[]).filter(a=>String(fv(a,'회의록ID'))===String(eid));for(const a of matched)await api('DELETE','/tables/'+TBL['후속조치']+'/records',{Id:a.Id})}catch(e){console.log('기존 후속조치 삭제 실패:',e)}}
     }else{const res=await api('POST','/tables/'+TBL['회의록']+'/records',rec);console.log('회의록 POST 응답:',JSON.stringify(res));sid=res.Id||res.id||res.ID;if(!sid&&typeof res==='object'){for(const k of Object.keys(res)){if(k.toLowerCase()==='id'){sid=res[k];break}}}}
     console.log('savedId:',sid,'pActions:',pActions.length,'TBL후속:',TBL['후속조치']);
     if(TBL['후속조치']&&pActions.length&&sid){
