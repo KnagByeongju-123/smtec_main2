@@ -443,7 +443,12 @@ async function editFromDetail(){
     if(mid){document.getElementById('iMid').value=mid;onIMidChg()}
     if(sub)document.getElementById('iSub').value=sub;
     pActions=[];if(TBL['후속조치']){const ar=await api('GET','/tables/'+TBL['후속조치']+'/records?limit=500');
-      const allA=ar.list||[];const matched=allA.filter(a=>String(fv(a,'회의록ID'))===String(curId));
+      const allA=ar.list||[];
+      console.log('수정모드 후속조치 - curId:',curId,'타입:',typeof curId);
+      if(allA.length>0)console.log('후속조치 첫번째 회의록ID:',fv(allA[0],'회의록ID'),'타입:',typeof fv(allA[0],'회의록ID'));
+      allA.forEach(a=>console.log('  비교:',fv(a,'회의록ID'),'===',curId,'→',String(fv(a,'회의록ID'))===String(curId)));
+      const matched=allA.filter(a=>String(fv(a,'회의록ID'))===String(curId));
+      console.log('매칭 결과:',matched.length,'건');
       pActions=matched.map(a=>({id:a.Id,text:fv(a,'조치내용'),person:fv(a,'담당자'),due:fv(a,'기한')?fv(a,'기한').split('T')[0]:'',done:!!fv(a,'완료여부'),status:fv(a,'진행상태')||'대기'}))}
     renderActs();photoFiles=[];existPhotos=[];const ph=fv(r,'첨부사진');if(ph&&Array.isArray(ph))existPhotos=ph;renderPhotos();
     closeDetail();swTab(1);
@@ -490,7 +495,15 @@ async function saveMeeting(){
     let sid;
     if(eid){rec.Id=parseInt(eid);await api('PATCH','/tables/'+TBL['회의록']+'/records',rec);sid=eid;
       if(TBL['후속조치']){try{const old=await api('GET','/tables/'+TBL['후속조치']+'/records?limit=500');const matched=(old.list||[]).filter(a=>String(fv(a,'회의록ID'))===String(eid));for(const a of matched)await api('DELETE','/tables/'+TBL['후속조치']+'/records',{Id:a.Id})}catch(e){console.log('기존 후속조치 삭제 실패:',e)}}
-    }else{const res=await api('POST','/tables/'+TBL['회의록']+'/records',rec);console.log('회의록 POST 응답:',JSON.stringify(res));sid=res.Id||res.id||res.ID;if(!sid&&typeof res==='object'){for(const k of Object.keys(res)){if(k.toLowerCase()==='id'){sid=res[k];break}}}}
+    }else{const res=await api('POST','/tables/'+TBL['회의록']+'/records',rec);console.log('회의록 POST 응답 전체:',res);
+      // NocoDB v2: 단건 POST 시 {Id:N, ...} 반환
+      sid=res.Id||res.id||res.ID;
+      if(!sid&&typeof res==='object'){
+        // 키 순회로 id 찾기
+        for(const k of Object.keys(res)){if(k.toLowerCase()==='id'&&typeof res[k]==='number'){sid=res[k];break}}
+      }
+      console.log('추출된 sid:', sid, '타입:', typeof sid);
+    }
     console.log('savedId:',sid,'pActions:',pActions.length,'TBL후속:',TBL['후속조치']);
     if(TBL['후속조치']&&pActions.length&&sid){
       for(const a of pActions){
