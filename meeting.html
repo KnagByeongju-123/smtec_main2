@@ -216,7 +216,20 @@ const API='https://app.nocodb.com/api/v2',TOKEN='mi9vXBv5w9h10RcshLNFexjEqzXhU0E
 let TBL={회의록:'',후속조치:'',설정:''};
 const H={'xc-token':TOKEN,'Content-Type':'application/json'};
 
-async function api(m,p,b){const o={method:m,headers:H};if(b)o.body=JSON.stringify(b);const r=await fetch(API+p,o);if(!r.ok){const t=await r.text();throw new Error(r.status+': '+t.substring(0,200))}const t=await r.text();try{return JSON.parse(t)}catch{return t}}
+async function api(m,p,b){
+  const o={method:m,headers:H};if(b)o.body=JSON.stringify(b);
+  // GET 요청 시 where/sort 파라미터 한글 인코딩
+  let url=API+p;
+  if(m==='GET'&&p.includes('?')){
+    const [base,qs]=p.split('?',2);
+    const params=new URLSearchParams();
+    qs.split('&').forEach(kv=>{const idx=kv.indexOf('=');if(idx>0){params.append(kv.substring(0,idx),kv.substring(idx+1))}else{params.append(kv,'')}});
+    url=API+base+'?'+params.toString();
+  }
+  const r=await fetch(url,o);
+  if(!r.ok){const t=await r.text();throw new Error(r.status+': '+t.substring(0,200))}
+  const t=await r.text();try{return JSON.parse(t)}catch{return t}
+}
 function fv(r,...n){for(const k of n){if(r[k]!==undefined&&r[k]!==null)return r[k]}return ''}
 
 // ===== 테이블 탐색/생성 =====
@@ -488,21 +501,27 @@ async function saveMeeting(){
 
 // ===== 현황 =====
 async function loadStats(){
-  if(!TBL['후속조치']){document.getElementById('statsArea').innerHTML='<div class="empty">테이블 생성 필요</div>';return}
-  try{const res=await api('GET','/tables/'+TBL['후속조치']+'/records?limit=500');const acts=res.list||[];
+  const sa=document.getElementById('statsArea'),pa=document.getElementById('pendingActions');
+  if(!TBL['후속조치']){sa.innerHTML='<div class="empty">⚙️ 설정에서 테이블을 먼저 생성하세요</div>';pa.innerHTML='';return}
+  sa.innerHTML='<div class="loading"><div class="spinner"></div></div>';pa.innerHTML='';
+  try{
+    const res=await api('GET','/tables/'+TBL['후속조치']+'/records?limit=500');
+    console.log('후속조치 조회 결과:', res);
+    const acts=res.list||[];
+    console.log('후속조치 건수:', acts.length);
+    if(!acts.length){sa.innerHTML='<div class="empty">등록된 후속조치가 없습니다</div>';pa.innerHTML='';return}
     const tot=acts.length,done=acts.filter(a=>fv(a,'완료여부')).length,pend=tot-done;
     const ov=acts.filter(a=>{const d=fv(a,'기한');return!fv(a,'완료여부')&&d&&new Date(d)<new Date()}).length;
-    document.getElementById('statsArea').innerHTML='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center">'
+    sa.innerHTML='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center">'
       +'<div style="padding:12px;background:#e8f8f5;border-radius:8px"><div style="font-size:24px;font-weight:700;color:#00b894">'+done+'</div><div style="font-size:11px;color:#888">완료</div></div>'
       +'<div style="padding:12px;background:#fff3cd;border-radius:8px"><div style="font-size:24px;font-weight:700;color:#f39c12">'+pend+'</div><div style="font-size:11px;color:#888">진행중</div></div>'
       +'<div style="padding:12px;background:#ffeaea;border-radius:8px"><div style="font-size:24px;font-weight:700;color:#e63946">'+ov+'</div><div style="font-size:11px;color:#888">지연</div></div>'
       +'</div><div style="margin-top:8px;font-size:12px;color:#888;text-align:center">전체 '+tot+'건</div>';
-    const pa=document.getElementById('pendingActions');
     const pActs=acts.filter(a=>!fv(a,'완료여부')).sort((a,b)=>{const da=fv(a,'기한'),db=fv(b,'기한');if(!da)return 1;if(!db)return -1;return new Date(da)-new Date(db)});
-    if(!pActs.length){pa.innerHTML='<div class="empty">🎉 모든 조치 완료</div>';return}
-    pa.innerHTML='';pActs.forEach(a=>{const txt=fv(a,'조치내용'),per=fv(a,'담당자'),due=fv(a,'기한'),mt=fv(a,'회의제목');const ds=due?new Date(due).toLocaleDateString('ko-KR'):'',ov=due&&new Date(due)<new Date();
-      const d=document.createElement('div');d.className='action-item';d.innerHTML='<div class="action-chk" onclick="togAct('+a.Id+',true)"></div><div class="action-body"><div class="a-text">'+esc(txt)+'</div><div class="a-meta">'+(mt?'📋'+esc(mt)+' · ':'')+(per?'👤'+esc(per):'')+(ds?' 📅<span style="color:'+(ov?'#e63946':'#333')+'">'+ds+'</span>':'')+'</div></div>';pa.appendChild(d)});
-  }catch(e){document.getElementById('statsArea').innerHTML='<div class="empty" style="color:#e63946">'+e.message+'</div>'}
+    if(!pActs.length){pa.innerHTML='<div class="empty">🎉 모든 조치가 완료되었습니다</div>';return}
+    pa.innerHTML='';pActs.forEach(a=>{const txt=fv(a,'조치내용'),per=fv(a,'담당자'),due=fv(a,'기한'),mt=fv(a,'회의제목');const ds=due?new Date(due).toLocaleDateString('ko-KR'):'',isOv=due&&new Date(due)<new Date();
+      const d=document.createElement('div');d.className='action-item';d.innerHTML='<div class="action-chk" onclick="togAct('+a.Id+',true)"></div><div class="action-body"><div class="a-text">'+esc(txt)+'</div><div class="a-meta">'+(mt?'📋'+esc(mt)+' · ':'')+(per?'👤'+esc(per):'')+(ds?' 📅<span style="color:'+(isOv?'#e63946':'#333')+'">'+ds+'</span>':'')+'</div></div>';pa.appendChild(d)});
+  }catch(e){console.error('loadStats error:',e);sa.innerHTML='<div class="empty" style="color:#e63946">조회 실패: '+e.message+'<br><span style="font-size:10px">콘솔(F12)에서 상세 확인</span></div>';pa.innerHTML=''}
 }
 
 // ===== 유틸 =====
