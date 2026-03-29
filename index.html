@@ -1,1716 +1,263 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>입고 로트추적 스캐너</title>
-  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-  <style>
-    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&display=swap');
-    *{box-sizing:border-box;margin:0;padding:0}
-    body{font-family:'Noto Sans KR',sans-serif;background:#f0f2f5;color:#212121;padding-bottom:60px}
-    /* 헤더 */
-    .hdr{background:linear-gradient(135deg,#1a237e,#283593);color:#fff;padding:12px 16px;text-align:center}
-    .hdr h1{font-size:17px;font-weight:700}.hdr p{font-size:10px;opacity:.7;margin-top:2px}
-    /* 탭 */
-    .tabs{display:flex;background:#fff;border-bottom:2px solid #e0e0e0;position:sticky;top:0;z-index:50}
-    .tab{flex:1;padding:10px;text-align:center;font-size:13px;font-weight:600;cursor:pointer;border-bottom:3px solid transparent;color:#888}
-    .tab.on{color:#1a237e;border-bottom-color:#1a237e}
-    /* 패널 */
-    .pnl{display:none;padding:12px}.pnl.on{display:block}
-    /* 카드 */
-    .card{background:#fff;border-radius:12px;padding:14px;margin-bottom:12px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
-    .card-tit{font-size:14px;font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:6px}
-    /* 입력 */
-    .fg{margin-bottom:12px}
-    .fg label{display:block;font-size:12px;font-weight:600;color:#555;margin-bottom:4px}
-    .fg select,.fg input,.fg textarea{width:100%;padding:10px;border:1.5px solid #ddd;border-radius:8px;font-size:14px;font-family:inherit;background:#fff}
-    .fg select{appearance:auto}
-    .fg textarea{resize:vertical;min-height:48px}
-    /* 버튼 */
-    .btn{padding:12px;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;width:100%}
-    .btn:active{transform:scale(.97)}
-    .btn-green{background:linear-gradient(135deg,#00c853,#00e676);color:#000;box-shadow:0 2px 8px rgba(0,200,83,.2)}
-    .btn-blue{background:linear-gradient(135deg,#1565c0,#42a5f5);color:#fff;box-shadow:0 2px 8px rgba(21,101,192,.2)}
-    .btn-red{background:#ffebee;color:#c62828;border:1px solid #ffcdd2}
-    .btn-gray{background:#f5f5f5;color:#555;border:1px solid #ddd}
-    .btn-sm{padding:8px 12px;font-size:12px;width:auto;border-radius:8px}
-    .btn-row{display:flex;gap:8px;margin-bottom:12px}
-    .btn-row .btn{flex:1}
-    /* 스캔결과 */
-    .scan-result{background:#e8f5e9;border:1.5px solid #a5d6a7;border-radius:10px;padding:12px;margin-bottom:12px;display:none}
-    .scan-result.show{display:block}
-    .scan-result.fail{background:#ffebee;border-color:#ef9a9a}
-    .sr-val{font-size:18px;font-weight:700;color:#2e7d32;word-break:break-all}
-    .scan-result.fail .sr-val{color:#c62828}
-    .sr-fmt{font-size:11px;color:#1565c0;margin-top:2px}
-    .sr-img{max-width:100%;max-height:100px;border-radius:6px;margin-top:6px;border:1px solid #ddd}
-    /* 이력 */
-    .h-empty{text-align:center;padding:20px;color:#aaa;font-size:13px}
-    .h-item{padding:10px 0;border-bottom:1px solid #f0f0f0}
-    .h-item:last-child{border:none}
-    .hi-top{display:flex;justify-content:space-between;align-items:center}
-    .hi-code{font-size:14px;font-weight:700;color:#1a237e}
-    .hi-time{font-size:10px;color:#999}
-    .hi-tags{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}
-    .hi-tag{font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600}
-    .ht-cat{background:#e3f2fd;color:#1565c0}
-    .ht-sub{background:#f3e5f5;color:#7b1fa2}
-    .ht-qty{background:#e8f5e9;color:#2e7d32}
-    .hi-note{font-size:11px;color:#666;margin-top:3px}
-    .hi-acts{display:flex;gap:4px;margin-top:4px}
-    .hi-acts button{padding:3px 8px;border:none;border-radius:4px;font-size:10px;font-weight:600;cursor:pointer;font-family:inherit}
-    .ha-cp{background:#e3f2fd;color:#1565c0}.ha-del{background:#ffebee;color:#c62828}
-    /* 항목관리 */
-    .cat-section{margin-bottom:14px;border:1px solid #e0e0e0;border-radius:10px;overflow:hidden}
-    .cat-hdr{display:flex;align-items:center;gap:4px;padding:8px 10px;background:#f5f5f5}
-    .cat-hdr input{flex:1;padding:6px 8px;border:1px solid #ddd;border-radius:6px;font-size:13px;font-family:inherit;font-weight:600;min-width:0}
-    .cat-body{padding:8px 12px;background:#fafafa}
-    .sub-item{display:flex;align-items:center;gap:4px;padding:4px 0;border-bottom:1px solid #eee;font-size:13px}
-    .sub-item:last-child{border:none}
-    .sub-item input{flex:1;padding:5px 8px;border:1px solid #ddd;border-radius:5px;font-size:12px;font-family:inherit}
-    .s-move{width:24px;height:24px;border:none;border-radius:4px;background:#f0f0f0;font-size:12px;cursor:pointer;color:#888;display:flex;align-items:center;justify-content:center}
-    .s-del{width:24px;height:24px;border:none;border-radius:4px;background:#ffebee;color:#c62828;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center}
-    .add-btn{width:100%;padding:6px;border:1.5px dashed #ccc;border-radius:6px;background:none;color:#999;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;margin-top:4px}
-    /* 숨김 */
-    #camInput,#imgInput,#qrCamInput,#qrImgInput,#ocrCamInput,#ocrImgInput,#stgCamInput,#stgImgInput,#partCamInput,#partImgInput,#analysisCv,#uniCamInput,#uniImgInput{display:none}
-    .toast{position:fixed;bottom:70px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.85);color:#fff;padding:8px 18px;border-radius:18px;font-size:12px;font-weight:600;z-index:9999;opacity:0;transition:opacity .3s;pointer-events:none}.toast.show{opacity:1}
-    .judge-ok{background:#e8f5e9;color:#2e7d32;border:3px solid #4caf50}.judge-ng{background:#ffebee;color:#c62828;border:3px solid #f44336}
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>(주)에스엠텍 스마트 팩토리</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700;900&family=Bebas+Neue&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --c-bg:    #0a0f1e;
+    --c-panel: #111827;
+    --c-border:#1e2d45;
+    --c-accent:#0ea5e9;
+    --c-gold:  #f59e0b;
+    --c-green: #10b981;
+    --c-red:   #f43f5e;
+    --c-txt:   #e2e8f0;
+    --c-sub:   #64748b;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--c-bg);color:var(--c-txt);overflow-x:hidden}
+
+  /* 배경 그리드 패턴 */
+  body::before{
+    content:'';position:fixed;inset:0;
+    background-image:
+      linear-gradient(rgba(14,165,233,.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(14,165,233,.04) 1px, transparent 1px);
+    background-size:40px 40px;
+    pointer-events:none;z-index:0;
+  }
+
+  /* 상단 글로우 */
+  body::after{
+    content:'';position:fixed;top:-120px;left:50%;transform:translateX(-50%);
+    width:600px;height:300px;
+    background:radial-gradient(ellipse, rgba(14,165,233,.18) 0%, transparent 70%);
+    pointer-events:none;z-index:0;
+  }
+
+  .wrap{position:relative;z-index:1;min-height:100vh;display:flex;flex-direction:column;padding:0 20px 40px;}
+
+  /* 헤더 */
+  .hdr{
+    padding:16px 0 12px;
+    display:flex;flex-direction:column;align-items:center;gap:6px;
+    border-bottom:1px solid var(--c-border);
+    margin-bottom:8px;
+  }
+  .logo-badge{
+    font-size:9px;letter-spacing:4px;text-transform:uppercase;
+    color:var(--c-accent);font-weight:700;
+    padding:4px 12px;border:1px solid rgba(14,165,233,.4);border-radius:20px;
+    background:rgba(14,165,233,.06);
+    animation:pulse-border 3s ease-in-out infinite;
+  }
+  @keyframes pulse-border{
+    0%,100%{box-shadow:0 0 0 0 rgba(14,165,233,.3)}
+    50%{box-shadow:0 0 0 4px rgba(14,165,233,.08)}
+  }
+  .logo-ko{
+    font-size:26px;font-weight:900;letter-spacing:-0.5px;
+    background:linear-gradient(135deg,#e2e8f0 30%,#94a3b8);
+    -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+    margin-top:4px;
+  }
+  .logo-sub{
+    font-size:11px;color:var(--c-sub);letter-spacing:1px;font-weight:400;
+  }
+
+  /* 시스템 시각 */
+  .sys-time{
+    text-align:center;padding:6px 0 10px;
+    font-size:10px;color:var(--c-sub);letter-spacing:1px;
+  }
+  .sys-time .time{
+    display:block;font-family:'Bebas Neue',cursive;
+    font-size:28px;letter-spacing:3px;color:var(--c-txt);line-height:1;
+    margin-bottom:1px;
+  }
+
+  /* 앱 카드 */
+  .apps{display:flex;flex-direction:column;gap:14px;margin-top:4px;}
+
+  .app-card{
+    background:var(--c-panel);
+    border:1px solid var(--c-border);
+    border-radius:16px;
+    padding:22px 20px;
+    text-decoration:none;
+    display:flex;align-items:center;gap:18px;
+    position:relative;overflow:hidden;
+    transition:transform .15s, box-shadow .15s, border-color .15s;
+    cursor:pointer;
+  }
+  .app-card:active{transform:scale(.97);}
+  .app-card::before{
+    content:'';position:absolute;inset:0;
+    background:linear-gradient(135deg,rgba(255,255,255,.03) 0%, transparent 60%);
+    border-radius:inherit;pointer-events:none;
+  }
+  /* 우측 상단 코너 악센트 */
+  .app-card::after{
+    content:'';position:absolute;top:0;right:0;
+    width:60px;height:60px;
+    border-radius:0 16px 0 60px;
+    opacity:.15;
+  }
+
+  .card-a::after{background:var(--c-accent);}
+  .card-b::after{background:var(--c-gold);}
+  .card-c::after{background:var(--c-green);}
+
+  .card-a{border-color:rgba(14,165,233,.25);}
+  .card-b{border-color:rgba(245,158,11,.25);}
+  .card-c{border-color:rgba(16,185,129,.25);}
+
+  .card-a:active, .card-a:hover{border-color:var(--c-accent); box-shadow:0 0 20px rgba(14,165,233,.15);}
+  .card-b:active, .card-b:hover{border-color:var(--c-gold);   box-shadow:0 0 20px rgba(245,158,11,.15);}
+  .card-c:active, .card-c:hover{border-color:var(--c-green);  box-shadow:0 0 20px rgba(16,185,129,.15);}
+
+  .card-icon{
+    width:52px;height:52px;border-radius:14px;
+    display:flex;align-items:center;justify-content:center;
+    font-size:26px;flex-shrink:0;
+  }
+  .card-a .card-icon{background:rgba(14,165,233,.12);}
+  .card-b .card-icon{background:rgba(245,158,11,.12);}
+  .card-c .card-icon{background:rgba(16,185,129,.12);}
+
+  .card-body{flex:1;min-width:0;}
+  .card-tag{
+    font-size:9px;letter-spacing:2px;text-transform:uppercase;font-weight:700;
+    margin-bottom:4px;
+  }
+  .card-a .card-tag{color:var(--c-accent);}
+  .card-b .card-tag{color:var(--c-gold);}
+  .card-c .card-tag{color:var(--c-green);}
+
+  .card-title{font-size:17px;font-weight:700;color:var(--c-txt);letter-spacing:-.3px;line-height:1.2;}
+  .card-desc{font-size:11px;color:var(--c-sub);margin-top:4px;font-weight:400;}
+
+  .card-arrow{
+    font-size:18px;color:var(--c-sub);flex-shrink:0;
+    transition:transform .2s, color .2s;
+  }
+  .app-card:hover .card-arrow, .app-card:active .card-arrow{
+    transform:translateX(4px);
+  }
+  .card-a:hover .card-arrow{color:var(--c-accent);}
+  .card-b:hover .card-arrow{color:var(--c-gold);}
+  .card-c:hover .card-arrow{color:var(--c-green);}
+
+  /* 상태 표시 점 */
+  .status-dot{
+    width:7px;height:7px;border-radius:50%;
+    display:inline-block;margin-right:6px;
+    animation:blink 2s ease-in-out infinite;
+  }
+  .dot-blue{background:var(--c-accent);}
+  .dot-gold{background:var(--c-gold);}
+  .dot-green{background:var(--c-green);}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+
+  /* 하단 */
+  .footer{
+    margin-top:auto;padding-top:32px;
+    text-align:center;
+    font-size:10px;color:var(--c-sub);letter-spacing:.5px;
+    line-height:1.8;
+  }
+  .footer a{color:var(--c-sub);text-decoration:none;}
+
+  /* 입장 애니메이션 */
+  .hdr{animation:fadeUp .6s ease both;}
+  .sys-time{animation:fadeUp .6s .1s ease both;}
+  .app-card:nth-child(1){animation:fadeUp .6s .2s ease both;}
+  .app-card:nth-child(2){animation:fadeUp .6s .3s ease both;}
+  .app-card:nth-child(3){animation:fadeUp .6s .4s ease both;}
+  .footer{animation:fadeUp .6s .5s ease both;}
+  @keyframes fadeUp{
+    from{opacity:0;transform:translateY(18px)}
+    to{opacity:1;transform:translateY(0)}
+  }
+</style>
 </head>
 <body>
-<div class="hdr"><h1>📦 제조현장 코드관리 시스템</h1><p>바코드/QR 스캔 기반 입출고 · 세팅체크 · 개별체크 · 이력관리</p></div>
-<div class="tabs">
-  <div class="tab on" id="tab0" onclick="swTab(0)">📦 입출고</div>
-  <div class="tab" id="tab1" onclick="swTab(1)">🔧 세팅</div>
-  <div class="tab" id="tab2" onclick="swTab(2)">🔄 개별</div>
-  <div class="tab" id="tab3" onclick="swTab(3)">📋 이력</div>
-  <div class="tab" id="tab4" onclick="swTab(4)">⚙ 항목</div>
+<div class="wrap">
+
+  <div class="hdr">
+    <div class="logo-badge">Smart Factory Platform</div>
+    <div class="logo-ko">(주)에스엠텍</div>
+    <div class="logo-sub">SMTECH Co., Ltd.</div>
+  </div>
+
+  <div class="sys-time">
+    <span class="time" id="clock">--:--:--</span>
+    <span id="date-str">----.--.--</span>
+  </div>
+
+  <div class="apps">
+
+    <a class="app-card card-a" href="https://knagbyeongju-123.github.io/smtec_main/lot_tracking.html">
+      <div class="card-icon">📦</div>
+      <div class="card-body">
+        <div class="card-tag"><span class="status-dot dot-blue"></span>공용 시스템</div>
+        <div class="card-title">로트 추적관리 시스템</div>
+        <div class="card-desc">자재 이동 · 세팅체크 · 교환체크 · 이력관리</div>
+      </div>
+      <div class="card-arrow">›</div>
+    </a>
+
+    <a class="app-card card-c" href="https://knagbyeongju-123.github.io/smtec_main/mask.html">
+      <div class="card-icon">🎭</div>
+      <div class="card-body">
+        <div class="card-tag"><span class="status-dot dot-green"></span>공용 시스템</div>
+        <div class="card-title">메탈마스크 관리</div>
+        <div class="card-desc">이동등록 · 재고현황 · 잔여수명 · 폐기관리</div>
+      </div>
+      <div class="card-arrow">›</div>
+    </a>
+
+    <a class="app-card card-b" href="https://knagbyeongju-123.github.io/smtec_main/line_patrol.html">
+      <div class="card-icon">🔧</div>
+      <div class="card-body">
+        <div class="card-tag"><span class="status-dot dot-gold"></span>개별 시스템</div>
+        <div class="card-title">공정점검</div>
+        <div class="card-desc">설비 · 라인 점검 체크리스트 및 이력</div>
+      </div>
+      <div class="card-arrow">›</div>
+    </a>
+
+
+  </div>
+
+  <div class="footer">
+    &copy; 2025 (주)에스엠텍 · SMTECH Co., Ltd.<br>
+    Smart Factory Platform v1.0
+  </div>
+
 </div>
-
-<!-- ===== 입출고 ===== -->
-<div class="pnl on" id="pnl0">
-
-  <!-- 상단: 출발지/도착지 -->
-  <div class="card">
-    <div class="card-tit">📦 입출고 등록</div>
-    <div id="regFields"></div>
-  </div>
-
-  <!-- ===== 중단: 코드리딩 ===== -->
-  <div class="card">
-    <div class="card-tit">📟 바코드 리딩기 입력 <span style="font-size:10px;color:#888;font-weight:400">여러번 리딩 가능</span></div>
-    <div class="fg">
-      <input type="text" id="bcReaderInput" placeholder="바코드 리딩기로 스캔하세요 (터치하여 포커스)" autocomplete="off" style="font-size:16px;padding:12px;border:2px solid #1565c0;background:#e3f2fd">
-    </div>
-    <div class="scan-result" id="bcReaderResult">
-      <div class="sr-val" id="bcReaderVal"></div>
-      <div class="sr-fmt" id="bcReaderFmt"></div>
-    </div>
-    <div style="display:flex;gap:6px;margin-top:6px"><button class="btn btn-sm" onclick="applyToCollection('bcReader')" style="flex:1;background:#1565c0;color:#fff">➕ 입력 적용</button><button class="btn btn-sm btn-gray" onclick="clearBcReader()" style="flex:0">✕</button></div>
-  </div>
-
-  <div class="card">
-    <div class="card-tit">📷 바코드 스캔 (사진 방식) <span style="font-size:10px;color:#888;font-weight:400">여러번 촬영 가능</span></div>
-    <div class="btn-row">
-      <button class="btn btn-green" onclick="takePhoto()">📷 사진촬영</button>
-      <button class="btn btn-blue" onclick="loadImage()">🖼 이미지</button>
-    </div>
-    <div class="scan-result" id="scanResult">
-      <div class="sr-val" id="srVal"></div>
-      <div class="sr-fmt" id="srFmt"></div>
-      <img class="sr-img" id="srImg" style="display:none">
-    </div>
-    <div style="display:flex;gap:6px;margin-top:6px"><button class="btn btn-sm" onclick="applyToCollection('photo')" style="flex:1;background:#2e7d32;color:#fff">➕ 입력 적용</button><button class="btn btn-sm btn-gray" onclick="clearBarcodeScan()" style="flex:0">✕</button></div>
-  </div>
-
-  <div class="card">
-    <div class="card-tit">📱 QR코드 스캔 (사진 방식) <span style="font-size:10px;color:#888;font-weight:400">중앙 사각형 인식</span></div>
-    <div class="btn-row">
-      <button class="btn btn-green" onclick="qrTakePhoto()" style="background:linear-gradient(135deg,#7b1fa2,#ab47bc);box-shadow:0 2px 8px rgba(123,31,162,.2)">📷 QR 촬영</button>
-      <button class="btn btn-blue" onclick="qrLoadImage()" style="background:linear-gradient(135deg,#4a148c,#7b1fa2)">🖼 QR 이미지</button>
-    </div>
-    <div class="scan-result" id="qrResult">
-      <div class="sr-val" id="qrVal"></div>
-      <div class="sr-fmt" id="qrFmt"></div>
-      <img class="sr-img" id="qrImg" style="display:none">
-    </div>
-    <div style="display:flex;gap:6px;margin-top:6px"><button class="btn btn-sm" onclick="applyToCollection('qr')" style="flex:1;background:#7b1fa2;color:#fff">➕ 입력 적용</button><button class="btn btn-sm btn-gray" onclick="clearQrScan()" style="flex:0">✕</button></div>
-  </div>
-
-  <div class="card">
-    <div class="card-tit">🔤 문자 인식 (OCR) <span style="font-size:10px;color:#888;font-weight:400">바코드 훼손 시</span></div>
-    <div class="btn-row">
-      <button class="btn btn-green" onclick="ocrPhoto()" style="background:linear-gradient(135deg,#e65100,#ff9800);box-shadow:0 2px 8px rgba(230,81,0,.2)">📷 촬영 OCR</button>
-      <button class="btn btn-blue" onclick="ocrImage()" style="background:linear-gradient(135deg,#4e342e,#8d6e63);box-shadow:0 2px 8px rgba(78,52,46,.2)">🖼 이미지 OCR</button>
-    </div>
-    <div class="scan-result" id="ocrResult">
-      <div class="sr-val" id="ocrVal"></div>
-      <div class="sr-fmt" id="ocrFmt"></div>
-      <img class="sr-img" id="ocrImg" style="display:none">
-    </div>
-    <div style="display:flex;gap:6px;margin-top:6px"><button class="btn btn-sm" onclick="applyToCollection('ocr')" style="flex:1;background:#e65100;color:#fff">➕ 입력 적용</button><button class="btn btn-sm btn-gray" onclick="clearOcrScan()" style="flex:0">✕</button></div>
-  </div>
-
-  <div class="card">
-    <div class="card-tit">✏️ 직접 입력</div>
-    <div class="fg">
-      <input type="text" id="manualInput" placeholder="코드를 직접 입력하세요" style="font-size:16px;padding:12px">
-    </div>
-    <div style="display:flex;gap:6px;margin-top:6px"><button class="btn btn-sm" onclick="applyToCollection('manual')" style="flex:1;background:#546e7a;color:#fff">➕ 입력 적용</button><button class="btn btn-sm btn-gray" onclick="clearManual()" style="flex:0">✕</button></div>
-    <div class="scan-result" id="manualResult">
-      <div class="sr-val" id="manualVal"></div>
-      <div class="sr-fmt" id="manualFmt"></div>
-    </div>
-  </div>
-
-  <!-- 적용된 코드 집합 -->
-  <div class="card" id="collectionCard" style="border:2px solid #1a237e">
-    <div class="card-tit" style="justify-content:space-between">
-      <span>📦 적용된 코드 (<span id="colCnt">0</span>건)</span>
-      <button class="btn btn-sm btn-red" onclick="clearCollection()">전체 초기화</button>
-    </div>
-    <div id="colList" style="font-size:14px;font-weight:600;color:#1a237e;word-break:break-all;min-height:24px">적용된 항목 없음</div>
-  </div>
-
-  <!-- DB 조회 결과 -->
-  <div class="card" id="dbResultCard" style="display:none">
-    <div class="card-tit" id="dbResultTit">🔍 DB 조회</div>
-    <div id="dbResultBody"></div>
-  </div>
-
-  <!-- ===== 하단: 소재부품정보 ===== -->
-  <div class="card">
-    <div class="card-tit">📋 소재/부품 정보 <span style="font-size:10px;color:#888;font-weight:400">DB 매칭 시 자동입력</span></div>
-    <div class="fg">
-      <label>기준품번</label>
-      <input type="text" id="inpBasePart" placeholder="자동 또는 직접 입력">
-    </div>
-    <div id="partSelFields"></div>
-    <div class="fg">
-      <label>규격</label>
-      <input type="text" id="inpSpec" placeholder="자동 또는 직접 입력">
-    </div>
-    <div class="fg">
-      <label>사용품번</label>
-      <input type="text" id="inpUsePart" placeholder="실제 사용되는 품번">
-    </div>
-    <div class="fg">
-      <label>로트</label>
-      <input type="text" id="inpLot" placeholder="로트번호">
-    </div>
-    <div class="fg">
-      <label>수량</label>
-      <input type="number" id="inpQty" placeholder="수량 입력" inputmode="numeric">
-    </div>
-    <div class="fg">
-      <label>비고</label>
-      <textarea id="inpNote" placeholder="비고 사항 입력"></textarea>
-    </div>
-  </div>
-
-  <button class="btn btn-green" id="btnSave" onclick="saveEntry()" style="font-size:16px;padding:14px">✅ 등록 저장</button>
-</div>
-
-<!-- ===== 세팅체크 (전수) ===== -->
-<div class="pnl" id="pnl1">
-  <div class="card">
-    <div class="card-tit">🔧 세팅체크 (전수) <span style="font-size:10px;color:#888;font-weight:400">기종+라인 기준 전체 스테이지 대조</span></div>
-    <div class="fg">
-      <label>기종 <span style="font-size:10px;color:#888;font-weight:400">바코드 리딩 또는 직접입력</span></label>
-      <input type="text" id="fcModel" placeholder="기종 바코드 리딩" autocomplete="off" style="font-size:15px;padding:10px;border:2px solid #1565c0;background:#e3f2fd">
-    </div>
-    <div class="fg">
-      <label>라인 <span style="font-size:10px;color:#888;font-weight:400">바코드 리딩 또는 직접입력</span></label>
-      <input type="text" id="fcLine" placeholder="라인 바코드 리딩" autocomplete="off" style="font-size:15px;padding:10px;border:2px solid #1565c0;background:#e3f2fd">
-    </div>
-    <button class="btn btn-blue" onclick="fcLoadList()" style="font-size:14px;padding:10px">📥 세팅목록 불러오기</button>
-    <div id="fcLoadStatus" style="text-align:center;padding:8px;font-size:12px;color:#888;display:none"></div>
-  </div>
-
-  <!-- 코드리딩 영역 (입출고와 동일 방식) -->
-  <div class="card" id="fcScanCard">
-    <div class="card-tit" id="fcScanTit">📌 스캔 대기</div>
-    <!-- 바코드 리딩기 -->
-    <div class="fg">
-      <label>📟 바코드 리딩기</label>
-      <input type="text" id="fcReaderInput" placeholder="바코드 리딩기로 스캔 (Enter)" autocomplete="off" style="font-size:16px;padding:12px;border:2px solid #1565c0;background:#e3f2fd">
-    </div>
-  </div>
-  <div class="card">
-    <div class="card-tit">📷 바코드 스캔 (사진) <span style="font-size:10px;color:#888;font-weight:400">중앙 가로 인식</span></div>
-    <div class="btn-row">
-      <button class="btn btn-green" onclick="fcCamScan('barcode')">📷 사진촬영</button>
-      <button class="btn btn-blue" onclick="fcImgScan('barcode')">🖼 이미지</button>
-    </div>
-  </div>
-  <div class="card">
-    <div class="card-tit">📱 QR코드 스캔 (사진) <span style="font-size:10px;color:#888;font-weight:400">중앙 사각형 인식</span></div>
-    <div class="btn-row">
-      <button class="btn btn-green" onclick="fcCamScan('qr')" style="background:linear-gradient(135deg,#7b1fa2,#ab47bc)">📷 QR 촬영</button>
-      <button class="btn btn-blue" onclick="fcImgScan('qr')" style="background:linear-gradient(135deg,#4a148c,#7b1fa2)">🖼 QR 이미지</button>
-    </div>
-  </div>
-  <div class="card">
-    <div class="card-tit">🔤 문자 인식 (OCR) <span style="font-size:10px;color:#888;font-weight:400">바코드 훼손 시</span></div>
-    <div class="btn-row">
-      <button class="btn btn-green" onclick="fcCamScan('ocr')" style="background:linear-gradient(135deg,#e65100,#ff9800)">📷 촬영 OCR</button>
-      <button class="btn btn-blue" onclick="fcImgScan('ocr')" style="background:linear-gradient(135deg,#4e342e,#8d6e63)">🖼 이미지 OCR</button>
-    </div>
-  </div>
-  <div class="card">
-    <div class="card-tit">✏️ 직접 입력</div>
-    <div class="fg">
-      <input type="text" id="fcManualInput" placeholder="코드를 직접 입력하세요 (Enter)" style="font-size:16px;padding:12px">
-    </div>
-  </div>
-  <!-- 스캔 결과 -->
-  <div class="card" id="fcResultCard" style="display:none">
-    <div class="card-tit">🔍 스캔 결과</div>
-    <div class="scan-result show" id="fcScanResult">
-      <div class="sr-val" id="fcScanVal"></div>
-      <div class="sr-fmt" id="fcScanFmt"></div>
-    </div>
-  </div>
-
-  <!-- 전수체크 진행현황 -->
-  <div class="card" id="fcCheckCard">
-    <div class="card-tit" style="justify-content:space-between">
-      <span>📋 진행현황</span>
-      <span style="font-size:11px;color:#888" id="fcProgress">0 / 0</span>
-    </div>
-    <div id="fcCheckList" style="max-height:400px;overflow-y:auto"><div style="text-align:center;padding:12px;color:#aaa;font-size:12px">세팅목록을 로드하세요</div></div>
-    <div style="margin-top:8px;display:flex;gap:6px">
-      <button class="btn btn-green" onclick="fcFinish()" style="flex:1;font-size:14px">✅ 전수체크 완료</button>
-      <button class="btn btn-gray" onclick="fcClear()" style="flex:0;font-size:12px">초기화</button>
-    </div>
-  </div>
-
-  <!-- 판정 -->
-  <div class="card" id="fcJudgeCard" style="display:none">
-    <div id="fcJudgeResult" style="text-align:center;padding:20px;border-radius:12px;font-size:28px;font-weight:700"></div>
-    <div id="fcJudgeDetail" style="text-align:center;font-size:13px;color:#555;margin-top:8px"></div>
-  </div>
-
-  <!-- 이력 -->
-  <div class="card" style="margin-top:4px">
-    <div class="card-tit" style="justify-content:space-between">
-      <span>📋 체크 이력 (<span id="fcHistCnt">0</span>건)</span>
-      <button class="btn btn-sm btn-red" onclick="clearSetupHist('fc')">전체삭제</button>
-    </div>
-    <div id="fcHistList"><div class="h-empty">이력이 없습니다</div></div>
-  </div>
-</div>
-
-<!-- ===== 개별체크 ===== -->
-<div class="pnl" id="pnl2">
-  <div class="card">
-    <div class="card-tit">🔄 개별체크 <span style="font-size:10px;color:#888;font-weight:400">부품교환 시 오장착 방지</span></div>
-    <div class="fg">
-      <label>기종</label>
-      <input type="text" id="scModel" placeholder="기종 바코드 리딩" autocomplete="off" style="font-size:15px;padding:10px;border:2px solid #e65100;background:#fff3e0">
-    </div>
-    <div class="fg">
-      <label>라인</label>
-      <input type="text" id="scLine" placeholder="라인 바코드 리딩" autocomplete="off" style="font-size:15px;padding:10px;border:2px solid #e65100;background:#fff3e0">
-    </div>
-    <button class="btn" onclick="scLoadList()" style="font-size:14px;padding:10px;background:linear-gradient(135deg,#e65100,#ff9800);color:#fff">📥 세팅목록 불러오기</button>
-    <div id="scLoadStatus" style="text-align:center;padding:8px;font-size:12px;color:#888;display:none"></div>
-  </div>
-
-  <!-- 스테이지 선택 (로드된 목록에서) -->
-  <div class="card" id="scStageCard">
-    <div class="card-tit">📌 스테이지 선택 <span style="font-size:10px;color:#888;font-weight:400">세팅목록 로드 후 선택</span></div>
-    <div class="fg">
-      <select id="scStageSel" onchange="scOnStageSelect()" style="font-size:15px;padding:10px">
-        <option value="">세팅목록을 먼저 로드하세요</option>
-      </select>
-    </div>
-    <div id="scStageInfo" style="font-size:12px;color:#555;padding:4px 0"></div>
-  </div>
-
-  <!-- 코드리딩 영역 (입출고와 동일 방식) -->
-  <div class="card" id="scScanCard">
-    <div class="card-tit" id="scScanTit">📌 스테이지를 선택하세요</div>
-    <!-- 바코드 리딩기 -->
-    <div class="fg">
-      <label>📟 바코드 리딩기</label>
-      <input type="text" id="scReaderInput" placeholder="바코드 리딩기로 스캔 (Enter)" autocomplete="off" style="font-size:16px;padding:12px;border:2px solid #e65100;background:#fff3e0">
-    </div>
-  </div>
-  <div class="card">
-    <div class="card-tit">📷 바코드 스캔 (사진) <span style="font-size:10px;color:#888;font-weight:400">중앙 가로 인식</span></div>
-    <div class="btn-row">
-      <button class="btn btn-green" onclick="scCamScan('barcode')">📷 사진촬영</button>
-      <button class="btn btn-blue" onclick="scImgScan('barcode')">🖼 이미지</button>
-    </div>
-  </div>
-  <div class="card">
-    <div class="card-tit">📱 QR코드 스캔 (사진) <span style="font-size:10px;color:#888;font-weight:400">중앙 사각형 인식</span></div>
-    <div class="btn-row">
-      <button class="btn btn-green" onclick="scCamScan('qr')" style="background:linear-gradient(135deg,#7b1fa2,#ab47bc)">📷 QR 촬영</button>
-      <button class="btn btn-blue" onclick="scImgScan('qr')" style="background:linear-gradient(135deg,#4a148c,#7b1fa2)">🖼 QR 이미지</button>
-    </div>
-  </div>
-  <div class="card">
-    <div class="card-tit">🔤 문자 인식 (OCR) <span style="font-size:10px;color:#888;font-weight:400">바코드 훼손 시</span></div>
-    <div class="btn-row">
-      <button class="btn btn-green" onclick="scCamScan('ocr')" style="background:linear-gradient(135deg,#e65100,#ff9800)">📷 촬영 OCR</button>
-      <button class="btn btn-blue" onclick="scImgScan('ocr')" style="background:linear-gradient(135deg,#4e342e,#8d6e63)">🖼 이미지 OCR</button>
-    </div>
-  </div>
-  <div class="card">
-    <div class="card-tit">✏️ 직접 입력</div>
-    <div class="fg">
-      <input type="text" id="scManualInput" placeholder="코드를 직접 입력하세요 (Enter)" style="font-size:16px;padding:12px">
-    </div>
-  </div>
-  <!-- 스캔 결과 -->
-  <div class="card" id="scResultCard" style="display:none">
-    <div class="card-tit">🔍 스캔 결과</div>
-    <div class="scan-result show" id="scScanResult">
-      <div class="sr-val" id="scScanVal"></div>
-      <div class="sr-fmt" id="scScanFmt"></div>
-    </div>
-  </div>
-
-  <!-- 진행 상태 -->
-  <div class="card" id="scStepsCard">
-    <div class="card-tit">🔄 교환 확인</div>
-    <div class="fg" style="padding:8px;background:#e3f2fd;border-radius:8px;margin-bottom:6px">
-      <label style="font-size:11px;color:#888">기준품번 (DB)</label>
-      <div style="font-size:15px;font-weight:700;color:#1565c0" id="scRefPart">-</div>
-    </div>
-    <div class="fg" style="padding:8px;background:#fff3e0;border-radius:8px;margin-bottom:6px">
-      <label style="font-size:11px;color:#888">① 사용중 부품 스캔</label>
-      <div style="font-size:14px;font-weight:600;color:#e65100" id="scOldVal">-</div>
-      <div style="font-size:10px;color:#555" id="scOldInfo"></div>
-    </div>
-    <div class="fg" style="padding:8px;background:#e8f5e9;border-radius:8px;margin-bottom:6px">
-      <label style="font-size:11px;color:#888">② 신규 부품 스캔</label>
-      <div style="font-size:14px;font-weight:600;color:#2e7d32" id="scNewVal">-</div>
-      <div style="font-size:10px;color:#555" id="scNewInfo"></div>
-    </div>
-    <div style="margin-top:6px;display:flex;gap:6px">
-      <button class="btn btn-gray" onclick="scClearStep()" style="flex:0;font-size:12px">초기화</button>
-    </div>
-  </div>
-
-  <!-- 판정 -->
-  <div class="card" id="scJudgeCard" style="display:none">
-    <div id="scJudgeResult" style="text-align:center;padding:20px;border-radius:12px;font-size:28px;font-weight:700"></div>
-    <div id="scJudgeDetail" style="text-align:center;font-size:13px;color:#555;margin-top:8px"></div>
-  </div>
-
-  <!-- 이력 -->
-  <div class="card" style="margin-top:4px">
-    <div class="card-tit" style="justify-content:space-between">
-      <span>📋 체크 이력 (<span id="scHistCnt">0</span>건)</span>
-      <button class="btn btn-sm btn-red" onclick="clearSetupHist('sc')">전체삭제</button>
-    </div>
-    <div id="scHistList"><div class="h-empty">이력이 없습니다</div></div>
-  </div>
-</div>
-
-<!-- ===== 이력 ===== -->
-<div class="pnl" id="pnl3">
-  <!-- 통합 다운로드 -->
-  <div class="card">
-    <div class="card-tit">📥 이력 다운로드</div>
-    <div class="btn-row">
-      <button class="btn btn-sm btn-gray" onclick="expXlsx('all')">📥 전체 엑셀</button>
-      <button class="btn btn-sm btn-gray" onclick="expXlsx('io')">입출고</button>
-      <button class="btn btn-sm btn-gray" onclick="expXlsx('fc')">세팅</button>
-      <button class="btn btn-sm btn-gray" onclick="expXlsx('sc')">개별</button>
-    </div>
-  </div>
-  <!-- 입출고 이력 -->
-  <div class="card">
-    <div class="card-tit" style="justify-content:space-between">
-      <span>📦 입출고 이력 (<span id="histCnt">0</span>건)</span>
-      <button class="btn btn-sm btn-red" onclick="clearHist()">전체삭제</button>
-    </div>
-    <div style="display:flex;gap:6px;margin-bottom:10px">
-      <select id="filtCat" onchange="renderHist()" style="flex:1;padding:6px;border:1px solid #ddd;border-radius:6px;font-size:12px;font-family:inherit"><option value="">전체 분류</option></select>
-      <input type="date" id="filtDate" onchange="renderHist()" style="padding:6px;border:1px solid #ddd;border-radius:6px;font-size:12px;font-family:inherit">
-    </div>
-    <div id="histList"><div class="h-empty">이력이 없습니다</div></div>
-  </div>
-  <!-- 세팅체크 이력 -->
-  <div class="card">
-    <div class="card-tit" style="justify-content:space-between">
-      <span>🔧 세팅 이력 (<span id="histFcCnt">0</span>건)</span>
-      <button class="btn btn-sm btn-red" onclick="clearSetupHist('fc')">전체삭제</button>
-    </div>
-    <div id="histFcList"><div class="h-empty">이력이 없습니다</div></div>
-  </div>
-  <!-- 개별체크 이력 -->
-  <div class="card">
-    <div class="card-tit" style="justify-content:space-between">
-      <span>🔄 개별 이력 (<span id="histScCnt">0</span>건)</span>
-      <button class="btn btn-sm btn-red" onclick="clearSetupHist('sc')">전체삭제</button>
-    </div>
-    <div id="histScList"><div class="h-empty">이력이 없습니다</div></div>
-  </div>
-</div>
-
-<!-- ===== 항목관리 ===== -->
-<div class="pnl" id="pnl4">
-  <div class="card">
-    <div class="card-tit" style="justify-content:space-between">
-      <span>⚙ 분류 항목 관리</span>
-      <button class="btn btn-sm btn-gray" onclick="resetCats()">기본값</button>
-    </div>
-    <div id="catEditor"></div>
-    <button class="add-btn" onclick="addCat()" style="margin-top:8px;padding:10px;font-size:13px">+ 분류 추가</button>
-    <div style="margin-top:12px">
-      <button class="btn btn-green" onclick="saveCats()">적용 저장</button>
-    </div>
-  </div>
-</div>
-
-<input type="file" id="camInput" accept="image/*" capture="environment">
-<input type="file" id="imgInput" accept="image/*">
-<input type="file" id="qrCamInput" accept="image/*" capture="environment">
-<input type="file" id="qrImgInput" accept="image/*">
-<input type="file" id="ocrCamInput" accept="image/*" capture="environment">
-<input type="file" id="ocrImgInput" accept="image/*">
-<input type="file" id="stgCamInput" accept="image/*" capture="environment">
-<input type="file" id="stgImgInput" accept="image/*">
-<input type="file" id="partCamInput" accept="image/*" capture="environment">
-<input type="file" id="partImgInput" accept="image/*">
-<canvas id="analysisCv"></canvas>
-<input type="file" id="uniCamInput" accept="image/*" capture="environment">
-<input type="file" id="uniImgInput" accept="image/*">
-<div class="toast" id="toast"></div>
 
 <script>
-// ===== 기본 데이터 =====
-const DEFAULT_CATS=[
-  {name:'출발지',subs:['태경스틸','동일스텐','정민스틸','나스테크']},
-  {name:'도착지',subs:['본사 창고','B동','C동','2층 검사실']},
-  {name:'공급사',subs:['태경스틸','동일스텐','정민스틸','나스테크']},
-  {name:'공급유형',subs:['소재','부품','반제품','완제품','소모품']},
-  {name:'공정',subs:['프레스','열처리','선삭','연마','도금','조립','검사']},
-  {name:'유형',subs:['코일','환봉','파이프','판재','볼트','너트','베어링']}
-];
-
-let cats=JSON.parse(localStorage.getItem('LOT_CATS')||'null')||JSON.parse(JSON.stringify(DEFAULT_CATS));
-// 필수 항목이 누락된 경우 자동 복원
-DEFAULT_CATS.forEach(dc=>{if(!cats.find(c=>c.name===dc.name))cats.unshift(JSON.parse(JSON.stringify(dc)))});
-let hist=JSON.parse(localStorage.getItem('LOT_HIST')||'[]');
-let pendingScan=null; // {value,format}
-let dbMappingFound=false; // DB 매핑 발견 여부
-
-// ===== NocoDB API 설정 =====
-const NOCO={
-  BASE:'https://app.nocodb.com/api/v3',
-  TOKEN:'mi9vXBv5w9h10RcshLNFexjEqzXhU0EUtYlNXAmw',
-  TABLES:{
-    품번매핑:'mpx06qj0vz420lk',
-    이동등록이력:'mm3rr8zyx83y7ez',
-    BOM:'m4bmmnv60ua13al',
-    피더세팅:'m4ft74mn67fu9hi',
-    파싱규칙:'mdlgfcihgsmnr0s',
-    세팅체크이력:'m0ubnd5221vvfj0',
-    교환체크이력:'mci8sxiwnbvh1xq'
-  },
-  headers(){return{'xc-token':this.TOKEN,'Content-Type':'application/json'}},
-  url(table,params){return this.BASE+'/tables/'+this.TABLES[table]+'/records'+(params?'?'+params:'')}
-};
-
-// 파싱규칙 캐시 (앱 시작 시 1회 로드)
-let parseRulesCache=null;
-async function loadParseRules(){
-  if(parseRulesCache)return parseRulesCache;
-  try{
-    const res=await fetch(NOCO.url('파싱규칙','limit=200'),{headers:NOCO.headers()});
-    const data=await res.json();
-    parseRulesCache=(data.list||[]).map(r=>({supplier:r['공급사']||'',ruleType:r['규칙유형']||'',ruleVal:r['규칙값']||''}));
-  }catch(e){parseRulesCache=[];}
-  return parseRulesCache;
-}
-
-// 파싱규칙 적용하여 품번매핑 재검색
-async function lookupWithParsing(barcode){
-  const rules=await loadParseRules();
-  for(const rule of rules){
-    let extracted='';
-    if(rule.ruleType==='구분자'){
-      const idx=barcode.lastIndexOf(rule.ruleVal);
-      if(idx>0)extracted=barcode.substring(0,idx);
-    }else if(rule.ruleType==='자릿수'){
-      const n=parseInt(rule.ruleVal);
-      if(n>0&&barcode.length>n)extracted=barcode.substring(0,barcode.length-n);
-    }else if(rule.ruleType==='고정길이'){
-      const n=parseInt(rule.ruleVal);
-      if(n>0)extracted=barcode.substring(0,n);
-    }
-    if(extracted){
-      const where='(공용품번,eq,"'+extracted+'")';
-      try{
-        const res=await fetch(NOCO.url('품번매핑','where='+encodeURIComponent(where)+'&limit=1'),{headers:NOCO.headers()});
-        const data=await res.json();
-        if(data.list&&data.list.length>0){
-          const row=data.list[0];
-          return{found:true,parsed:true,extractedPart:extracted,lotPart:barcode.substring(extracted.length),
-            data:{barcode:row['공용품번'],basePart:row['기준품번'],supplier:row['공급사']||'',material:row['소재']||'',spec:row['규격']||'',note:row['비고']||''}};
-        }
-      }catch(e){}
-    }
+  function tick(){
+    const now = new Date();
+    const hh = String(now.getHours()).padStart(2,'0');
+    const mm = String(now.getMinutes()).padStart(2,'0');
+    const ss = String(now.getSeconds()).padStart(2,'0');
+    document.getElementById('clock').textContent = hh+':'+mm+':'+ss;
+    const days = ['일','월','화','수','목','금','토'];
+    const d = now;
+    document.getElementById('date-str').textContent =
+      d.getFullYear()+'.'
+      +String(d.getMonth()+1).padStart(2,'0')+'.'
+      +String(d.getDate()).padStart(2,'0')
+      +' ('+days[d.getDay()]+')';
   }
-  return null;
-}
-
-// ===== DB 조회 (NocoDB) =====
-async function lookupBarcode(barcode){
-  const card=document.getElementById('dbResultCard');
-  const body=document.getElementById('dbResultBody');
-  card.style.display='block';
-  document.getElementById('dbResultTit').textContent='🔍 DB 조회 중...';
-  body.innerHTML='<div style="text-align:center;color:#888;padding:10px">조회 중...</div>';
-
-  try{
-    // 1차: 정확 매칭
-    const where='(공용품번,eq,"'+barcode+'")';
-    const res=await fetch(NOCO.url('품번매핑','where='+encodeURIComponent(where)+'&limit=1'),{headers:NOCO.headers()});
-    const data=await res.json();
-
-    let result=null;
-    if(data.list&&data.list.length>0){
-      const row=data.list[0];
-      result={found:true,parsed:false,data:{barcode:row['공용품번'],basePart:row['기준품번'],supplier:row['공급사']||'',material:row['소재']||'',spec:row['규격']||'',note:row['비고']||''}};
-    }else{
-      // 2차: 파싱규칙으로 부분매칭
-      result=await lookupWithParsing(barcode);
-    }
-
-    if(result&&result.found){
-      dbMappingFound=true;
-      const d=result.data;
-      document.getElementById('dbResultTit').textContent='✅ DB 매핑 발견';
-      let html=`<div style="padding:8px 0">
-        <div style="font-size:15px;font-weight:700;color:#2e7d32;margin-bottom:6px">기준품번: ${d.basePart}</div>
-        <div style="font-size:12px;color:#555">공급사: ${d.supplier} · 소재: ${d.material} · 규격: ${d.spec}</div>`;
-      if(result.parsed)html+=`<div style="font-size:11px;color:#1565c0;margin-top:4px">파싱: 품번 [${result.extractedPart}] / 로트 [${result.lotPart}]</div>`;
-      html+=`<button class="btn btn-sm btn-green" onclick="applyDbResult()" style="margin-top:8px">자동 입력 적용</button></div>`;
-      body.innerHTML=html;
-
-      card.dataset.basePart=d.basePart;
-      card.dataset.supplier=d.supplier;
-      card.dataset.material=d.material;
-      card.dataset.spec=d.spec;
-      card.dataset.lot=result.lotPart||'';
-    }else{
-      dbMappingFound=false;
-      document.getElementById('dbResultTit').textContent='⚠ 신규 바코드';
-      body.innerHTML=`<div style="padding:8px 0;font-size:13px;color:#e65100">매핑되지 않은 바코드입니다.<br>아래 항목을 직접 선택하고 "신규 품번 매핑 등록" 버튼으로 DB에 추가하세요.</div>`;
-    }
-  }catch(e){
-    document.getElementById('dbResultTit').textContent='⚠ 조회 실패';
-    body.innerHTML=`<div style="padding:8px 0;font-size:12px;color:#c62828">네트워크 오류: ${e.message}<br>오프라인 모드로 직접 입력하세요.</div>`;
-  }
-}
-
-function applyDbResult(){
-  const card=document.getElementById('dbResultCard');
-  document.getElementById('inpBasePart').value=card.dataset.basePart||'';
-  document.getElementById('inpLot').value=card.dataset.lot||'';
-  // 셀렉트 자동 선택
-  const mapping={'공급사':card.dataset.supplier,'소재':card.dataset.material,'규격':card.dataset.spec};
-  cats.forEach((cat,i)=>{
-    const sel=document.getElementById('sel_'+i);
-    if(!sel)return;
-    const val=mapping[cat.name]||'';
-    if(val){for(let o of sel.options){if(o.value===val){sel.value=val;break}}}
-  });
-  if(card.dataset.spec)document.getElementById('inpSpec').value=card.dataset.spec;
-  showToast('자동 입력 적용됨');
-}
-
-// ===== 신규 매핑 등록 (NocoDB) =====
-async function showAddMapping(){
-  const barcode=pendingScan?pendingScan.value:'';
-  const basePart=document.getElementById('inpBasePart').value;
-  if(!barcode){showToast('바코드를 먼저 스캔하세요');return}
-  if(!basePart){showToast('기준품번을 입력하세요');return}
-
-  const fields={};
-  cats.forEach((cat,i)=>{fields[cat.name]=document.getElementById('sel_'+i).value||''});
-
-  if(!confirm(`DB에 매핑을 등록합니다.\n\n바코드: ${barcode}\n기준품번: ${basePart}\n공급사: ${fields['공급사']||'-'}\n소재: ${fields['소재']||'-'}\n규격: ${fields['규격']||'-'}`))return;
-
-  try{
-    const res=await fetch(NOCO.url('품번매핑'),{
-      method:'POST',
-      headers:NOCO.headers(),
-      body:JSON.stringify({공용품번:barcode,기준품번:basePart,공급사:fields['공급사']||'',소재:fields['소재']||'',규격:fields['규격']||'',비고:''})
-    });
-    const result=await res.json();
-    if(result.Id)showToast('✅ DB 매핑 등록 완료');
-    else showToast('✅ DB 매핑 등록 요청 완료');
-  }catch(e){showToast('등록 실패: '+e.message)}
-}
-
-// ===== NocoDB에 이력 저장 =====
-async function saveHistToSheet(entry){
-  try{
-    const row={일자:entry.date,시간:entry.time,바코드원본:entry.barcode,기준품번:entry.basePart||'',공급사:entry.supplier||'',공급유형:entry.supplyType||'',공정:entry.process||'',유형:entry.type||'',규격:entry.spec||'',사용품번:entry.usePart||'',로트:entry.lot||'',수량:entry.qty?Number(entry.qty):0,비고:entry.note||''};
-    // 동적 필드 추가
-    if(entry.fields){Object.entries(entry.fields).forEach(([k,v])=>{if(v&&!row[k])row[k]=v})}
-    const res=await fetch(NOCO.url('이동등록이력'),{method:'POST',headers:NOCO.headers(),body:JSON.stringify(row)});
-    const result=await res.json();
-    if(result.Id)console.log('NocoDB 저장 완료:',result.Id);
-  }catch(e){console.log('NocoDB 저장 실패:',e)}
-}
-
-// ===== 탭 =====
-function swTab(n){
-  document.querySelectorAll('.tab').forEach((t,i)=>{t.classList.toggle('on',i===n)});
-  document.querySelectorAll('.pnl').forEach((p,i)=>{p.classList.toggle('on',i===n)});
-  if(n!==0){stopQr()}
-  if(n===0){renderRegFields()}
-  if(n===1){fcInit()}
-  if(n===2){scInit()}
-  if(n===3){renderHistFilter();renderHist();renderHistSetup()}
-  if(n===4){renderCatEditor()}
-}
-
-// ===== 등록 탭: 항목 셀렉트 =====
-let savedSelections={}; // 선택값 보존용
-const topFields=['출발지','도착지'];
-const partFields=['공급사','공급유형','공정','유형'];
-
-function renderRegFields(){
-  // 기존 선택값 저장
-  cats.forEach((cat,i)=>{
-    const el=document.getElementById('sel_'+i);
-    if(el&&el.value)savedSelections[cat.name]=el.value;
-  });
-  // 상단: 출발지/도착지
-  const c=document.getElementById('regFields');
-  c.innerHTML='';
-  cats.forEach((cat,i)=>{
-    if(!topFields.includes(cat.name))return;
-    const prev=savedSelections[cat.name]||'';
-    const div=document.createElement('div');div.className='fg';
-    div.innerHTML=`<label>${cat.name}</label><select id="sel_${i}"><option value="">선택하세요</option>${cat.subs.map(s=>'<option value="'+s+'"'+(s===prev?' selected':'')+'>'+s+'</option>').join('')}</select>`;
-    c.appendChild(div);
-  });
-  // 하단: 공급사/공급유형/공정/유형
-  const p=document.getElementById('partSelFields');
-  p.innerHTML='';
-  cats.forEach((cat,i)=>{
-    if(!partFields.includes(cat.name))return;
-    const prev=savedSelections[cat.name]||'';
-    const div=document.createElement('div');div.className='fg';
-    div.innerHTML=`<label>${cat.name}</label><select id="sel_${i}"><option value="">선택하세요</option>${cat.subs.map(s=>'<option value="'+s+'"'+(s===prev?' selected':'')+'>'+s+'</option>').join('')}</select>`;
-    p.appendChild(div);
-  });
-}
-
-// ===== 사진/이미지 =====
-function takePhoto(){document.getElementById('camInput').click()}
-function loadImage(){document.getElementById('imgInput').click()}
-document.getElementById('camInput').addEventListener('change',e=>{handleFile(e.target.files[0]);e.target.value=''});
-document.getElementById('imgInput').addEventListener('change',e=>{handleFile(e.target.files[0]);e.target.value=''});
-
-function handleFile(file){
-  if(!file)return;
-  const sr=document.getElementById('scanResult');
-  sr.classList.add('show');sr.classList.remove('fail');
-  document.getElementById('srVal').textContent='분석 중...';
-  document.getElementById('srFmt').textContent='';
-  const imgUrl=URL.createObjectURL(file);
-  const preview=document.getElementById('srImg');
-  preview.src=imgUrl;preview.style.display='block';
-  const img=new Image();
-  img.onload=async()=>{URL.revokeObjectURL(imgUrl);await analyzeBarcode(img)};
-  img.src=URL.createObjectURL(file);
-}
-
-async function analyzeBarcode(img){
-  const cv=document.getElementById('analysisCv'),ctx=cv.getContext('2d');
-  // 중앙 가로 8:1 크롭
-  const cropW=img.width,cropH=Math.floor(img.width/8),cropY=Math.floor((img.height-cropH)/2);
-  cv.width=cropW;cv.height=cropH;ctx.drawImage(img,0,cropY,cropW,cropH,0,0,cropW,cropH);
-  let found=false;
-  // 1: BarcodeDetector 크롭
-  if('BarcodeDetector' in window){
-    try{const det=new BarcodeDetector({formats:await BarcodeDetector.getSupportedFormats()});const r=await det.detect(cv);if(r.length>0){scanOk(r[0].rawValue,r[0].format);found=true}}catch(e){}
-  }
-  // 2: html5-qrcode 크롭
-  if(!found){try{const blob=await new Promise(r=>cv.toBlob(r,'image/jpeg',.95));const f=new File([blob],'s.jpg',{type:'image/jpeg'});const qr=new Html5Qrcode('analysisCv');const res=await qr.scanFileV2(f,true);if(res&&res.decodedText){scanOk(res.decodedText,res.result&&res.result.format?res.result.format.formatName:'unknown');found=true}qr.clear()}catch(e){}}
-  // 3: 이진화 크롭
-  if(!found){try{const id=ctx.getImageData(0,0,cropW,cropH),d=id.data;for(let i=0;i<d.length;i+=4){const g=d[i]*.299+d[i+1]*.587+d[i+2]*.114;const bw=g>128?255:0;d[i]=bw;d[i+1]=bw;d[i+2]=bw}ctx.putImageData(id,0,0);
-    if('BarcodeDetector' in window){const det=new BarcodeDetector({formats:await BarcodeDetector.getSupportedFormats()});const r=await det.detect(cv);if(r.length>0){scanOk(r[0].rawValue,r[0].format);found=true}}
-    if(!found){const blob=await new Promise(r=>cv.toBlob(r,'image/jpeg',.95));const f=new File([blob],'s2.jpg',{type:'image/jpeg'});const qr=new Html5Qrcode('analysisCv');const res=await qr.scanFileV2(f,true);if(res&&res.decodedText){scanOk(res.decodedText,res.result&&res.result.format?res.result.format.formatName:'unknown');found=true}qr.clear()}
-  }catch(e){}}
-  // 4: 전체 원본
-  if(!found){cv.width=img.width;cv.height=img.height;ctx.drawImage(img,0,0);
-    if('BarcodeDetector' in window){try{const det=new BarcodeDetector({formats:await BarcodeDetector.getSupportedFormats()});const r=await det.detect(cv);if(r.length>0){scanOk(r[0].rawValue,r[0].format);found=true}}catch(e){}}
-    if(!found){try{const blob=await new Promise(r=>cv.toBlob(r,'image/jpeg',.95));const f=new File([blob],'s3.jpg',{type:'image/jpeg'});const qr=new Html5Qrcode('analysisCv');const res=await qr.scanFileV2(f,true);if(res&&res.decodedText){scanOk(res.decodedText,res.result&&res.result.format?res.result.format.formatName:'unknown');found=true}qr.clear()}catch(e){}}
-  }
-  if(!found){scanFail()}
-}
-
-let barcodeList=[]; // 바코드 누적 배열
-
-function scanOk(val,fmt){
-  if(!barcodeList.includes(val))barcodeList.push(val);
-  const combined=barcodeList.join(' / ');
-  pendingScan={value:combined,format:fmtN(fmt)};
-  const sr=document.getElementById('scanResult');sr.classList.remove('fail');sr.classList.add('show');
-  document.getElementById('srVal').textContent=combined;
-  document.getElementById('srFmt').textContent=barcodeList.length+'건 스캔 · 형식: '+fmtN(fmt);
-  if(navigator.vibrate)navigator.vibrate([50,30,50]);
-  showToast('✅ '+val+' ('+barcodeList.length+'건)');
-  // DB 자동 조회 (첫 번째 바코드로)
-  lookupBarcode(barcodeList[0]);
-}
-function scanFail(){
-  // 실패해도 기존 누적 유지
-  const sr=document.getElementById('scanResult');
-  if(!barcodeList.length){
-    sr.classList.add('fail');sr.classList.add('show');
-    document.getElementById('srVal').textContent='인식 실패';
-    document.getElementById('srFmt').textContent='바코드를 중앙에 놓고 재촬영하세요';
-  }
-  showToast('인식 실패');
-}
-function clearBarcodeScan(){
-  barcodeList=[];pendingScan=null;
-  document.getElementById('scanResult').classList.remove('show','fail');
-  document.getElementById('srVal').textContent='';
-  document.getElementById('srFmt').textContent='';
-  document.getElementById('srImg').style.display='none';
-}
-function fmtN(f){if(!f)return'?';const s=f.toString().toUpperCase();return{'QR_CODE':'QR','CODE_39':'Code39','CODE_128':'Code128','CODE_93':'Code93','EAN_13':'EAN-13','EAN_8':'EAN-8','UPC_A':'UPC-A','UPC_E':'UPC-E','ITF':'ITF','CODABAR':'Codabar','DATA_MATRIX':'DataMatrix','PDF_417':'PDF417'}[s]||s}
-
-// ===== QR코드 사진 스캔 =====
-function qrTakePhoto(){document.getElementById('qrCamInput').click()}
-function qrLoadImage(){document.getElementById('qrImgInput').click()}
-document.getElementById('qrCamInput').addEventListener('change',e=>{handleQrFile(e.target.files[0]);e.target.value=''});
-document.getElementById('qrImgInput').addEventListener('change',e=>{handleQrFile(e.target.files[0]);e.target.value=''});
-
-function handleQrFile(file){
-  if(!file)return;
-  const sr=document.getElementById('qrResult');
-  sr.classList.add('show');sr.classList.remove('fail');
-  document.getElementById('qrVal').textContent='분석 중...';
-  document.getElementById('qrFmt').textContent='';
-  const imgUrl=URL.createObjectURL(file);
-  const preview=document.getElementById('qrImg');
-  preview.src=imgUrl;preview.style.display='block';
-  const img=new Image();
-  img.onload=async()=>{URL.revokeObjectURL(imgUrl);await analyzeQr(img)};
-  img.src=URL.createObjectURL(file);
-}
-
-async function analyzeQr(img){
-  const cv=document.createElement('canvas'),ctx=cv.getContext('2d');
-  // 중앙 사각형 크롭 (1:1 비율, 이미지 짧은변 기준 70%)
-  const side=Math.floor(Math.min(img.width,img.height)*0.7);
-  const cropX=Math.floor((img.width-side)/2);
-  const cropY=Math.floor((img.height-side)/2);
-  cv.width=side;cv.height=side;
-  ctx.drawImage(img,cropX,cropY,side,side,0,0,side,side);
-
-  let found=false;
-
-  // 1: BarcodeDetector 크롭
-  if('BarcodeDetector' in window){
-    try{const det=new BarcodeDetector({formats:['qr_code','data_matrix','pdf417','aztec']});const r=await det.detect(cv);if(r.length>0){qrScanOk(r[0].rawValue,r[0].format);found=true}}catch(e){}
-  }
-  // 2: html5-qrcode 크롭
-  if(!found){
-    try{const blob=await new Promise(r=>cv.toBlob(r,'image/jpeg',.95));const f=new File([blob],'qr.jpg',{type:'image/jpeg'});const qr=new Html5Qrcode('analysisCv');const res=await qr.scanFileV2(f,true);if(res&&res.decodedText){qrScanOk(res.decodedText,res.result&&res.result.format?res.result.format.formatName:'QR_CODE');found=true}qr.clear()}catch(e){}
-  }
-  // 3: 전체 원본
-  if(!found){
-    cv.width=img.width;cv.height=img.height;ctx.drawImage(img,0,0);
-    if('BarcodeDetector' in window){
-      try{const det=new BarcodeDetector({formats:['qr_code','data_matrix','pdf417','aztec','code_128','code_39','ean_13']});const r=await det.detect(cv);if(r.length>0){qrScanOk(r[0].rawValue,r[0].format);found=true}}catch(e){}
-    }
-    if(!found){
-      try{const blob=await new Promise(r=>cv.toBlob(r,'image/jpeg',.95));const f=new File([blob],'qr2.jpg',{type:'image/jpeg'});const qr=new Html5Qrcode('analysisCv');const res=await qr.scanFileV2(f,true);if(res&&res.decodedText){qrScanOk(res.decodedText,res.result&&res.result.format?res.result.format.formatName:'QR_CODE');found=true}qr.clear()}catch(e){}
-    }
-  }
-  if(!found){
-    const sr=document.getElementById('qrResult');sr.classList.add('fail');
-    document.getElementById('qrVal').textContent='인식 실패';
-    document.getElementById('qrFmt').textContent='QR코드를 중앙에 놓고 재촬영하세요';
-    showToast('QR 인식 실패');
-  }
-}
-
-function qrScanOk(val,fmt){
-  pendingScan={value:val,format:fmtN(fmt)};
-  const sr=document.getElementById('qrResult');sr.classList.remove('fail');sr.classList.add('show');
-  document.getElementById('qrVal').textContent=val;
-  document.getElementById('qrFmt').textContent='형식: '+fmtN(fmt);
-  if(navigator.vibrate)navigator.vibrate([50,30,50]);
-  showToast('✅ '+val);
-  lookupBarcode(val);
-}
-
-function stopQr(){} // 호환용 빈 함수
-
-// ===== 바코드 리딩기 (키보드 입력) =====
-let bcReaderList=[];
-
-document.getElementById('bcReaderInput').addEventListener('keydown',function(e){
-  if(e.key==='Enter'){
-    e.preventDefault();
-    const val=this.value.trim();
-    if(!val)return;
-    if(!bcReaderList.includes(val))bcReaderList.push(val);
-    const combined=bcReaderList.join(' / ');
-    pendingScan={value:combined,format:'리딩기'};
-
-    const sr=document.getElementById('bcReaderResult');
-    sr.classList.add('show');sr.classList.remove('fail');
-    document.getElementById('bcReaderVal').textContent=combined;
-    document.getElementById('bcReaderFmt').textContent=bcReaderList.length+'건 리딩';
-
-    if(navigator.vibrate)navigator.vibrate([50,30,50]);
-    showToast('✅ '+val+' ('+bcReaderList.length+'건)');
-    this.value='';
-    this.focus();
-
-    // DB 조회 (첫 번째 바코드)
-    lookupBarcode(bcReaderList[0]);
-  }
-});
-
-function clearBcReader(){
-  bcReaderList=[];
-  if(!barcodeList.length)pendingScan=null;
-  document.getElementById('bcReaderResult').classList.remove('show','fail');
-  document.getElementById('bcReaderVal').textContent='';
-  document.getElementById('bcReaderFmt').textContent='';
-  document.getElementById('bcReaderInput').value='';
-  document.getElementById('bcReaderInput').focus();
-}
-
-function clearQrScan(){
-  document.getElementById('qrResult').classList.remove('show','fail');
-  document.getElementById('qrVal').textContent='';
-  document.getElementById('qrFmt').textContent='';
-  const img=document.getElementById('qrImg');if(img)img.style.display='none';
-}
-
-function clearOcrScan(){
-  document.getElementById('ocrResult').classList.remove('show','fail');
-  document.getElementById('ocrVal').textContent='';
-  document.getElementById('ocrFmt').textContent='';
-  document.getElementById('ocrImg').style.display='none';
-}
-
-function clearManual(){
-  document.getElementById('manualResult').classList.remove('show','fail');
-  document.getElementById('manualVal').textContent='';
-  document.getElementById('manualFmt').textContent='';
-  document.getElementById('manualInput').value='';
-}
-
-// ===== OCR 문자인식 =====
-function ocrPhoto(){document.getElementById('ocrCamInput').click()}
-function ocrImage(){document.getElementById('ocrImgInput').click()}
-document.getElementById('ocrCamInput').addEventListener('change',e=>{handleOcrFile(e.target.files[0]);e.target.value=''});
-document.getElementById('ocrImgInput').addEventListener('change',e=>{handleOcrFile(e.target.files[0]);e.target.value=''});
-
-function handleOcrFile(file){
-  if(!file)return;
-  const sr=document.getElementById('ocrResult');
-  sr.classList.add('show');sr.classList.remove('fail');
-  document.getElementById('ocrVal').textContent='인식 중... (3~5초 소요)';
-  document.getElementById('ocrFmt').textContent='';
-  const imgUrl=URL.createObjectURL(file);
-  document.getElementById('ocrImg').src=imgUrl;
-  document.getElementById('ocrImg').style.display='block';
-
-  const img=new Image();
-  img.onload=async()=>{
-    // 중앙 가로 8:1 크롭 (바코드 사진 방식과 동일)
-    const cv=document.createElement('canvas');
-    const ctx=cv.getContext('2d');
-    const cropW=img.width;
-    const cropH=Math.floor(img.width/8);
-    const cropY=Math.floor((img.height-cropH)/2);
-    cv.width=cropW;cv.height=cropH;
-    ctx.drawImage(img,0,cropY,cropW,cropH,0,0,cropW,cropH);
-
-    // 이진화 (OCR 정확도 향상)
-    const imgData=ctx.getImageData(0,0,cv.width,cv.height);
-    const d=imgData.data;
-    for(let i=0;i<d.length;i+=4){
-      const g=d[i]*.299+d[i+1]*.587+d[i+2]*.114;
-      const bw=g>140?255:0;
-      d[i]=bw;d[i+1]=bw;d[i+2]=bw;
-    }
-    ctx.putImageData(imgData,0,0);
-
-    try{
-      const result=await Tesseract.recognize(cv,'eng+kor',{
-        logger:m=>{if(m.status==='recognizing text')document.getElementById('ocrFmt').textContent='인식 진행: '+Math.round(m.progress*100)+'%'}
-      });
-      let text=result.data.text.trim().replace(/\n/g,' ').replace(/\s+/g,' ');
-      // 특수문자 정리
-      text=text.replace(/[^A-Za-z0-9가-힣\-_./ ]/g,'').trim();
-
-      if(text){
-        pendingScan={value:text,format:'OCR'};
-        document.getElementById('ocrVal').textContent=text;
-        document.getElementById('ocrFmt').textContent='OCR 인식 완료 (신뢰도: '+Math.round(result.data.confidence)+'%)';
-        sr.classList.remove('fail');
-        if(navigator.vibrate)navigator.vibrate([50,30,50]);
-        showToast('OCR: '+text);
-        lookupBarcode(text);
-      }else{
-        document.getElementById('ocrVal').textContent='문자를 인식하지 못했습니다';
-        document.getElementById('ocrFmt').textContent='더 선명한 사진으로 재시도하세요';
-        sr.classList.add('fail');
-        showToast('OCR 인식 실패');
-      }
-    }catch(e){
-      document.getElementById('ocrVal').textContent='OCR 오류';
-      document.getElementById('ocrFmt').textContent=e.message;
-      sr.classList.add('fail');
-    }
-    URL.revokeObjectURL(imgUrl);
-  };
-  img.src=URL.createObjectURL(file);
-}
-
-// ===== 입력 적용 집합 =====
-let collection=[]; // {value, source}
-
-function applyToCollection(source){
-  let val='';
-  if(source==='bcReader'){
-    val=document.getElementById('bcReaderVal').textContent;
-  }else if(source==='photo'){
-    val=document.getElementById('srVal').textContent;
-  }else if(source==='qr'){
-    val=document.getElementById('qrVal').textContent;
-  }else if(source==='ocr'){
-    val=document.getElementById('ocrVal').textContent;
-  }else if(source==='manual'){
-    val=document.getElementById('manualInput').value.trim();
-    if(val){
-      document.getElementById('manualResult').classList.add('show');
-      document.getElementById('manualVal').textContent=val;
-      document.getElementById('manualFmt').textContent='직접 입력됨';
-      document.getElementById('manualInput').value='';
-    }
-  }
-  if(!val||val==='인식 실패'||val==='적용된 항목 없음'){showToast('적용할 값이 없습니다');return}
-
-  // '//' 구분된 값들 분리하여 개별 추가
-  const vals=val.split(' / ').map(v=>v.trim()).filter(v=>v);
-  let added=0;
-  vals.forEach(v=>{
-    if(!collection.find(c=>c.value===v)){
-      collection.push({value:v,source:source});
-      added++;
-    }
-  });
-  if(!added){showToast('이미 적용된 항목');return}
-
-  renderCollection();
-  showToast('➕ '+added+'건 적용 (총 '+collection.length+'건)');
-}
-
-function renderCollection(){
-  const cnt=document.getElementById('colCnt');
-  const list=document.getElementById('colList');
-  cnt.textContent=collection.length;
-  if(!collection.length){
-    list.innerHTML='적용된 항목 없음';
-    pendingScan=null;
-    return;
-  }
-  const combined=collection.map(c=>c.value).join(' / ');
-  pendingScan={value:combined,format:'복합'};
-  list.innerHTML=collection.map((c,i)=>`<span style="display:inline-block;margin:2px 4px 2px 0;padding:3px 8px;background:#e3f2fd;border-radius:6px;font-size:12px">${c.value}<button onclick="removeFromCollection(${i})" style="border:none;background:none;color:#c62828;font-weight:700;cursor:pointer;margin-left:4px;font-size:11px">✕</button></span>`).join('');
-  // 첫 번째로 DB 조회
-  lookupBarcode(collection[0].value);
-}
-
-function removeFromCollection(idx){
-  collection.splice(idx,1);
-  renderCollection();
-  showToast('항목 제거됨');
-}
-
-function clearCollection(){
-  collection=[];
-  barcodeList=[];bcReaderList=[];
-  renderCollection();
-  // 각 카드 결과도 초기화
-  document.getElementById('bcReaderResult').classList.remove('show');
-  document.getElementById('scanResult').classList.remove('show');
-  document.getElementById('qrResult').classList.remove('show');
-  document.getElementById('ocrResult').classList.remove('show');
-  document.getElementById('manualResult').classList.remove('show');
-  document.getElementById('dbResultCard').style.display='none';
-  showToast('전체 초기화');
-}
-
-// ===== 범용 바코드→기준품번 매핑 조회 (NocoDB) =====
-async function resolveBasePart(barcode){
-  try{
-    // 1차: 정확 매칭
-    const where='(공용품번,eq,"'+barcode+'")';
-    const res=await fetch(NOCO.url('품번매핑','where='+encodeURIComponent(where)+'&limit=1'),{headers:NOCO.headers()});
-    const data=await res.json();
-    if(data.list&&data.list.length>0){
-      const row=data.list[0];
-      return{found:true,basePart:row['기준품번'],supplier:row['공급사']||'',spec:row['규격']||''};
-    }
-    // 2차: 파싱규칙
-    const parsed=await lookupWithParsing(barcode);
-    if(parsed&&parsed.found)return{found:true,basePart:parsed.data.basePart,supplier:parsed.data.supplier,spec:parsed.data.spec,parsed:true,extractedPart:parsed.extractedPart};
-  }catch(e){}
-  return{found:false,basePart:barcode};
-}
-
-// ===== 범용 스캔 처리 (바코드/QR/OCR 사진 → 텍스트) =====
-let uniScanCallback=null;
-let uniScanMode='barcode'; // barcode, qr, ocr
-
-function uniStartCam(mode,cb){uniScanMode=mode;uniScanCallback=cb;document.getElementById('uniCamInput').click()}
-function uniStartImg(mode,cb){uniScanMode=mode;uniScanCallback=cb;document.getElementById('uniImgInput').click()}
-
-document.getElementById('uniCamInput').addEventListener('change',e=>{uniHandleFile(e.target.files[0]);e.target.value=''});
-document.getElementById('uniImgInput').addEventListener('change',e=>{uniHandleFile(e.target.files[0]);e.target.value=''});
-
-async function uniHandleFile(file){
-  if(!file||!uniScanCallback)return;
-  const img=new Image();const url=URL.createObjectURL(file);
-  img.onload=async()=>{
-    URL.revokeObjectURL(url);
-    if(uniScanMode==='ocr'){await uniOcr(img);return}
-    const cv=document.getElementById('analysisCv'),ctx=cv.getContext('2d');
-    let found=false,val='';
-    if(uniScanMode==='qr'){
-      // QR: 중앙 사각형 크롭
-      const side=Math.floor(Math.min(img.width,img.height)*0.7);
-      const cx=Math.floor((img.width-side)/2),cy=Math.floor((img.height-side)/2);
-      cv.width=side;cv.height=side;ctx.drawImage(img,cx,cy,side,side,0,0,side,side);
-    }else{
-      // 바코드: 중앙 가로 8:1 크롭
-      const cropW=img.width,cropH=Math.floor(img.width/8),cropY=Math.floor((img.height-cropH)/2);
-      cv.width=cropW;cv.height=cropH;ctx.drawImage(img,0,cropY,cropW,cropH,0,0,cropW,cropH);
-    }
-    // BarcodeDetector
-    if('BarcodeDetector' in window){try{const det=new BarcodeDetector({formats:await BarcodeDetector.getSupportedFormats()});const r=await det.detect(cv);if(r.length>0){found=true;val=r[0].rawValue}}catch(e){}}
-    // html5-qrcode
-    if(!found){try{const blob=await new Promise(r=>cv.toBlob(r,'image/jpeg',.95));const f=new File([blob],'s.jpg',{type:'image/jpeg'});const qr=new Html5Qrcode('analysisCv');const res=await qr.scanFileV2(f,true);if(res&&res.decodedText){found=true;val=res.decodedText}qr.clear()}catch(e){}}
-    // 전체 원본 재시도
-    if(!found){cv.width=img.width;cv.height=img.height;ctx.drawImage(img,0,0);
-      if('BarcodeDetector' in window){try{const det=new BarcodeDetector({formats:await BarcodeDetector.getSupportedFormats()});const r=await det.detect(cv);if(r.length>0){found=true;val=r[0].rawValue}}catch(e){}}
-      if(!found){try{const blob=await new Promise(r=>cv.toBlob(r,'image/jpeg',.95));const f=new File([blob],'s2.jpg',{type:'image/jpeg'});const qr=new Html5Qrcode('analysisCv');const res=await qr.scanFileV2(f,true);if(res&&res.decodedText){found=true;val=res.decodedText}qr.clear()}catch(e){}}}
-    if(found&&uniScanCallback){if(navigator.vibrate)navigator.vibrate([50,30,50]);uniScanCallback(val)}
-    else showToast('인식 실패');
-  };img.src=url;
-}
-
-async function uniOcr(img){
-  const cv=document.createElement('canvas'),ctx=cv.getContext('2d');
-  const cropW=img.width,cropH=Math.floor(img.width/8),cropY=Math.floor((img.height-cropH)/2);
-  cv.width=cropW;cv.height=cropH;ctx.drawImage(img,0,cropY,cropW,cropH,0,0,cropW,cropH);
-  const id=ctx.getImageData(0,0,cv.width,cv.height),d=id.data;
-  for(let i=0;i<d.length;i+=4){const g=d[i]*.299+d[i+1]*.587+d[i+2]*.114;const bw=g>140?255:0;d[i]=bw;d[i+1]=bw;d[i+2]=bw}
-  ctx.putImageData(id,0,0);
-  try{
-    const result=await Tesseract.recognize(cv,'eng+kor');
-    let text=result.data.text.trim().replace(/\n/g,' ').replace(/\s+/g,' ').replace(/[^A-Za-z0-9가-힣\-_./ ]/g,'').trim();
-    if(text&&uniScanCallback){if(navigator.vibrate)navigator.vibrate([50,30,50]);uniScanCallback(text)}
-    else showToast('OCR 인식 실패');
-  }catch(e){showToast('OCR 오류')}
-}
-
-// ===== 세팅체크 이력 (공통 저장소) =====
-let setupHist=JSON.parse(localStorage.getItem('SETUP_HIST')||'[]');
-
-function saveSetupEntry(entry){
-  setupHist.unshift(entry);if(setupHist.length>500)setupHist.length=500;
-  localStorage.setItem('SETUP_HIST',JSON.stringify(setupHist));
-  renderSetupHistAll();
-  saveSetupToSheet(entry);
-}
-
-async function saveSetupToSheet(entry){
-  try{
-    if(entry.type==='전수체크'){
-      const detail=entry.checks?entry.checks.filter(c=>c.judge==='NG').map(c=>c.stage+':'+c.resolved).join(', '):'';
-      await fetch(NOCO.url('세팅체크이력'),{method:'POST',headers:NOCO.headers(),
-        body:JSON.stringify({일자:entry.date,시간:entry.time,기종:entry.model||'',라인:entry.line||'',
-          총건수:entry.total||0,NG건수:entry.ngCount||0,판정:entry.judge||'',상세:detail||'전체OK'})
-      });
-    }else{
-      await fetch(NOCO.url('교환체크이력'),{method:'POST',headers:NOCO.headers(),
-        body:JSON.stringify({일자:entry.date,시간:entry.time,기종:entry.model||'',라인:entry.line||'',
-          설비:entry.equipment||'',스테이지:entry.stage||'',기준품번:entry.expected||'',
-          사용중바코드:entry.oldScanned||'',사용중품번:entry.oldResolved||'',
-          신규바코드:entry.newScanned||entry.scanned||'',신규품번:entry.newResolved||'',판정:entry.judge||''})
-      });
-    }
-  }catch(e){console.log('NocoDB 세팅이력 저장 실패:',e)}
-}
-
-function renderSetupHistAll(){renderSetupHistFor('fc');renderSetupHistFor('sc');renderHistSetup()}
-
-// 이력탭(pnl3)에 세팅/개별 이력 표시
-function renderHistSetup(){
-  // 세팅이력 (이력탭용)
-  const fcFiltered=setupHist.filter(h=>h.type==='전수체크');
-  const fcC=document.getElementById('histFcList');
-  document.getElementById('histFcCnt').textContent=fcFiltered.length;
-  if(!fcFiltered.length){fcC.innerHTML='<div class="h-empty">이력이 없습니다</div>'}
-  else{fcC.innerHTML='';fcFiltered.slice(0,50).forEach(h=>{
-    const isOK=h.judge&&h.judge.startsWith('OK');const d=document.createElement('div');d.className='h-item';
-    d.innerHTML='<div class="hi-top"><span class="hi-code" style="color:'+(isOK?'#2e7d32':'#c62828')+'">'+(isOK?'✅':'❌')+' '+h.judge+'</span><span class="hi-time">'+h.date+' '+h.time+'</span></div><div class="hi-tags"><span class="hi-tag ht-cat">기종: '+(h.model||'')+'</span><span class="hi-tag ht-cat">라인: '+(h.line||'')+'</span><span class="hi-tag" style="background:#e3f2fd;color:#1565c0">'+h.total+'건'+(h.ngCount?', NG:'+h.ngCount:'')+'</span></div>';
-    fcC.appendChild(d);
-  })}
-  // 개별이력 (이력탭용)
-  const scFiltered=setupHist.filter(h=>h.type==='개별체크');
-  const scC=document.getElementById('histScList');
-  document.getElementById('histScCnt').textContent=scFiltered.length;
-  if(!scFiltered.length){scC.innerHTML='<div class="h-empty">이력이 없습니다</div>'}
-  else{scC.innerHTML='';scFiltered.slice(0,50).forEach(h=>{
-    const isOK=h.judge&&h.judge.startsWith('OK');const d=document.createElement('div');d.className='h-item';
-    let dt='';
-    if(h.equipment)dt+='<span class="hi-tag" style="background:#e8eaf6;color:#283593">'+h.equipment+'/'+h.stage+'</span>';
-    dt+='<span class="hi-tag" style="background:#fff3e0;color:#e65100">구:'+(h.oldScanned||h.oldResolved||'')+'</span>';
-    dt+='<span class="hi-tag" style="background:#e8f5e9;color:#2e7d32">신:'+(h.newScanned||h.newResolved||h.scanned||'')+'</span>';
-    d.innerHTML='<div class="hi-top"><span class="hi-code" style="color:'+(isOK?'#2e7d32':'#c62828')+'">'+(isOK?'✅':'❌')+' '+h.judge+'</span><span class="hi-time">'+h.date+' '+h.time+'</span></div><div class="hi-tags"><span class="hi-tag ht-cat">기종: '+(h.model||'')+'</span><span class="hi-tag ht-cat">라인: '+(h.line||'')+'</span>'+dt+'</div>';
-    scC.appendChild(d);
-  })}
-}
-function renderSetupHistFor(prefix){
-  const type=prefix==='fc'?'전수체크':'개별체크';
-  const c=document.getElementById(prefix+'HistList');
-  const filtered=setupHist.filter(h=>h.type===type);
-  document.getElementById(prefix+'HistCnt').textContent=filtered.length;
-  if(!filtered.length){c.innerHTML='<div class="h-empty">이력이 없습니다</div>';return}
-  c.innerHTML='';
-  filtered.slice(0,30).forEach(h=>{
-    const isOK=h.judge&&h.judge.startsWith('OK');
-    const d=document.createElement('div');d.className='h-item';
-    let ft='';
-    if(h.model)ft+='<span class="hi-tag ht-cat">기종: '+h.model+'</span>';
-    if(h.line)ft+='<span class="hi-tag ht-cat">라인: '+h.line+'</span>';
-    let dt='';
-    if(h.type==='전수체크'){
-      dt='<span class="hi-tag" style="background:#e3f2fd;color:#1565c0">'+h.total+'건'+(h.ngCount?', NG:'+h.ngCount:'')+'</span>';
-    }else{
-      if(h.equipment)dt+='<span class="hi-tag" style="background:#e8eaf6;color:#283593">'+h.equipment+'/'+h.stage+'</span>';
-      dt+='<span class="hi-tag" style="background:#fff3e0;color:#e65100">구:'+(h.oldScanned||'')+'</span>';
-      dt+='<span class="hi-tag" style="background:#e8f5e9;color:#2e7d32">신:'+(h.newScanned||h.scanned||'')+'</span>';
-    }
-    d.innerHTML='<div class="hi-top"><span class="hi-code" style="color:'+(isOK?'#2e7d32':'#c62828')+'">'+(isOK?'✅':'❌')+' '+h.judge+' ('+h.type+')</span><span class="hi-time">'+h.date+' '+h.time+'</span></div><div class="hi-tags">'+ft+dt+'</div><div class="hi-acts"><button class="ha-del" onclick="delSetupHist(\''+h.id+'\')">🗑삭제</button></div>';
-    c.appendChild(d);
-  });
-}
-function delSetupHist(id){if(!confirm('삭제?'))return;setupHist=setupHist.filter(h=>h.id!==id);localStorage.setItem('SETUP_HIST',JSON.stringify(setupHist));renderSetupHistAll()}
-function clearSetupHist(prefix){const type=prefix==='fc'?'전수체크':'개별체크';if(!confirm(type+' 이력 전체 삭제?'))return;setupHist=setupHist.filter(h=>h.type!==type);localStorage.setItem('SETUP_HIST',JSON.stringify(setupHist));renderSetupHistAll()}
-
-// ===== 전수체크 (pnl1) =====
-let fcList=[];   // DB에서 가져온 세팅 마스터
-let fcChecks=[]; // 체크 진행 상태
-let fcIdx=0;     // 현재 체크 위치
-let fcStep='stage'; // 'stage' or 'part'
-
-function fcInit(){renderSetupHistFor('fc');fcUpdatePrompt()}
-
-async function fcLoadList(){
-  const model=document.getElementById('fcModel').value.trim();
-  const line=document.getElementById('fcLine').value.trim();
-  if(!model||!line){showToast('기종과 라인을 입력하세요');return}
-  const st=document.getElementById('fcLoadStatus');st.style.display='block';st.textContent='조회 중...';st.style.color='#1565c0';
-  const where='(기종,eq,"'+model+'")~and(라인,eq,"'+line+'")';
-  try{
-    const res=await fetch(NOCO.url('피더세팅','where='+encodeURIComponent(where)+'&limit=200'),{headers:NOCO.headers()});
-    const data=await res.json();
-    const list=(data.list||[]).map(row=>({model:row['기종']||'',line:row['라인']||'',equipment:row['설비']||'',stage:row['스테이지']||'',stageBarcode:row['스테이지바코드']||'',basePart:row['기준품번']||''}));
-    if(list.length>0){
-      fcList=list;
-      fcChecks=fcList.map(s=>({...s,scannedStage:'',scannedPart:'',resolvedPart:'',judge:''}));
-      fcIdx=0;fcStep='stage';
-      st.textContent='✅ '+list.length+'개 스테이지 로드';st.style.color='#2e7d32';
-      fcRender();fcUpdatePrompt();showToast('📂 '+list.length+'개 로드');
-    }else{
-      fcList=[];fcChecks=[];st.textContent='⚠ 등록된 세팅정보 없음 (기종: '+model+', 라인: '+line+')';st.style.color='#e65100';fcRender();
-    }
-  }catch(e){st.textContent='⚠ 네트워크 오류: '+e.message;st.style.color='#c62828';console.log('fcLoadList error:',e)}
-}
-
-function fcUpdatePrompt(){
-  const tit=document.getElementById('fcScanTit');
-  const inp=document.getElementById('fcReaderInput');
-  if(!fcList.length){tit.textContent='📌 세팅목록을 먼저 로드하세요';inp.placeholder='기종+라인 입력 후 로드';return}
-  const cur=fcChecks[fcIdx];
-  if(!cur){tit.textContent='✅ 전체 스캔 완료';inp.placeholder='완료 버튼을 눌러주세요';return}
-  if(fcStep==='stage'){
-    tit.innerHTML='📌 스테이지 스캔 <span style="font-size:11px;color:#1565c0;font-weight:400">['+cur.equipment+'] '+cur.stage+'</span>';
-    inp.placeholder='스테이지 ['+cur.stage+'] 바코드 스캔';inp.style.borderColor='#1565c0';inp.style.background='#e3f2fd';
-  }else{
-    tit.innerHTML='🔍 부품 스캔 <span style="font-size:11px;color:#e65100;font-weight:400">['+cur.stage+'] 기준: '+cur.basePart+'</span>';
-    inp.placeholder='부품 바코드를 스캔하세요';inp.style.borderColor='#e65100';inp.style.background='#fff3e0';
-  }
-  inp.focus();
-}
-
-// 리딩기 Enter
-document.getElementById('fcReaderInput').addEventListener('keydown',function(e){
-  if(e.key==='Enter'){e.preventDefault();const v=this.value.trim();if(!v)return;this.value='';fcProcessScan(v)}
-});
-// 직접입력 Enter
-document.getElementById('fcManualInput').addEventListener('keydown',function(e){
-  if(e.key==='Enter'){e.preventDefault();const v=this.value.trim();if(!v)return;this.value='';fcProcessScan(v)}
-});
-// 사진/이미지
-function fcCamScan(mode){uniStartCam(mode,fcProcessScan)}
-function fcImgScan(mode){uniStartImg(mode,fcProcessScan)}
-
-async function fcProcessScan(val){
-  document.getElementById('fcResultCard').style.display='block';
-  const sr=document.getElementById('fcScanResult');sr.classList.add('show');sr.classList.remove('fail');
-  document.getElementById('fcScanVal').textContent=val;
-  if(!fcList.length){showToast('세팅목록을 먼저 로드하세요');return}
-  const cur=fcChecks[fcIdx];
-  if(!cur){showToast('전체 스캔 완료');return}
-
-  if(fcStep==='stage'){
-    cur.scannedStage=val;
-    const match=val.trim()===cur.stageBarcode.trim();
-    fcStep='part';
-    document.getElementById('fcScanFmt').textContent=match?'✅ 스테이지 확인 → 부품 스캔':'⚠ 스테이지 불일치 (기대: '+cur.stageBarcode+') → 부품 스캔 진행';
-    showToast(match?'✅ 스테이지 확인':'⚠ 스테이지 불일치');
-  }else{
-    cur.scannedPart=val;
-    document.getElementById('fcScanFmt').textContent='DB 매핑 조회 중...';
-    const resolved=await resolveBasePart(val);
-    cur.resolvedPart=resolved.basePart;
-    const partMatch=resolved.basePart.trim()===cur.basePart.trim();
-    cur.judge=partMatch?'OK':'NG';
-    if(partMatch){
-      document.getElementById('fcScanFmt').textContent='✅ OK — 기준: '+cur.basePart+(resolved.found?' (매핑: '+val+' → '+resolved.basePart+')':'');
-      showToast('✅ OK ['+cur.stage+']');if(navigator.vibrate)navigator.vibrate([100]);
-    }else{
-      document.getElementById('fcScanFmt').textContent='❌ NG — 기준: '+cur.basePart+' ≠ 매핑결과: '+resolved.basePart+(resolved.found?'':' (미등록 원본)');
-      showToast('❌ NG ['+cur.stage+']');if(navigator.vibrate)navigator.vibrate([200,100,200,100,200]);
-    }
-    fcIdx++;fcStep='stage';
-  }
-  fcRender();fcUpdatePrompt();
-}
-
-function fcRender(){
-  const c=document.getElementById('fcCheckList');
-  const done=fcChecks.filter(f=>f.judge).length;
-  document.getElementById('fcProgress').textContent=done+' / '+fcChecks.length;
-  if(!fcChecks.length){c.innerHTML='<div style="text-align:center;padding:12px;color:#aaa;font-size:12px">세팅목록을 로드하세요</div>';return}
-  c.innerHTML='';let lastEquip='';
-  fcChecks.forEach((ck,i)=>{
-    if(ck.equipment!==lastEquip){lastEquip=ck.equipment;const h=document.createElement('div');h.style.cssText='padding:6px 8px;background:#e8eaf6;font-size:11px;font-weight:700;color:#1a237e;border-bottom:1px solid #c5cae9';h.textContent='🏭 '+ck.equipment;c.appendChild(h)}
-    const isCur=i===fcIdx&&!ck.judge,isOK=ck.judge==='OK',isNG=ck.judge==='NG';
-    const d=document.createElement('div');
-    d.style.cssText='display:flex;align-items:center;gap:6px;padding:8px 6px;border-bottom:1px solid #eee;font-size:12px;background:'+(isCur?'#fffde7':isOK?'#e8f5e9':isNG?'#ffebee':'#fafafa')+';border-left:3px solid '+(isCur?'#fdd835':'transparent');
-    let badge='<span style="width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0;';
-    badge+=isOK?'background:#4caf50;color:#fff">✓</span>':isNG?'background:#f44336;color:#fff">✕</span>':isCur?'background:#fdd835;color:#000">→</span>':'background:#e0e0e0;color:#999">'+(i+1)+'</span>';
-    let info='<span style="flex:1;min-width:0"><span style="font-weight:600;color:#1565c0">'+ck.stage+'</span> <span style="color:#888">→</span> <span style="color:#555;font-size:11px">'+ck.basePart+'</span>';
-    if(ck.judge)info+='<br><span style="font-size:10px;color:'+(isOK?'#2e7d32':'#c62828')+'">'+ck.judge+(isNG?' (스캔→매핑: '+ck.resolvedPart+')':'')+'</span>';
-    else if(isCur)info+='<br><span style="font-size:10px;color:#e65100">'+(fcStep==='stage'?'스테이지 스캔 대기':'부품 스캔 대기')+'</span>';
-    info+='</span>';
-    d.innerHTML=badge+info+(ck.judge?'<span style="font-weight:700;font-size:11px;color:'+(isOK?'#2e7d32':'#c62828')+'">'+ck.judge+'</span>':'');
-    c.appendChild(d);
-  });
-  if(fcIdx<fcChecks.length){const cur=c.querySelector('[style*="border-left:3px solid #fdd835"]');if(cur)cur.scrollIntoView({block:'nearest',behavior:'smooth'})}
-}
-
-function fcFinish(){
-  if(!fcChecks.length){showToast('세팅목록이 없습니다');return}
-  const checked=fcChecks.filter(c=>c.judge).length;
-  if(!checked){showToast('체크 항목 없음');return}
-  const ng=fcChecks.filter(c=>c.judge==='NG').length,unc=fcChecks.filter(c=>!c.judge).length;
-  const judge=ng===0&&unc===0?'OK':'NG(NG:'+ng+(unc?',미체크:'+unc:'')+')';
-  const model=document.getElementById('fcModel').value.trim(),line=document.getElementById('fcLine').value.trim();
-  const card=document.getElementById('fcJudgeCard');card.style.display='block';
-  const r=document.getElementById('fcJudgeResult'),det=document.getElementById('fcJudgeDetail');
-  if(ng===0&&unc===0){r.className='judge-ok';r.textContent='✅ 전수 OK — '+checked+'건 전체 일치';if(navigator.vibrate)navigator.vibrate([100])}
-  else{r.className='judge-ng';r.textContent='❌ NG — '+ng+'건 불일치'+(unc?' / '+unc+'건 미체크':'');if(navigator.vibrate)navigator.vibrate([200,100,200,100,200])}
-  det.textContent=model+' / '+line+' ('+checked+'/'+fcChecks.length+')';
-  const now=new Date();
-  saveSetupEntry({id:'S'+now.getTime(),type:'전수체크',date:now.toISOString().split('T')[0],time:String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0'),model,line,checks:fcChecks.map(c=>({equipment:c.equipment,stage:c.stage,expected:c.basePart,scanned:c.scannedPart,resolved:c.resolvedPart,judge:c.judge})),judge,total:fcChecks.length,ngCount:ng,ts:now.toISOString()});
-  fcChecks=fcList.map(s=>({...s,scannedStage:'',scannedPart:'',resolvedPart:'',judge:''}));fcIdx=0;fcStep='stage';fcRender();fcUpdatePrompt();
-}
-
-function fcClear(){
-  fcChecks=fcList.map(s=>({...s,scannedStage:'',scannedPart:'',resolvedPart:'',judge:''}));fcIdx=0;fcStep='stage';
-  document.getElementById('fcJudgeCard').style.display='none';document.getElementById('fcResultCard').style.display='none';
-  fcRender();fcUpdatePrompt();
-}
-
-// ===== 개별체크 (pnl2) =====
-let scList=[];     // DB 세팅 마스터
-let scSelStage=null; // 선택된 스테이지
-let scStep='old';  // 'old' or 'new'
-let scOldCode='',scOldResolved='',scNewCode='',scNewResolved='';
-
-function scInit(){renderSetupHistFor('sc');scUpdatePrompt()}
-
-async function scLoadList(){
-  const model=document.getElementById('scModel').value.trim(),line=document.getElementById('scLine').value.trim();
-  if(!model||!line){showToast('기종과 라인을 입력하세요');return}
-  const st=document.getElementById('scLoadStatus');st.style.display='block';st.textContent='조회 중...';st.style.color='#1565c0';
-  const where='(기종,eq,"'+model+'")~and(라인,eq,"'+line+'")';
-  try{
-    const res=await fetch(NOCO.url('피더세팅','where='+encodeURIComponent(where)+'&limit=200'),{headers:NOCO.headers()});
-    const data=await res.json();
-    const list=(data.list||[]).map(row=>({model:row['기종']||'',line:row['라인']||'',equipment:row['설비']||'',stage:row['스테이지']||'',stageBarcode:row['스테이지바코드']||'',basePart:row['기준품번']||''}));
-    if(list.length>0){
-      scList=list;
-      st.textContent='✅ '+list.length+'개 스테이지 로드';st.style.color='#2e7d32';
-      const sel=document.getElementById('scStageSel');
-      sel.innerHTML='<option value="">스테이지 선택</option>';
-      scList.forEach((s,i)=>{sel.innerHTML+='<option value="'+i+'">['+s.equipment+'] '+s.stage+' → '+s.basePart+'</option>'});
-      scSelStage=null;scClearStep();
-      showToast('📂 '+list.length+'개 로드');
-    }else{
-      scList=[];st.textContent='⚠ 등록된 세팅정보 없음 (기종: '+model+', 라인: '+line+')';st.style.color='#e65100';
-      document.getElementById('scStageSel').innerHTML='<option value="">세팅목록을 먼저 로드하세요</option>';
-    }
-  }catch(e){st.textContent='⚠ 네트워크 오류: '+e.message;st.style.color='#c62828';console.log('scLoadList error:',e)}
-}
-
-function scOnStageSelect(){
-  const idx=document.getElementById('scStageSel').value;
-  if(idx===''){scSelStage=null;document.getElementById('scStageInfo').textContent='';document.getElementById('scRefPart').textContent='-';scClearStep();return}
-  scSelStage=scList[parseInt(idx)];
-  document.getElementById('scStageInfo').innerHTML='<span style="font-weight:600;color:#1565c0">설비: '+scSelStage.equipment+' | 스테이지: '+scSelStage.stage+'</span><br>기준품번: <strong>'+scSelStage.basePart+'</strong>';
-  document.getElementById('scRefPart').textContent=scSelStage.basePart;
-  scClearStep();
-}
-
-function scClearStep(){
-  scStep='old';scOldCode='';scOldResolved='';scNewCode='';scNewResolved='';
-  document.getElementById('scOldVal').textContent='-';document.getElementById('scOldInfo').textContent='';
-  document.getElementById('scNewVal').textContent='-';document.getElementById('scNewInfo').textContent='';
-  document.getElementById('scJudgeCard').style.display='none';document.getElementById('scResultCard').style.display='none';
-  scUpdatePrompt();
-}
-
-function scUpdatePrompt(){
-  const tit=document.getElementById('scScanTit');
-  const inp=document.getElementById('scReaderInput');
-  if(!scSelStage){tit.textContent='📌 스테이지를 선택하세요';inp.placeholder='위에서 스테이지 선택';return}
-  if(scStep==='old'){
-    tit.innerHTML='🔄 ① 사용중 부품 스캔 <span style="font-size:11px;color:#e65100;font-weight:400">['+scSelStage.stage+']</span>';
-    inp.placeholder='사용중 부품 바코드 스캔';inp.style.borderColor='#e65100';inp.style.background='#fff3e0';
-  }else{
-    tit.innerHTML='✅ ② 신규 부품 스캔 <span style="font-size:11px;color:#2e7d32;font-weight:400">기준: '+scSelStage.basePart+'</span>';
-    inp.placeholder='신규 부품 바코드 스캔';inp.style.borderColor='#2e7d32';inp.style.background='#e8f5e9';
-  }
-  inp.focus();
-}
-
-document.getElementById('scReaderInput').addEventListener('keydown',function(e){
-  if(e.key==='Enter'){e.preventDefault();const v=this.value.trim();if(!v)return;this.value='';scProcessScan(v)}
-});
-document.getElementById('scManualInput').addEventListener('keydown',function(e){
-  if(e.key==='Enter'){e.preventDefault();const v=this.value.trim();if(!v)return;this.value='';scProcessScan(v)}
-});
-function scCamScan(mode){uniStartCam(mode,scProcessScan)}
-function scImgScan(mode){uniStartImg(mode,scProcessScan)}
-
-async function scProcessScan(val){
-  if(!scSelStage){showToast('스테이지를 선택하세요');return}
-  document.getElementById('scResultCard').style.display='block';
-  const sr=document.getElementById('scScanResult');sr.classList.add('show');sr.classList.remove('fail');
-  document.getElementById('scScanVal').textContent=val;
-  document.getElementById('scScanFmt').textContent='DB 매핑 조회 중...';
-
-  const resolved=await resolveBasePart(val);
-  const mappedInfo=resolved.found?'매핑: '+val+' → '+resolved.basePart:'미등록 (원본 사용)';
-
-  if(scStep==='old'){
-    scOldCode=val;scOldResolved=resolved.basePart;
-    document.getElementById('scOldVal').textContent=val;
-    document.getElementById('scOldInfo').textContent='기준품번: '+resolved.basePart+' ('+mappedInfo+')';
-    document.getElementById('scScanFmt').textContent='✅ 사용중 부품 확인 → 신규 부품 스캔';
-    showToast('📌 사용중: '+resolved.basePart);
-    scStep='new';
-  }else{
-    scNewCode=val;scNewResolved=resolved.basePart;
-    document.getElementById('scNewVal').textContent=val;
-    document.getElementById('scNewInfo').textContent='기준품번: '+resolved.basePart+' ('+mappedInfo+')';
-
-    // 판정: 신규 부품의 기준품번이 DB 기준품번과 일치하는지
-    const isOK=resolved.basePart.trim()===scSelStage.basePart.trim();
-    // 추가 체크: 사용중도 기준과 일치하는지 참고표시
-    const oldMatch=scOldResolved.trim()===scSelStage.basePart.trim();
-
-    const card=document.getElementById('scJudgeCard');card.style.display='block';
-    const r=document.getElementById('scJudgeResult'),d=document.getElementById('scJudgeDetail');
-    if(isOK){
-      r.className='judge-ok';r.textContent='✅ OK — 신규부품 기준 일치';
-      d.textContent='기준: '+scSelStage.basePart+' = 신규: '+resolved.basePart+(oldMatch?'':' (※ 사용중 부품은 불일치: '+scOldResolved+')');
-      if(navigator.vibrate)navigator.vibrate([100]);showToast('✅ OK');
-      document.getElementById('scScanFmt').textContent='✅ OK — 신규부품 기준 일치';
-    }else{
-      r.className='judge-ng';r.textContent='❌ NG — 신규부품 기준 불일치';
-      d.textContent='기준: '+scSelStage.basePart+' ≠ 신규: '+resolved.basePart;
-      if(navigator.vibrate)navigator.vibrate([200,100,200,100,200]);showToast('❌ NG');
-      document.getElementById('scScanFmt').textContent='❌ NG — 기준: '+scSelStage.basePart+' ≠ 신규: '+resolved.basePart;
-    }
-
-    const now=new Date();
-    const model=document.getElementById('scModel').value.trim(),line=document.getElementById('scLine').value.trim();
-    saveSetupEntry({id:'S'+now.getTime(),type:'개별체크',date:now.toISOString().split('T')[0],
-      time:String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0'),
-      model,line,equipment:scSelStage.equipment,stage:scSelStage.stage,expected:scSelStage.basePart,
-      oldScanned:scOldCode,oldResolved:scOldResolved,newScanned:scNewCode,newResolved:scNewResolved,
-      judge:isOK?'OK':'NG',ts:now.toISOString()});
-
-    // 다음 교환 대기
-    scStep='old';scOldCode='';scOldResolved='';scNewCode='';scNewResolved='';
-    document.getElementById('scOldVal').textContent='-';document.getElementById('scOldInfo').textContent='';
-    document.getElementById('scNewVal').textContent='-';document.getElementById('scNewInfo').textContent='';
-  }
-  scUpdatePrompt();
-}
-
-// ===== 저장 =====
-function saveEntry(){
-  const basePart=document.getElementById('inpBasePart').value;
-  const spec=document.getElementById('inpSpec').value;
-  const usePart=document.getElementById('inpUsePart').value;
-  const lot=document.getElementById('inpLot').value;
-  const qty=document.getElementById('inpQty').value;
-  const note=document.getElementById('inpNote').value;
-  if(!pendingScan){showToast('코드를 스캔하세요');return}
-
-  const fields={};
-  cats.forEach((cat,i)=>{
-    const v=document.getElementById('sel_'+i);
-    if(v)fields[cat.name]=v.value||'';
-  });
-  // 셀렉트에서 가져온 값
-  const supplier=fields['공급사']||'';
-  const supplyType=fields['공급유형']||'';
-  const process=fields['공정']||'';
-  const type=fields['유형']||'';
-
-  const now=new Date();
-  const entry={
-    id:'E'+now.getTime(),
-    date:now.toISOString().split('T')[0],
-    time:String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0'),
-    fields,
-    barcode:pendingScan.value,
-    basePart:basePart||'',
-    supplier:supplier||'',
-    supplyType:supplyType||'',
-    process:process||'',
-    type:type||'',
-    spec:spec||'',
-    usePart:usePart||'',
-    lot:lot||'',
-    format:pendingScan.format,
-    qty:qty||'',
-    note:note||'',
-    ts:now.toISOString()
-  };
-  hist.unshift(entry);if(hist.length>500)hist.length=500;
-  localStorage.setItem('LOT_HIST',JSON.stringify(hist));
-
-  // 구글시트에도 저장
-  saveHistToSheet(entry);
-
-  // DB에 매핑 없고 기준품번이 입력된 경우 자동 매핑 등록 제안
-  if(!dbMappingFound&&basePart&&pendingScan){
-    const barcodes=pendingScan.value.split(' / ');
-    const firstBarcode=barcodes[0].trim();
-    if(firstBarcode&&confirm('이 바코드를 DB에 매핑 등록할까요?\n\n바코드: '+firstBarcode+'\n기준품번: '+basePart+'\n공급사: '+(supplier||'-')+'\n공정: '+(process||'-')+'\n규격: '+(spec||'-'))){
-      autoAddMapping(firstBarcode,basePart,{supplier,supplyType,process,type,spec});
-    }
-  }
-
-  // 초기화 (코드/소재부품정보만, 출발지/도착지 선택은 유지)
-  pendingScan=null;
-  barcodeList=[];bcReaderList=[];collection=[];
-  dbMappingFound=false;
-  document.getElementById('scanResult').classList.remove('show','fail');
-  document.getElementById('srVal').textContent='';
-  document.getElementById('srFmt').textContent='';
-  document.getElementById('srImg').style.display='none';
-  document.getElementById('qrResult').classList.remove('show');
-  document.getElementById('ocrResult').classList.remove('show');
-  document.getElementById('bcReaderResult').classList.remove('show');
-  document.getElementById('manualResult').classList.remove('show');
-  renderCollection();
-  document.getElementById('inpBasePart').value='';
-  document.getElementById('inpSpec').value='';
-  document.getElementById('inpUsePart').value='';
-  document.getElementById('inpLot').value='';
-  document.getElementById('inpQty').value='';
-  document.getElementById('inpNote').value='';
-  document.getElementById('dbResultCard').style.display='none';
-  showToast('✅ 등록 완료: '+entry.barcode);
-}
-
-async function autoAddMapping(barcode,basePart,info){
-  try{
-    const res=await fetch(NOCO.url('품번매핑'),{
-      method:'POST',
-      headers:NOCO.headers(),
-      body:JSON.stringify({공용품번:barcode,기준품번:basePart,공급사:info.supplier||'',소재:info.material||'',규격:info.spec||'',비고:''})
-    });
-    const result=await res.json();
-    if(result.Id)showToast('✅ DB 매핑도 등록 완료');
-    else showToast('✅ DB 매핑 등록 요청 완료');
-  }catch(e){showToast('매핑 등록 실패: '+e.message)}
-}
-
-// ===== 이력 =====
-function renderHistFilter(){
-  const fc=document.getElementById('filtCat');
-  fc.innerHTML='<option value="">전체 분류</option>';
-  cats.forEach(c=>{const o=document.createElement('option');o.value=c.name;o.textContent=c.name;fc.appendChild(o)});
-}
-function renderHist(){
-  const c=document.getElementById('histList');document.getElementById('histCnt').textContent=hist.length;
-  const fc=document.getElementById('filtCat').value;
-  const fd=document.getElementById('filtDate').value;
-  let filtered=hist;
-  if(fc)filtered=filtered.filter(h=>{
-    if(h.fields){return Object.values(h.fields).some(v=>v&&(h.fields[fc]||Object.keys(h.fields).includes(fc)))}
-    return false;
-  });
-  if(fd)filtered=filtered.filter(h=>h.date===fd);
-  if(!filtered.length){c.innerHTML='<div class="h-empty">이력이 없습니다</div>';return}
-  c.innerHTML='';
-  filtered.slice(0,100).forEach((h,i)=>{
-    let tags='';
-    if(h.fields){
-      Object.entries(h.fields).forEach(([k,v])=>{if(v)tags+=`<span class="hi-tag ht-cat">${k}: ${v}</span>`});
-    }
-    if(h.basePart)tags+=`<span class="hi-tag" style="background:#e8f5e9;color:#2e7d32">품번: ${h.basePart}</span>`;
-    if(h.supplier)tags+=`<span class="hi-tag" style="background:#e3f2fd;color:#1565c0">공급: ${h.supplier}</span>`;
-    if(h.supplyType)tags+=`<span class="hi-tag" style="background:#e8eaf6;color:#283593">공급유형: ${h.supplyType}</span>`;
-    if(h.process)tags+=`<span class="hi-tag" style="background:#f3e5f5;color:#7b1fa2">공정: ${h.process}</span>`;
-    if(h.type)tags+=`<span class="hi-tag" style="background:#e0f7fa;color:#00838f">유형: ${h.type}</span>`;
-    if(h.spec)tags+=`<span class="hi-tag" style="background:#e0f2f1;color:#00695c">규격: ${h.spec}</span>`;
-    if(h.usePart)tags+=`<span class="hi-tag" style="background:#fce4ec;color:#c62828">사용: ${h.usePart}</span>`;
-    if(h.lot)tags+=`<span class="hi-tag" style="background:#fff3e0;color:#e65100">LOT: ${h.lot}</span>`;
-    if(h.qty)tags+=`<span class="hi-tag ht-qty">수량: ${h.qty}</span>`;
-    tags+=`<span class="hi-tag" style="background:#f5f5f5;color:#888">${h.format}</span>`;
-    const d=document.createElement('div');d.className='h-item';
-    d.innerHTML=`<div class="hi-top"><span class="hi-code">${h.barcode}</span><span class="hi-time">${h.date} ${h.time}</span></div>
-      <div class="hi-tags">${tags}</div>
-      ${h.note?'<div class="hi-note">📝 '+h.note+'</div>':''}
-      <div class="hi-acts"><button class="ha-cp" onclick="cpVal('${esc(h.barcode)}')">📋복사</button><button class="ha-del" onclick="delHist('${h.id}')">🗑삭제</button></div>`;
-    c.appendChild(d);
-  });
-}
-function delHist(id){if(!confirm('삭제?'))return;hist=hist.filter(h=>h.id!==id);localStorage.setItem('LOT_HIST',JSON.stringify(hist));renderHist()}
-function clearHist(){if(!hist.length)return;if(!confirm('전체 이력 삭제?'))return;hist.length=0;localStorage.setItem('LOT_HIST','[]');renderHist()}
-function esc(s){return s.replace(/'/g,'&#39;').replace(/"/g,'&quot;').replace(/</g,'&lt;')}
-function cpVal(v){v=v.replace(/&#39;/g,"'");navigator.clipboard.writeText(v).then(()=>showToast('복사: '+v)).catch(()=>{const t=document.createElement('textarea');t.value=v;document.body.appendChild(t);t.select();document.execCommand('copy');document.body.removeChild(t);showToast('복사: '+v)})}
-
-function expXlsx(mode){
-  const wb=XLSX.utils.book_new();
-  const today=new Date().toISOString().split('T')[0].replace(/-/g,'');
-
-  // 입출고 시트
-  if(mode==='all'||mode==='io'){
-    if(hist.length){
-      const catNames=cats.map(c=>c.name);
-      const hd=['일자','시간',...catNames,'바코드','기준품번','공급사','공급유형','공정','유형','규격','사용품번','로트','형식','수량','비고'];
-      const rows=hist.map(h=>{
-        const row=[h.date,h.time];
-        catNames.forEach(cn=>{row.push(h.fields?h.fields[cn]||'':'')});
-        row.push(h.barcode,h.basePart||'',h.supplier||'',h.supplyType||'',h.process||'',h.type||'',h.spec||'',h.usePart||'',h.lot||'',h.format,h.qty,h.note);
-        return row;
-      });
-      const ws=XLSX.utils.aoa_to_sheet([hd,...rows]);
-      ws['!cols']=[{wch:11},{wch:9},...catNames.map(()=>({wch:12})),{wch:24},{wch:14},{wch:10},{wch:10},{wch:10},{wch:8},{wch:8},{wch:14},{wch:12},{wch:8},{wch:8},{wch:20}];
-      XLSX.utils.book_append_sheet(wb,ws,'입출고이력');
-    }else if(mode==='io'){showToast('입출고 이력 없음');return}
-  }
-
-  // 세팅체크 시트
-  if(mode==='all'||mode==='fc'){
-    const fcData=setupHist.filter(h=>h.type==='전수체크');
-    if(fcData.length){
-      const hd=['일자','시간','기종','라인','총건수','NG건수','판정','상세(NG항목)'];
-      const rows=fcData.map(h=>{
-        const ngDetail=h.checks?h.checks.filter(c=>c.judge==='NG').map(c=>c.stage+': 기준='+c.expected+' 스캔='+(c.resolved||c.scanned)).join(' | '):'';
-        return[h.date,h.time,h.model||'',h.line||'',h.total||'',h.ngCount||0,h.judge,ngDetail||'전체OK'];
-      });
-      const ws=XLSX.utils.aoa_to_sheet([hd,...rows]);
-      ws['!cols']=[{wch:11},{wch:9},{wch:14},{wch:10},{wch:8},{wch:8},{wch:14},{wch:40}];
-      XLSX.utils.book_append_sheet(wb,ws,'세팅이력');
-    }else if(mode==='fc'){showToast('세팅 이력 없음');return}
-  }
-
-  // 개별체크 시트
-  if(mode==='all'||mode==='sc'){
-    const scData=setupHist.filter(h=>h.type==='개별체크');
-    if(scData.length){
-      const hd=['일자','시간','기종','라인','설비','스테이지','기준품번','사용중바코드','사용중품번','신규바코드','신규품번','판정'];
-      const rows=scData.map(h=>[h.date,h.time,h.model||'',h.line||'',h.equipment||'',h.stage||'',h.expected||'',h.oldScanned||'',h.oldResolved||'',h.newScanned||h.scanned||'',h.newResolved||'',h.judge]);
-      const ws=XLSX.utils.aoa_to_sheet([hd,...rows]);
-      ws['!cols']=[{wch:11},{wch:9},{wch:14},{wch:10},{wch:14},{wch:12},{wch:16},{wch:18},{wch:16},{wch:18},{wch:16},{wch:8}];
-      XLSX.utils.book_append_sheet(wb,ws,'개별이력');
-    }else if(mode==='sc'){showToast('개별 이력 없음');return}
-  }
-
-  if(!wb.SheetNames.length){showToast('다운로드할 이력 없음');return}
-  const fname=mode==='all'?'전체이력':mode==='io'?'입출고이력':mode==='fc'?'세팅이력':'개별이력';
-  XLSX.writeFile(wb,fname+'_'+today+'.xlsx');
-}
-
-// ===== 항목관리 =====
-function renderCatEditor(){
-  const c=document.getElementById('catEditor');c.innerHTML='';
-  cats.forEach((cat,ci)=>{
-    const sec=document.createElement('div');sec.className='cat-section';
-    let subsHtml=cat.subs.map((s,si)=>`<div class="sub-item">
-      <button class="s-move" onclick="moveSub(${ci},${si},-1)">▲</button>
-      <button class="s-move" onclick="moveSub(${ci},${si},1)">▼</button>
-      <input value="${s}" oninput="cats[${ci}].subs[${si}]=this.value">
-      <button class="s-del" onclick="delSub(${ci},${si})">✕</button>
-    </div>`).join('');
-    sec.innerHTML=`<div class="cat-hdr">
-      <button class="s-move" onclick="moveCat(${ci},-1)">▲</button>
-      <button class="s-move" onclick="moveCat(${ci},1)">▼</button>
-      <input value="${cat.name}" oninput="cats[${ci}].name=this.value">
-      <button class="s-del" onclick="delCat(${ci})">✕</button>
-    </div>
-    <div class="cat-body">${subsHtml}<button class="add-btn" onclick="addSub(${ci})">+ 항목 추가</button></div>`;
-    c.appendChild(sec);
-  });
-}
-function addCat(){cats.push({name:'새 분류',subs:['항목1']});renderCatEditor()}
-function delCat(i){if(cats.length<=1){showToast('최소 1개 필요');return}if(!confirm(cats[i].name+' 삭제?'))return;cats.splice(i,1);renderCatEditor()}
-function moveCat(i,d){const n=i+d;if(n<0||n>=cats.length)return;[cats[i],cats[n]]=[cats[n],cats[i]];renderCatEditor()}
-function addSub(ci){cats[ci].subs.push('새 항목');renderCatEditor()}
-function delSub(ci,si){if(cats[ci].subs.length<=1){showToast('최소 1개 필요');return}cats[ci].subs.splice(si,1);renderCatEditor()}
-function moveSub(ci,si,d){const n=si+d;if(n<0||n>=cats[ci].subs.length)return;[cats[ci].subs[si],cats[ci].subs[n]]=[cats[ci].subs[n],cats[ci].subs[si]];renderCatEditor()}
-function saveCats(){localStorage.setItem('LOT_CATS',JSON.stringify(cats));renderRegFields();showToast('항목 저장 완료')}
-function resetCats(){if(!confirm('기본값으로 복원?'))return;cats=JSON.parse(JSON.stringify(DEFAULT_CATS));localStorage.setItem('LOT_CATS',JSON.stringify(cats));renderCatEditor();renderRegFields();showToast('기본값 복원')}
-
-let tt;function showToast(m){const el=document.getElementById('toast');el.textContent=m;el.classList.add('show');clearTimeout(tt);tt=setTimeout(()=>el.classList.remove('show'),2000)}
-
-// 초기화
-renderRegFields();
+  tick();
+  setInterval(tick, 1000);
 </script>
 </body>
 </html>
