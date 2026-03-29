@@ -577,7 +577,7 @@ async function autoSetupTables() {
           { Title: '이물', Category: '기타', SortOrder: 12 },
           { Title: '스크래치', Category: '기타', SortOrder: 13 },
           { Title: '기타', Category: '기타', SortOrder: 14 }
-        ];
+        ].map(t => rec(t));
         await nocoPost(cfg.tblDefectType, defaultTypes);
         status.innerHTML += '<br><span style="color:#1565c0">📋 기본 불량유형 14개 등록됨</span>';
       }
@@ -651,6 +651,50 @@ function swTab(n) {
 }
 
 // ============================================================
+//  NocoDB 필드명 헬퍼 (column_name 또는 title 둘 다 대응)
+// ============================================================
+function fv(r, ...names) {
+  for (const n of names) { if (r[n] !== undefined && r[n] !== null && r[n] !== '') return r[n]; }
+  return '';
+}
+function fn(r, ...names) {
+  for (const n of names) { if (r[n] !== undefined && r[n] !== null) return parseFloat(r[n]) || 0; }
+  return 0;
+}
+
+// 필드명 매핑 (영문 column_name → 한글 title)
+// NocoDB는 title(한글)로 응답/쿼리하므로, POST/where 시 양쪽 다 보냄
+const FM = {
+  // 기종마스터
+  'Title': '기종명', 'Description': '설명',
+  // 기판이미지
+  'Side': '면', 'Image': '이미지',
+  // 영역설정
+  'ZoneName': '영역명', 'X': 'X(%)', 'Y': 'Y(%)', 'W': 'W(%)', 'H': 'H(%)',
+  'Color': '색상', 'SortOrder': '순서',
+  // 불량유형
+  'Category': '카테고리',
+  // 불량이력
+  'Date': '날짜', 'Time': '시간', 'Model': '기종',
+  'Zone': '영역', 'DefectType': '불량유형', 'Qty': '수량', 'Note': '비고'
+};
+
+// POST용: 양쪽 필드명 모두 포함한 레코드 생성
+function rec(obj) {
+  const result = {};
+  for (const [k, v] of Object.entries(obj)) {
+    result[k] = v;
+    if (FM[k]) result[FM[k]] = v;
+  }
+  return result;
+}
+
+// where 쿼리 생성: 한글 필드명 우선, 영문 fallback
+function wf(engName) {
+  return FM[engName] || engName;
+}
+
+// ============================================================
 //  캐시 데이터
 // ============================================================
 let cachedModels = [];
@@ -677,7 +721,7 @@ async function loadModels() {
   if (!cfg.tblModel) { showToast('기종마스터 테이블 ID 필요'); return; }
   try {
     const data = await nocoGet(cfg.tblModel, 'limit=200&sort=-nc_order');
-    cachedModels = (data.list || []).map(r => ({ id: r.Id, name: r.Title || '', desc: r.Description || '' }));
+    cachedModels = (data.list || []).map(r => ({ id: r.Id, name: fv(r,'Title','기종명'), desc: fv(r,'Description','설명') }));
     renderModelList();
     refreshModelSelect();
     refreshHistModelSelect();
@@ -702,7 +746,7 @@ async function addModel() {
   if (!name) { showToast('기종명을 입력하세요'); return; }
   if (!cfg.tblModel) { showToast('기종마스터 테이블 ID 필요'); return; }
   try {
-    await nocoPost(cfg.tblModel, { Title: name });
+    await nocoPost(cfg.tblModel, rec({ Title: name }));
     document.getElementById('newModelName').value = '';
     showToast('✅ 기종 추가됨');
     await loadModels();
@@ -754,9 +798,9 @@ async function loadDefectTypes() {
   const cfg = getCfg();
   if (!cfg.tblDefectType) { showToast('불량유형 테이블 ID 필요'); return; }
   try {
-    const data = await nocoGet(cfg.tblDefectType, 'limit=200&sort=SortOrder');
+    const data = await nocoGet(cfg.tblDefectType, `limit=200&sort=${wf('SortOrder')}`);
     cachedDefectTypes = (data.list || []).map(r => ({
-      id: r.Id, name: r.Title || '', category: r.Category || '', order: r.SortOrder || 0
+      id: r.Id, name: fv(r,'Title','불량유형명'), category: fv(r,'Category','카테고리'), order: fn(r,'SortOrder','순서')
     }));
     renderDefectTypeList();
     showToast('✅ 불량유형 ' + cachedDefectTypes.length + '개 로드');
@@ -779,7 +823,7 @@ async function addDefectType() {
   if (!name) { showToast('불량유형명을 입력하세요'); return; }
   if (!cfg.tblDefectType) { showToast('불량유형 테이블 ID 필요'); return; }
   try {
-    await nocoPost(cfg.tblDefectType, { Title: name, Category: cat, SortOrder: cachedDefectTypes.length + 1 });
+    await nocoPost(cfg.tblDefectType, rec({ Title: name, Category: cat, SortOrder: cachedDefectTypes.length + 1 }));
     document.getElementById('newDefectType').value = '';
     document.getElementById('newDefectCategory').value = '';
     showToast('✅ 불량유형 추가됨');
@@ -818,11 +862,12 @@ document.getElementById('boardImgInput').addEventListener('change', async functi
   showLoading('이미지 업로드 중...');
   try {
     const uploaded = await nocoUploadFile(file);
-    await nocoPost(cfg.tblBoardImg, {
+    await nocoPost(cfg.tblBoardImg, rec({
       Title: model,
       Side: uploadSide,
+      Image: uploaded,
       '이미지': uploaded
-    });
+    }));
     showToast('✅ ' + uploadSide + ' 이미지 업로드 완료');
     await loadBoardImages();
   } catch (e) {
@@ -840,7 +885,7 @@ async function loadBoardImages() {
   if (!model || !cfg.tblBoardImg) { c.innerHTML = '<div class="empty">기종을 선택하세요</div>'; return; }
 
   try {
-    const where = `(Title,eq,${model})`;
+    const where = `(${wf('Title')},eq,${model})`;
     const data = await nocoGet(cfg.tblBoardImg, `where=${encodeURIComponent(where)}&limit=10`);
     const list = data.list || [];
     if (!list.length) { c.innerHTML = '<div class="empty">등록된 이미지가 없습니다</div>'; return; }
@@ -849,7 +894,7 @@ async function loadBoardImages() {
       const imgs = r['이미지'] || r.Image || [];
       const imgUrl = Array.isArray(imgs) && imgs.length ? imgs[0].signedUrl || imgs[0].url || imgs[0].path : '';
       return `<div class="cfg-item">
-        <span class="cfg-label">${r.Side || '?'}</span>
+        <span class="cfg-label">${fv(r,'Side','면') || '?'}</span>
         ${imgUrl ? `<img src="${imgUrl}" style="width:60px;height:40px;object-fit:cover;border-radius:4px;border:1px solid #ddd">` : '<span style="font-size:11px;color:#aaa">이미지없음</span>'}
         <button class="btn btn-sm" style="background:#ffebee;color:#c62828;flex:0" onclick="deleteBoardImage(${r.Id})">삭제</button>
       </div>`;
@@ -906,7 +951,7 @@ async function loadBoard() {
 
   // 기판 이미지 로드
   try {
-    const where = `(Title,eq,${currentModel})~and(Side,eq,${currentSide})`;
+    const where = `(${wf('Title')},eq,${currentModel})~and(${wf('Side')},eq,${currentSide})`;
     const imgData = await nocoGet(cfg.tblBoardImg, `where=${encodeURIComponent(where)}&limit=1`);
     const imgList = imgData.list || [];
     const boardImg = document.getElementById('boardImg');
@@ -933,13 +978,13 @@ async function loadBoard() {
 
   // 영역 로드
   try {
-    const where = `(Title,eq,${currentModel})~and(Side,eq,${currentSide})`;
-    const zoneData = await nocoGet(cfg.tblZone, `where=${encodeURIComponent(where)}&limit=200&sort=SortOrder`);
+    const where = `(${wf('Title')},eq,${currentModel})~and(${wf('Side')},eq,${currentSide})`;
+    const zoneData = await nocoGet(cfg.tblZone, `where=${encodeURIComponent(where)}&limit=200&sort=${wf('SortOrder')}`);
     cachedZones = (zoneData.list || []).map(r => ({
-      id: r.Id, name: r.ZoneName || r['영역명'] || '',
-      x: parseFloat(r.X || r['X(%)'] || 0), y: parseFloat(r.Y || r['Y(%)'] || 0),
-      w: parseFloat(r.W || r['W(%)'] || 10), h: parseFloat(r.H || r['H(%)'] || 10),
-      color: r.Color || r['색상'] || '#ff5252', order: r.SortOrder || r['순서'] || 0
+      id: r.Id, name: fv(r,'ZoneName','영역명'),
+      x: fn(r,'X','X(%)'), y: fn(r,'Y','Y(%)'),
+      w: fn(r,'W','W(%)') || 10, h: fn(r,'H','H(%)') || 10,
+      color: fv(r,'Color','색상') || '#ff5252', order: fn(r,'SortOrder','순서')
     }));
     renderZoneMarkers();
   } catch (e) { console.error('영역 로드 오류:', e); cachedZones = []; }
@@ -947,9 +992,9 @@ async function loadBoard() {
   // 불량유형 로드 (필요 시)
   if (!cachedDefectTypes.length && cfg.tblDefectType) {
     try {
-      const data = await nocoGet(cfg.tblDefectType, 'limit=200&sort=SortOrder');
+      const data = await nocoGet(cfg.tblDefectType, `limit=200&sort=${wf('SortOrder')}`);
       cachedDefectTypes = (data.list || []).map(r => ({
-        id: r.Id, name: r.Title || '', category: r.Category || '', order: r.SortOrder || 0
+        id: r.Id, name: fv(r,'Title','불량유형명'), category: fv(r,'Category','카테고리'), order: fn(r,'SortOrder','순서')
       }));
     } catch (e) { console.error('불량유형 로드 오류:', e); }
   }
@@ -1039,7 +1084,7 @@ async function saveDefect() {
 
   showLoading('저장 중...');
   try {
-    const records = entries.map(([type, qty]) => ({
+    const records = entries.map(([type, qty]) => rec({
       Title: `${date} ${time}`,
       Date: date,
       Time: time,
@@ -1073,13 +1118,13 @@ async function loadTodayStats() {
   if (!cfg.tblDefectHist) return;
   const today = new Date().toISOString().split('T')[0];
   try {
-    let where = `(Date,eq,${today})`;
-    if (currentModel) where += `~and(Model,eq,${currentModel})`;
+    let where = `(${wf('Date')},eq,${today})`;
+    if (currentModel) where += `~and(${wf('Model')},eq,${currentModel})`;
     const data = await nocoGet(cfg.tblDefectHist, `where=${encodeURIComponent(where)}&limit=1000`);
     const list = data.list || [];
-    const total = list.reduce((s, r) => s + (r.Qty || 0), 0);
-    const zones = new Set(list.map(r => r.Zone));
-    const types = new Set(list.map(r => r.DefectType));
+    const total = list.reduce((s, r) => s + fn(r,'Qty','수량'), 0);
+    const zones = new Set(list.map(r => fv(r,'Zone','영역')).filter(Boolean));
+    const types = new Set(list.map(r => fv(r,'DefectType','불량유형')).filter(Boolean));
     document.getElementById('statTotal').textContent = total;
     document.getElementById('statZones').textContent = zones.size;
     document.getElementById('statTypes').textContent = types.size;
@@ -1098,14 +1143,14 @@ async function loadHistory() {
   const to = document.getElementById('histDateTo').value;
 
   let conditions = [];
-  if (model) conditions.push(`(Model,eq,${model})`);
-  if (from) conditions.push(`(Date,gte,${from})`);
-  if (to) conditions.push(`(Date,lte,${to})`);
+  if (model) conditions.push(`(${wf('Model')},eq,${model})`);
+  if (from) conditions.push(`(${wf('Date')},gte,${from})`);
+  if (to) conditions.push(`(${wf('Date')},lte,${to})`);
   const where = conditions.length ? conditions.join('~and') : '';
 
   showLoading('이력 조회 중...');
   try {
-    const params = `limit=500&sort=-Date,-Time${where ? '&where=' + encodeURIComponent(where) : ''}`;
+    const params = `limit=500&sort=-${wf('Date')},-${wf('Time')}${where ? '&where=' + encodeURIComponent(where) : ''}`;
     const data = await nocoGet(cfg.tblDefectHist, params);
     const list = data.list || [];
     document.getElementById('histCount').textContent = list.length;
@@ -1118,13 +1163,13 @@ async function loadHistory() {
     }
     tbody.innerHTML = list.map(r =>
       `<tr>
-        <td style="white-space:nowrap">${r.Date || ''}<br><span style="color:#888;font-size:10px">${r.Time || ''}</span></td>
-        <td>${r.Model || ''}</td>
-        <td><span class="chip ${r.Side === 'TOP' ? 'chip-blue' : 'chip-orange'}">${r.Side || ''}</span></td>
-        <td>${r.Zone || ''}</td>
-        <td>${r.DefectType || ''}</td>
-        <td style="font-weight:700;color:var(--primary)">${r.Qty || 0}</td>
-        <td style="font-size:10px;color:#888;max-width:80px;overflow:hidden;text-overflow:ellipsis">${r.Note || ''}</td>
+        <td style="white-space:nowrap">${fv(r,'Date','날짜')}<br><span style="color:#888;font-size:10px">${fv(r,'Time','시간')}</span></td>
+        <td>${fv(r,'Model','기종')}</td>
+        <td><span class="chip ${fv(r,'Side','면') === 'TOP' ? 'chip-blue' : 'chip-orange'}">${fv(r,'Side','면')}</span></td>
+        <td>${fv(r,'Zone','영역')}</td>
+        <td>${fv(r,'DefectType','불량유형')}</td>
+        <td style="font-weight:700;color:var(--primary)">${fn(r,'Qty','수량')}</td>
+        <td style="font-size:10px;color:#888;max-width:80px;overflow:hidden;text-overflow:ellipsis">${fv(r,'Note','비고')}</td>
         <td><button class="btn btn-sm" style="background:#ffebee;color:#c62828;padding:4px 6px;font-size:10px" onclick="deleteHistRecord(${r.Id})">삭제</button></td>
       </tr>`
     ).join('');
@@ -1161,16 +1206,16 @@ async function loadStats() {
   const today = new Date();
 
   let conditions = [];
-  if (model) conditions.push(`(Model,eq,${model})`);
+  if (model) conditions.push(`(${wf('Model')},eq,${model})`);
 
   if (period === 'today') {
-    conditions.push(`(Date,eq,${today.toISOString().split('T')[0]})`);
+    conditions.push(`(${wf('Date')},eq,${today.toISOString().split('T')[0]})`);
   } else if (period === 'week') {
     const weekAgo = new Date(today); weekAgo.setDate(weekAgo.getDate() - 7);
-    conditions.push(`(Date,gte,${weekAgo.toISOString().split('T')[0]})`);
+    conditions.push(`(${wf('Date')},gte,${weekAgo.toISOString().split('T')[0]})`);
   } else if (period === 'month') {
     const monthAgo = new Date(today); monthAgo.setMonth(monthAgo.getMonth() - 1);
-    conditions.push(`(Date,gte,${monthAgo.toISOString().split('T')[0]})`);
+    conditions.push(`(${wf('Date')},gte,${monthAgo.toISOString().split('T')[0]})`);
   }
 
   const where = conditions.length ? conditions.join('~and') : '';
@@ -1183,7 +1228,7 @@ async function loadStats() {
 
     // 영역별 집계
     const byZone = {};
-    list.forEach(r => { byZone[r.Zone || '?'] = (byZone[r.Zone || '?'] || 0) + (r.Qty || 0); });
+    list.forEach(r => { const z = fv(r,'Zone','영역') || '?'; byZone[z] = (byZone[z] || 0) + fn(r,'Qty','수량'); });
     const zoneSorted = Object.entries(byZone).sort((a, b) => b[1] - a[1]);
 
     const zoneC = document.getElementById('statByZone');
@@ -1203,7 +1248,7 @@ async function loadStats() {
 
     // 유형별 집계
     const byType = {};
-    list.forEach(r => { byType[r.DefectType || '?'] = (byType[r.DefectType || '?'] || 0) + (r.Qty || 0); });
+    list.forEach(r => { const t = fv(r,'DefectType','불량유형') || '?'; byType[t] = (byType[t] || 0) + fn(r,'Qty','수량'); });
     const typeSorted = Object.entries(byType).sort((a, b) => b[1] - a[1]);
 
     const typeC = document.getElementById('statByType');
@@ -1250,7 +1295,7 @@ async function loadZoneSetup() {
 
   // 이미지 로드
   try {
-    const where = `(Title,eq,${model})~and(Side,eq,${zoneSide})`;
+    const where = `(${wf('Title')},eq,${model})~and(${wf('Side')},eq,${zoneSide})`;
     const imgData = await nocoGet(cfg.tblBoardImg, `where=${encodeURIComponent(where)}&limit=1`);
     const imgList = imgData.list || [];
     const zoneImg = document.getElementById('zoneImg');
@@ -1265,13 +1310,13 @@ async function loadZoneSetup() {
 
   // 영역 로드
   try {
-    const where = `(Title,eq,${model})~and(Side,eq,${zoneSide})`;
-    const zoneData = await nocoGet(cfg.tblZone, `where=${encodeURIComponent(where)}&limit=200&sort=SortOrder`);
+    const where = `(${wf('Title')},eq,${model})~and(${wf('Side')},eq,${zoneSide})`;
+    const zoneData = await nocoGet(cfg.tblZone, `where=${encodeURIComponent(where)}&limit=200&sort=${wf('SortOrder')}`);
     editZones = (zoneData.list || []).map(r => ({
-      id: r.Id, name: r.ZoneName || r['영역명'] || '',
-      x: parseFloat(r.X || r['X(%)'] || 0), y: parseFloat(r.Y || r['Y(%)'] || 0),
-      w: parseFloat(r.W || r['W(%)'] || 10), h: parseFloat(r.H || r['H(%)'] || 10),
-      color: r.Color || r['색상'] || '#ff5252', order: r.SortOrder || r['순서'] || 0
+      id: r.Id, name: fv(r,'ZoneName','영역명'),
+      x: fn(r,'X','X(%)'), y: fn(r,'Y','Y(%)'),
+      w: fn(r,'W','W(%)') || 10, h: fn(r,'H','H(%)') || 10,
+      color: fv(r,'Color','색상') || '#ff5252', order: fn(r,'SortOrder','순서')
     }));
     renderEditZones();
   } catch (e) { editZones = []; console.error(e); }
@@ -1386,14 +1431,14 @@ async function saveZones() {
   showLoading('영역 저장 중...');
   try {
     // 기존 영역 삭제
-    const where = `(Title,eq,${model})~and(Side,eq,${zoneSide})`;
+    const where = `(${wf('Title')},eq,${model})~and(${wf('Side')},eq,${zoneSide})`;
     const existing = await nocoGet(cfg.tblZone, `where=${encodeURIComponent(where)}&limit=200&fields=Id`);
     const existingIds = (existing.list || []).map(r => r.Id);
     if (existingIds.length) await nocoDelete(cfg.tblZone, existingIds);
 
     // 새 영역 저장
     if (editZones.length) {
-      const records = editZones.map((z, i) => ({
+      const records = editZones.map((z, i) => rec({
         Title: model, Side: zoneSide, ZoneName: z.name,
         X: z.x, Y: z.y, W: z.w, H: z.h,
         Color: z.color, SortOrder: i + 1
