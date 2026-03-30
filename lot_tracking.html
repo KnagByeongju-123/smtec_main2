@@ -625,19 +625,52 @@ async function nocoFindByField(tableId, fieldName, value){
   const now=Date.now();
   // 캐시 5분 유효
   if(!_partMapCache || now-_partMapCacheTime>300000){
-    let all=[],offset=0,limit=200;
-    while(true){
-      const data=await nocoGet(tableId,{limit,offset});
-      const rows=data.list||[];
-      all=all.concat(rows);
-      if(rows.length<limit)break;
-      offset+=limit;
+    try{
+      let all=[],offset=0,limit=200;
+      while(true){
+        const url=new URL(`${NOCO_BASE}/api/v2/tables/${tableId}/records`);
+        url.searchParams.set('limit',limit);
+        if(offset)url.searchParams.set('offset',offset);
+        const res=await fetch(url.toString(),{headers:nocoHeaders()});
+        if(!res.ok){
+          const errText=await res.text().catch(()=>'');
+          console.error('nocoFindByField 로드 오류:',res.status,errText);
+          throw new Error('NocoDB GET 오류: '+res.status);
+        }
+        const data=await res.json();
+        const rows=data.list||[];
+        all=all.concat(rows);
+        if(rows.length<limit)break;
+        offset+=limit;
+        if(all.length>=2000)break; // 안전장치
+      }
+      _partMapCache=all;
+      _partMapCacheTime=now;
+      console.log('품번매핑 캐시 로드:',all.length+'건',all.length>0?'첫행 키: '+Object.keys(all[0]).join(','):'');
+    }catch(e){
+      console.error('품번매핑 캐시 로드 실패:',e);
+      _partMapCache=null;
+      throw e;
     }
-    _partMapCache=all;
-    _partMapCacheTime=now;
   }
   const val=String(value).trim();
-  return _partMapCache.find(r=>String(r[fieldName]||'').trim()===val)||null;
+  // 필드명 유연 매칭: 정확히 일치하는 키 또는 해당 문자열을 포함하는 키
+  return _partMapCache.find(r=>{
+    // 정확한 키
+    if(String(r[fieldName]||'').trim()===val) return true;
+    // 포함 키 (예: '공용품번(바코드값)' 안에 '공용품번' 포함)
+    const matchKey=Object.keys(r).find(k=>k.includes(fieldName));
+    if(matchKey && String(r[matchKey]||'').trim()===val) return true;
+    return false;
+  })||null;
+}
+
+// NocoDB 필드명 유연 접근 (title에 한글+괄호 등 포함될 수 있음)
+function getFieldVal(row, shortName){
+  if(!row) return '';
+  if(row[shortName]!==undefined) return row[shortName];
+  const key=Object.keys(row).find(k=>k.includes(shortName));
+  return key ? row[key] : '';
 }
 
 // NocoDB 설정 UI
@@ -716,23 +749,24 @@ async function openRegModal(barcodeValue, format){
     
     if(found && row){
       dbMappingFound = true;
+      const gv=(n)=>getFieldVal(row,n);
       document.getElementById('modalTitle').textContent = '✅ 매핑 확인 → 등록';
       matchArea.innerHTML = `<div class="modal-match found">
         <div class="mm-title">✅ DB 매핑 발견</div>
         <table>
-          <tr><td>기준품번</td><td style="font-size:14px;color:#2e7d32">${row['기준품번']||''}</td></tr>
-          <tr><td>공급사</td><td>${row['공급사']||'-'}</td><td>Description</td><td>${row['Description']||'-'}</td></tr>
-          <tr><td>공정</td><td>${row['공정']||'-'}</td><td>거래유형</td><td>${row['거래유형']||'-'}</td></tr>
-          ${row['MOQ']?'<tr><td>MOQ</td><td>'+row['MOQ']+'</td></tr>':''}
+          <tr><td>기준품번</td><td style="font-size:14px;color:#2e7d32">${gv('기준품번')}</td></tr>
+          <tr><td>공급사</td><td>${gv('공급사')||'-'}</td><td>Description</td><td>${gv('Description')||'-'}</td></tr>
+          <tr><td>공정</td><td>${gv('공정')||'-'}</td><td>거래유형</td><td>${gv('거래유형')||'-'}</td></tr>
+          ${gv('MOQ')?'<tr><td>MOQ</td><td>'+gv('MOQ')+'</td></tr>':''}
         </table>
       </div>`;
       // 자동 채움
-      document.getElementById('mInpBasePart').value = row['기준품번'] || '';
-      document.getElementById('mInpSupplier').value = row['공급사'] || '';
-      document.getElementById('mInpDesc').value = row['Description'] || '';
-      document.getElementById('mInpProcess').value = row['공정'] || '';
-      document.getElementById('mInpTradeType').value = row['거래유형'] || '';
-      if(row['MOQ']) document.getElementById('mInpMoq').value = row['MOQ'];
+      document.getElementById('mInpBasePart').value = gv('기준품번');
+      document.getElementById('mInpSupplier').value = gv('공급사');
+      document.getElementById('mInpDesc').value = gv('Description');
+      document.getElementById('mInpProcess').value = gv('공정');
+      document.getElementById('mInpTradeType').value = gv('거래유형');
+      if(gv('MOQ')) document.getElementById('mInpMoq').value = gv('MOQ');
       document.getElementById('modalNewMapping').style.display='none';
     } else {
       dbMappingFound = false;
@@ -745,7 +779,7 @@ async function openRegModal(barcodeValue, format){
       document.getElementById('modalNewMapping').style.display='block';
     }
   } catch(e){
-    matchArea.innerHTML = `<div class="modal-match notfound"><div class="mm-title">⚠ 조회 실패</div><div style="font-size:11px;color:#c62828">${e.message}</div></div>`;
+    matchArea.innerHTML = `<div class="modal-match notfound"><div class="mm-title">⚠ 조회 실패</div><div style="font-size:11px;color:#c62828">${e.message}</div><div style="font-size:10px;color:#888;margin-top:4px">테이블ID: ${cfg.tblPart}<br>캐시: ${_partMapCache?_partMapCache.length+'건':'없음'}</div></div>`;
     document.getElementById('modalNewMapping').style.display='block';
   }
 }
@@ -987,7 +1021,7 @@ async function saveHistToSheet(entry){
 // ============================================================
 async function resolveBasePart(barcode){
   const cfg=getCfg();if(!cfg.tblPart)return{found:false,basePart:barcode};
-  try{const cp=clientParseBarcode(barcode);for(const code of [barcode,cp.partCode]){if(!code)continue;const row=await nocoFindByField(cfg.tblPart,'공용품번',code);if(row)return{found:true,basePart:row['기준품번']||barcode,supplier:row['공급사']||''}}}catch(e){}
+  try{const cp=clientParseBarcode(barcode);for(const code of [barcode,cp.partCode]){if(!code)continue;const row=await nocoFindByField(cfg.tblPart,'공용품번',code);if(row){const bp=getFieldVal(row,'기준품번')||barcode;const sup=getFieldVal(row,'공급사')||'';return{found:true,basePart:bp,supplier:sup}}}}catch(e){}
   return{found:false,basePart:barcode};
 }
 
