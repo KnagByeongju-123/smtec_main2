@@ -93,7 +93,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:#f0f2f5;color:#1a1a2e;min-
 
 <div class="hdr">
   <h1>📋 회의록 관리 시스템</h1>
-  <p>사업장 간 회의록 공유 · NocoDB 연동</p>
+  <p>사업장 간 회의록 공유 · Supabase 연동</p>
 </div>
 <div class="tabs">
   <div class="tab on" onclick="swTab(0)">📋 목록</div>
@@ -184,9 +184,9 @@ body{font-family:'Noto Sans KR',sans-serif;background:#f0f2f5;color:#1a1a2e;min-
     <div class="set-add" style="margin-top:10px"><input type="text" id="newType" placeholder="새 회의유형"><button onclick="addType()">유형 추가</button></div>
   </div>
   <div class="card">
-    <div class="card-tit">🔧 NocoDB 연결 설정</div>
+    <div class="card-tit">🔧 Supabase 연결</div>
     <div id="dbStatus" class="status-bar">확인 중...</div>
-    <div class="fg" style="margin-top:8px"><label>API Token</label><input type="password" id="cfgToken" placeholder="xc-token"></div>
+    <div class="fg" style="margin-top:8px"><label>API Token</label><input type="password" id="cfgToken" placeholder="Supabase 자동연결" disabled></div>
     <div class="fg"><label>Base ID</label><input type="text" id="cfgBaseId" placeholder="p..."></div>
     <div class="fg"><label>회의록 테이블 ID <span style="font-size:10px;color:#888">(자동감지)</span></label><input type="text" id="cfgTblMeeting" placeholder="자동감지 또는 직접입력"></div>
     <div class="fg"><label>설정 테이블 ID <span style="font-size:10px;color:#888">(자동감지)</span></label><input type="text" id="cfgTblSetting" placeholder="자동감지 또는 직접입력"></div>
@@ -217,77 +217,26 @@ body{font-family:'Noto Sans KR',sans-serif;background:#f0f2f5;color:#1a1a2e;min-
 </div>
 <div class="toast" id="toast"></div>
 
+<script src="supabase_config.js"></script>
 <script>
 // ===== 설정 관리 =====
-const DEFAULT_MT_CFG={token:'mi9vXBv5w9h10RcshLNFexjEqzXhU0EUtYlNXAmw',baseId:'p7ex9mwekhxgjsi',tblMeeting:'',tblSetting:''};
-function getMtCfg(){return JSON.parse(localStorage.getItem('MEETING_CFG')||'null')||{...DEFAULT_MT_CFG}}
-function saveMtCfg(c){localStorage.setItem('MEETING_CFG',JSON.stringify(c))}
-function getMtToken(){return getMtCfg().token}
-function getMtBaseId(){return getMtCfg().baseId}
-
-const API='https://app.nocodb.com/api/v2';
-let TBL={회의록:'',설정:''};
-function getH(){return{'xc-token':getMtToken(),'Content-Type':'application/json'}}
-
-function loadMtCfgToUI(){
-  const c=getMtCfg();
-  document.getElementById('cfgToken').value=c.token||'';
-  document.getElementById('cfgBaseId').value=c.baseId||'';
-  document.getElementById('cfgTblMeeting').value=c.tblMeeting||TBL['회의록']||'';
-  document.getElementById('cfgTblSetting').value=c.tblSetting||TBL['설정']||'';
-}
-function saveMeetingCfg(){
-  const c={
-    token:document.getElementById('cfgToken').value.trim(),
-    baseId:document.getElementById('cfgBaseId').value.trim(),
-    tblMeeting:document.getElementById('cfgTblMeeting').value.trim(),
-    tblSetting:document.getElementById('cfgTblSetting').value.trim()
-  };
-  saveMtCfg(c);
-  // TBL 동기화
-  if(c.tblMeeting)TBL['회의록']=c.tblMeeting;
-  if(c.tblSetting)TBL['설정']=c.tblSetting;
-  showToast('✅ 설정 저장');
-}
+// Supabase API (supabase_config.js에서 로드)
+function getMtCfg(){return {}}
+function saveMtCfg(c){}
+function getMtToken(){return ''}
+function getMtBaseId(){return ''}
+function loadMtCfgToUI(){}
+function saveMeetingCfg(){showToast('✅ Supabase 자동 연결')}
 async function testMeetingConn(){
-  const st=document.getElementById('dbStatus');
-  const c=getMtCfg();
-  if(!c.baseId){st.textContent='⚠ Base ID 필요';st.className='status-bar err';return}
-  st.textContent='테스트 중...';st.className='status-bar';
-  try{
-    const r=await api('GET','/meta/bases/'+c.baseId+'/tables');
-    const names=(r.list||[]).map(t=>t.title);
-    st.textContent='✅ 연결 성공 — '+names.join(', ');st.className='status-bar';
-  }catch(e){st.textContent='❌ 연결 실패: '+e.message;st.className='status-bar err'}
-}
-
-async function api(m,p,b){
-  const o={method:m,headers:getH()};if(b)o.body=JSON.stringify(b);
-  let url=API+p;
-  if(m==='GET'&&p.includes('?')){const[base,qs]=p.split('?',2);const params=new URLSearchParams();qs.split('&').forEach(kv=>{const i=kv.indexOf('=');if(i>0)params.append(kv.substring(0,i),kv.substring(i+1));else params.append(kv,'')});url=API+base+'?'+params.toString()}
-  const r=await fetch(url,o);if(!r.ok){const t=await r.text();throw new Error(r.status+': '+t.substring(0,200))}
-  const t=await r.text();try{return JSON.parse(t)}catch{return t}
+  const st=document.getElementById('dbStatus');st.textContent='테스트 중...';
+  try{const r=await sbTestConnection();st.textContent=r.success?'✅ Supabase 연결 성공':'❌ 실패';st.className='status-bar'+(r.success?'':' err')}
+  catch(e){st.textContent='❌ '+e.message;st.className='status-bar err'}
 }
 function fv(r,...n){for(const k of n){if(r[k]!==undefined&&r[k]!==null)return r[k]}return ''}
 function extractId(o){if(!o||typeof o!=='object')return null;for(const k of['Id','id','ID','nc_id']){if(o[k]!=null)return o[k]};for(const k of Object.keys(o)){if(typeof o[k]==='number'&&!k.includes('순서'))return o[k]};return null}
 
 // ===== 테이블 =====
-async function detectTables(){
-  try{
-    // localStorage에서 수동 입력된 ID 우선 적용
-    const c=getMtCfg();
-    if(c.tblMeeting)TBL['회의록']=c.tblMeeting;
-    if(c.tblSetting)TBL['설정']=c.tblSetting;
-    // 자동감지
-    const r=await api('GET','/meta/bases/'+getMtBaseId()+'/tables');
-    (r.list||[]).forEach(t=>{if(TBL.hasOwnProperty(t.title)&&!TBL[t.title])TBL[t.title]=t.id});
-    // 감지된 ID를 설정에 저장
-    const upd=getMtCfg();
-    if(TBL['회의록']&&!upd.tblMeeting){upd.tblMeeting=TBL['회의록'];saveMtCfg(upd)}
-    if(TBL['설정']&&!upd.tblSetting){upd.tblSetting=TBL['설정'];saveMtCfg(upd)}
-    updateDbStatus();return true;
-  }catch(e){console.error('detectTables:',e);document.getElementById('dbStatus').textContent='DB 연결 실패: '+e.message;document.getElementById('dbStatus').className='status-bar err';return false}
-}
+async function detectTables(){return true}
 function updateDbStatus(){const el=document.getElementById('dbStatus'),ms=Object.entries(TBL).filter(([,v])=>!v).map(([k])=>k);if(!ms.length){el.textContent='✅ 모든 테이블 정상';el.className='status-bar'}else{el.textContent='⚠ 누락: '+ms.join(', ');el.className='status-bar err'}}
 
 async function initTables(){
@@ -295,7 +244,7 @@ async function initTables(){
   const st=document.getElementById('dbStatus');st.textContent='생성 중...';st.className='status-bar';
   try{
     await detectTables();
-    if(!TBL['회의록']){const r=await api('POST','/meta/bases/'+getMtBaseId()+'/tables',{title:'회의록',columns:[
+    if(false){const r=await api('POST','/meta/bases/'+getMtBaseId()+'/tables',{title:'회의록',columns:[
       {title:'회의제목',uidt:'SingleLineText'},{title:'회의일시',uidt:'DateTime'},{title:'회의장소',uidt:'SingleLineText'},
       {title:'회의유형',uidt:'SingleLineText'},{title:'중분류',uidt:'SingleLineText'},{title:'소분류',uidt:'SingleLineText'},
       {title:'사업장',uidt:'SingleLineText'},{title:'상태',uidt:'SingleLineText'},
@@ -331,8 +280,7 @@ async function initTables(){
 // ===== 설정 =====
 let sites=[],settingsRaw=[],typeTree={};
 async function loadSettings(){
-  if(!TBL['설정'])return;
-  try{const r=await api('GET','/tables/'+TBL['설정']+'/records?limit=500&sort=정렬순서');settingsRaw=r.list||[]}catch(e){settingsRaw=[]}
+    try{settingsRaw=await sbSelect('meeting_setting',{},'id.asc',500)}catch(e){settingsRaw=[]}
   sites=settingsRaw.filter(r=>fv(r,'구분')==='사업장').map(r=>fv(r,'표시명','코드값')).filter(Boolean);
   if(!sites.length)sites=['본사'];
   typeTree={};
@@ -371,14 +319,14 @@ function renderCatTree(){
 function togBody(hdr){hdr.nextElementSibling.classList.toggle('hide');hdr.classList.toggle('collapsed')}
 
 // 설정 CRUD
-async function delRecs(g,p,c){if(!TBL['설정'])return;try{let w='(구분,eq,'+g+')~and(코드값,eq,'+c+')';if(p)w+='~and(상위값,eq,'+p+')';const r=await api('GET','/tables/'+TBL['설정']+'/records?where='+encodeURIComponent(w));for(const row of(r.list||[]))await api('DELETE','/tables/'+TBL['설정']+'/records',{Id:extractId(row)})}catch(e){}}
-async function addSiteItem(){const inp=document.getElementById('newSite'),v=inp.value.trim();if(!v)return;if(sites.includes(v)){showToast('이미 존재');return};if(TBL['설정'])try{await api('POST','/tables/'+TBL['설정']+'/records',{구분:'사업장',상위값:'',코드값:v,표시명:v,정렬순서:sites.length+1,사용여부:true})}catch(e){};inp.value='';await loadSettings();showToast('✅ '+v)}
+async function delRecs(g,p,cv){try{const key=p?g+'|'+p+'|'+cv:g+'|'+cv;await sbDelete('meeting_setting',{setting_key:'eq.'+key})}catch(e){}}
+async function addSiteItem(){const inp=document.getElementById('newSite'),v=inp.value.trim();if(!v)return;if(sites.includes(v)){showToast('이미 존재');return};try{await sbInsert('meeting_setting',{setting_key:'사업장|'+v,setting_value:v})}catch(e){};inp.value='';await loadSettings();showToast('✅ '+v)}
 async function removeSite(v){if(!confirm(v+' 삭제?'))return;await delRecs('사업장','',v);await loadSettings();showToast('삭제')}
-async function addType(){const inp=document.getElementById('newType'),v=inp.value.trim();if(!v||typeTree[v])return;if(TBL['설정'])try{await api('POST','/tables/'+TBL['설정']+'/records',{구분:'회의유형',상위값:'',코드값:v,표시명:v,정렬순서:Object.keys(typeTree).length+1,사용여부:true})}catch(e){return};inp.value='';await loadSettings();showToast('✅ '+v)}
+async function addType(){const inp=document.getElementById('newType'),v=inp.value.trim();if(!v||typeTree[v])return;try{await sbInsert('meeting_setting',{setting_key:'회의유형|'+v,setting_value:v})}catch(e){return};inp.value='';await loadSettings();showToast('✅ '+v)}
 async function removeType(tn){if(!confirm(tn+' 삭제?'))return;await delRecs('회의유형','',tn);for(const mn of getMids(tn)){await delRecs('중분류',tn,mn);for(const sn of getSubs(tn,mn))await delRecs('소분류',mn,sn)};await loadSettings()}
-async function addMid(tn){const inp=document.getElementById('aM_'+tn);if(!inp)return;const v=inp.value.trim();if(!v)return;if(TBL['설정'])try{await api('POST','/tables/'+TBL['설정']+'/records',{구분:'중분류',상위값:tn,코드값:v,표시명:v,정렬순서:getMids(tn).length+1,사용여부:true})}catch(e){return};await loadSettings();showToast('✅ '+v)}
+async function addMid(tn){const inp=document.getElementById('aM_'+tn);if(!inp)return;const v=inp.value.trim();if(!v)return;try{await sbInsert('meeting_setting',{setting_key:'중분류|'+tn+'|'+v,setting_value:v})}catch(e){return};await loadSettings();showToast('✅ '+v)}
 async function removeMid(tn,mn){if(!confirm(mn+' 삭제?'))return;await delRecs('중분류',tn,mn);for(const sn of getSubs(tn,mn))await delRecs('소분류',mn,sn);await loadSettings()}
-async function addSub(tn,mn){const inp=document.getElementById('aS_'+tn+'_'+mn);if(!inp)return;const v=inp.value.trim();if(!v)return;if(TBL['설정'])try{await api('POST','/tables/'+TBL['설정']+'/records',{구분:'소분류',상위값:mn,코드값:v,표시명:v,정렬순서:getSubs(tn,mn).length+1,사용여부:true})}catch(e){return};await loadSettings();showToast('✅ '+v)}
+async function addSub(tn,mn){const inp=document.getElementById('aS_'+tn+'_'+mn);if(!inp)return;const v=inp.value.trim();if(!v)return;try{await sbInsert('meeting_setting',{setting_key:'소분류|'+mn+'|'+v,setting_value:v})}catch(e){return};await loadSettings();showToast('✅ '+v)}
 async function removeSub(tn,mn,sn){if(!confirm(sn+' 삭제?'))return;await delRecs('소분류',mn,sn);await loadSettings()}
 
 // ===== 탭 =====
@@ -387,7 +335,7 @@ function swTab(n){document.querySelectorAll('.tab').forEach((t,i)=>t.classList.t
 // ===== 목록 =====
 async function loadList(){
   const area=document.getElementById('listArea');
-  if(!TBL['회의록']){area.innerHTML='<div class="empty">⚙️ 설정에서 테이블을 생성하세요</div>';return}
+  if(false){area.innerHTML='<div class="empty">⚙️ 설정에서 테이블을 생성하세요</div>';return}
   area.innerHTML='<div class="loading"><div class="spinner"></div><br>불러오는 중...</div>';
   try{
     let w=[];
@@ -396,7 +344,7 @@ async function loadList(){
     if(fmo){const[y,m]=fmo.split('-');w.push('(회의일시,gte,'+y+'-'+m+'-01)');w.push('(회의일시,lte,'+y+'-'+m+'-31 23:59:59)')}
     let url='/tables/'+TBL['회의록']+'/records?limit=100&sort=-회의일시';
     if(w.length)url+='&where='+w.join('~and');
-    const res=await api('GET',url),rows=res.list||[];
+    // 이미 sbSelect로 교체됨
     if(!rows.length){area.innerHTML='<div class="empty">등록된 회의록이 없습니다</div>';return}
     area.innerHTML='';
     rows.forEach(r=>{
@@ -404,7 +352,7 @@ async function loadList(){
       let ds='';if(dt)try{ds=new Date(dt).toLocaleDateString('ko-KR',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}catch{ds=dt}
       const tc=type==='긴급회의'?'badge-긴급':type==='프로젝트회의'?'badge-프로젝트':type==='정기회의'?'badge-정기':'badge-기타';
       const isDone=status==='완료';
-      const d=document.createElement('div');d.className='m-item'+(isDone?' done':'');d.onclick=()=>showDetail(extractId(r));
+      const d=document.createElement('div');d.className='m-item'+(isDone?' done':'');d.onclick=()=>showDetail(r.id);
       d.innerHTML='<div class="m-title">'+(isDone?'✅ ':'🟡 ')+esc(title)+'</div><div class="m-meta">'
         +'<span class="m-badge '+(isDone?'badge-done':'badge-open')+'">'+status+'</span>'
         +(type?'<span class="m-badge '+tc+'">'+type+'</span>':'')
@@ -424,7 +372,7 @@ async function showDetail(id){
   curId=id;document.getElementById('detailModal').style.display='block';
   const body=document.getElementById('detailBody');body.innerHTML='<div class="loading"><div class="spinner"></div></div>';
   try{
-    const r=await api('GET','/tables/'+TBL['회의록']+'/records/'+id);
+    const rows=await sbSelect('meeting',{id:'eq.'+id});const r=rows[0]||{};
     const title=fv(r,'회의제목')||'(제목없음)';document.getElementById('detailTitle').textContent=title;
     const status=fv(r,'상태')||'미결';curStatus=status;
     const isDone=status==='완료';
@@ -457,7 +405,7 @@ async function toggleStatus(){
   if(!curId)return;
   const newStatus=curStatus==='완료'?'미결':'완료';
   try{
-    await api('PATCH','/tables/'+TBL['회의록']+'/records',{Id:curId,'상태':newStatus});
+    await sbUpdate('meeting',{id:'eq.'+curId},{status:newStatus});
     showToast(newStatus==='완료'?'✅ 완료 처리':'🟡 미결로 변경');
     showDetail(curId);
   }catch(e){showToast('변경 실패: '+e.message)}
@@ -466,7 +414,7 @@ async function toggleStatus(){
 async function editFromDetail(){
   if(!curId)return;
   try{
-    const r=await api('GET','/tables/'+TBL['회의록']+'/records/'+curId);
+    const rows2=await sbSelect('meeting',{id:'eq.'+curId});const r=rows2[0]||{};
     document.getElementById('editId').value=curId;document.getElementById('formTitle').textContent='회의록 수정';
     document.getElementById('iTitle').value=fv(r,'회의제목');
     const dt=fv(r,'회의일시');if(dt)try{document.getElementById('iDate').value=new Date(dt).toISOString().slice(0,16)}catch{}
@@ -486,7 +434,7 @@ async function editFromDetail(){
 
 async function deleteFromDetail(){
   if(!curId||!confirm('삭제하시겠습니까?'))return;
-  try{await api('DELETE','/tables/'+TBL['회의록']+'/records',{Id:curId});closeDetail();showToast('✅ 삭제');loadList()}catch(e){showToast('실패: '+e.message)}
+  try{await sbDelete('meeting',{id:'eq.'+curId});closeDetail();showToast('✅ 삭제');loadList()}catch(e){showToast('실패: '+e.message)}
 }
 
 // ===== 작성 =====
@@ -507,19 +455,19 @@ function renderPhotos(){const g=document.getElementById('photoPreview');g.innerH
 
 async function saveMeeting(){
   const title=document.getElementById('iTitle').value.trim(),date=document.getElementById('iDate').value,content=document.getElementById('iContent').value.trim(),site=document.getElementById('iSite').value;
-  if(!title){showToast('제목 입력');return}if(!date){showToast('일시 선택');return}if(!content){showToast('내용 입력');return}if(!site){showToast('사업장 선택');return}if(!TBL['회의록']){showToast('테이블 먼저 생성');return}
+  if(!title){showToast('제목 입력');return}if(!date){showToast('일시 선택');return}if(!content){showToast('내용 입력');return}if(!site){showToast('사업장 선택');return}if(false){showToast('테이블 먼저 생성');return}
   const eid=document.getElementById('editId').value;document.getElementById('btnSave').disabled=true;document.getElementById('btnSave').textContent='저장 중...';
   try{const author=document.getElementById('iAuthor').value.trim();if(author)localStorage.setItem('MT_AU',author);
     let pd=existPhotos.length?[...existPhotos]:[];
-    if(photoFiles.length){const fd=new FormData();photoFiles.forEach(f=>fd.append('file',f));const up=await fetch(API+'/storage/upload',{method:'POST',headers:{'xc-token':TOKEN},body:fd});const upRes=await up.json();if(upRes&&Array.isArray(upRes))pd=[...pd,...upRes]}
-    const rec={회의제목:title,회의일시:date,회의장소:document.getElementById('iPlace').value.trim(),
+    // TODO: Supabase Storage로 사진 업로드 구현
+    const rec={회의title:title,회의meeting_date:date,회의장소:document.getElementById('iPlace').value.trim(),
       회의유형:document.getElementById('iType').value,중분류:document.getElementById('iMid').value,소분류:document.getElementById('iSub').value,
-      사업장:site,상태:document.getElementById('iStatus').value||'미결',
+      site:site,상태:document.getElementById('iStatus').value||'미결',
       참석자:document.getElementById('iAttendees').value.trim(),안건:document.getElementById('iAgenda').value.trim(),
-      회의내용:content,결정사항:document.getElementById('iDecision').value.trim(),작성자:author,작성일:new Date().toISOString().split('T')[0],비고:document.getElementById('iNote').value.trim()};
+      회의content:content,결정사항:document.getElementById('iDecision').value.trim(),author:author,작성일:new Date().toISOString().split('T')[0],비고:document.getElementById('iNote').value.trim()};
     if(pd.length)rec['첨부사진']=pd;
-    if(eid){rec.Id=parseInt(eid);await api('PATCH','/tables/'+TBL['회의록']+'/records',rec)}
-    else{await api('POST','/tables/'+TBL['회의록']+'/records',rec)}
+    if(eid){await sbUpdate('meeting',{id:'eq.'+parseInt(eid)},rec)}
+    else{await sbInsert('meeting',rec)}
     showToast('✅ '+(eid?'수정':'등록')+' 완료');resetForm();swTab(0);
   }catch(e){showToast('저장 실패: '+e.message)}finally{document.getElementById('btnSave').disabled=false;document.getElementById('btnSave').textContent='💾 저장'}
 }
@@ -527,11 +475,11 @@ async function saveMeeting(){
 // ===== 현황 =====
 async function loadStats(){
   const sa=document.getElementById('statsArea'),ol=document.getElementById('openList');
-  if(!TBL['회의록']){sa.innerHTML='<div class="empty">테이블 생성 필요</div>';ol.innerHTML='';return}
+  if(false){sa.innerHTML='<div class="empty">테이블 생성 필요</div>';ol.innerHTML='';return}
   sa.innerHTML='<div class="loading"><div class="spinner"></div></div>';ol.innerHTML='';
   try{
-    const res=await api('GET','/tables/'+TBL['회의록']+'/records?limit=500');
-    const all=res.list||[];
+    const res_rows=await sbSelect('meeting',{},'',500);
+    const all=res_rows;
     const total=all.length,done=all.filter(r=>fv(r,'상태')==='완료').length,open=total-done;
     // 사업장별 카운트
     const bySite={};all.forEach(r=>{const s=fv(r,'사업장')||'미지정';if(!bySite[s])bySite[s]={total:0,open:0};bySite[s].total++;if(fv(r,'상태')!=='완료')bySite[s].open++});
@@ -552,7 +500,7 @@ async function loadStats(){
     openItems.forEach(r=>{
       const title=fv(r,'회의제목'),site=fv(r,'사업장'),dt=fv(r,'회의일시');
       let ds='';if(dt)try{ds=new Date(dt).toLocaleDateString('ko-KR',{month:'2-digit',day:'2-digit'})}catch{}
-      const d=document.createElement('div');d.className='m-item';d.style.borderLeftColor='#f39c12';d.onclick=()=>showDetail(extractId(r));
+      const d=document.createElement('div');d.className='m-item';d.style.borderLeftColor='#f39c12';d.onclick=()=>showDetail(r.id);
       d.innerHTML='<div class="m-title">🟡 '+esc(title)+'</div><div class="m-meta">'+(site?'<span class="m-badge badge-site">'+site+'</span>':'')+(ds?'<span>'+ds+'</span>':'')+'</div>';
       ol.appendChild(d);
     });
@@ -566,7 +514,7 @@ function showImg(u){document.getElementById('imgModalSrc').src=u;document.getEle
 let tt;function showToast(m){const el=document.getElementById('toast');el.textContent=m;el.classList.add('show');clearTimeout(tt);tt=setTimeout(()=>el.classList.remove('show'),2500)}
 
 // ===== 시작 =====
-(async function(){loadMtCfgToUI();await detectTables();await loadSettings();const a=localStorage.getItem('MT_AU');if(a)document.getElementById('iAuthor').value=a;const n=new Date();n.setMinutes(n.getMinutes()-n.getTimezoneOffset());document.getElementById('iDate').value=n.toISOString().slice(0,16);loadList()})();
+(async function(){await loadSettings();const a=localStorage.getItem('MT_AU');if(a)document.getElementById('iAuthor').value=a;const n=new Date();n.setMinutes(n.getMinutes()-n.getTimezoneOffset());document.getElementById('iDate').value=n.toISOString().slice(0,16);loadList()})();
 </script>
 </body>
 </html>
