@@ -619,6 +619,27 @@ async function nocoPost(tableId,data){if(!tableId)throw new Error('테이블 ID 
 async function nocoPatch(tableId,rowId,data){if(!tableId)throw new Error('테이블 ID 미설정');const res=await fetch(`${NOCO_BASE}/api/v2/tables/${tableId}/records`,{method:'PATCH',headers:nocoHeaders(),body:JSON.stringify({Id:rowId,...data})});if(!res.ok)throw new Error('NocoDB PATCH 오류: '+res.status);return await res.json()}
 async function nocoDelete(tableId,rowId){if(!tableId)throw new Error('테이블 ID 미설정');const res=await fetch(`${NOCO_BASE}/api/v2/tables/${tableId}/records`,{method:'DELETE',headers:nocoHeaders(),body:JSON.stringify({Id:rowId})});if(!res.ok)throw new Error('NocoDB DELETE 오류: '+res.status);return true}
 
+// 품번매핑 캐시 (전체 로드 후 클라이언트 필터 — WHERE 절 422 에러 방지)
+let _partMapCache=null, _partMapCacheTime=0;
+async function nocoFindByField(tableId, fieldName, value){
+  const now=Date.now();
+  // 캐시 5분 유효
+  if(!_partMapCache || now-_partMapCacheTime>300000){
+    let all=[],offset=0,limit=200;
+    while(true){
+      const data=await nocoGet(tableId,{limit,offset});
+      const rows=data.list||[];
+      all=all.concat(rows);
+      if(rows.length<limit)break;
+      offset+=limit;
+    }
+    _partMapCache=all;
+    _partMapCacheTime=now;
+  }
+  const val=String(value).trim();
+  return _partMapCache.find(r=>String(r[fieldName]||'').trim()===val)||null;
+}
+
 // NocoDB 설정 UI
 function loadNocoConfigUI(){const cfg=getCfg();const fields={cfgToken:'token',cfgBaseId:'baseId',cfgTblPart:'tblPart',cfgTblMove:'tblMove',cfgTblFeeder:'tblFeeder',cfgTblSetHist:'tblSetHist',cfgTblExHist:'tblExHist',cfgTblBom:'tblBom'};Object.entries(fields).forEach(([elId,key])=>{const el=document.getElementById(elId);if(el)el.value=cfg[key]||''})}
 function saveNocoConfig(){const cfg={token:document.getElementById('cfgToken').value.trim(),baseId:document.getElementById('cfgBaseId').value.trim(),tblPart:document.getElementById('cfgTblPart').value.trim(),tblMove:document.getElementById('cfgTblMove').value.trim(),tblFeeder:document.getElementById('cfgTblFeeder').value.trim(),tblSetHist:document.getElementById('cfgTblSetHist').value.trim(),tblExHist:document.getElementById('cfgTblExHist').value.trim(),tblBom:document.getElementById('cfgTblBom').value.trim()};localStorage.setItem('NOCO_CFG',JSON.stringify(cfg));showToast('✅ NocoDB 설정 저장 완료')}
@@ -689,8 +710,8 @@ async function openRegModal(barcodeValue, format){
     const searchCode = parsed.partCode || barcodeValue;
     let found=false, row=null;
     for(const code of [barcodeValue, searchCode]){
-      const data = await nocoGet(cfg.tblPart, {where:`(공용품번,eq,${code})`, limit:1});
-      if(data.list && data.list.length > 0){row=data.list[0]; found=true; break;}
+      const r = await nocoFindByField(cfg.tblPart, '공용품번', code);
+      if(r){row=r; found=true; break;}
     }
     
     if(found && row){
@@ -822,6 +843,7 @@ async function doAddMappingFromModal(){
       'MOQ':document.getElementById('mInpMoq').value.trim(),'비고':''
     });
     dbMappingFound=true;
+    _partMapCache=null; // 캐시 초기화
     document.getElementById('modalNewMapping').style.display='none';
     showToast('✅ 품번매핑 등록 완료');
   }catch(e){showToast('⚠ 등록 실패: '+e.message)}
@@ -965,7 +987,7 @@ async function saveHistToSheet(entry){
 // ============================================================
 async function resolveBasePart(barcode){
   const cfg=getCfg();if(!cfg.tblPart)return{found:false,basePart:barcode};
-  try{const cp=clientParseBarcode(barcode);for(const code of [barcode,cp.partCode]){if(!code)continue;const data=await nocoGet(cfg.tblPart,{where:`(공용품번,eq,${code})`,limit:1});if(data.list&&data.list.length>0)return{found:true,basePart:data.list[0]['기준품번']||barcode,supplier:data.list[0]['공급사']||''}}}catch(e){}
+  try{const cp=clientParseBarcode(barcode);for(const code of [barcode,cp.partCode]){if(!code)continue;const row=await nocoFindByField(cfg.tblPart,'공용품번',code);if(row)return{found:true,basePart:row['기준품번']||barcode,supplier:row['공급사']||''}}}catch(e){}
   return{found:false,basePart:barcode};
 }
 
