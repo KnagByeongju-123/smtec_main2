@@ -527,7 +527,11 @@ async function submitMovement(){
   const row={일자:now.toISOString().split('T')[0],시간:String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0'),마스크번호:maskNo,출발지:from,도착지:to,기종:isLine?selectedModel:'',생산수:isLine?prodQty:0,사용횟수:usage,담당자:manager,비고:note,폐기사유:reason,수명:mask?mask.lifespan:0,누적사용:stk?stk.totalUsage+usage:usage,잔여수명:stk?stk.remaining-usage:0};
   try{
     await sbInsert('mask_move_history',{mask_id:maskNo,move_date:row['일자'],move_time:row['시간'],from_location:from,to_location:to,model:isLine?selectedModel:'',prod_qty:isLine?prodQty:0,usage_count:usage,worker:manager,note:note});
-    if(to==='폐기'){await sbInsert('mask_dispose_history',{mask_id:maskNo,dispose_date:row['일자'],reason:reason,worker:manager,note:'수명:'+String(row['수명']||'')+' 누적:'+String(row['누적사용']||'')});try{await sbUpdate('mask_register',{mask_id:'eq.'+maskNo},{status:'폐기'})}catch(e){}}
+    // 입고: qty 증가
+    const isMaker=from==='제조사';const mvInQty=parseInt(document.getElementById('mvInQty').value)||0;
+    if(isMaker&&mvInQty){const curQty=(mask?mask.qty:0)||0;try{await sbUpdate('mask_register',{mask_id:'eq.'+maskNo},{qty:curQty+mvInQty})}catch(e){}}
+    // 폐기: qty 감소 + status
+    if(to==='폐기'){const mvDisQty=parseInt(document.getElementById('mvDisQty').value)||1;await sbInsert('mask_dispose_history',{mask_id:maskNo,dispose_date:row['일자'],reason:reason,worker:manager,note:'수명:'+String(row['수명']||'')+' 누적:'+String(row['누적사용']||'')});const curQty=(mask?mask.qty:0)||0;const newQty=Math.max(0,curQty-mvDisQty);try{await sbUpdate('mask_register',{mask_id:'eq.'+maskNo},{qty:newQty,status:newQty<=0?'폐기':'사용중'})}catch(e){}}
     st.textContent='✅ 등록 완료!';st.style.color='var(--green)';if(navigator.vibrate)navigator.vibrate([80]);toast('✅ 이동 등록 완료');
     setTimeout(()=>{st.style.display='none';st.style.color='var(--blue)'},2500);
     pendingScan=null;document.getElementById('mvMaskInput').value='';document.getElementById('mvScanBox').classList.remove('show');
@@ -620,9 +624,19 @@ async function submitStkMove(){
     if(from==='제조사')moveNote=(moveNote?moveNote+' ':'')+'입고:'+inQty;
     if(to==='폐기')moveNote=(moveNote?moveNote+' ':'')+'폐기:'+disQty;
     await sbInsert('mask_move_history',{mask_id:stkMoveMaskNo,move_date:dt,move_time:tm,from_location:from,to_location:to,model:'',prod_qty:inQty||0,usage_count:0,worker:worker,note:moveNote});
+    // 입고: qty 증가
+    if(from==='제조사'&&inQty){
+      const cur=masks.find(m=>m.maskNo===stkMoveMaskNo);
+      const curQty=(cur?cur.qty:0)||0;
+      try{await sbUpdate('mask_register',{mask_id:'eq.'+stkMoveMaskNo},{qty:curQty+inQty})}catch(e){}
+    }
+    // 폐기: qty 감소 + status 변경
     if(to==='폐기'){
       await sbInsert('mask_dispose_history',{mask_id:stkMoveMaskNo,dispose_date:dt,reason:reason,worker:worker,note:'폐기수량:'+disQty});
-      try{await sbUpdate('mask_register',{mask_id:'eq.'+stkMoveMaskNo},{status:'폐기'})}catch(e){}
+      const cur=masks.find(m=>m.maskNo===stkMoveMaskNo);
+      const curQty=(cur?cur.qty:0)||0;
+      const newQty=Math.max(0,curQty-(disQty||1));
+      try{await sbUpdate('mask_register',{mask_id:'eq.'+stkMoveMaskNo},{qty:newQty,status:newQty<=0?'폐기':'사용중'})}catch(e){}
     }
     toast('\u2705 이동 처리 완료');closePopup('stkMovePopup');loadStock();
   }catch(e){toast('\u26a0 실패: '+e.message)}
