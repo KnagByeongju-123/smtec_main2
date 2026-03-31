@@ -142,33 +142,6 @@
     </div>
     <p style="font-size:10px;color:#888;margin-top:8px">처음 사용: ① URL/Key 저장 → ② 연결 테스트 → ③ 테이블 자동생성<br>공유 시: HTML 파일만 전달 → 상대방이 자기 Supabase 프로젝트 URL/Key 입력</p>
   </div>
-  <!-- 불량이력 아카이브 -->
-  <div class="card" style="border:2px solid #ff9800">
-    <div class="card-tit" style="justify-content:space-between">
-      <span>🗄️ 불량이력 아카이브</span>
-      <span style="font-size:10px;color:#888;font-weight:400" id="archDbSize">확인 중...</span>
-    </div>
-    <p style="font-size:11px;color:#888;margin-bottom:10px">날짜 범위의 불량이력을 CSV 다운로드 후 DB에서 삭제합니다. Supabase 500MB 무료 관리용.</p>
-    <div style="display:flex;gap:8px;margin-bottom:8px">
-      <div class="fg" style="flex:1;margin:0"><label>시작일</label><input type="date" id="archFrom"></div>
-      <div class="fg" style="flex:1;margin:0"><label>종료일</label><input type="date" id="archTo"></div>
-    </div>
-    <div style="display:flex;gap:6px;margin-bottom:8px">
-      <button class="btn btn-sm" onclick="archPreview()" style="background:#e3f2fd;color:#1565c0;border:1px solid #90caf9;flex:1">🔍 조회</button>
-      <button class="btn btn-sm" style="background:#f5f5f5;color:#555;border:1px solid #ddd" onclick="archSetQuick(3)">3개월전</button>
-      <button class="btn btn-sm" style="background:#f5f5f5;color:#555;border:1px solid #ddd" onclick="archSetQuick(6)">6개월전</button>
-      <button class="btn btn-sm" style="background:#f5f5f5;color:#555;border:1px solid #ddd" onclick="archSetQuick(12)">1년전</button>
-    </div>
-    <div id="archPreviewArea" style="display:none">
-      <div style="padding:10px;background:#fff8e1;border-radius:8px;margin-bottom:8px;font-size:12px"><span id="archSummary" style="font-weight:600"></span></div>
-      <div style="max-height:200px;overflow-y:auto;border:1px solid #eee;border-radius:8px;margin-bottom:8px" id="archPreviewList"></div>
-      <div style="display:flex;gap:6px">
-        <button class="btn btn-sm btn-green" onclick="archDownloadCSV()" style="flex:1" id="archDlBtn">📥 CSV 다운로드</button>
-        <button class="btn btn-sm" onclick="archDeleteFromDB()" style="flex:1;background:#ffebee;color:#c62828;border:1px solid #ef9a9a" id="archDelBtn" disabled>🗑️ DB에서 삭제</button>
-      </div>
-      <div id="archStatus" style="font-size:11px;color:#888;text-align:center;margin-top:6px"></div>
-    </div>
-  </div>
 
   <!-- 작업자 관리 -->
   <div class="card">
@@ -992,58 +965,6 @@ async function init(){
 }
 init();
 
-// ============================================================
-//  아카이브 (불량이력)
-// ============================================================
-let archData=[],archDownloaded=false;
-function archSetQuick(months){const d=new Date();d.setMonth(d.getMonth()-months);document.getElementById('archFrom').value='2020-01-01';document.getElementById('archTo').value=d.toISOString().split('T')[0]}
-async function archPreview(){
-  const from=document.getElementById('archFrom').value,to=document.getElementById('archTo').value;
-  if(!from||!to){showToast('날짜 범위 지정');return}if(from>to){showToast('시작일>종료일');return}
-  document.getElementById('archPreviewArea').style.display='block';
-  document.getElementById('archSummary').textContent='조회 중...';
-  document.getElementById('archPreviewList').innerHTML='';
-  archDownloaded=false;document.getElementById('archDelBtn').disabled=true;
-  try{
-    const all=await sbSelect('defect_history',{defect_date:'gte.'+from+',lte.'+to},'defect_date.asc',5000);
-    archData=all;
-    if(!archData.length){document.getElementById('archSummary').textContent='⚠ 해당 기간에 이력 없음';return}
-    document.getElementById('archSummary').textContent='📋 '+archData.length+'건 ('+from+' ~ '+to+') — CSV 다운로드 후 삭제 가능';
-    const preview=archData.slice(0,20);
-    let h='<table style="width:100%;font-size:11px;border-collapse:collapse"><thead><tr style="background:#f5f5f5"><th style="padding:4px 6px;text-align:left">날짜</th><th>기종</th><th>면</th><th>영역</th><th>불량유형</th><th>수량</th></tr></thead><tbody>';
-    preview.forEach(r=>{h+='<tr style="border-bottom:1px solid #f0f0f0"><td style="padding:3px 6px">'+(r.defect_date||'')+'</td><td>'+(r.model_name||'')+'</td><td>'+(r.side||'')+'</td><td>'+(r.zone_name||'')+'</td><td>'+(r.defect_type||'')+'</td><td style="font-weight:600">'+(r.qty||0)+'</td></tr>'});
-    h+='</tbody></table>';
-    if(archData.length>20)h+='<div style="text-align:center;padding:6px;font-size:10px;color:#888">... 외 '+(archData.length-20)+'건</div>';
-    document.getElementById('archPreviewList').innerHTML=h;
-  }catch(e){document.getElementById('archSummary').textContent='❌ '+e.message;archData=[]}
-}
-function archDownloadCSV(){
-  if(!archData.length){showToast('데이터 없음');return}
-  const cols=Object.keys(archData[0]);
-  let csv='\uFEFF'+cols.join(',')+'\n';
-  archData.forEach(r=>{csv+=cols.map(c=>{let v=r[c];if(v==null)v='';v=String(v).replace(/"/g,'""');if(v.includes(',')||v.includes('"')||v.includes('\n'))v='"'+v+'"';return v}).join(',')+'\n'});
-  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
-  a.download='불량이력_아카이브_'+document.getElementById('archFrom').value.replace(/-/g,'')+'_'+document.getElementById('archTo').value.replace(/-/g,'')+'.csv';
-  a.click();archDownloaded=true;document.getElementById('archDelBtn').disabled=false;
-  document.getElementById('archDlBtn').textContent='✅ 다운로드 완료';
-  document.getElementById('archStatus').textContent='CSV 다운로드 완료 — DB 삭제 버튼 활성화됨';
-  showToast('📥 CSV '+archData.length+'건 다운로드')
-}
-async function archDeleteFromDB(){
-  if(!archDownloaded){showToast('먼저 CSV 다운로드');return}if(!archData.length)return;
-  if(!confirm('⚠ '+archData.length+'건 영구 삭제?\nCSV 파일 확인 후 진행하세요.'))return;
-  if(!confirm('최종 확인: '+archData.length+'건 삭제'))return;
-  const st=document.getElementById('archStatus');st.textContent='삭제 중...';document.getElementById('archDelBtn').disabled=true;
-  try{
-    const ids=archData.map(r=>r.id);const bs=500;let done=0;
-    for(let i=0;i<ids.length;i+=bs){const batch=ids.slice(i,i+bs);await sbDelete('defect_history',{id:'in.('+batch.join(',')+')'});done+=batch.length;st.textContent='삭제 중... ('+done+'/'+ids.length+')'}
-    st.textContent='✅ '+done+'건 삭제 완료';document.getElementById('archSummary').textContent='✅ 아카이브 완료 — '+done+'건 삭제됨';
-    document.getElementById('archPreviewList').innerHTML='';archData=[];archDownloaded=false;
-    showToast('✅ 아카이브 완료');archCheckDbSize();if(typeof loadHistory==='function')loadHistory()
-  }catch(e){st.textContent='❌ '+e.message;document.getElementById('archDelBtn').disabled=false}
-}
-async function archCheckDbSize(){try{const all=await sbSelect('defect_history',{},'',1);document.getElementById('archDbSize').textContent='defect_history 연결됨'}catch(e){document.getElementById('archDbSize').textContent='조회 실패'}}
-archCheckDbSize();
 </script>
 </body>
 </html>
