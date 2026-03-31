@@ -520,10 +520,10 @@ function rmsS(){['imgModel','zoneModel'].forEach(id=>{const s=document.getElemen
 // === 공통코드 (작업자/검사라인/생산라인) ===
 async function loadCommonCodes(){
   try{
-    const d=await sbSelect('common_code',{},'sort_order.asc',500);
-    cachedCommon.workers=d.filter(r=>r.code_type==='작업자').map(r=>({id:r.id, name:r.code_value||''}));
-    cachedCommon.inspLines=d.filter(r=>r.code_type==='검사라인').map(r=>({id:r.id, name:r.code_value||''}));
-    cachedCommon.prodLines=d.filter(r=>r.code_type==='생산라인').map(r=>({id:r.id, name:r.code_value||''}));
+    const d=await sbSelect('common_code',{},'id.asc',500);
+    cachedCommon.workers=d.filter(r=>r.code_group==='작업자').map(r=>({id:r.id, name:r.code_value||''}));
+    cachedCommon.inspLines=d.filter(r=>r.code_group==='검사라인').map(r=>({id:r.id, name:r.code_value||''}));
+    cachedCommon.prodLines=d.filter(r=>r.code_group==='생산라인').map(r=>({id:r.id, name:r.code_value||''}));
     renderCommonLists();refreshCommonSelects();
   }catch(e){console.log('공통코드 로드 실패:',e)}
 }
@@ -545,7 +545,7 @@ async function addCommonCode(type){
   const inputId=type==='작업자'?'newWorker':type==='검사라인'?'newInspLine':'newProdLine';
   const val=document.getElementById(inputId).value.trim();if(!val){showToast('값을 입력하세요');return}
   try{
-    await sbInsert('common_code',{code_type:type, code_value:val, sort_order:1});
+    await sbInsert('common_code',{code_group:type, code_value:val, sort_order:1});
     document.getElementById(inputId).value='';await loadCommonCodes();showToast('✅ 추가 완료');
   }catch(e){showToast('추가 실패: '+e.message)}
 }
@@ -606,8 +606,8 @@ async function loadBoard(){
   }catch(e){}
   // 영역
   try{
-    const d=await sbSelect('defect_zone',{model_name:'eq.'+currentModel, side:'eq.'+currentSide},'sort_order.asc',200);
-    cachedZones=d.map(r=>({id:r.id, name:r.zone_name||'', x:r.x||0, y:r.y||0, w:r.w||10, h:r.h||10, color:r.color||'#ff5252'}));
+    const d=await sbSelect('defect_zone',{model_name:'eq.'+currentModel, side:'eq.'+currentSide},'id.asc',200);
+    cachedZones=d.map(r=>({id:r.id, name:r.zone_name||'', x:r.x_pct||0, y:r.y_pct||0, w:r.w_pct||10, h:r.h_pct||10, color:'#ff5252'}));
     renderRegZoneMarkers();
   }catch(e){cachedZones=[]}
   // 불량유형
@@ -769,8 +769,8 @@ async function loadZoneSetup(){
   }catch(e){}
   // 영역
   try{
-    const d=await sbSelect('defect_zone',{model_name:'eq.'+m, side:'eq.'+zoneSide},'sort_order.asc',200);
-    editZones=d.map(r=>({id:r.id, name:r.zone_name||'', x:r.x||0, y:r.y||0, w:r.w||10, h:r.h||10, color:r.color||'#ff5252', order:r.sort_order||0}));
+    const d=await sbSelect('defect_zone',{model_name:'eq.'+m, side:'eq.'+zoneSide},'id.asc',200);
+    editZones=d.map(r=>({id:r.id, name:r.zone_name||'', x:r.x_pct||0, y:r.y_pct||0, w:r.w_pct||10, h:r.h_pct||10, color:'#ff5252'}));
     renderEditZones();
   }catch(e){editZones=[]}
   pzReset('zone');setupZoneDraw();
@@ -787,7 +787,7 @@ async function saveZones(){
     if(editZones.length){
       await sbInsert('defect_zone', editZones.map((z,i)=>({
         model_name:m, side:zoneSide, zone_name:z.name,
-        x:z.x, y:z.y, w:z.w, h:z.h, color:z.color, sort_order:i+1
+        x_pct:z.x, y_pct:z.y, w_pct:z.w, h_pct:z.h
       })));
     }
     showToast('✅ '+editZones.length+'개 적용');
@@ -823,12 +823,10 @@ CREATE TABLE IF NOT EXISTS defect_zone (
   model_name TEXT NOT NULL,
   side TEXT DEFAULT 'TOP',
   zone_name TEXT NOT NULL,
-  x DECIMAL DEFAULT 0,
-  y DECIMAL DEFAULT 0,
-  w DECIMAL DEFAULT 10,
-  h DECIMAL DEFAULT 10,
-  color TEXT DEFAULT '#ff5252',
-  sort_order INT DEFAULT 0,
+  x_pct NUMERIC DEFAULT 0,
+  y_pct NUMERIC DEFAULT 0,
+  w_pct NUMERIC DEFAULT 10,
+  h_pct NUMERIC DEFAULT 10,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -857,7 +855,7 @@ CREATE TABLE IF NOT EXISTS defect_history (
 
 CREATE TABLE IF NOT EXISTS common_code (
   id BIGSERIAL PRIMARY KEY,
-  code_type TEXT NOT NULL,
+  code_group TEXT NOT NULL,
   code_value TEXT NOT NULL,
   sort_order INT DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT NOW()
