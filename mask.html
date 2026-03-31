@@ -136,7 +136,16 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
     <div id="mvStatus" style="text-align:center;font-size:11px;color:var(--blue);margin-top:8px;display:none"></div>
   </div>
   <div class="card">
-    <div class="card-tit"><span>📋 최근 이동이력</span><button class="btn btn-sm btn-gray" onclick="loadHistory()">새로고침</button></div>
+    <div class="card-tit"><span>📥 엑셀 다운로드</span></div>
+    <div class="btn-row">
+      <button class="btn btn-sm btn-blue" onclick="exportExcel('move')">📋 이동이력</button>
+      <button class="btn btn-sm btn-green" onclick="exportExcel('stock')">📦 재고현황</button>
+      <button class="btn btn-sm btn-orange" onclick="exportExcel('dispose')">🗑 폐기이력</button>
+    </div>
+    <button class="btn btn-sm btn-gray" onclick="exportExcel('all')" style="width:100%;margin-top:4px">📥 전체 다운로드</button>
+  </div>
+  <div class="card">
+    <div class="card-tit"><span>📋 오늘 이동이력</span><button class="btn btn-sm btn-gray" onclick="loadHistory()">새로고침</button></div>
     <div id="histList"><div class="empty"><div class="empty-icon">📋</div>이력이 없습니다</div></div>
   </div>
 </div>
@@ -543,7 +552,8 @@ async function submitMovement(){
 // ============================================================
 async function loadHistory(){
   try{
-    const data=await sbSelect('mask_move_history',{},'created_at.desc',30);
+    const today=new Date().toISOString().split('T')[0];
+    const data=await sbSelect('mask_move_history',{move_date:'eq.'+today},'created_at.desc',100);
     renderHistory(data.map(r=>({id:r.id,maskNo:r.mask_id||'',date:r.move_date||'',time:r.move_time||'',from:r.from_location||'',to:r.to_location||'',model:r.model||'',prodQty:parseInt(r.prod_qty)||0,usage:parseInt(r.usage_count)||0,manager:r.worker||'',note:r.note||''})));
   }catch(e){}
 }
@@ -770,6 +780,48 @@ document.addEventListener('click',function(e){
 // ============================================================
 //  초기화
 // ============================================================
+// ============================================================
+//  엑셀 다운로드
+// ============================================================
+async function exportExcel(type){
+  toast('데이터 불러오는 중...');
+  const wb=XLSX.utils.book_new();
+  const today=new Date().toISOString().split('T')[0].replace(/-/g,'');
+  try{
+    if(type==='move'||type==='all'){
+      const data=await sbSelect('mask_move_history',{},'created_at.desc',5000);
+      if(data.length){
+        const rows=data.map(r=>({일자:r.move_date||'',시간:r.move_time||'',소모품번호:r.mask_id||'',출발지:r.from_location||'',도착지:r.to_location||'',기종:r.model||'',생산수:r.prod_qty||0,사용횟수:r.usage_count||0,담당자:r.worker||'',비고:r.note||''}));
+        const ws=XLSX.utils.json_to_sheet(rows);
+        ws['!cols']=[{wch:11},{wch:6},{wch:28},{wch:10},{wch:10},{wch:14},{wch:8},{wch:8},{wch:8},{wch:20}];
+        XLSX.utils.book_append_sheet(wb,ws,'이동이력');
+      }else if(type==='move'){toast('이동이력 없음');return}
+    }
+    if(type==='stock'||type==='all'){
+      if(!stockData.length)await loadStock();
+      if(stockData.length){
+        const rows=stockData.map(s=>({소모품번호:s.maskNo,기종:s.model||'공용',위치:s.location,현재고:s.qty,안전재고:s.safetyStock||0,배열수:s.arrayQty,수명:s.isInfinite?'무한':s.lifespan,사용횟수:s.totalUsage,잔여수명:s.isInfinite?'무한':s.remaining,담당자:s.manager||''}));
+        const ws=XLSX.utils.json_to_sheet(rows);
+        ws['!cols']=[{wch:28},{wch:14},{wch:10},{wch:8},{wch:8},{wch:6},{wch:10},{wch:8},{wch:10},{wch:8}];
+        XLSX.utils.book_append_sheet(wb,ws,'재고현황');
+      }else if(type==='stock'){toast('재고 없음');return}
+    }
+    if(type==='dispose'||type==='all'){
+      const data=await sbSelect('mask_dispose_history',{},'created_at.desc',5000);
+      if(data.length){
+        const rows=data.map(r=>({일자:r.dispose_date||'',소모품번호:r.mask_id||'',폐기사유:r.reason||'',담당자:r.worker||'',비고:r.note||''}));
+        const ws=XLSX.utils.json_to_sheet(rows);
+        ws['!cols']=[{wch:11},{wch:28},{wch:24},{wch:8},{wch:20}];
+        XLSX.utils.book_append_sheet(wb,ws,'폐기이력');
+      }else if(type==='dispose'){toast('폐기이력 없음');return}
+    }
+    if(!wb.SheetNames.length){toast('다운로드할 데이터 없음');return}
+    const fname=type==='all'?'소모품_전체':'소모품_'+(type==='move'?'이동이력':type==='stock'?'재고현황':'폐기이력');
+    XLSX.writeFile(wb,fname+'_'+today+'.xlsx');
+    toast('📥 엑셀 다운로드 완료');
+  }catch(e){toast('⚠ 다운로드 실패: '+e.message)}
+}
+
 function init(){loadSettingsLocal();updateNocoBadge();loadHistory();loadMasks().catch(()=>{});renderModelTags()}
 init();
 </script>
