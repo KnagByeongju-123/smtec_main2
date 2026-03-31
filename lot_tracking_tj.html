@@ -152,13 +152,38 @@
   <!-- 이동관리 내용 (공정 선택 후 표시) -->
   <div id="moveSection" style="display:none">
 
-    <!-- 선택된 공정 표시 + 출발지/도착지 -->
-    <div class="card" style="border:2px solid #1a237e">
+    <!-- STEP 2: 이동등록 카드 (출발지/도착지 확인 후 진행) -->
+    <div class="card" style="border:2px solid #1a237e" id="moveRegCard">
       <div class="card-tit" style="justify-content:space-between">
         <span>📦 <span id="selProcName">-</span> 이동등록</span>
         <button class="btn btn-sm btn-gray" onclick="backToProcessSelect()" style="font-size:11px">← 공정선택</button>
       </div>
       <div id="regFields"></div>
+      <button class="btn btn-blue" onclick="goToScanStep()" style="font-size:15px;padding:13px;margin-top:6px">📟 바코드 리딩 시작 →</button>
+    </div>
+
+    <!-- 최근 등록 이력 (이동등록 화면에서도 보임) -->
+    <div class="card" id="recentCardStep2">
+      <div class="card-tit" style="justify-content:space-between">
+        <span>📋 최근 등록 <span id="recentCnt2" style="font-size:10px;color:#888;font-weight:400">0건</span></span>
+        <button class="btn btn-sm btn-gray" onclick="expXlsx()" style="font-size:10px;padding:4px 8px">📥 엑셀</button>
+      </div>
+      <div id="recentList2" style="max-height:200px;overflow-y:auto"><div class="h-empty">이력이 없습니다</div></div>
+    </div>
+  </div>
+
+  <!-- STEP 3: 바코드 리딩 (바코드리딩 시작 후 표시) -->
+  <div id="scanSection" style="display:none">
+
+    <!-- 현재 공정/출발지/도착지 요약 -->
+    <div class="card" style="border:2px solid #1a237e;padding:10px 14px">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <span style="font-size:15px;font-weight:700;color:#1a237e" id="scanProcName">-</span>
+          <span style="font-size:12px;color:#666;margin-left:8px" id="scanLocSummary">- → -</span>
+        </div>
+        <button class="btn btn-sm btn-gray" onclick="backToMoveReg()" style="font-size:11px">← 이동등록</button>
+      </div>
     </div>
 
     <!-- 바코드 리딩기 (메인 입력) -->
@@ -256,7 +281,7 @@
       </div>
       <div id="recentList" style="max-height:300px;overflow-y:auto"><div class="h-empty">이력이 없습니다</div></div>
     </div>
-  </div>
+  </div><!-- /scanSection -->
 </div>
 
 <!-- ===== 등록 팝업 모달 ===== -->
@@ -495,20 +520,46 @@ function selectProcess(proc){
   renderProcessGrid();
   updateProcessFlow();
 
-  // 이동관리 섹션 표시
+  // STEP 2: 이동등록 카드 표시
   document.getElementById('moveSection').style.display='block';
+  document.getElementById('scanSection').style.display='none';
   document.getElementById('selProcName').textContent=proc.icon+' '+proc.name;
 
   // 출발지/도착지 기본값 설정
   savedSelections['출발지']=proc.defaultFrom;
   savedSelections['도착지']=proc.defaultTo;
   renderRegFields();
-
-  // 리딩기 포커스
-  setTimeout(()=>{const inp=document.getElementById('bcReaderInput');if(inp)inp.focus()},200);
+  renderRecentList2();
 
   // 스크롤
   document.getElementById('moveSection').scrollIntoView({behavior:'smooth',block:'start'});
+}
+
+function goToScanStep(){
+  if(!selectedProcess){showToast('공정을 먼저 선택하세요');return}
+  // 출발지/도착지 값 저장
+  cats.forEach((cat,i)=>{const el=document.getElementById('sel_'+i);if(el&&el.value)savedSelections[cat.name]=el.value});
+
+  const from=savedSelections['출발지']||'-';
+  const to=savedSelections['도착지']||'-';
+
+  // STEP 3: 바코드 리딩 화면
+  document.getElementById('moveSection').style.display='none';
+  document.getElementById('scanSection').style.display='block';
+  document.getElementById('scanProcName').textContent=selectedProcess.icon+' '+selectedProcess.name;
+  document.getElementById('scanLocSummary').textContent=from+' → '+to;
+
+  // 리딩기 포커스
+  setTimeout(()=>{const inp=document.getElementById('bcReaderInput');if(inp)inp.focus()},200);
+  document.getElementById('scanSection').scrollIntoView({behavior:'smooth',block:'start'});
+}
+
+function backToMoveReg(){
+  document.getElementById('scanSection').style.display='none';
+  document.getElementById('moveSection').style.display='block';
+  renderRegFields();
+  renderRecentList2();
+  window.scrollTo({top:document.getElementById('moveSection').offsetTop-60,behavior:'smooth'});
 }
 
 function updateProcessFlow(){
@@ -520,6 +571,7 @@ function updateProcessFlow(){
 
 function backToProcessSelect(){
   document.getElementById('moveSection').style.display='none';
+  document.getElementById('scanSection').style.display='none';
   selectedProcess=null;
   renderProcessGrid();
   updateProcessFlow();
@@ -681,6 +733,7 @@ async function doRegisterFromModal(){
   if(navigator.vibrate)navigator.vibrate([100]);
   closeRegModal();
   renderRecentList();
+  renderRecentList2();
 }
 
 async function doAddMappingFromModal(){
@@ -822,7 +875,7 @@ document.getElementById('manualInput').addEventListener('keydown',function(e){
 function swTab(n){
   document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('on',i===n));
   document.querySelectorAll('.pnl').forEach((p,i)=>p.classList.toggle('on',i===n));
-  if(n===0){renderRegFields();renderRecentList();renderProcessGrid();setTimeout(()=>{if(selectedProcess){const inp=document.getElementById('bcReaderInput');if(inp)inp.focus()}},200)}
+  if(n===0){renderRegFields();renderRecentList();renderRecentList2();renderProcessGrid();setTimeout(()=>{if(selectedProcess&&document.getElementById('scanSection').style.display!=='none'){const inp=document.getElementById('bcReaderInput');if(inp)inp.focus()}},200)}
   if(n===1){renderCatEditor();loadSbConfigUI()}
 }
 
@@ -860,7 +913,25 @@ function renderRecentList(){
     c.appendChild(d);
   });
 }
-function delHist(id){if(!confirm('삭제?'))return;hist=hist.filter(h=>h.id!==id);localStorage.setItem('LOT_TJ_HIST',JSON.stringify(hist));renderRecentList();showToast('삭제됨')}
+function delHist(id){if(!confirm('삭제?'))return;hist=hist.filter(h=>h.id!==id);localStorage.setItem('LOT_TJ_HIST',JSON.stringify(hist));renderRecentList();renderRecentList2();showToast('삭제됨')}
+
+// Step2 이력 (이동등록 화면용)
+function renderRecentList2(){
+  const c=document.getElementById('recentList2');
+  const cnt=document.getElementById('recentCnt2');
+  if(!c||!cnt)return;
+  cnt.textContent=hist.length+'건';
+  if(!hist.length){c.innerHTML='<div class="h-empty">이력이 없습니다</div>';return}
+  c.innerHTML='';
+  hist.slice(0,5).forEach(h=>{
+    const saved=h.sheetSaved;
+    const badge=saved?'<span style="font-size:9px;background:#e8f5e9;color:#2e7d32;border-radius:3px;padding:1px 5px">☁</span>':'<span style="font-size:9px;background:#ffebee;color:#c62828;border-radius:3px;padding:1px 5px">⚠</span>';
+    const from=(h.fields&&h.fields['출발지'])||'';const to=(h.fields&&h.fields['도착지'])||'';
+    const d=document.createElement('div');d.className='h-item';d.style.padding='6px 0';
+    d.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:12px;font-weight:700;color:#1a237e">${h.basePart||h.barcode} ${badge}</span><span style="font-size:10px;color:#aaa">${h.date} ${h.time}</span></div><div style="font-size:10px;color:#666;margin-top:2px"><span style="display:inline-block;background:#e8eaf6;padding:1px 5px;border-radius:3px;font-weight:600;color:#1a237e;margin-right:4px">${h.process||'-'}</span>${from?from+' → ':''}${to||''} ${h.qty?'수량:'+h.qty:''}</div>`;
+    c.appendChild(d);
+  });
+}
 
 // 엑셀 다운로드
 function expXlsx(){
