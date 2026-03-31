@@ -563,7 +563,23 @@ async function loadStock(){
     const [mr,hr]=await Promise.all([sbSelect('mask_register',{},'',200),sbSelect('mask_move_history',{},'created_at.desc',1000)]);
     masks=mr.map(r=>({id:r.id,maskNo:r.mask_id||'',model:r.model||'공용',qty:parseInt(r.qty)||1,arrayQty:parseInt(r.use_count)||1,lifespan:parseInt(r.note)||0,safetyStock:parseInt(r.safety_stock)||0,manager:r.maker||'',status:r.status||'사용중'}));
     const hl=hr;stockData=[];
-    masks.forEach(m=>{const mh=hl.filter(h=>(h.mask_id||'')===m.maskNo);const tu=mh.reduce((s,h)=>s+(parseInt(h.usage_count)||0),0);const curQty=m.qty||0;let loc=curQty>0?'보관함':'-';if(curQty>0&&mh.length>0){const lastMove=mh.find(h=>h.to_location&&h.to_location!=='폐기');if(lastMove)loc=lastMove.to_location||'보관함'}const isInfinite=!m.lifespan||m.lifespan<=0;const rem=isInfinite?999999:Math.max(0,m.lifespan-tu);const pct=isInfinite?100:(m.lifespan>0?Math.round(rem/m.lifespan*100):100);stockData.push({maskNo:m.maskNo,model:m.model,qty:curQty,arrayQty:m.arrayQty,lifespan:m.lifespan,safetyStock:m.safetyStock,totalUsage:tu,remaining:rem,pct,remProd:isInfinite?999999:rem*m.arrayQty,location:loc,manager:m.manager,isInfinite,status:m.status||'사용중'})});
+    // mask_id 기준으로 중복 합산
+    const maskMap={};
+    masks.forEach(m=>{
+      if(!maskMap[m.maskNo]){maskMap[m.maskNo]={ids:[m.id],maskNo:m.maskNo,model:m.model,qty:m.qty||0,arrayQty:m.arrayQty,lifespan:m.lifespan,safetyStock:m.safetyStock,manager:m.manager,status:m.status||'사용중'}}
+      else{maskMap[m.maskNo].ids.push(m.id);maskMap[m.maskNo].qty+=(m.qty||0)}
+    });
+    Object.values(maskMap).forEach(m=>{
+      const mh=hl.filter(h=>(h.mask_id||'')===m.maskNo);
+      const tu=mh.reduce((s,h)=>s+(parseInt(h.usage_count)||0),0);
+      const curQty=m.qty;
+      let loc=curQty>0?'보관함':'-';
+      if(curQty>0&&mh.length>0){const lastMove=mh.find(h=>h.to_location&&h.to_location!=='폐기');if(lastMove)loc=lastMove.to_location||'보관함'}
+      const isInfinite=!m.lifespan||m.lifespan<=0;
+      const rem=isInfinite?999999:Math.max(0,m.lifespan-tu);
+      const pct=isInfinite?100:(m.lifespan>0?Math.round(rem/m.lifespan*100):100);
+      stockData.push({ids:m.ids,maskNo:m.maskNo,model:m.model,qty:curQty,arrayQty:m.arrayQty,lifespan:m.lifespan,safetyStock:m.safetyStock,totalUsage:tu,remaining:rem,pct,remProd:isInfinite?999999:rem*m.arrayQty,location:loc,manager:m.manager,isInfinite,status:m.status});
+    });
     renderStock();toast('✅ 재고 불러오기 완료 ('+stockData.length+'건)');
   }catch(e){toast('⚠ 재고 불러오기 실패: '+e.message)}
 }
@@ -594,10 +610,12 @@ function renderStock(){
   c.innerHTML=h;
 }
 let stkMoveMaskNo='';
+let stkMoveData=null;
 function openStkMove(maskNo){
   stkMoveMaskNo=maskNo;
+  stkMoveData=stockData.find(s=>s.maskNo===maskNo);
   const mask=masks.find(m=>m.maskNo===maskNo);
-  const stk=stockData.find(s=>s.maskNo===maskNo);
+  const stk=stkMoveData;
   document.getElementById('stkMoveTit').textContent='\ud83d\udce6 이동 \u2014 '+maskNo;
   document.getElementById('stkMoveInfo').innerHTML='<div style="font-size:15px;font-weight:700">'+maskNo+'</div><div style="font-size:12px;color:var(--sub)">'+(mask?mask.model||'공용':'')+(stk?' \u00b7 현위치: '+stk.location:'')+'</div>';
   ['stkMvFrom','stkMvTo'].forEach((id,idx)=>{const sel=document.getElementById(id);sel.innerHTML='<option value="">선택</option>';(idx===0?settings.from:settings.to).forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=v;sel.appendChild(o)});if(idx===0&&stk)sel.value=stk.location});
@@ -626,15 +644,13 @@ async function submitStkMove(){
     await sbInsert('mask_move_history',{mask_id:stkMoveMaskNo,move_date:dt,move_time:tm,from_location:from,to_location:to,model:'',prod_qty:inQty||0,usage_count:0,worker:worker,note:moveNote});
     // 입고: qty 증가
     if(from==='제조사'&&inQty){
-      const cur=masks.find(m=>m.maskNo===stkMoveMaskNo);
-      const curQty=(cur?cur.qty:0)||0;
+      const curQty=stkMoveData?stkMoveData.qty:0;
       try{await sbUpdate('mask_register',{mask_id:'eq.'+stkMoveMaskNo},{qty:curQty+inQty})}catch(e){}
     }
     // 폐기: qty 감소 + status 변경
     if(to==='폐기'){
       await sbInsert('mask_dispose_history',{mask_id:stkMoveMaskNo,dispose_date:dt,reason:reason,worker:worker,note:'폐기수량:'+disQty});
-      const cur=masks.find(m=>m.maskNo===stkMoveMaskNo);
-      const curQty=(cur?cur.qty:0)||0;
+      const curQty=stkMoveData?stkMoveData.qty:0;
       const newQty=Math.max(0,curQty-(disQty||1));
       try{await sbUpdate('mask_register',{mask_id:'eq.'+stkMoveMaskNo},{qty:newQty,status:newQty<=0?'폐기':'사용중'})}catch(e){}
     }
