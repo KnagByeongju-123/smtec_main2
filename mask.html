@@ -322,7 +322,7 @@ async function autoCreateMaskTables(){
 `CREATE TABLE IF NOT EXISTS mask_register (id BIGSERIAL PRIMARY KEY, mask_id TEXT, model TEXT, use_count INTEGER DEFAULT 1, note TEXT, safety_stock INTEGER DEFAULT 0, maker TEXT, status TEXT DEFAULT '사용중', location TEXT DEFAULT '보관함', created_at TIMESTAMPTZ DEFAULT NOW());
 ALTER TABLE mask_register ENABLE ROW LEVEL SECURITY;
 CREATE POLICY IF NOT EXISTS "allow_all_mask_register" ON mask_register FOR ALL USING (true) WITH CHECK (true);`,
-`CREATE TABLE IF NOT EXISTS mask_move_history (id BIGSERIAL PRIMARY KEY, mask_id TEXT, move_date TEXT, move_time TEXT, from_location TEXT, to_location TEXT, worker TEXT, note TEXT, created_at TIMESTAMPTZ DEFAULT NOW());
+`CREATE TABLE IF NOT EXISTS mask_move_history (id BIGSERIAL PRIMARY KEY, mask_id TEXT, move_date TEXT, move_time TEXT, from_location TEXT, to_location TEXT, model TEXT, prod_qty INTEGER DEFAULT 0, usage_count INTEGER DEFAULT 0, worker TEXT, note TEXT, created_at TIMESTAMPTZ DEFAULT NOW());
 ALTER TABLE mask_move_history ENABLE ROW LEVEL SECURITY;
 CREATE POLICY IF NOT EXISTS "allow_all_mask_move" ON mask_move_history FOR ALL USING (true) WITH CHECK (true);`,
 `CREATE TABLE IF NOT EXISTS mask_dispose_history (id BIGSERIAL PRIMARY KEY, mask_id TEXT, dispose_date TEXT, reason TEXT, worker TEXT, note TEXT, created_at TIMESTAMPTZ DEFAULT NOW());
@@ -500,7 +500,7 @@ async function submitMovement(){
   const now=new Date();
   const row={일자:now.toISOString().split('T')[0],시간:String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0'),마스크번호:maskNo,출발지:from,도착지:to,기종:isLine?selectedModel:'',생산수:isLine?prodQty:0,사용횟수:usage,담당자:manager,비고:note,폐기사유:reason,수명:mask?mask.lifespan:0,누적사용:stk?stk.totalUsage+usage:usage,잔여수명:stk?stk.remaining-usage:0};
   try{
-    await sbInsert('mask_move_history',{mask_id:maskNo,move_date:row['일자'],move_time:row['시간'],from_location:from,to_location:to,worker:manager,note:(row['기종']||'')+' 생산:'+String(row['생산수']||'')});
+    await sbInsert('mask_move_history',{mask_id:maskNo,move_date:row['일자'],move_time:row['시간'],from_location:from,to_location:to,model:isLine?selectedModel:'',prod_qty:isLine?prodQty:0,usage_count:usage,worker:manager,note:note});
     if(to==='폐기'){await sbInsert('mask_dispose_history',{mask_id:maskNo,dispose_date:row['일자'],reason:reason,worker:manager,note:'수명:'+String(row['수명']||'')+' 누적:'+String(row['누적사용']||'')});try{await sbUpdate('mask_register',{mask_id:'eq.'+maskNo},{status:'폐기'})}catch(e){}}
     st.textContent='✅ 등록 완료!';st.style.color='var(--green)';if(navigator.vibrate)navigator.vibrate([80]);toast('✅ 이동 등록 완료');
     setTimeout(()=>{st.style.display='none';st.style.color='var(--blue)'},2500);
@@ -516,12 +516,12 @@ async function submitMovement(){
 async function loadHistory(){
   try{
     const data=await sbSelect('mask_move_history',{},'created_at.desc',30);
-    renderHistory(data.map(r=>({maskNo:r.mask_id||'',date:r.move_date||'',time:r.move_time||'',from:r.from_location||'',to:r.to_location||'',model:'',prodQty:0,usage:0,manager:r.worker||'',note:r.note||''})));
+    renderHistory(data.map(r=>({id:r.id,maskNo:r.mask_id||'',date:r.move_date||'',time:r.move_time||'',from:r.from_location||'',to:r.to_location||'',model:r.model||'',prodQty:parseInt(r.prod_qty)||0,usage:parseInt(r.usage_count)||0,manager:r.worker||'',note:r.note||''})));
   }catch(e){}
 }
 function renderHistory(list){
   const c=document.getElementById('histList');if(!list.length){c.innerHTML='<div class="empty"><div class="empty-icon">📋</div>이력이 없습니다</div>';return}c.innerHTML='';
-  list.forEach(h=>{const d=document.createElement('div');d.className='hist-item';const id=h.to==='폐기';d.innerHTML='<div class="hi-row"><span class="hi-mask">'+h.maskNo+'</span><span class="hi-time">'+h.date+' '+h.time+'</span></div><div class="hi-flow"><span class="hi-loc" style="'+(id?'background:var(--red-lt);color:var(--red)':'')+'">'+h.from+'</span><span style="color:var(--sub)">→</span><span class="hi-loc" style="'+(id?'background:var(--red-lt);color:var(--red)':'')+'">'+h.to+'</span>'+(h.manager?'<span style="font-size:10px;color:var(--sub);margin-left:4px">'+h.manager+'</span>':'')+'</div>'+(h.prodQty?'<div class="hi-prod">'+(h.model?'['+h.model+'] ':'')+'생산: '+h.prodQty.toLocaleString()+'개 → 사용: '+h.usage.toLocaleString()+'회</div>':'')+(h.note?'<div style="font-size:11px;color:var(--sub);margin-top:2px">📝 '+h.note+'</div>':'');c.appendChild(d)});
+  list.forEach(h=>{const d=document.createElement('div');d.className='hist-item';const id=h.to==='폐기';d.innerHTML='<div class="hi-row"><span class="hi-mask">'+h.maskNo+'</span><span class="hi-time">'+h.date+' '+h.time+'</span></div><div class="hi-flow"><span class="hi-loc" style="'+(id?'background:var(--red-lt);color:var(--red)':'')+'">'+h.from+'</span><span style="color:var(--sub)">→</span><span class="hi-loc" style="'+(id?'background:var(--red-lt);color:var(--red)':'')+'">'+h.to+'</span>'+(h.manager?'<span style="font-size:10px;color:var(--sub);margin-left:4px">'+h.manager+'</span>':'')+'</div>'+(h.prodQty?'<div class="hi-prod">'+(h.model?'['+h.model+'] ':'')+'생산: '+h.prodQty.toLocaleString()+'개 → 사용: '+h.usage.toLocaleString()+'회</div>':'')+(h.note?'<div style="font-size:11px;color:var(--sub);margin-top:2px">📝 '+h.note+'</div>':'')+(h.id?'<div style="display:flex;gap:4px;margin-top:4px"><button class="btn btn-sm" onclick="deleteMoveHist('+h.id+')" style="background:var(--red-lt);color:var(--red);padding:3px 8px;font-size:10px">🗑삭제</button></div>':'');c.appendChild(d)});
 }
 
 // ============================================================
@@ -533,7 +533,7 @@ async function loadStock(){
     const [mr,hr]=await Promise.all([sbSelect('mask_register',{},'',200),sbSelect('mask_move_history',{},'created_at.desc',1000)]);
     masks=mr.map(r=>({id:r.id,maskNo:r.mask_id||'',model:r.model||'공용',arrayQty:parseInt(r.use_count)||1,lifespan:parseInt(r.note)||0,safetyStock:parseInt(r.safety_stock)||0,manager:r.maker||'',status:r.status||'사용중'}));
     const hl=hr;stockData=[];
-    masks.filter(m=>m.status!=='폐기').forEach(m=>{const mh=hl.filter(h=>(h.mask_id||'')===m.maskNo);const tu=mh.filter(h=>/라인/.test(h.from_location||'')).length;let loc='보관함';if(mh.length>0)loc=mh[0].to_location||'보관함';const isInfinite=!m.lifespan||m.lifespan<=0;const rem=isInfinite?999999:Math.max(0,m.lifespan-tu);const pct=isInfinite?100:(m.lifespan>0?Math.round(rem/m.lifespan*100):100);stockData.push({maskNo:m.maskNo,model:m.model,arrayQty:m.arrayQty,lifespan:m.lifespan,safetyStock:m.safetyStock,totalUsage:tu,remaining:rem,pct,remProd:isInfinite?999999:rem*m.arrayQty,location:loc,manager:m.manager,isInfinite})});
+    masks.filter(m=>m.status!=='폐기').forEach(m=>{const mh=hl.filter(h=>(h.mask_id||'')===m.maskNo);const tu=mh.reduce((s,h)=>s+(parseInt(h.usage_count)||0),0);let loc='보관함';if(mh.length>0)loc=mh[0].to_location||'보관함';const isInfinite=!m.lifespan||m.lifespan<=0;const rem=isInfinite?999999:Math.max(0,m.lifespan-tu);const pct=isInfinite?100:(m.lifespan>0?Math.round(rem/m.lifespan*100):100);stockData.push({maskNo:m.maskNo,model:m.model,arrayQty:m.arrayQty,lifespan:m.lifespan,safetyStock:m.safetyStock,totalUsage:tu,remaining:rem,pct,remProd:isInfinite?999999:rem*m.arrayQty,location:loc,manager:m.manager,isInfinite})});
     renderStock();toast('✅ 재고 불러오기 완료 ('+stockData.length+'건)');
   }catch(e){toast('⚠ 재고 불러오기 실패: '+e.message)}
 }
@@ -561,13 +561,43 @@ async function loadDisposal(){
   toast('폐기 내용 불러오는 중...');
   try{
     const data=await sbSelect('mask_dispose_history',{},'created_at.desc',100);
-    const list=data.map(r=>({maskNo:r.mask_id||'',date:r.dispose_date||'',time:'',reason:r.reason||'',lifespan:0,totalUsage:0,remaining:0,manager:r.worker||''}));
+    const list=data.map(r=>({id:r.id,maskNo:r.mask_id||'',date:r.dispose_date||'',reason:r.reason||'',manager:r.worker||'',note:r.note||''}));
     renderDisposal(list);toast('✅ 폐기 불러오기 완료 ('+list.length+'건)');
   }catch(e){toast('⚠ 불러오기 실패: '+e.message)}
 }
 function renderDisposal(list){
   const c=document.getElementById('disList');if(!list.length){c.innerHTML='<div class="empty"><div class="empty-icon">🗑</div>폐기 이력 없음</div>';return}c.innerHTML='';
-  list.forEach(d=>{const pct=d.lifespan>0?Math.round(d.remaining/d.lifespan*100):0;const el=document.createElement('div');el.className='dis-item';el.innerHTML='<div class="hi-row"><span class="dis-mask">🗑 '+d.maskNo+'</span><span class="hi-time">'+d.date+' '+d.time+'</span></div><div class="dis-reason">📌 사유: '+(d.reason||'-')+'</div><div class="dis-meta"><span class="dis-chip">총 '+d.totalUsage.toLocaleString()+'회 사용</span><span class="dis-chip">수명 '+d.lifespan.toLocaleString()+'회</span><span class="dis-chip">잔여 '+pct+'%</span>'+(d.manager?'<span class="dis-chip">담당: '+d.manager+'</span>':'')+'</div>';c.appendChild(el)});
+  list.forEach(d=>{
+    const el=document.createElement('div');el.className='dis-item';
+    el.innerHTML='<div class="hi-row"><span class="dis-mask">🗑 '+d.maskNo+'</span><span class="hi-time">'+d.date+'</span></div>'
+      +'<div class="dis-reason">📌 사유: '+(d.reason||'-')+'</div>'
+      +(d.manager?'<div class="dis-meta"><span class="dis-chip">담당: '+d.manager+'</span></div>':'')
+      +(d.note?'<div style="font-size:11px;color:var(--sub);margin-top:3px">📝 '+d.note+'</div>':'')
+      +'<div style="display:flex;gap:4px;margin-top:6px">'
+      +'<button class="btn btn-sm" onclick="editDisposal('+d.id+')" style="background:var(--blue-lt);color:var(--blue);padding:3px 8px;font-size:10px">✏수정</button>'
+      +'<button class="btn btn-sm" onclick="deleteDisposal('+d.id+')" style="background:var(--red-lt);color:var(--red);padding:3px 8px;font-size:10px">🗑삭제</button>'
+      +'</div>';
+    c.appendChild(el);
+  });
+}
+async function deleteDisposal(id){
+  if(!confirm('폐기이력을 삭제하시겠습니까?'))return;
+  try{await sbDelete('mask_dispose_history',{id:'eq.'+id});toast('🗑 삭제됨');loadDisposal()}catch(e){toast('⚠ 삭제 실패: '+e.message)}
+}
+async function editDisposal(id){
+  try{
+    const data=await sbSelect('mask_dispose_history',{id:'eq.'+id},'',1);
+    if(!data.length){toast('데이터 없음');return}
+    const r=data[0];
+    const newReason=prompt('폐기 사유 수정:',r.reason||'');
+    if(newReason===null)return;
+    await sbUpdate('mask_dispose_history',{id:'eq.'+id},{reason:newReason});
+    toast('✅ 수정 완료');loadDisposal();
+  }catch(e){toast('⚠ 수정 실패: '+e.message)}
+}
+async function deleteMoveHist(id){
+  if(!confirm('이동이력을 삭제하시겠습니까?'))return;
+  try{await sbDelete('mask_move_history',{id:'eq.'+id});toast('🗑 삭제됨');loadHistory()}catch(e){toast('⚠ 삭제 실패: '+e.message)}
 }
 
 // ============================================================
