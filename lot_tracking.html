@@ -7,7 +7,7 @@
   <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-  <script src="supabase_config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&display=swap');
     *{box-sizing:border-box;margin:0;padding:0}
@@ -568,11 +568,21 @@
     <div style="margin-top:12px"><button class="btn btn-green" onclick="saveCats()">적용 저장</button></div>
   </div>
   <div class="card" style="border:2px solid #00897b">
-    <div class="card-tit" style="justify-content:space-between"><span>🗄 Supabase 연결 상태</span><span id="nocoSavedBadge" style="font-size:10px;padding:2px 8px;border-radius:4px;display:none"></span></div>
-    <div style="font-size:11px;color:#555;background:#f1f8e6;border-radius:7px;padding:8px 10px;margin-bottom:12px;line-height:1.6">Supabase 연결 정보는 <b>supabase_config.js</b>에서 관리됩니다.<br>URL/Key 변경 시 해당 파일만 수정하면 됩니다.</div>
-    <button class="btn btn-blue" onclick="testSupabaseConn()" style="font-size:14px;padding:12px;margin-bottom:8px">🔌 연결 테스트</button>
+    <div class="card-tit" style="justify-content:space-between"><span>🗄 Supabase 연결 설정</span><span id="nocoSavedBadge" style="font-size:10px;padding:2px 8px;border-radius:4px;display:none"></span></div>
+    <p style="font-size:11px;color:#555;background:#f1f8e6;border-radius:7px;padding:8px 10px;margin-bottom:12px;line-height:1.6">Supabase 가입 → 프로젝트 생성 → Settings → API에서 <b>Project URL</b>과 <b>anon public</b> 키를 복사하여 아래에 입력하세요.</p>
+    <div class="fg"><label>Project URL</label><input type="text" id="sbCfgUrl" placeholder="https://xxxxx.supabase.co"></div>
+    <div class="fg"><label>Anon Public Key</label><input type="password" id="sbCfgKey" placeholder="eyJhbGciOi..."></div>
+    <div style="display:flex;gap:6px;margin-bottom:8px">
+      <button class="btn btn-sm btn-green" onclick="saveSbConfig()" style="flex:1">💾 저장</button>
+      <button class="btn btn-sm btn-blue" onclick="testSupabaseConn()" style="flex:1">🔌 연결 테스트</button>
+    </div>
     <div id="sbConnStatus" style="font-size:12px;text-align:center;padding:6px;display:none"></div>
-    <a href="https://supabase.com/dashboard" target="_blank" class="btn" style="display:flex;align-items:center;justify-content:center;gap:6px;font-size:13px;padding:10px;text-decoration:none;margin-bottom:6px;background:linear-gradient(135deg,#00695c,#00897b);color:#fff">📊 Supabase Dashboard 열기</a>
+    <div style="display:flex;gap:6px;margin-top:6px">
+      <button class="btn btn-sm" onclick="autoCreateTables()" style="flex:1;background:#fff3e0;color:#e65100;border:1px solid #ffcc80">🚀 테이블 자동생성</button>
+      <a href="https://supabase.com/dashboard" target="_blank" class="btn btn-sm" style="flex:1;display:flex;align-items:center;justify-content:center;gap:4px;text-decoration:none;background:linear-gradient(135deg,#00695c,#00897b);color:#fff">📊 Dashboard</a>
+    </div>
+    <div id="sbCreateStatus" style="font-size:11px;color:#888;margin-top:6px;display:none"></div>
+    <p style="font-size:10px;color:#888;margin-top:8px">처음 사용: ① URL/Key 저장 → ② 연결 테스트 → ③ 테이블 자동생성<br>공유 시: HTML 파일만 전달 → 상대방이 자기 Supabase 프로젝트 URL/Key 입력</p>
   </div>
   <!-- 아카이브 -->
   <div class="card" style="border:2px solid #ff9800">
@@ -620,8 +630,236 @@
 
 <script>
 // ============================================================
-//  Supabase API (supabase_config.js에서 sbSelect/sbInsert/sbUpdate/sbDelete 로드됨)
+//  Supabase 설정 관리 (내장 - 외부 파일 불필요)
 // ============================================================
+const SB_STORAGE_KEY='LOT_SB_CFG';
+const SB_DEFAULT_URL='https://omngtyewdaqpphnzeate.supabase.co';
+const SB_DEFAULT_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tbmd0eWV3ZGFxcHBobnplYXRlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4ODk4ODksImV4cCI6MjA5MDQ2NTg4OX0.Zxur3t02JHtOcXforCMSwO3i2mMaf5sViE0tXXUC0-s';
+function getSbCfg(){return JSON.parse(localStorage.getItem(SB_STORAGE_KEY)||'{}')}
+function saveSbCfgToStorage(cfg){localStorage.setItem(SB_STORAGE_KEY,JSON.stringify(cfg))}
+function getSbUrl(){return(getSbCfg().url||SB_DEFAULT_URL).replace(/\/$/,'')}
+function getSbKey(){return getSbCfg().key||SB_DEFAULT_KEY}
+
+// Supabase 클라이언트 (동적 생성)
+let _sb=null;
+function getSb(){
+  const url=getSbUrl(),key=getSbKey();
+  if(!url||!key)return null;
+  if(!_sb||_sb._url!==url){_sb=window.supabase.createClient(url,key);_sb._url=url}
+  return _sb;
+}
+
+// 설정 UI
+function loadSbConfigUI(){
+  const cfg=getSbCfg();
+  document.getElementById('sbCfgUrl').value=cfg.url||SB_DEFAULT_URL;
+  document.getElementById('sbCfgKey').value=cfg.key||SB_DEFAULT_KEY;
+}
+function saveSbConfig(){
+  const url=document.getElementById('sbCfgUrl').value.trim();
+  const key=document.getElementById('sbCfgKey').value.trim();
+  if(!url||!key){showToast('URL과 Key를 모두 입력하세요');return}
+  saveSbCfgToStorage({url,key});_sb=null;
+  showToast('✅ Supabase 설정 저장됨');
+}
+
+// Supabase REST 헬퍼 (sb 객체 사용)
+async function sbSelect(table,filters={},order='',limit=200){
+  const sb=getSb();if(!sb)throw new Error('Supabase 미설정 — 항목관리 탭에서 URL/Key를 입력하세요');
+  let q=sb.from(table).select('*');
+  Object.entries(filters).forEach(([col,cond])=>{
+    const s=String(cond);
+    if(s.startsWith('eq.'))q=q.eq(col,s.slice(3));
+    else if(s.startsWith('gte.'))q=q.gte(col,s.slice(4));
+    else if(s.startsWith('lte.'))q=q.lte(col,s.slice(4));
+    else if(s.startsWith('ilike.'))q=q.ilike(col,s.slice(6));
+    else if(s.startsWith('in.('))q=q.in(col,s.slice(4,-1).split(','));
+    else if(s.includes(',lte.')){const p=s.split(',lte.');q=q.gte(col,p[0].replace('gte.',''));q=q.lte(col,p[1])}
+    else if(col==='or')q=q.or(s)
+    else q=q.eq(col,cond);
+  });
+  if(order){const desc=order.endsWith('.desc');const c=order.replace(/\.(asc|desc)$/,'');q=q.order(c,{ascending:!desc})}
+  q=q.limit(limit);
+  const{data,error}=await q;if(error)throw error;return data||[];
+}
+async function sbInsert(table,data){
+  const sb=getSb();if(!sb)throw new Error('Supabase 미설정');
+  const{data:res,error}=await sb.from(table).insert(data).select();
+  if(error)throw error;return res;
+}
+async function sbUpdate(table,filters,data){
+  const sb=getSb();if(!sb)throw new Error('Supabase 미설정');
+  let q=sb.from(table).update(data);
+  Object.entries(filters).forEach(([col,cond])=>{
+    const s=String(cond);
+    if(s.startsWith('eq.'))q=q.eq(col,s.slice(3));else q=q.eq(col,cond);
+  });
+  const{data:res,error}=await q.select();if(error)throw error;return res;
+}
+async function sbDelete(table,filters){
+  const sb=getSb();if(!sb)throw new Error('Supabase 미설정');
+  let q=sb.from(table).delete();
+  Object.entries(filters).forEach(([col,cond])=>{
+    const s=String(cond);
+    if(s.startsWith('eq.'))q=q.eq(col,s.slice(3));
+    else if(s.startsWith('in.('))q=q.in(col,s.slice(4,-1).split(','));
+    else q=q.eq(col,cond);
+  });
+  const{error}=await q;if(error)throw error;
+}
+async function sbTestConnection(){
+  const sb=getSb();if(!sb)return{success:false,status:'미설정'};
+  try{const{error}=await sb.from('part_mapping').select('id',{count:'exact',head:true});return{success:!error,status:error?error.message:'OK'}}
+  catch(e){return{success:false,status:e.message}}
+}
+
+// Supabase 연결 테스트 (UI)
+async function testSupabaseConn(){
+  const st=document.getElementById('sbConnStatus');
+  st.style.display='block';st.textContent='테스트 중...';st.style.color='#1565c0';
+  const r=await sbTestConnection();
+  if(r.success){st.textContent='✅ Supabase 연결 성공';st.style.color='#2e7d32'}
+  else{st.textContent='❌ 연결 실패: '+r.status;st.style.color='#c62828'}
+}
+
+// ===== 테이블 자동생성 (Supabase SQL Editor 대체) =====
+async function autoCreateTables(){
+  const sb=getSb();if(!sb){showToast('먼저 URL/Key를 저장하세요');return}
+  if(!confirm('6개 테이블을 자동생성합니다.\n(part_mapping, move_history, feeder_setting, setting_check_history, exchange_check_history, bom)\n\n이미 있는 테이블은 건너뜁니다.'))return;
+  const st=document.getElementById('sbCreateStatus');st.style.display='block';st.textContent='생성 중...';
+
+  const url=getSbUrl(),key=getSbKey();
+  const sqlStatements=[
+`CREATE TABLE IF NOT EXISTS part_mapping (
+  id BIGSERIAL PRIMARY KEY,
+  common_part TEXT,
+  base_part TEXT,
+  supplier TEXT,
+  material TEXT,
+  spec TEXT,
+  note TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE part_mapping ENABLE ROW LEVEL SECURITY;
+CREATE POLICY IF NOT EXISTS "allow_all_part_mapping" ON part_mapping FOR ALL USING (true) WITH CHECK (true);`,
+
+`CREATE TABLE IF NOT EXISTS move_history (
+  id BIGSERIAL PRIMARY KEY,
+  move_date TEXT,
+  move_time TEXT,
+  departure TEXT,
+  destination TEXT,
+  barcode_raw TEXT,
+  base_part TEXT,
+  supplier TEXT,
+  supply_type TEXT,
+  process TEXT,
+  item_type TEXT,
+  spec TEXT,
+  use_part TEXT,
+  lot TEXT,
+  qty INTEGER,
+  note TEXT,
+  format TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE move_history ENABLE ROW LEVEL SECURITY;
+CREATE POLICY IF NOT EXISTS "allow_all_move_history" ON move_history FOR ALL USING (true) WITH CHECK (true);`,
+
+`CREATE TABLE IF NOT EXISTS feeder_setting (
+  id BIGSERIAL PRIMARY KEY,
+  model TEXT,
+  line TEXT,
+  equipment TEXT,
+  stage TEXT,
+  stage_barcode TEXT,
+  base_part TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE feeder_setting ENABLE ROW LEVEL SECURITY;
+CREATE POLICY IF NOT EXISTS "allow_all_feeder_setting" ON feeder_setting FOR ALL USING (true) WITH CHECK (true);`,
+
+`CREATE TABLE IF NOT EXISTS setting_check_history (
+  id BIGSERIAL PRIMARY KEY,
+  check_date TEXT,
+  check_time TEXT,
+  model TEXT,
+  line TEXT,
+  total_count INTEGER,
+  ng_count INTEGER,
+  judge TEXT,
+  detail TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE setting_check_history ENABLE ROW LEVEL SECURITY;
+CREATE POLICY IF NOT EXISTS "allow_all_setting_check" ON setting_check_history FOR ALL USING (true) WITH CHECK (true);`,
+
+`CREATE TABLE IF NOT EXISTS exchange_check_history (
+  id BIGSERIAL PRIMARY KEY,
+  check_date TEXT,
+  check_time TEXT,
+  model TEXT,
+  line TEXT,
+  equipment TEXT,
+  stage TEXT,
+  expected_part TEXT,
+  old_scanned TEXT,
+  old_resolved TEXT,
+  new_scanned TEXT,
+  new_resolved TEXT,
+  judge TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE exchange_check_history ENABLE ROW LEVEL SECURITY;
+CREATE POLICY IF NOT EXISTS "allow_all_exchange_check" ON exchange_check_history FOR ALL USING (true) WITH CHECK (true);`,
+
+`CREATE TABLE IF NOT EXISTS bom (
+  id BIGSERIAL PRIMARY KEY,
+  base_part TEXT,
+  reading_part TEXT,
+  moq INTEGER DEFAULT 1,
+  line TEXT,
+  equipment TEXT,
+  stage TEXT,
+  note TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE bom ENABLE ROW LEVEL SECURITY;
+CREATE POLICY IF NOT EXISTS "allow_all_bom" ON bom FOR ALL USING (true) WITH CHECK (true);`
+  ];
+
+  let ok=0,fail=0;
+  for(const sql of sqlStatements){
+    try{
+      const res=await fetch(url+'/rest/v1/rpc/exec_sql',{method:'POST',headers:{'Content-Type':'application/json','apikey':key,'Authorization':'Bearer '+key},body:JSON.stringify({query:sql})});
+      if(res.ok){ok++}else{
+        // exec_sql RPC가 없으면 직접 SQL 실행 불가 → pg_meta 시도
+        const res2=await fetch(url+'/pg/query',{method:'POST',headers:{'Content-Type':'application/json','apikey':key,'Authorization':'Bearer '+key},body:JSON.stringify({query:sql})});
+        if(res2.ok)ok++;else fail++;
+      }
+    }catch(e){fail++}
+    st.textContent='생성 중... ('+ok+'/'+(ok+fail)+')';
+  }
+
+  if(fail>0){
+    st.innerHTML='⚠ 자동생성이 제한됩니다. 아래 SQL을 Supabase Dashboard → <b>SQL Editor</b>에 붙여넣어 실행하세요.';
+    st.style.color='#e65100';
+    // SQL 복사 버튼 추가
+    const allSql=sqlStatements.join('\n\n');
+    const btn=document.createElement('button');
+    btn.className='btn btn-sm';btn.style.cssText='margin-top:8px;background:#e3f2fd;color:#1565c0;border:1px solid #90caf9;width:100%';
+    btn.textContent='📋 전체 SQL 복사';
+    btn.onclick=()=>{navigator.clipboard.writeText(allSql).then(()=>showToast('📋 SQL 복사됨')).catch(()=>{const t=document.createElement('textarea');t.value=allSql;document.body.appendChild(t);t.select();document.execCommand('copy');document.body.removeChild(t);showToast('📋 SQL 복사됨')})};
+    st.appendChild(document.createElement('br'));st.appendChild(btn);
+  }else{
+    st.textContent='✅ '+ok+'개 테이블 생성 완료';st.style.color='#2e7d32';
+    showToast('✅ 테이블 자동생성 완료');
+  }
+}
+
+// 하위 호환
+function loadNocoConfigUI(){loadSbConfigUI()}
+function saveNocoConfig(){}
 
 // 품번매핑 캐시 (전체 로드 후 클라이언트 필터)
 let _partMapCache=null, _partMapCacheTime=0;
