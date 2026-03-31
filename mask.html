@@ -206,8 +206,8 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
       </div>
     </div>
     <div class="fg-row">
+      <div class="fg"><label>수량 (개)</label><input type="number" id="setQty" placeholder="예: 5" inputmode="numeric" value="1"></div>
       <div class="fg"><label>배열수</label><input type="number" id="setArrayQty" placeholder="1" inputmode="numeric"></div>
-      <div class="fg"></div>
     </div>
     <div class="fg-row">
       <div class="fg"><label>수명 (사용가능횟수)</label><input type="number" id="setLifespan" placeholder="예: 5000" inputmode="numeric"></div>
@@ -343,7 +343,7 @@ async function autoCreateMaskTables(){
   const st=document.getElementById('sbCreateStatus');st.style.display='block';st.textContent='생성 중...';
   const url=getMaskSbUrl(),key=getMaskSbKey();
   const sqls=[
-`CREATE TABLE IF NOT EXISTS mask_register (id BIGSERIAL PRIMARY KEY, mask_id TEXT, model TEXT, use_count INTEGER DEFAULT 1, note TEXT, safety_stock INTEGER DEFAULT 0, maker TEXT, status TEXT DEFAULT '사용중', location TEXT DEFAULT '보관함', created_at TIMESTAMPTZ DEFAULT NOW());
+`CREATE TABLE IF NOT EXISTS mask_register (id BIGSERIAL PRIMARY KEY, mask_id TEXT, model TEXT, qty INTEGER DEFAULT 1, use_count INTEGER DEFAULT 1, note TEXT, safety_stock INTEGER DEFAULT 0, maker TEXT, status TEXT DEFAULT '사용중', location TEXT DEFAULT '보관함', created_at TIMESTAMPTZ DEFAULT NOW());
 ALTER TABLE mask_register ENABLE ROW LEVEL SECURITY;
 CREATE POLICY IF NOT EXISTS "allow_all_mask_register" ON mask_register FOR ALL USING (true) WITH CHECK (true);`,
 `CREATE TABLE IF NOT EXISTS mask_move_history (id BIGSERIAL PRIMARY KEY, mask_id TEXT, move_date TEXT, move_time TEXT, from_location TEXT, to_location TEXT, model TEXT, prod_qty INTEGER DEFAULT 0, usage_count INTEGER DEFAULT 0, worker TEXT, note TEXT, created_at TIMESTAMPTZ DEFAULT NOW());
@@ -412,7 +412,7 @@ async function saveSettings(){
 async function loadMasks(){
   try{
     const data=await sbSelect('mask_register',{},'created_at.desc',200);
-    masks=data.map(r=>({id:r.id,maskNo:r.mask_id||'',model:r.model||'공용',arrayQty:parseInt(r.use_count)||1,lifespan:parseInt(r.note)||0,safetyStock:parseInt(r.safety_stock)||0,manager:r.maker||'',status:r.status||'사용중'}));
+    masks=data.map(r=>({id:r.id,maskNo:r.mask_id||'',model:r.model||'공용',qty:parseInt(r.qty)||1,arrayQty:parseInt(r.use_count)||1,lifespan:parseInt(r.note)||0,safetyStock:parseInt(r.safety_stock)||0,manager:r.maker||'',status:r.status||'사용중'}));
     renderMaskList();
   }catch(e){document.getElementById('maskList').innerHTML='<div class="empty" style="padding:12px">불러오기 실패: '+e.message+'</div>'}
 }
@@ -433,6 +433,7 @@ function editMask(id){
   document.getElementById('setMaskNo').value=m.maskNo;
   setModelList=(m.model||'공용')==='공용'?[]:m.model.split(',').map(v=>v.trim());
   renderModelTags();
+  document.getElementById('setQty').value=m.qty||1;
   document.getElementById('setArrayQty').value=m.arrayQty||1;
   document.getElementById('setLifespan').value=m.lifespan||'';
   document.getElementById('setSafetyStock').value=m.safetyStock||'';
@@ -447,20 +448,21 @@ async function updateMask(){
   if(!editingMaskId){toast('수정 대상 없음');return}
   const maskNo=document.getElementById('setMaskNo').value.trim();
   const model=setModelList.length?setModelList.join(','):'공용';
+  const qty=parseInt(document.getElementById('setQty').value)||1;
   const arrayQty=parseInt(document.getElementById('setArrayQty').value)||1;
   const lifespan=parseInt(document.getElementById('setLifespan').value)||0;
   const safetyStock=parseInt(document.getElementById('setSafetyStock').value)||0;
   const manager=document.getElementById('setMaskManager').value;
   if(!maskNo){toast('소모품번호를 입력하세요');return}
   try{
-    await sbUpdate('mask_register',{id:'eq.'+editingMaskId},{mask_id:maskNo,model:model,use_count:arrayQty,note:String(lifespan),safety_stock:safetyStock,maker:manager});
+    await sbUpdate('mask_register',{id:'eq.'+editingMaskId},{mask_id:maskNo,model:model,qty:qty,use_count:arrayQty,note:String(lifespan),safety_stock:safetyStock,maker:manager});
     toast('✅ 수정 완료');cancelEdit();loadMasks();
   }catch(e){toast('⚠ 수정 실패: '+e.message)}
 }
 function cancelEdit(){
   editingMaskId=null;
   document.getElementById('setMaskNo').value='';setModelList=[];renderModelTags();
-  document.getElementById('setArrayQty').value='';document.getElementById('setLifespan').value='';document.getElementById('setSafetyStock').value='';
+  document.getElementById('setQty').value='1';document.getElementById('setArrayQty').value='';document.getElementById('setLifespan').value='';document.getElementById('setSafetyStock').value='';
   const btn=document.getElementById('btnRegMask');
   if(btn){btn.textContent='✅ 소모품 등록';btn.onclick=registerMask;btn.style.background='linear-gradient(135deg,#1e40af,#3b82f6)'}
 }
@@ -471,9 +473,9 @@ async function deleteMask(id,name){
 function addModelTag(){const inp=document.getElementById('setModelInput');const val=inp.value.trim();if(!val){toast('기종명을 입력하세요');return}if(setModelList.includes(val)){toast('이미 추가된 기종');return}setModelList.push(val);inp.value='';renderModelTags()}
 function renderModelTags(){const c=document.getElementById('setModelTags');c.innerHTML='';if(!setModelList.length){c.innerHTML='<span style="font-size:12px;color:var(--sub);padding:4px">기종을 추가하세요 (없으면 공용)</span>';return}setModelList.forEach((v,i)=>{const t=document.createElement('span');t.className='model-tag';t.innerHTML=v+'<button onclick="setModelList.splice('+i+',1);renderModelTags()">✕</button>';c.appendChild(t)})}
 async function registerMask(){
-  const maskNo=document.getElementById('setMaskNo').value.trim();const model=setModelList.length?setModelList.join(','):'공용';const arrayQty=parseInt(document.getElementById('setArrayQty').value)||1;const lifespan=parseInt(document.getElementById('setLifespan').value)||0;const safetyStock=parseInt(document.getElementById('setSafetyStock').value)||0;const manager=document.getElementById('setMaskManager').value;
+  const maskNo=document.getElementById('setMaskNo').value.trim();const model=setModelList.length?setModelList.join(','):'공용';const qty=parseInt(document.getElementById('setQty').value)||1;const arrayQty=parseInt(document.getElementById('setArrayQty').value)||1;const lifespan=parseInt(document.getElementById('setLifespan').value)||0;const safetyStock=parseInt(document.getElementById('setSafetyStock').value)||0;const manager=document.getElementById('setMaskManager').value;
   if(!maskNo){toast('소모품번호를 입력하세요');return}
-  try{const res=await sbInsert('mask_register',{mask_id:maskNo,model:model,use_count:arrayQty,note:String(lifespan),safety_stock:safetyStock,maker:manager,status:'사용중',location:'보관함'});if(res&&res.length){toast('✅ 소모품 등록 완료');document.getElementById('setMaskNo').value='';setModelList=[];renderModelTags();document.getElementById('setArrayQty').value='';document.getElementById('setLifespan').value='';document.getElementById('setSafetyStock').value='';loadMasks()}else toast('⚠ 등록 실패')}catch(e){toast('⚠ 오류: '+e.message)}
+  try{const res=await sbInsert('mask_register',{mask_id:maskNo,model:model,qty:qty,use_count:arrayQty,note:String(lifespan),safety_stock:safetyStock,maker:manager,status:'사용중',location:'보관함'});if(res&&res.length){toast('✅ 소모품 등록 완료');document.getElementById('setMaskNo').value='';setModelList=[];renderModelTags();document.getElementById('setQty').value='1';document.getElementById('setArrayQty').value='';document.getElementById('setLifespan').value='';document.getElementById('setSafetyStock').value='';loadMasks()}else toast('⚠ 등록 실패')}catch(e){toast('⚠ 오류: '+e.message)}
 }
 
 // ============================================================
@@ -555,16 +557,16 @@ async function loadStock(){
   toast('재고 불러오는 중...');
   try{
     const [mr,hr]=await Promise.all([sbSelect('mask_register',{},'',200),sbSelect('mask_move_history',{},'created_at.desc',1000)]);
-    masks=mr.map(r=>({id:r.id,maskNo:r.mask_id||'',model:r.model||'공용',arrayQty:parseInt(r.use_count)||1,lifespan:parseInt(r.note)||0,safetyStock:parseInt(r.safety_stock)||0,manager:r.maker||'',status:r.status||'사용중'}));
+    masks=mr.map(r=>({id:r.id,maskNo:r.mask_id||'',model:r.model||'공용',qty:parseInt(r.qty)||1,arrayQty:parseInt(r.use_count)||1,lifespan:parseInt(r.note)||0,safetyStock:parseInt(r.safety_stock)||0,manager:r.maker||'',status:r.status||'사용중'}));
     const hl=hr;stockData=[];
-    masks.filter(m=>m.status!=='폐기').forEach(m=>{const mh=hl.filter(h=>(h.mask_id||'')===m.maskNo);const tu=mh.reduce((s,h)=>s+(parseInt(h.usage_count)||0),0);let loc='보관함';if(mh.length>0)loc=mh[0].to_location||'보관함';const isInfinite=!m.lifespan||m.lifespan<=0;const rem=isInfinite?999999:Math.max(0,m.lifespan-tu);const pct=isInfinite?100:(m.lifespan>0?Math.round(rem/m.lifespan*100):100);stockData.push({maskNo:m.maskNo,model:m.model,arrayQty:m.arrayQty,lifespan:m.lifespan,safetyStock:m.safetyStock,totalUsage:tu,remaining:rem,pct,remProd:isInfinite?999999:rem*m.arrayQty,location:loc,manager:m.manager,isInfinite})});
+    masks.filter(m=>m.status!=='폐기').forEach(m=>{const mh=hl.filter(h=>(h.mask_id||'')===m.maskNo);const tu=mh.reduce((s,h)=>s+(parseInt(h.usage_count)||0),0);let loc='보관함';if(mh.length>0)loc=mh[0].to_location||'보관함';const isInfinite=!m.lifespan||m.lifespan<=0;const rem=isInfinite?999999:Math.max(0,m.lifespan-tu);const pct=isInfinite?100:(m.lifespan>0?Math.round(rem/m.lifespan*100):100);stockData.push({maskNo:m.maskNo,model:m.model,qty:m.qty||1,arrayQty:m.arrayQty,lifespan:m.lifespan,safetyStock:m.safetyStock,totalUsage:tu,remaining:rem,pct,remProd:isInfinite?999999:rem*m.arrayQty,location:loc,manager:m.manager,isInfinite})});
     renderStock();toast('✅ 재고 불러오기 완료 ('+stockData.length+'건)');
   }catch(e){toast('⚠ 재고 불러오기 실패: '+e.message)}
 }
 function renderStock(){
   const filter=document.getElementById('stkFilter').value;const list=filter?stockData.filter(s=>s.location===filter):stockData;
   const sum=document.getElementById('stkSummary');const tot=stockData.length;
-  const modelStock={};stockData.forEach(s=>{const key=s.model||'공용';if(!modelStock[key])modelStock[key]={count:0,safety:s.safetyStock||0};modelStock[key].count++});
+  const modelStock={};stockData.forEach(s=>{const key=s.model||'공용';if(!modelStock[key])modelStock[key]={count:0,safety:s.safetyStock||0};modelStock[key].count+=s.qty||1});
   const safetyShort=Object.values(modelStock).filter(v=>v.safety>0&&v.count<v.safety).length;
   sum.innerHTML='<span style="flex:1;background:var(--blue-lt);color:var(--blue);text-align:center;padding:7px;border-radius:8px;font-size:12px;font-weight:700">전체<br><b style="font-size:18px">'+tot+'</b></span>'+(safetyShort?'<span style="flex:1;background:#fff3e0;color:#e65100;text-align:center;padding:7px;border-radius:8px;font-size:12px;font-weight:700">재고부족<br><b style="font-size:18px">'+safetyShort+'</b></span>':'');
   const safetyInfo=Object.entries(modelStock).filter(([,v])=>v.safety>0).map(([k,v])=>{const isShort=v.count<v.safety;return'<div style="display:flex;justify-content:space-between;padding:4px 8px;font-size:11px;border-bottom:1px solid #f0f0f0;'+(isShort?'background:#fff5f5;color:#c62828':'color:#555')+'"><span>'+k+'</span><span style="font-weight:700">'+(isShort?'\u26a0 ':'')+'현재 '+v.count+' / 안전재고 '+v.safety+'</span></div>'}).join('');
@@ -579,7 +581,7 @@ function renderStock(){
     h+='<tr style="border-bottom:1px solid #f0f0f0;'+(isShort?'background:#fff5f5':'')+'">';
     h+='<td style="padding:8px 6px;font-weight:600;color:var(--blue)">'+s.maskNo+'<div style="font-size:10px;color:var(--sub);font-weight:400">'+(s.model||'공용')+'</div></td>';
     h+='<td style="padding:8px 4px;text-align:center"><span style="font-size:10px;padding:2px 6px;border-radius:4px;background:var(--blue-lt);color:var(--blue);font-weight:600">'+s.location+'</span></td>';
-    h+='<td style="padding:8px 4px;text-align:center;font-weight:700;color:'+(isShort?'var(--red)':'var(--txt)')+'">'+ms.count+'</td>';
+    h+='<td style="padding:8px 4px;text-align:center;font-weight:700;color:'+(isShort?'var(--red)':'var(--txt)')+'">'+(s.qty||1)+'</td>';
     h+='<td style="padding:8px 4px;text-align:center;color:var(--sub)">'+(ms.safety||'-')+'</td>';
     h+='<td style="padding:8px 4px;text-align:center"><button class="btn btn-sm btn-blue" onclick="openStkMove(\''+s.maskNo.replace(/'/g,"\\'")+'\')" style="padding:4px 8px;font-size:10px">이동</button></td>';
     h+='</tr>';
