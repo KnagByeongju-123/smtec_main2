@@ -1,0 +1,932 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>출하의뢰서 관리</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&display=swap');
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Noto Sans KR',sans-serif;background:#f0f2f5;color:#212121;-webkit-tap-highlight-color:transparent}
+
+  /* ── 헤더 ── */
+  .hdr{background:linear-gradient(135deg,#0d47a1,#1565c0);color:#fff;padding:14px 16px;display:flex;align-items:center;justify-content:space-between}
+  .hdr h1{font-size:17px;font-weight:700;display:flex;align-items:center;gap:6px}
+  .hdr-sub{font-size:10px;opacity:.7}
+  .conn-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-left:6px}
+  .conn-dot.ok{background:#69f0ae}.conn-dot.ng{background:#ff5252}
+
+  /* ── Supabase 접속정보 ── */
+  .cfg-card{background:#fff;border:2px solid #43a047;border-radius:12px;margin:8px 12px;padding:10px 14px}
+  .cfg-tit{font-size:12px;font-weight:700;color:#2e7d32;margin-bottom:6px;display:flex;align-items:center;gap:4px}
+  .cfg-row{display:flex;gap:6px;margin-bottom:6px;align-items:center}
+  .cfg-row label{font-size:11px;font-weight:600;color:#555;min-width:60px;flex-shrink:0}
+  .cfg-row input{flex:1;padding:6px 8px;border:1px solid #ddd;border-radius:6px;font-size:11px;font-family:inherit}
+  .cfg-btn{padding:6px 14px;border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit}
+
+  /* ── 탭 ── */
+  .tabs{display:flex;background:#fff;border-bottom:2px solid #e0e0e0;position:sticky;top:0;z-index:50}
+  .tab{flex:1;padding:11px 4px;text-align:center;font-size:12px;font-weight:600;cursor:pointer;border-bottom:3px solid transparent;color:#888;transition:all .15s}
+  .tab.on{color:#0d47a1;border-bottom-color:#0d47a1}
+
+  /* ── 패널 ── */
+  .pnl{display:none;padding:10px 12px 80px}.pnl.on{display:block}
+
+  /* ── 카드 ── */
+  .card{background:#fff;border-radius:12px;padding:14px;margin-bottom:10px;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+  .card-tit{font-size:14px;font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+
+  /* ── 입력 ── */
+  .fg{margin-bottom:10px}
+  .fg label{display:block;font-size:11px;font-weight:600;color:#555;margin-bottom:3px}
+  .fg input,.fg select,.fg textarea{width:100%;padding:10px;border:1.5px solid #ddd;border-radius:8px;font-size:14px;font-family:inherit;background:#fff}
+  .fg select{appearance:auto}
+
+  /* ── 버튼 ── */
+  .btn{padding:12px;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;width:100%;transition:transform .1s}
+  .btn:active{transform:scale(.97)}
+  .btn-primary{background:linear-gradient(135deg,#0d47a1,#1976d2);color:#fff;box-shadow:0 2px 8px rgba(13,71,161,.2)}
+  .btn-green{background:linear-gradient(135deg,#2e7d32,#43a047);color:#fff}
+  .btn-red{background:#ffebee;color:#c62828;border:1px solid #ffcdd2}
+  .btn-gray{background:#f5f5f5;color:#555;border:1px solid #ddd}
+  .btn-orange{background:linear-gradient(135deg,#e65100,#ff9800);color:#fff}
+  .btn-sm{padding:8px 12px;font-size:12px;width:auto;border-radius:8px}
+  .btn-row{display:flex;gap:8px;margin-bottom:10px}
+  .btn-row .btn{flex:1}
+
+  /* ── 작업 카드 (출하 품목) ── */
+  .work-card{background:#fff;border-radius:12px;padding:14px;margin-bottom:10px;box-shadow:0 1px 4px rgba(0,0,0,.06);border-left:4px solid #1976d2;position:relative}
+  .work-card.has-lot{border-left-color:#43a047}
+  .wc-part{font-size:16px;font-weight:800;color:#0d47a1;margin-bottom:4px}
+  .wc-info{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:6px}
+  .wc-tag{font-size:12px;padding:3px 8px;border-radius:6px;font-weight:600}
+  .wc-tag.bs{background:#e3f2fd;color:#1565c0}
+  .wc-tag.bc{background:#f3e5f5;color:#7b1fa2}
+  .wc-tag.qt{background:#e8f5e9;color:#2e7d32}
+  .wc-lot{font-size:14px;font-weight:700;color:#2e7d32;margin:4px 0}
+  .wc-lot.empty{color:#bbb;font-weight:400}
+  .wc-acts{display:flex;gap:6px;margin-top:6px}
+  .wc-acts button{padding:8px 0;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;flex:1}
+  .wc-btn-lot{background:#0d47a1;color:#fff}
+  .wc-btn-copy{background:#e3f2fd;color:#1565c0}
+  .wc-btn-del{background:#ffebee;color:#c62828}
+
+  /* ── 숫자키패드 모달 ── */
+  .modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.45);z-index:999;justify-content:center;align-items:flex-end}
+  .modal-overlay.on{display:flex}
+  .modal-box{background:#fff;border-radius:20px 20px 0 0;width:100%;max-width:500px;padding:20px;animation:slideUp .2s ease-out}
+  @keyframes slideUp{from{transform:translateY(100px);opacity:0}to{transform:translateY(0);opacity:1}}
+  .kp-title{font-size:13px;font-weight:700;color:#555;margin-bottom:4px;text-align:center}
+  .kp-display{font-size:32px;font-weight:800;text-align:center;min-height:48px;padding:8px 0;color:#0d47a1;word-break:break-all;letter-spacing:1px;border-bottom:2px solid #e0e0e0;margin-bottom:12px}
+  .kp-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
+  .kp-btn{font-size:24px;font-weight:700;padding:16px 0;border-radius:10px;border:none;background:#f5f5f5;color:#212121;cursor:pointer;font-family:inherit;transition:background .1s}
+  .kp-btn:active{background:#e0e0e0}
+  .kp-btn.fn{background:#e3f2fd;color:#1565c0;font-size:18px}
+  .kp-actions{display:flex;gap:8px}
+  .kp-actions .btn{flex:1;padding:14px;font-size:15px}
+
+  /* ── 박스단위 관리 테이블 ── */
+  .tbl-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .tbl{width:100%;border-collapse:collapse;font-size:12px}
+  .tbl th{background:#e3f2fd;color:#0d47a1;font-weight:700;padding:8px 6px;border-bottom:2px solid #90caf9;text-align:left;white-space:nowrap}
+  .tbl td{padding:7px 6px;border-bottom:1px solid #f0f0f0;vertical-align:middle}
+  .tbl tr:hover{background:#f5f9ff}
+  .tbl .act-btn{padding:4px 8px;border:none;border-radius:4px;font-size:10px;font-weight:700;cursor:pointer;font-family:inherit}
+  .inactive-row{opacity:.5;text-decoration:line-through}
+
+  /* ── 이력 아이템 ── */
+  .h-item{padding:10px 0;border-bottom:1px solid #f0f0f0}
+  .h-item:last-child{border:none}
+  .hi-top{display:flex;justify-content:space-between;align-items:center}
+  .hi-part{font-size:14px;font-weight:700;color:#0d47a1}
+  .hi-date{font-size:10px;color:#999}
+  .hi-tags{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}
+  .hi-tag{font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600}
+  .h-empty{text-align:center;padding:20px;color:#aaa;font-size:13px}
+
+  /* ── 검색 ── */
+  .search-row{display:flex;gap:6px;margin-bottom:10px}
+  .search-row input,.search-row select{flex:1;padding:8px;border:1.5px solid #ddd;border-radius:8px;font-size:13px;font-family:inherit}
+
+  /* ── 토스트 ── */
+  .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.85);color:#fff;padding:8px 20px;border-radius:20px;font-size:12px;font-weight:600;z-index:9999;opacity:0;transition:opacity .3s;pointer-events:none}
+  .toast.show{opacity:1}
+
+  /* ── 로딩 ── */
+  .loading{text-align:center;padding:30px;color:#aaa;font-size:13px}
+  .spin{display:inline-block;width:18px;height:18px;border:2px solid #ddd;border-top-color:#1976d2;border-radius:50%;animation:spin .6s linear infinite;margin-right:6px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* ── 뱃지 카운트 ── */
+  .badge{display:inline-block;background:#ef5350;color:#fff;font-size:9px;font-weight:700;padding:1px 5px;border-radius:8px;margin-left:3px;min-width:16px;text-align:center}
+</style>
+</head>
+<body>
+
+<!-- 헤더 -->
+<div class="hdr">
+  <h1>📦 출하의뢰서 관리 <span class="conn-dot ng" id="connDot"></span></h1>
+  <span class="hdr-sub">Supabase 기반</span>
+</div>
+
+<!-- 탭 -->
+<div class="tabs">
+  <div class="tab on" onclick="swTab(0)">📦 출하작업</div>
+  <div class="tab" onclick="swTab(1)">📋 이력</div>
+  <div class="tab" onclick="swTab(2)">📏 박스단위</div>
+  <div class="tab" onclick="swTab(3)">⚙ 설정</div>
+</div>
+
+<!-- ===== 탭0: 출하작업 ===== -->
+<div class="pnl on" id="pnl0">
+  <!-- 품목 추가 -->
+  <div class="card">
+    <div class="card-tit">➕ 품목 추가</div>
+    <div class="fg">
+      <label>품번</label>
+      <input type="text" id="addPart" placeholder="품번 입력 (자동완성)" list="partList" autocomplete="off">
+      <datalist id="partList"></datalist>
+    </div>
+    <div class="fg">
+      <label>수량</label>
+      <input type="number" id="addQty" placeholder="수량 입력" inputmode="numeric">
+    </div>
+    <div style="display:flex;gap:6px;font-size:12px;color:#888;margin-bottom:8px">
+      <span id="addInfo">박스단위를 자동 조회합니다</span>
+    </div>
+    <button class="btn btn-primary" onclick="addWorkItem()">➕ 추가</button>
+  </div>
+
+  <!-- 작업 목록 -->
+  <div class="card">
+    <div class="card-tit" style="justify-content:space-between">
+      <span>📦 출하 품목 (<span id="workCnt">0</span>건)</span>
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-sm btn-green" onclick="moveAllToHistory()">📋 전체 이력등록</button>
+        <button class="btn btn-sm btn-red" onclick="clearAllWork()">전체삭제</button>
+      </div>
+    </div>
+    <div id="workList"><div class="loading"><span class="spin"></span>로딩 중...</div></div>
+  </div>
+</div>
+
+<!-- ===== 탭1: 이력 ===== -->
+<div class="pnl" id="pnl1">
+  <div class="card">
+    <div class="card-tit">📋 출하 이력</div>
+    <div class="search-row">
+      <input type="text" id="histSearch" placeholder="품번 검색" oninput="loadHistory()">
+      <input type="date" id="histDate" onchange="loadHistory()">
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-sm btn-gray" onclick="exportHistXlsx()">📥 엑셀 다운로드</button>
+      <button class="btn btn-sm btn-red" onclick="clearHistory()">선택삭제</button>
+    </div>
+    <div id="histList"><div class="loading"><span class="spin"></span>로딩 중...</div></div>
+    <div style="text-align:center;margin-top:8px">
+      <button class="btn btn-sm btn-gray" id="histMore" onclick="loadHistoryMore()" style="display:none">더보기</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 탭2: 박스단위 관리 ===== -->
+<div class="pnl" id="pnl2">
+  <div class="card">
+    <div class="card-tit" style="justify-content:space-between">
+      <span>📏 박스단위 마스터 (<span id="buCnt">0</span>건)</span>
+      <button class="btn btn-sm btn-primary" onclick="showBuAdd()">➕ 추가</button>
+    </div>
+    <div class="search-row">
+      <input type="text" id="buSearch" placeholder="품번 검색" oninput="loadBoxUnits()">
+      <select id="buFilter" onchange="loadBoxUnits()" style="max-width:100px">
+        <option value="all">전체</option>
+        <option value="active">사용중</option>
+        <option value="inactive">비활성</option>
+      </select>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-sm btn-orange" onclick="uploadBuExcel()">📤 엑셀 업로드</button>
+      <button class="btn btn-sm btn-gray" onclick="exportBuXlsx()">📥 서버 → 엑셀</button>
+    </div>
+    <div id="buProgress" style="display:none;text-align:center;padding:8px;font-size:12px;color:#1565c0"></div>
+    <input type="file" id="buFileInput" accept=".xlsx,.xls,.csv" style="display:none">
+    <div class="tbl-wrap">
+      <div id="buTable"><div class="loading"><span class="spin"></span>로딩 중...</div></div>
+    </div>
+    <div style="margin-top:10px;display:flex;gap:6px">
+      <button class="btn btn-sm btn-red" onclick="deleteAllBoxUnits()">⚠ 전체삭제</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 탭3: 설정 ===== -->
+<div class="pnl" id="pnl3">
+  <div class="card">
+    <div class="card-tit">⚙ 시스템 설정</div>
+    <div class="fg">
+      <label>로트번호 접두사 (자동생성 시)</label>
+      <input type="text" id="setLotPrefix" placeholder="예: LOT-" value="">
+    </div>
+    <div class="fg">
+      <label>기본 작업일자</label>
+      <input type="date" id="setWorkDate">
+    </div>
+    <button class="btn btn-primary" onclick="saveSettings()" style="margin-top:8px">저장</button>
+  </div>
+  <div class="card" style="margin-top:10px">
+    <div class="card-tit">🗄 데이터 관리</div>
+    <div class="btn-row">
+      <button class="btn btn-sm btn-gray" onclick="exportAllXlsx()">📥 전체 데이터 엑셀</button>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-sm btn-red" onclick="resetAllData()">⚠ 전체 데이터 초기화</button>
+    </div>
+  </div>
+  <div class="cfg-card" style="margin-top:10px">
+    <div class="cfg-tit">🔗 Supabase 접속정보 <span class="conn-dot ng" id="connDot2" style="width:6px;height:6px"></span></div>
+    <div class="cfg-row"><label>URL</label><input type="password" id="cfgUrl" placeholder="https://xxx.supabase.co"></div>
+    <div class="cfg-row"><label>Anon Key</label><input type="password" id="cfgKey" placeholder="eyJ..."></div>
+    <div style="display:flex;gap:6px;margin-top:6px">
+      <button class="cfg-btn" style="background:#43a047;color:#fff" onclick="testConn()">연결 테스트</button>
+      <button class="cfg-btn" style="background:#1565c0;color:#fff" onclick="saveConfig()">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- 키패드 모달 -->
+<div class="modal-overlay" id="kpModal">
+  <div class="modal-box">
+    <div class="kp-title" id="kpTitle">로트번호 입력</div>
+    <div class="kp-display" id="kpDisplay"></div>
+    <div class="kp-grid">
+      <button class="kp-btn" onclick="kpInput('1')">1</button>
+      <button class="kp-btn" onclick="kpInput('2')">2</button>
+      <button class="kp-btn" onclick="kpInput('3')">3</button>
+      <button class="kp-btn" onclick="kpInput('4')">4</button>
+      <button class="kp-btn" onclick="kpInput('5')">5</button>
+      <button class="kp-btn" onclick="kpInput('6')">6</button>
+      <button class="kp-btn" onclick="kpInput('7')">7</button>
+      <button class="kp-btn" onclick="kpInput('8')">8</button>
+      <button class="kp-btn" onclick="kpInput('9')">9</button>
+      <button class="kp-btn fn" onclick="kpInput('/')">/</button>
+      <button class="kp-btn" onclick="kpInput('0')">0</button>
+      <button class="kp-btn fn" onclick="kpInput('-')">-</button>
+      <button class="kp-btn fn" onclick="kpBackspace()">⌫</button>
+      <button class="kp-btn fn" onclick="kpClear()">C</button>
+      <button class="kp-btn fn" onclick="kpInput('.')">.</button>
+    </div>
+    <div class="kp-actions">
+      <button class="btn btn-gray" onclick="kpCancel()">취소</button>
+      <button class="btn btn-primary" onclick="kpConfirm()">확인</button>
+    </div>
+  </div>
+</div>
+
+<!-- 박스단위 추가/수정 모달 -->
+<div class="modal-overlay" id="buModal">
+  <div class="modal-box">
+    <div class="kp-title">박스단위 추가/수정</div>
+    <div class="fg"><label>품번</label><input type="text" id="buEditPart" placeholder="품번"></div>
+    <div class="fg"><label>박스당수량</label><input type="number" id="buEditSize" placeholder="수량" inputmode="numeric"></div>
+    <div class="fg"><label>메모</label><input type="text" id="buEditMemo" placeholder="메모 (선택)"></div>
+    <input type="hidden" id="buEditId">
+    <div class="kp-actions" style="margin-top:10px">
+      <button class="btn btn-gray" onclick="closeBuModal()">취소</button>
+      <button class="btn btn-primary" onclick="saveBuEdit()">저장</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ========================================
+// Supabase 인라인 헬퍼 (defect.html 패턴)
+// ========================================
+let SB_URL = '', SB_KEY = '';
+
+function sbHeaders() {
+  return {
+    'apikey': SB_KEY,
+    'Authorization': 'Bearer ' + SB_KEY,
+    'Content-Type': 'application/json',
+    'Prefer': 'return=representation'
+  };
+}
+
+async function sbSelect(table, query = '') {
+  const r = await fetch(SB_URL + '/rest/v1/' + table + '?select=*' + (query ? '&' + query : ''), { headers: sbHeaders() });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+async function sbInsert(table, data) {
+  const body = Array.isArray(data) ? data : [data];
+  const r = await fetch(SB_URL + '/rest/v1/' + table, {
+    method: 'POST', headers: sbHeaders(), body: JSON.stringify(body)
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+async function sbUpdate(table, id, data) {
+  const r = await fetch(SB_URL + '/rest/v1/' + table + '?id=eq.' + id, {
+    method: 'PATCH', headers: sbHeaders(), body: JSON.stringify(data)
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+async function sbDelete(table, filter) {
+  const r = await fetch(SB_URL + '/rest/v1/' + table + '?' + filter, {
+    method: 'DELETE', headers: { ...sbHeaders(), 'Prefer': 'return=minimal' }
+  });
+  if (!r.ok) throw new Error(await r.text());
+}
+
+async function sbRpc(fn, params = {}) {
+  const r = await fetch(SB_URL + '/rest/v1/rpc/' + fn, {
+    method: 'POST', headers: sbHeaders(), body: JSON.stringify(params)
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+// ========================================
+// 설정 & 초기화
+// ========================================
+const LS_PREFIX = 'SHIP_';
+function lsGet(k, def) { return localStorage.getItem(LS_PREFIX + k) || def || ''; }
+function lsSet(k, v) { localStorage.setItem(LS_PREFIX + k, v); }
+
+function initConfig() {
+  const url = lsGet('SB_URL', 'https://omngtyewdaqpphnzeate.supabase.co');
+  const key = lsGet('SB_KEY', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tbmd0eWV3ZGFxcHBobnplYXRlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4ODk4ODksImV4cCI6MjA5MDQ2NTg4OX0.Zxur3t02JHtOcXforCMSwO3i2mMaf5sViE0tXXUC0-s');
+  document.getElementById('cfgUrl').value = url;
+  document.getElementById('cfgKey').value = key;
+  SB_URL = url; SB_KEY = key;
+
+  // 설정탭 초기값
+  document.getElementById('setLotPrefix').value = lsGet('LOT_PREFIX', '');
+  document.getElementById('setWorkDate').value = lsGet('WORK_DATE', new Date().toISOString().split('T')[0]);
+}
+
+function saveConfig() {
+  SB_URL = document.getElementById('cfgUrl').value.trim().replace(/\/+$/, '');
+  SB_KEY = document.getElementById('cfgKey').value.trim();
+  lsSet('SB_URL', SB_URL); lsSet('SB_KEY', SB_KEY);
+  toast('접속정보 저장됨');
+  testConn();
+}
+
+function setConnDot(ok) {
+  ['connDot','connDot2'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.className = 'conn-dot ' + (ok ? 'ok' : 'ng');
+  });
+}
+
+async function testConn() {
+  try {
+    const r = await fetch(SB_URL + '/rest/v1/box_unit?select=id&limit=1', { headers: sbHeaders() });
+    if (r.ok) { setConnDot(true); toast('✅ 연결 성공'); loadAll(); }
+    else { setConnDot(false); toast('❌ 연결 실패: ' + r.status); }
+  } catch (e) { setConnDot(false); toast('❌ 연결 오류: ' + e.message); }
+}
+
+function saveSettings() {
+  lsSet('LOT_PREFIX', document.getElementById('setLotPrefix').value);
+  lsSet('WORK_DATE', document.getElementById('setWorkDate').value);
+  toast('설정 저장됨');
+}
+
+// ========================================
+// 탭
+// ========================================
+let currentTab = 0;
+function swTab(n) {
+  currentTab = n;
+  document.querySelectorAll('.tab').forEach((t, i) => t.classList.toggle('on', i === n));
+  document.querySelectorAll('.pnl').forEach((p, i) => p.classList.toggle('on', i === n));
+  if (n === 0) loadWork();
+  if (n === 1) loadHistory();
+  if (n === 2) loadBoxUnits();
+}
+
+// ========================================
+// 전체 로드
+// ========================================
+let boxUnitCache = []; // 박스단위 캐시
+
+async function loadAll() {
+  try {
+    boxUnitCache = await sbSelect('box_unit', 'is_active=eq.true&order=part_no.asc');
+    buildPartDatalist();
+    loadWork();
+  } catch (e) { toast('데이터 로드 실패: ' + e.message); }
+}
+
+function buildPartDatalist() {
+  const dl = document.getElementById('partList');
+  dl.innerHTML = '';
+  boxUnitCache.forEach(b => {
+    const o = document.createElement('option');
+    o.value = b.part_no;
+    o.label = b.part_no + ' (박스: ' + b.box_size + ')';
+    dl.appendChild(o);
+  });
+}
+
+function findBoxSize(partNo) {
+  const found = boxUnitCache.find(b => b.part_no === partNo);
+  return found ? found.box_size : 0;
+}
+
+// 품번 입력 시 자동 정보 표시
+document.getElementById('addPart').addEventListener('input', function() {
+  const bs = findBoxSize(this.value.trim());
+  document.getElementById('addInfo').textContent = bs ? '박스당수량: ' + bs : '매칭되는 박스단위 없음';
+});
+
+// ========================================
+// 출하작업 (shipment_work)
+// ========================================
+let workItems = [];
+
+async function loadWork() {
+  const c = document.getElementById('workList');
+  try {
+    workItems = await sbSelect('shipment_work', 'status=eq.working&order=sort_order.asc,created_at.asc');
+    renderWork();
+  } catch (e) { c.innerHTML = '<div class="h-empty">로드 실패: ' + e.message + '</div>'; }
+}
+
+function renderWork() {
+  const c = document.getElementById('workList');
+  document.getElementById('workCnt').textContent = workItems.length;
+  if (!workItems.length) { c.innerHTML = '<div class="h-empty">출하 품목이 없습니다<br>위에서 품목을 추가하세요</div>'; return; }
+
+  c.innerHTML = '';
+  workItems.forEach(w => {
+    const hasLot = w.lot_no && w.lot_no.trim();
+    const d = document.createElement('div');
+    d.className = 'work-card' + (hasLot ? ' has-lot' : '');
+    d.innerHTML = `
+      <div class="wc-part">${esc(w.part_no)}</div>
+      <div class="wc-info">
+        <span class="wc-tag bs">박스당: ${w.box_size || '-'}</span>
+        <span class="wc-tag bc">박스수: ${w.box_count || '-'}</span>
+        <span class="wc-tag qt">수량: ${w.qty || '-'}</span>
+      </div>
+      <div class="wc-lot ${hasLot ? '' : 'empty'}">LOT: ${hasLot ? esc(w.lot_no) : '미등록'}</div>
+      <div class="wc-acts">
+        <button class="wc-btn-lot" onclick="openLotKeypad(${w.id},'${esc(w.lot_no || '')}','${esc(w.part_no)}')">로트 등록</button>
+        <button class="wc-btn-copy" onclick="copyText('${esc(w.lot_no || '')}')">복사</button>
+        <button class="wc-btn-del" onclick="deleteWorkItem(${w.id})">삭제</button>
+      </div>`;
+    c.appendChild(d);
+  });
+}
+
+async function addWorkItem() {
+  const partNo = document.getElementById('addPart').value.trim();
+  const qty = parseInt(document.getElementById('addQty').value) || 0;
+  if (!partNo) { toast('품번을 입력하세요'); return; }
+
+  const boxSize = findBoxSize(partNo);
+  const boxCount = (boxSize && qty) ? Math.ceil(qty / boxSize) : 0;
+
+  try {
+    await sbInsert('shipment_work', {
+      part_no: partNo, box_size: boxSize, box_count: boxCount,
+      qty: qty || null, lot_no: '', sort_order: workItems.length,
+      status: 'working'
+    });
+    document.getElementById('addPart').value = '';
+    document.getElementById('addQty').value = '';
+    document.getElementById('addInfo').textContent = '박스단위를 자동 조회합니다';
+    toast('✅ ' + partNo + ' 추가');
+    loadWork();
+  } catch (e) { toast('추가 실패: ' + e.message); }
+}
+
+async function deleteWorkItem(id) {
+  if (!confirm('삭제하시겠습니까?')) return;
+  try { await sbDelete('shipment_work', 'id=eq.' + id); toast('삭제됨'); loadWork(); }
+  catch (e) { toast('삭제 실패: ' + e.message); }
+}
+
+async function clearAllWork() {
+  if (!workItems.length) return;
+  if (!confirm('작업 목록 ' + workItems.length + '건을 전체 삭제하시겠습니까?')) return;
+  try { await sbDelete('shipment_work', 'status=eq.working'); toast('전체 삭제됨'); loadWork(); }
+  catch (e) { toast('삭제 실패: ' + e.message); }
+}
+
+// ========================================
+// 이력 등록 (작업 → 이력)
+// ========================================
+async function moveAllToHistory() {
+  if (!workItems.length) { toast('등록할 품목이 없습니다'); return; }
+  const noLot = workItems.filter(w => !w.lot_no || !w.lot_no.trim());
+  if (noLot.length && !confirm(noLot.length + '건의 로트번호가 미등록입니다.\n그래도 이력에 등록하시겠습니까?')) return;
+  if (!confirm(workItems.length + '건을 이력에 등록합니다.')) return;
+
+  const regDate = lsGet('WORK_DATE', new Date().toISOString().split('T')[0]) || new Date().toISOString().split('T')[0];
+  const histRows = workItems.map(w => ({
+    reg_date: regDate,
+    part_no: w.part_no,
+    box_size: w.box_size,
+    box_count: w.box_count,
+    qty: w.qty,
+    lot_no: w.lot_no || ''
+  }));
+
+  try {
+    await sbInsert('shipment_history', histRows);
+    await sbDelete('shipment_work', 'status=eq.working');
+    toast('✅ ' + histRows.length + '건 이력 등록 완료');
+    loadWork();
+  } catch (e) { toast('이력 등록 실패: ' + e.message); }
+}
+
+// ========================================
+// 키패드 (로트번호 입력)
+// ========================================
+let kpValue = '';
+let kpCallback = null;
+let kpTargetId = null;
+
+function openLotKeypad(workId, currentLot, partNo) {
+  kpTargetId = workId;
+  kpValue = currentLot || '';
+  document.getElementById('kpTitle').textContent = '로트번호 입력 — ' + partNo;
+  document.getElementById('kpDisplay').textContent = kpValue;
+  document.getElementById('kpModal').classList.add('on');
+}
+
+function kpInput(ch) { kpValue += ch; document.getElementById('kpDisplay').textContent = kpValue; }
+function kpBackspace() { kpValue = kpValue.slice(0, -1); document.getElementById('kpDisplay').textContent = kpValue || ''; }
+function kpClear() { kpValue = ''; document.getElementById('kpDisplay').textContent = ''; }
+function kpCancel() { document.getElementById('kpModal').classList.remove('on'); kpTargetId = null; }
+
+async function kpConfirm() {
+  document.getElementById('kpModal').classList.remove('on');
+  if (kpTargetId === null) return;
+  try {
+    await sbUpdate('shipment_work', kpTargetId, { lot_no: kpValue, updated_at: new Date().toISOString() });
+    toast('✅ 로트번호 저장');
+    loadWork();
+  } catch (e) { toast('저장 실패: ' + e.message); }
+  kpTargetId = null;
+}
+
+// ========================================
+// 이력 조회 (shipment_history)
+// ========================================
+let histPage = 0;
+const HIST_LIMIT = 50;
+let histData = [];
+
+async function loadHistory() {
+  histPage = 0; histData = [];
+  const c = document.getElementById('histList');
+  const search = document.getElementById('histSearch').value.trim();
+  const date = document.getElementById('histDate').value;
+
+  let q = 'order=reg_date.desc,created_at.desc&limit=' + HIST_LIMIT;
+  if (search) q += '&part_no=ilike.*' + encodeURIComponent(search) + '*';
+  if (date) q += '&reg_date=eq.' + date;
+
+  try {
+    histData = await sbSelect('shipment_history', q);
+    renderHistory();
+    document.getElementById('histMore').style.display = histData.length >= HIST_LIMIT ? '' : 'none';
+  } catch (e) { c.innerHTML = '<div class="h-empty">로드 실패: ' + e.message + '</div>'; }
+}
+
+async function loadHistoryMore() {
+  if (!histData.length) return;
+  histPage++;
+  const search = document.getElementById('histSearch').value.trim();
+  const date = document.getElementById('histDate').value;
+  let q = 'order=reg_date.desc,created_at.desc&limit=' + HIST_LIMIT + '&offset=' + (histPage * HIST_LIMIT);
+  if (search) q += '&part_no=ilike.*' + encodeURIComponent(search) + '*';
+  if (date) q += '&reg_date=eq.' + date;
+  try {
+    const more = await sbSelect('shipment_history', q);
+    histData = histData.concat(more);
+    renderHistory();
+    document.getElementById('histMore').style.display = more.length >= HIST_LIMIT ? '' : 'none';
+  } catch (e) { toast('추가 로드 실패'); }
+}
+
+function renderHistory() {
+  const c = document.getElementById('histList');
+  if (!histData.length) { c.innerHTML = '<div class="h-empty">이력이 없습니다</div>'; return; }
+  c.innerHTML = '';
+  histData.forEach(h => {
+    const d = document.createElement('div');
+    d.className = 'h-item';
+    d.innerHTML = `
+      <div class="hi-top">
+        <span class="hi-part">${esc(h.part_no)}</span>
+        <span class="hi-date">${h.reg_date}</span>
+      </div>
+      <div class="hi-tags">
+        <span class="hi-tag" style="background:#e3f2fd;color:#1565c0">박스당: ${h.box_size||'-'}</span>
+        <span class="hi-tag" style="background:#f3e5f5;color:#7b1fa2">박스수: ${h.box_count||'-'}</span>
+        <span class="hi-tag" style="background:#e8f5e9;color:#2e7d32">수량: ${h.qty||'-'}</span>
+        ${h.lot_no ? '<span class="hi-tag" style="background:#fff3e0;color:#e65100">LOT: ' + esc(h.lot_no) + '</span>' : ''}
+      </div>`;
+    c.appendChild(d);
+  });
+}
+
+async function clearHistory() {
+  if (!histData.length) return;
+  const date = document.getElementById('histDate').value;
+  if (!date) { toast('삭제할 일자를 선택하세요'); return; }
+  if (!confirm(date + ' 이력을 삭제하시겠습니까?')) return;
+  try {
+    await sbDelete('shipment_history', 'reg_date=eq.' + date);
+    toast('삭제됨');
+    loadHistory();
+  } catch (e) { toast('삭제 실패: ' + e.message); }
+}
+
+// ========================================
+// 박스단위 관리 (box_unit)
+// ========================================
+let buData = [];
+
+async function loadBoxUnits() {
+  const c = document.getElementById('buTable');
+  const search = document.getElementById('buSearch').value.trim();
+  const filter = document.getElementById('buFilter').value;
+
+  let q = 'order=part_no.asc';
+  if (search) q += '&part_no=ilike.*' + encodeURIComponent(search) + '*';
+  if (filter === 'active') q += '&is_active=eq.true';
+  else if (filter === 'inactive') q += '&is_active=eq.false';
+
+  try {
+    buData = await sbSelect('box_unit', q);
+    document.getElementById('buCnt').textContent = buData.length;
+    renderBuTable();
+    // 캐시 갱신
+    boxUnitCache = buData.filter(b => b.is_active);
+    buildPartDatalist();
+  } catch (e) { c.innerHTML = '<div class="h-empty">로드 실패: ' + e.message + '</div>'; }
+}
+
+function renderBuTable() {
+  const c = document.getElementById('buTable');
+  if (!buData.length) { c.innerHTML = '<div class="h-empty">데이터 없음</div>'; return; }
+  let html = '<table class="tbl"><thead><tr><th>품번</th><th>박스당</th><th>메모</th><th>상태</th><th>관리</th></tr></thead><tbody>';
+  buData.forEach(b => {
+    const cls = b.is_active ? '' : ' class="inactive-row"';
+    html += `<tr${cls}>
+      <td style="font-weight:700;font-size:13px">${esc(b.part_no)}</td>
+      <td style="text-align:right;font-weight:600">${b.box_size.toLocaleString()}</td>
+      <td style="font-size:11px;color:#888">${esc(b.memo || '')}</td>
+      <td><span style="font-size:10px;padding:2px 6px;border-radius:4px;${b.is_active ? 'background:#e8f5e9;color:#2e7d32' : 'background:#ffebee;color:#c62828'}">${b.is_active ? '사용' : '비활성'}</span></td>
+      <td style="white-space:nowrap">
+        <button class="act-btn" style="background:#e3f2fd;color:#1565c0" onclick="editBu(${b.id})">수정</button>
+        <button class="act-btn" style="background:${b.is_active ? '#fff3e0;color:#e65100' : '#e8f5e9;color:#2e7d32'}" onclick="toggleBu(${b.id},${b.is_active})">${b.is_active ? '비활성' : '활성'}</button>
+      </td>
+    </tr>`;
+  });
+  html += '</tbody></table>';
+  c.innerHTML = html;
+}
+
+function showBuAdd() {
+  document.getElementById('buEditId').value = '';
+  document.getElementById('buEditPart').value = '';
+  document.getElementById('buEditSize').value = '';
+  document.getElementById('buEditMemo').value = '';
+  document.getElementById('buModal').classList.add('on');
+}
+
+function editBu(id) {
+  const b = buData.find(x => x.id === id);
+  if (!b) return;
+  document.getElementById('buEditId').value = b.id;
+  document.getElementById('buEditPart').value = b.part_no;
+  document.getElementById('buEditSize').value = b.box_size;
+  document.getElementById('buEditMemo').value = b.memo || '';
+  document.getElementById('buModal').classList.add('on');
+}
+
+function closeBuModal() { document.getElementById('buModal').classList.remove('on'); }
+
+async function saveBuEdit() {
+  const id = document.getElementById('buEditId').value;
+  const partNo = document.getElementById('buEditPart').value.trim();
+  const boxSize = parseInt(document.getElementById('buEditSize').value) || 0;
+  const memo = document.getElementById('buEditMemo').value.trim();
+  if (!partNo) { toast('품번을 입력하세요'); return; }
+
+  try {
+    if (id) {
+      await sbUpdate('box_unit', id, { part_no: partNo, box_size: boxSize, memo: memo, updated_at: new Date().toISOString() });
+      toast('✅ 수정 완료');
+    } else {
+      await sbInsert('box_unit', { part_no: partNo, box_size: boxSize, memo: memo });
+      toast('✅ 추가 완료');
+    }
+    closeBuModal();
+    loadBoxUnits();
+  } catch (e) { toast('저장 실패: ' + e.message); }
+}
+
+async function toggleBu(id, isActive) {
+  try {
+    await sbUpdate('box_unit', id, { is_active: !isActive, updated_at: new Date().toISOString() });
+    toast(isActive ? '비활성 처리됨' : '활성 처리됨');
+    loadBoxUnits();
+  } catch (e) { toast('변경 실패: ' + e.message); }
+}
+
+// 엑셀 업로드
+function uploadBuExcel() {
+  document.getElementById('buFileInput').click();
+}
+
+document.getElementById('buFileInput').addEventListener('change', async function(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  e.target.value = '';
+
+  const prog = document.getElementById('buProgress');
+  prog.style.display = 'block';
+  prog.textContent = '파일 읽는 중...';
+
+  try {
+    const data = await file.arrayBuffer();
+    const wb = XLSX.read(data, { type: 'array' });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
+
+    if (rows.length < 2) { toast('데이터가 없습니다'); prog.style.display = 'none'; return; }
+
+    // 첫 행: 헤더 (품번, 박스단위)
+    const items = [];
+    for (let i = 1; i < rows.length; i++) {
+      const partNo = String(rows[i][0] || '').trim();
+      let boxSize = 0;
+      try { boxSize = parseInt(rows[i][1]) || 0; } catch(ex) {}
+      if (partNo) items.push({ part_no: partNo, box_size: boxSize });
+    }
+
+    if (!items.length) { toast('유효한 데이터 없음'); prog.style.display = 'none'; return; }
+    if (!confirm(items.length + '건의 박스단위를 서버에 업로드합니다.\n기존 동일 품번은 수량을 덮어씁니다.')) {
+      prog.style.display = 'none'; return;
+    }
+
+    prog.textContent = '기존 데이터 조회 중...';
+    const existing = await sbSelect('box_unit');
+    const existMap = {};
+    existing.forEach(b => { existMap[b.part_no] = b; });
+
+    // 신규/수정 분류
+    const toInsert = [];
+    const toUpdate = [];
+    for (const item of items) {
+      const ex = existMap[item.part_no];
+      if (ex) {
+        if (ex.box_size !== item.box_size) {
+          toUpdate.push({ id: ex.id, box_size: item.box_size });
+        }
+      } else {
+        toInsert.push(item);
+      }
+    }
+
+    // 배치 INSERT (50건씩)
+    const BATCH = 50;
+    let done = 0;
+    for (let i = 0; i < toInsert.length; i += BATCH) {
+      const chunk = toInsert.slice(i, i + BATCH);
+      await sbInsert('box_unit', chunk);
+      done += chunk.length;
+      prog.textContent = '추가 중... ' + done + '/' + toInsert.length;
+    }
+
+    // 배치 UPDATE (개별 — PATCH는 배치 불가)
+    for (let i = 0; i < toUpdate.length; i++) {
+      await sbUpdate('box_unit', toUpdate[i].id, { box_size: toUpdate[i].box_size, is_active: true, updated_at: new Date().toISOString() });
+      if (i % 10 === 0) prog.textContent = '수정 중... ' + (i+1) + '/' + toUpdate.length;
+    }
+
+    prog.style.display = 'none';
+    toast('✅ 업로드 완료 (추가: ' + toInsert.length + ', 수정: ' + toUpdate.length + ')');
+    loadBoxUnits();
+  } catch (e) { prog.style.display = 'none'; toast('업로드 실패: ' + e.message); }
+});
+
+async function deleteAllBoxUnits() {
+  if (!buData.length) { toast('삭제할 데이터 없음'); return; }
+  if (!confirm('⚠ 박스단위 마스터 전체 ' + buData.length + '건을 삭제합니다.\n\n삭제 후 복구할 수 없습니다.')) return;
+  if (!confirm('정말 삭제하시겠습니까? (최종확인)')) return;
+  try {
+    await sbDelete('box_unit', 'id=gt.0');
+    toast('전체 삭제 완료');
+    loadBoxUnits();
+  } catch (e) { toast('삭제 실패: ' + e.message); }
+}
+
+// ========================================
+// 엑셀 다운로드
+// ========================================
+function exportHistXlsx() {
+  if (!histData.length) { toast('이력 데이터 없음'); return; }
+  const hd = ['일자', '품번', '박스당수량', '박스수량', '수량', '로트번호'];
+  const rows = histData.map(h => [h.reg_date, h.part_no, h.box_size, h.box_count, h.qty, h.lot_no || '']);
+  const ws = XLSX.utils.aoa_to_sheet([hd, ...rows]);
+  ws['!cols'] = [{ wch: 11 }, { wch: 18 }, { wch: 10 }, { wch: 8 }, { wch: 10 }, { wch: 16 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '출하이력');
+  const today = new Date().toISOString().split('T')[0].replace(/-/g, '');
+  XLSX.writeFile(wb, '출하이력_' + today + '.xlsx');
+}
+
+async function exportBuXlsx() {
+  try {
+    toast('서버에서 전체 데이터 조회 중...');
+    const allBu = await sbSelect('box_unit', 'order=part_no.asc');
+    if (!allBu.length) { toast('박스단위 데이터 없음'); return; }
+    const hd = ['품번', '박스당수량', '메모', '상태'];
+    const rows = allBu.map(b => [b.part_no, b.box_size, b.memo || '', b.is_active ? '사용' : '비활성']);
+    const ws = XLSX.utils.aoa_to_sheet([hd, ...rows]);
+    ws['!cols'] = [{ wch: 24 }, { wch: 12 }, { wch: 16 }, { wch: 8 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '박스단위');
+    const today = new Date().toISOString().split('T')[0].replace(/-/g, '');
+    XLSX.writeFile(wb, '박스단위_' + today + '.xlsx');
+    toast('📥 서버 데이터 ' + allBu.length + '건 다운로드 완료');
+  } catch (e) { toast('다운로드 실패: ' + e.message); }
+}
+
+async function exportAllXlsx() {
+  try {
+    const wb = XLSX.utils.book_new();
+    // 박스단위
+    const bu = await sbSelect('box_unit', 'order=part_no.asc');
+    if (bu.length) {
+      const ws1 = XLSX.utils.aoa_to_sheet([['품번', '박스당수량', '메모', '상태'], ...bu.map(b => [b.part_no, b.box_size, b.memo || '', b.is_active ? '사용' : '비활성'])]);
+      XLSX.utils.book_append_sheet(wb, ws1, '박스단위');
+    }
+    // 이력
+    const hist = await sbSelect('shipment_history', 'order=reg_date.desc,created_at.desc&limit=5000');
+    if (hist.length) {
+      const ws2 = XLSX.utils.aoa_to_sheet([['일자', '품번', '박스당수량', '박스수량', '수량', '로트번호'], ...hist.map(h => [h.reg_date, h.part_no, h.box_size, h.box_count, h.qty, h.lot_no || ''])]);
+      XLSX.utils.book_append_sheet(wb, ws2, '출하이력');
+    }
+    const today = new Date().toISOString().split('T')[0].replace(/-/g, '');
+    XLSX.writeFile(wb, '출하의뢰서_전체_' + today + '.xlsx');
+    toast('📥 전체 데이터 다운로드 완료');
+  } catch (e) { toast('다운로드 실패: ' + e.message); }
+}
+
+async function resetAllData() {
+  if (!confirm('⚠ 정말 모든 데이터를 삭제하시겠습니까?\n\n- 작업 데이터\n- 이력 데이터\n\n(박스단위 마스터는 유지됩니다)')) return;
+  if (!confirm('최종 확인: 복구할 수 없습니다. 진행하시겠습니까?')) return;
+  try {
+    await sbDelete('shipment_work', 'id=gt.0');
+    await sbDelete('shipment_history', 'id=gt.0');
+    toast('전체 초기화 완료');
+    loadAll();
+  } catch (e) { toast('초기화 실패: ' + e.message); }
+}
+
+// ========================================
+// 유틸
+// ========================================
+function esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+
+function copyText(v) {
+  if (!v) { toast('복사할 값 없음'); return; }
+  navigator.clipboard.writeText(v).then(() => toast('📋 복사됨: ' + v)).catch(() => {
+    const t = document.createElement('textarea'); t.value = v; document.body.appendChild(t); t.select(); document.execCommand('copy'); document.body.removeChild(t); toast('📋 복사됨');
+  });
+}
+
+let toastTimer;
+function toast(m) {
+  const el = document.getElementById('toast');
+  el.textContent = m; el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+// ========================================
+// 초기화
+// ========================================
+initConfig();
+testConn();
+</script>
+</body>
+</html>
