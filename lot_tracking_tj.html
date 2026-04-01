@@ -1134,40 +1134,36 @@ function filterBasePart(){
 
   let partList=[];
   const procId=selectedProcess?selectedProcess.id:'';
+  const custData=(_partTree&&_partTree.length)?(selectedCustomer?_partTree.filter(r=>r.customer===selectedCustomer):_partTree):[];
 
-  if(procId==='production'){
-    // 생산 공정: 기종(소재품번) 목록
-    if(_partTree&&_partTree.length){
-      const custData=selectedCustomer?_partTree.filter(r=>r.customer===selectedCustomer):_partTree;
-      partList=[...new Set(custData.map(r=>r.parent_part))].sort();
-    }
+  if(procId==='incoming'){
+    // 소재입고: 기준품번(소재품번)만
+    partList=custData.length?[...new Set(custData.map(r=>r.parent_part))].sort():[];
+    if(!partList.length){const mc=cats.find(c=>c.name==='기준품번');if(mc)partList=mc.subs}
+  }else if(procId==='production'){
+    // 생산: 기준품번(소재품번)만
+    partList=custData.length?[...new Set(custData.map(r=>r.parent_part))].sort():[];
     if(!partList.length){const mc=cats.find(c=>c.name==='기준품번');if(mc)partList=mc.subs}
   }else if(procId==='heat'){
-    // 열처리: 생산품번(소재+Inner/Outer) 목록
-    if(_partTree&&_partTree.length){
-      const custData=selectedCustomer?_partTree.filter(r=>r.customer===selectedCustomer):_partTree;
-      partList=[...new Set(custData.map(r=>r.heat_part))].sort();
-    }
+    // 열처리: 열처리품번 목록
+    partList=custData.length?[...new Set(custData.map(r=>r.heat_part))].sort():[];
   }else if(procId==='surface'){
-    // 표면처리: 열처리품번 중 표면처리 경로만
-    if(_partTree&&_partTree.length){
-      const custData=selectedCustomer?_partTree.filter(r=>r.customer===selectedCustomer):_partTree;
-      partList=[...new Set(custData.filter(r=>r.process_route==='heat_surface').map(r=>r.surface_part||r.heat_part))].sort();
-    }
+    // 표면처리: 표면처리 경로 품번만
+    partList=custData.length?[...new Set(custData.filter(r=>r.process_route==='heat_surface').map(r=>r.surface_part||r.heat_part))].sort():[];
   }else if(procId==='shipment'){
-    // 출하: 출하품번 목록
-    if(_partTree&&_partTree.length){
-      const custData=selectedCustomer?_partTree.filter(r=>r.customer===selectedCustomer):_partTree;
-      partList=[...new Set(custData.map(r=>getFinalPart(r)))].sort();
-    }
+    // 출하: 출하품번만
+    partList=custData.length?[...new Set(custData.map(r=>getFinalPart(r)))].sort():[];
     if(!partList.length){const mc=cats.find(c=>c.name==='출하품번');if(mc)partList=mc.subs}
   }else{
-    // 기타 공정: 전체 최종품번
-    if(_partTree&&_partTree.length){
-      const custData=selectedCustomer?_partTree.filter(r=>r.customer===selectedCustomer):_partTree;
-      partList=[...new Set(custData.map(r=>getFinalPart(r)))].sort();
+    // 세척/가공 등 기타: 기준품번 + 출하품번 통합
+    const parents=custData.length?[...new Set(custData.map(r=>r.parent_part))]:[];
+    const finals=custData.length?[...new Set(custData.map(r=>getFinalPart(r)))]:[];
+    partList=[...new Set([...parents,...finals])].sort();
+    if(!partList.length){
+      const mc1=cats.find(c=>c.name==='기준품번');
+      const mc2=cats.find(c=>c.name==='출하품번');
+      partList=[...(mc1?mc1.subs:[]),...(mc2?mc2.subs:[])];
     }
-    if(!partList.length){const mc=cats.find(c=>c.name==='출하품번');if(mc)partList=mc.subs}
   }
   if(!partList.length){drop.style.display='none';return}
 
@@ -1227,11 +1223,12 @@ async function openRegModal(barcodeValue,format){
   // 공정별 라벨 변경
   const lbl=document.getElementById('basePartLabel');
   const procId=selectedProcess?selectedProcess.id:'';
-  if(procId==='production')lbl.innerHTML='기준품번 (소재품번) <span style="font-size:10px;color:#888;font-weight:400">입력하면 검색됨</span>';
+  if(procId==='incoming')lbl.innerHTML='기준품번 (소재품번) <span style="font-size:10px;color:#888;font-weight:400">입력하면 검색됨</span>';
+  else if(procId==='production')lbl.innerHTML='기준품번 (소재품번) <span style="font-size:10px;color:#888;font-weight:400">입력하면 검색됨</span>';
   else if(procId==='heat')lbl.innerHTML='열처리 품번 <span style="font-size:10px;color:#888;font-weight:400">자동변경 또는 선택</span>';
   else if(procId==='surface')lbl.innerHTML='표면처리 품번 <span style="font-size:10px;color:#888;font-weight:400">자동변경</span>';
   else if(procId==='shipment')lbl.innerHTML='출하품번 <span style="font-size:10px;color:#888;font-weight:400">입력하면 검색됨</span>';
-  else lbl.innerHTML='품번 <span style="font-size:10px;color:#888;font-weight:400">입력하면 검색됨</span>';
+  else lbl.innerHTML='품번 <span style="font-size:10px;color:#888;font-weight:400">기준품번/출하품번 검색</span>';
   matchArea.innerHTML='<div style="text-align:center;padding:10px;color:#1565c0;font-size:12px">🔍 DB 조회 중...</div>';
 
   document.getElementById('singleQtyArea').style.display='block';
