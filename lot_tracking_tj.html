@@ -123,6 +123,7 @@
     .acc-body.open{display:block}
     .acc-pin{font-size:10px;padding:2px 6px;border-radius:4px;background:#e3f2fd;color:#1565c0;font-weight:600;cursor:pointer;border:none;flex-shrink:0}
     .acc-pin.pinned{background:#1565c0;color:#fff}
+    #basePartDropdown div:hover{background:#e3f2fd}
   </style>
 </head>
 <body>
@@ -158,6 +159,7 @@
             <div class="fg"><label>설비호기</label><input type="text" id="inpEquip" placeholder="설비호기 입력"></div>
           </div>
           <div class="fg"><label>소재중량 (kg)</label><input type="number" id="inpWeight" placeholder="소재중량 입력" inputmode="decimal" step="0.1"></div>
+          <div class="fg" id="fgIncomingDate" style="display:none"><label>소재입고일자</label><input type="date" id="inpIncomingDate"></div>
           <button class="btn btn-blue" onclick="showMoveConfirm()" style="font-size:15px;padding:13px;margin-top:6px">확인 →</button>
         </div>
 
@@ -260,14 +262,14 @@
     <div class="modal-body">
       <div class="modal-barcode" id="modalBarcode"><span>스캔된 코드</span>-</div>
       <div id="modalMatchArea"></div>
-      <div class="fg" id="basePartField">
-        <label>기준품번</label>
-        <select id="mSelBasePart" onchange="onBasePartSelect()" style="display:none;padding:9px;font-size:14px;font-weight:700;border:2px solid #e65100;background:#fff3e0;border-radius:7px"></select>
-        <input type="text" id="mInpBasePart" placeholder="자동 또는 직접 입력">
+      <div class="fg" id="basePartField" style="position:relative">
+        <label>기준품번 <span style="font-size:10px;color:#888;font-weight:400">입력하면 검색됨</span></label>
+        <input type="text" id="mInpBasePart" placeholder="품번 입력 (자동검색)" autocomplete="off" oninput="filterBasePart()" onfocus="filterBasePart()" style="font-size:14px;font-weight:700">
+        <div id="basePartDropdown" style="display:none;position:absolute;left:0;right:0;top:100%;background:#fff;border:1.5px solid #1565c0;border-top:none;border-radius:0 0 8px 8px;max-height:180px;overflow-y:auto;z-index:100;box-shadow:0 4px 12px rgba(0,0,0,.15)"></div>
       </div>
       <div class="modal-row2">
         <div class="fg"><label>로트</label><input type="text" id="mInpLot" placeholder="로트번호"></div>
-        <div class="fg"><label>수량</label><input type="number" id="mInpQty" placeholder="수량" inputmode="numeric" style="border:2px solid #2e7d32;background:#e8f5e9;font-size:16px;font-weight:700"></div>
+        <div class="fg"><label>생산수량</label><input type="number" id="mInpQty" placeholder="생산수량" inputmode="numeric" style="border:2px solid #2e7d32;background:#e8f5e9;font-size:16px;font-weight:700"></div>
       </div>
       <div class="fg"><label>비고</label><textarea id="mInpNote" placeholder="비고 사항" style="min-height:36px"></textarea></div>
       <button class="btn btn-green" onclick="doRegisterFromModal()" style="font-size:16px;padding:14px;margin-top:4px">✅ 등록</button>
@@ -510,6 +512,14 @@ function selectProcess(proc){
   document.getElementById('inpEquip').value=savedInfo.equip||'';
   // 소재중량은 매번 새로 입력
   document.getElementById('inpWeight').value='';
+  // 소재입고일자: 소재입고 공정만 표시
+  const dateField=document.getElementById('fgIncomingDate');
+  if(proc.id==='incoming'){
+    dateField.style.display='block';
+    document.getElementById('inpIncomingDate').value=new Date().toISOString().split('T')[0];
+  }else{
+    dateField.style.display='none';
+  }
 
   const modal=document.getElementById('moveSetupModal');
   modal.classList.add('show','center');
@@ -541,8 +551,12 @@ function showMoveConfirm(){
   html+=`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #c5cae9"><span style="color:#555">도착지</span><span style="font-weight:700">${to}</span></div>`;
   html+=`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #c5cae9"><span style="color:#555">작업자명</span><span style="font-weight:700">${worker}</span></div>`;
   html+=`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #c5cae9"><span style="color:#555">설비호기</span><span style="font-weight:700">${equip}</span></div>`;
-  if(weight)html+=`<div style="display:flex;justify-content:space-between;padding:4px 0"><span style="color:#555">소재중량</span><span style="font-weight:700;color:#e65100">${weight} kg</span></div>`;
-  else html+=`<div style="display:flex;justify-content:space-between;padding:4px 0"><span style="color:#555">소재중량</span><span style="color:#aaa">미입력</span></div>`;
+  if(weight)html+=`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #c5cae9"><span style="color:#555">소재중량</span><span style="font-weight:700;color:#e65100">${weight} kg</span></div>`;
+  else html+=`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #c5cae9"><span style="color:#555">소재중량</span><span style="color:#aaa">미입력</span></div>`;
+  if(selectedProcess&&selectedProcess.id==='incoming'){
+    const inDate=document.getElementById('inpIncomingDate').value||'-';
+    html+=`<div style="display:flex;justify-content:space-between;padding:4px 0"><span style="color:#555">소재입고일자</span><span style="font-weight:700;color:#1565c0">${inDate}</span></div>`;
+  }
   summary.innerHTML=html;
 
   // 입력 숨기고 확인 표시
@@ -586,6 +600,10 @@ function goToScanStep(){
   let locText=from+' → '+to;
   if(worker||equip)locText+=' | '+(worker||'-')+' / '+(equip||'-');
   if(weight)locText+=' | '+weight+'kg';
+  if(selectedProcess.id==='incoming'){
+    const inDate=document.getElementById('inpIncomingDate').value||'';
+    if(inDate)locText+=' | 입고:'+inDate;
+  }
   document.getElementById('scanLocSummary2').textContent=locText;
   document.getElementById('scanOverlay').style.display='block';
   document.body.style.overflow='hidden';
@@ -662,24 +680,35 @@ async function findPartMapping(fieldName,value){
 // ============================================================
 //  등록 팝업
 // ============================================================
-function populateBasePartSelect(preselect){
-  const sel=document.getElementById('mSelBasePart');
-  const partCat=cats.find(c=>c.name==='기준품번');
-  if(!partCat||!partCat.subs.length){sel.style.display='none';return}
-  sel.innerHTML='<option value="">-- 기준품번 선택 --</option>';
-  partCat.subs.forEach(s=>{sel.innerHTML+='<option value="'+s+'"'+(s===preselect?' selected':'')+'>'+s+'</option>'});
-  sel.innerHTML+='<option value="__manual__">✏️ 직접 입력...</option>';
-  sel.style.display='block';
-  if(preselect){document.getElementById('mInpBasePart').value=preselect;document.getElementById('mInpBasePart').style.display='none'}
-  else{document.getElementById('mInpBasePart').style.display='none'}
-}
-function onBasePartSelect(){
-  const sel=document.getElementById('mSelBasePart');
+function filterBasePart(){
   const inp=document.getElementById('mInpBasePart');
-  if(sel.value==='__manual__'){inp.style.display='block';inp.value='';inp.focus()}
-  else if(sel.value){inp.value=sel.value;inp.style.display='none'}
-  else{inp.style.display='none';inp.value=''}
+  const drop=document.getElementById('basePartDropdown');
+  const val=inp.value.trim().toLowerCase();
+  const partCat=cats.find(c=>c.name==='기준품번');
+  if(!partCat||!partCat.subs.length){drop.style.display='none';return}
+
+  const filtered=val?partCat.subs.filter(s=>s.toLowerCase().includes(val)):partCat.subs;
+  if(!filtered.length){drop.style.display='none';return}
+
+  drop.style.display='block';
+  drop.innerHTML=filtered.map(s=>{
+    const hl=val?s.replace(new RegExp('('+val.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')','gi'),'<b style="color:#1565c0">$1</b>'):s;
+    return `<div onclick="selectBasePart('${s.replace(/'/g,"\\'")}')" style="padding:10px 12px;cursor:pointer;font-size:13px;font-weight:600;border-bottom:1px solid #f0f0f0;transition:background .1s" onmousedown="event.preventDefault()" ontouchstart="this.style.background='#e3f2fd'" ontouchend="this.style.background=''">${hl}</div>`;
+  }).join('');
 }
+
+function selectBasePart(val){
+  document.getElementById('mInpBasePart').value=val;
+  document.getElementById('basePartDropdown').style.display='none';
+  // 수량으로 포커스 이동
+  setTimeout(()=>{const q=document.getElementById('mInpQty');if(q)q.focus()},100);
+}
+
+// 드롭다운 외부 클릭 시 닫기
+document.addEventListener('click',function(e){
+  const field=document.getElementById('basePartField');
+  if(field&&!field.contains(e.target)){document.getElementById('basePartDropdown').style.display='none'}
+});
 
 function addToScanAccum(val,fmt){
   if(!val)return;
@@ -735,8 +764,7 @@ async function openRegModal(barcodeValue,format){
   document.getElementById('mInpLot').value=barcodeValue; // 로트 = 스캔값
   document.getElementById('mInpQty').value=''; // 수량은 매번 새로
   document.getElementById('mInpNote').value=regSave.note||'';
-  document.getElementById('mInpBasePart').style.display='block';
-  document.getElementById('mSelBasePart').style.display='none';
+  document.getElementById('basePartDropdown').style.display='none';
   document.getElementById('modalNewMapping').style.display='none';
 
   modal.classList.add('show','center');
@@ -755,27 +783,27 @@ async function openRegModal(barcodeValue,format){
       const gv=n=>row[n]||'';
       document.getElementById('modalTitle').textContent='✅ 매핑 확인';
       matchArea.innerHTML=`<div class="modal-match found"><div class="mm-title">✅ DB 매핑 발견</div><table><tr><td>기준품번</td><td style="font-size:14px;color:#2e7d32">${gv('base_part')}</td></tr><tr><td>공급사</td><td>${gv('supplier')||'-'}</td><td>규격</td><td>${gv('spec')||'-'}</td></tr></table></div>`;
-      // 매핑 성공: input에 자동입력, select 숨김
       document.getElementById('mInpBasePart').value=gv('base_part');
-      document.getElementById('mInpBasePart').style.display='block';
-      document.getElementById('mSelBasePart').style.display='none';
       document.getElementById('mInpLot').value=barcodeValue;
       document.getElementById('modalNewMapping').style.display='none';
     }else{
       dbMappingFound=false;
-      document.getElementById('modalTitle').textContent='⚠ 미매핑 → 품번 선택';
-      matchArea.innerHTML=`<div class="modal-match notfound"><div class="mm-title">⚠ 미매핑 바코드</div><div style="font-size:11px;color:#795548">아래에서 기준품번을 선택하세요</div></div>`;
-      // 미매핑: select 표시
-      populateBasePartSelect(parsed.partCode||'');
+      document.getElementById('modalTitle').textContent='⚠ 미매핑 → 품번 입력';
+      matchArea.innerHTML=`<div class="modal-match notfound"><div class="mm-title">⚠ 미매핑 바코드</div><div style="font-size:11px;color:#795548">기준품번을 입력하세요 (자동검색)</div></div>`;
+      if(parsed.partCode)document.getElementById('mInpBasePart').value=parsed.partCode;
       document.getElementById('modalNewMapping').style.display='block';
+      // 품번 입력란에 포커스
+      setTimeout(()=>{const bp=document.getElementById('mInpBasePart');if(bp){bp.focus();filterBasePart()}},400);
+      return;
     }
   }catch(e){
     matchArea.innerHTML=`<div class="modal-match notfound"><div class="mm-title">⚠ 조회 실패</div><div style="font-size:11px;color:#c62828">${e.message}</div></div>`;
-    populateBasePartSelect('');
     document.getElementById('modalNewMapping').style.display='block';
+    setTimeout(()=>{const bp=document.getElementById('mInpBasePart');if(bp){bp.focus();filterBasePart()}},400);
+    return;
   }
 
-  // 수량 입력란에 포커스
+  // 매핑 성공 시 수량 입력란에 포커스
   setTimeout(()=>{const q=document.getElementById('mInpQty');if(q)q.focus()},400);
 }
 
@@ -800,6 +828,7 @@ async function doRegisterFromModal(){
   const procInfo=selectedProcess?JSON.parse(localStorage.getItem('LOT_TJ_PROC_'+selectedProcess.id)||'{}'):{};
   const fields={'출발지':procInfo.from||savedSelections['출발지']||'','도착지':procInfo.to||savedSelections['도착지']||''};
   const weight=document.getElementById('inpWeight')?document.getElementById('inpWeight').value.trim():'';
+  const incomingDate=(selectedProcess&&selectedProcess.id==='incoming'&&document.getElementById('inpIncomingDate'))?document.getElementById('inpIncomingDate').value:'';
 
   const now=new Date();
   const entry={
@@ -810,6 +839,7 @@ async function doRegisterFromModal(){
     worker:procInfo.worker||'',
     equip:procInfo.equip||'',
     weight:weight,
+    incomingDate:incomingDate,
     fields,barcode:modalScanData.value,basePart,lot,
     format:modalScanData.format,qty,note,ts:now.toISOString()
   };
@@ -847,6 +877,7 @@ async function saveHistToServer(entry){
     let noteText=entry.note||'';
     if(entry.worker||entry.equip)noteText=('[작업자:'+(entry.worker||'-')+' 설비:'+(entry.equip||'-')+'] '+(noteText)).trim();
     if(entry.weight)noteText=('[중량:'+entry.weight+'kg] '+(noteText)).trim();
+    if(entry.incomingDate)noteText=('[입고일:'+entry.incomingDate+'] '+(noteText)).trim();
     await sbInsert('move_history_tj',{
       move_date:entry.date, move_time:entry.time,
       process:entry.process||'',
@@ -1030,8 +1061,8 @@ function renderRecentList2(){
 function expXlsx(){
   if(!hist.length){showToast('이력 없음');return}
   const wb=XLSX.utils.book_new();
-  const hd=['일자','시간','공정','작업자','설비','소재중량','출발지','도착지','바코드','기준품번','로트','수량','비고','서버저장'];
-  const rows=hist.map(h=>[h.date,h.time,h.process||'',h.worker||'',h.equip||'',h.weight||'',(h.fields&&h.fields['출발지'])||'',(h.fields&&h.fields['도착지'])||'',h.barcode,h.basePart||'',h.lot||'',h.qty||'',h.note||'',h.sheetSaved?'O':'X']);
+  const hd=['일자','시간','공정','작업자','설비','소재중량','입고일','출발지','도착지','바코드','기준품번','로트','생산수량','비고','서버저장'];
+  const rows=hist.map(h=>[h.date,h.time,h.process||'',h.worker||'',h.equip||'',h.weight||'',h.incomingDate||'',(h.fields&&h.fields['출발지'])||'',(h.fields&&h.fields['도착지'])||'',h.barcode,h.basePart||'',h.lot||'',h.qty||'',h.note||'',h.sheetSaved?'O':'X']);
   const ws=XLSX.utils.aoa_to_sheet([hd,...rows]);
   ws['!cols']=[{wch:11},{wch:9},{wch:10},{wch:14},{wch:14},{wch:24},{wch:16},{wch:14},{wch:8},{wch:20},{wch:6}];
   XLSX.utils.book_append_sheet(wb,ws,'이동이력');
