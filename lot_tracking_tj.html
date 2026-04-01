@@ -737,18 +737,19 @@ function getDefaultPartTreeData(){
 async function loadPartTreeData(){
   const now=Date.now();
   if(_partTree&&_partTree.length&&now-_partTreeTime<60000)return _partTree;
+  // 1) DB 시도
   try{
     const data=await sbSelect('part_hierarchy',{},'sort_order.asc',1000);
     if(data&&data.length>0){_partTree=data;_partTreeTime=now;return _partTree}
   }catch(e){}
-  // 로컬 폴백
+  // 2) 로컬 폴백
   let local=JSON.parse(localStorage.getItem('LOT_TJ_PART_TREE')||'[]');
-  if(local&&local.length>0){_partTree=local;_partTreeTime=now;return _partTree}
-  // DB도 로컬도 비어있으면 하드코딩 기본 데이터 사용
+  if(local&&local.length>0&&local.some(r=>r.customer==='SBC')){_partTree=local;_partTreeTime=now;return _partTree}
+  // 3) DB도 로컬도 비어있거나 SBC 없으면 → 하드코딩 기본 데이터
   const defaults=getDefaultPartTreeData();
   localStorage.setItem('LOT_TJ_PART_TREE',JSON.stringify(defaults));
   _partTree=defaults;_partTreeTime=now;
-  // 백그라운드로 DB에도 삽입 시도
+  // 백그라운드로 DB 삽입 시도
   try{await sbInsert('part_hierarchy',defaults.map(r=>{const{id,...rest}=r;return rest}))}catch(e){}
   return _partTree;
 }
@@ -1538,8 +1539,9 @@ renderRegFields();
 renderRecentList();
 renderProcessGrid();
 
-// 품번트리 자동 초기화: DB에 데이터 없으면 기본 데이터 자동 등록
+// 품번트리 자동 초기화
 (async function initPartTree(){
+  _partTree=null;_partTreeTime=0; // 캐시 강제 초기화
   try{
     const data=await loadPartTreeData();
     if(!data||data.length===0){
