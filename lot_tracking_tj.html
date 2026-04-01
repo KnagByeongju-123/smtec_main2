@@ -1372,6 +1372,26 @@ async function checkLotTrace(barcodeValue){
 
   try{
     const incomingHist=await sbSelect('move_history_tj',{process:'eq.소재입고'},'created_at.desc',1000);
+    // 직접선택 목록 생성 함수
+    const buildManualSelect=(msg)=>{
+      if(!incomingHist.length)return '';
+      // 중복 제거 (base_part + lot 조합)
+      const seen=new Set();
+      const opts=incomingHist.filter(h=>{
+        const key=(h.base_part||'')+'|'+(h.lot||h.barcode_raw||'');
+        if(seen.has(key))return false;seen.add(key);return true;
+      }).slice(0,50);
+      return `<div style="margin-top:8px;padding:10px 12px;background:#e8eaf6;border:1.5px solid #c5cae9;border-radius:8px">
+        <div style="font-size:12px;font-weight:700;color:#1a237e;margin-bottom:6px">📋 소재입고 이력에서 직접 선택</div>
+        <select id="lotManualSelect" onchange="onLotManualSelect()" style="width:100%;padding:10px;border:2px solid #1a237e;border-radius:8px;font-size:13px;font-weight:600;font-family:inherit;background:#fff;color:#1a237e">
+          <option value="">소재 로트를 선택하세요</option>
+          ${opts.map(h=>{
+            const label=(h.base_part||'-')+' / '+(h.lot||h.barcode_raw||'-')+' ('+h.move_date+', '+(h.qty||'-')+'개'+(h.weight?', '+h.weight+'kg':'')+')';
+            return '<option value="'+h.id+'" data-base="'+(h.base_part||'')+'" data-lot="'+(h.lot||h.barcode_raw||'')+'" data-date="'+(h.move_date||'')+'" data-weight="'+(h.weight||'')+'" data-incoming="'+(h.incoming_date||'')+'" data-qty="'+(h.qty||'')+'">'+label+'</option>';
+          }).join('')}
+        </select>
+      </div>`;
+    };
 
     if(!incomingHist.length){
       area.innerHTML=`<div style="padding:10px 12px;background:#ffebee;border:2px solid #ef5350;border-radius:8px">
@@ -1406,14 +1426,14 @@ async function checkLotTrace(barcodeValue){
           ${wt?`<tr><td style="color:#888;padding:2px 4px">소재중량</td><td style="font-weight:700;color:#e65100">${wt} kg</td></tr>`:''}
           <tr><td style="color:#888;padding:2px 4px">등록일시</td><td style="font-size:10px;color:#888">${r.move_date||''} ${r.move_time||''}</td></tr>
         </table>
-      </div>`;
+      </div>` + buildManualSelect();
     }else if(matched.length>0&&notMatched.length>0){
       // ⚠ 일부 일치
       area.innerHTML=`<div style="padding:10px 12px;background:#fff3e0;border:2px solid #ffb74d;border-radius:8px">
         <div style="font-size:13px;font-weight:800;color:#e65100;margin-bottom:4px">⚠ 일부 로트 미확인</div>
         <div style="font-size:11px;color:#2e7d32;margin-bottom:2px">✅ 입고확인: ${matched.map(m=>m.lot).join(', ')}</div>
         <div style="font-size:11px;color:#c62828">❌ 입고이력 없음: <b>${notMatched.join(', ')}</b></div>
-      </div>`;
+      </div>` + buildManualSelect();
       if(navigator.vibrate)navigator.vibrate([200,100,200]);
     }else{
       // ❌ 불일치
@@ -1422,12 +1442,48 @@ async function checkLotTrace(barcodeValue){
         <div style="font-size:13px;font-weight:800;color:#c62828;margin-bottom:4px">❌ 입고 소재 로트 없음</div>
         <div style="font-size:11px;color:#c62828;margin-bottom:4px">로트 <b>[${scannedLots.join(', ')}]</b>의 소재입고 이력이 없습니다</div>
         <div style="font-size:10px;color:#888">최근 입고로트: ${recent}</div>
-      </div>`;
+      </div>` + buildManualSelect();
       if(navigator.vibrate)navigator.vibrate([200,100,200]);
     }
   }catch(e){
     area.innerHTML=`<div style="padding:8px 10px;background:#f5f5f5;border-radius:8px;font-size:11px;color:#888">⚠ 로트 대조 실패: ${e.message}</div>`;
   }
+}
+
+// 직접 선택 시 기종/로트 자동 반영
+function onLotManualSelect(){
+  const sel=document.getElementById('lotManualSelect');if(!sel||!sel.value)return;
+  const opt=sel.options[sel.selectedIndex];
+  const basePart=opt.dataset.base||'';
+  const lot=opt.dataset.lot||'';
+  const inDate=opt.dataset.incoming||'';
+  const wt=opt.dataset.weight||'';
+  const qty=opt.dataset.qty||'';
+
+  // 로트 반영
+  document.getElementById('mInpLot').value=lot;
+
+  // 기준기종 자동 선택 (레이스웨이 콤보에서)
+  if(basePart){
+    const raceSel=document.getElementById('selRacewayPart');
+    if(raceSel){
+      for(let o of raceSel.options){if(o.value===basePart){raceSel.value=basePart;break}}
+      onRacewayPartSelect();
+    }
+  }
+
+  // 선택 결과 표시
+  const infoDiv=document.createElement('div');
+  infoDiv.style.cssText='margin-top:6px;padding:8px 10px;background:#e8f5e9;border:1.5px solid #a5d6a7;border-radius:8px;font-size:11px';
+  infoDiv.innerHTML=`<span style="font-weight:700;color:#2e7d32">✅ 선택됨:</span> <b>${basePart}</b> / 로트: <b>${lot}</b>`
+    +(inDate?' / 입고일: '+inDate:'')+(wt?' / '+wt+'kg':'');
+  const existing=sel.parentElement.querySelector('.lot-manual-result');
+  if(existing)existing.remove();
+  infoDiv.className='lot-manual-result';
+  sel.parentElement.appendChild(infoDiv);
+
+  if(navigator.vibrate)navigator.vibrate([50,30,50]);
+  showToast('✅ 소재로트 선택: '+basePart+' / '+lot);
 }
 
 // [이후 공정: 세척/가공/열처리/표면처리/출하]
