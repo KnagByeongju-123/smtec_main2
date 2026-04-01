@@ -704,17 +704,53 @@ function backToMoveReg(){closeScanOverlay();selectProcess(selectedProcess)}
 let _partTree=null; // 캐시
 let _partTreeTime=0;
 
+// SBC 기본 데이터 (하드코딩)
+function getDefaultPartTreeData(){
+  const defs=[
+    {p:'1106',heat:'1106CB',route:'heat_only'},
+    {p:'1106',heat:'1106CA',route:'heat_only'},
+    {p:'1113',heat:'1113AA',route:'heat_only'},
+    {p:'1113',heat:'1113E',route:'heat_only'},
+    {p:'1124',heat:'1124BA',route:'heat_only'},
+    {p:'1165',heat:'1165A',route:'heat_only'},
+    {p:'1179',heat:'1179T',route:'heat_surface'},
+    {p:'1179',heat:'1179C',route:'heat_surface'},
+    {p:'1159',heat:'1159C',route:'heat_surface'},
+    {p:'1159',heat:'1159B',route:'heat_surface'},
+    {p:'1156',heat:'1156',route:'heat_surface'},
+    {p:'1156',heat:'1156A',route:'heat_surface'},
+  ];
+  const rows=[];
+  defs.forEach((d,di)=>{
+    ['Inner','Outer'].forEach((ct,ci)=>{
+      rows.push({
+        id:'D'+(di*10+ci),customer:'SBC',parent_part:d.p,child_type:ct,
+        heat_part:d.heat+' '+ct,
+        surface_part:d.route==='heat_surface'?d.heat+' '+ct:'',
+        process_route:d.route,sort_order:ci
+      });
+    });
+  });
+  return rows;
+}
+
 async function loadPartTreeData(){
   const now=Date.now();
-  if(_partTree&&now-_partTreeTime<60000)return _partTree;
+  if(_partTree&&_partTree.length&&now-_partTreeTime<60000)return _partTree;
   try{
-    _partTree=await sbSelect('part_hierarchy',{},'sort_order.asc',1000);
-    _partTreeTime=now;
-  }catch(e){
-    // 로컬 폴백
-    _partTree=JSON.parse(localStorage.getItem('LOT_TJ_PART_TREE')||'[]');
-  }
-  return _partTree||[];
+    const data=await sbSelect('part_hierarchy',{},'sort_order.asc',1000);
+    if(data&&data.length>0){_partTree=data;_partTreeTime=now;return _partTree}
+  }catch(e){}
+  // 로컬 폴백
+  let local=JSON.parse(localStorage.getItem('LOT_TJ_PART_TREE')||'[]');
+  if(local&&local.length>0){_partTree=local;_partTreeTime=now;return _partTree}
+  // DB도 로컬도 비어있으면 하드코딩 기본 데이터 사용
+  const defaults=getDefaultPartTreeData();
+  localStorage.setItem('LOT_TJ_PART_TREE',JSON.stringify(defaults));
+  _partTree=defaults;_partTreeTime=now;
+  // 백그라운드로 DB에도 삽입 시도
+  try{await sbInsert('part_hierarchy',defaults.map(r=>{const{id,...rest}=r;return rest}))}catch(e){}
+  return _partTree;
 }
 
 function buildTreeStructure(data){
