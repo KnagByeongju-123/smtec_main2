@@ -274,7 +274,7 @@
       <div id="dualRegArea" style="display:none"></div>
 
       <div class="fg" id="basePartField" style="position:relative">
-        <label>기준품번 <span style="font-size:10px;color:#888;font-weight:400">입력하면 검색됨</span></label>
+        <label id="basePartLabel">기준품번 <span style="font-size:10px;color:#888;font-weight:400">입력하면 검색됨</span></label>
         <input type="text" id="mInpBasePart" placeholder="품번 입력 (자동검색)" autocomplete="off" oninput="filterBasePart()" onfocus="filterBasePart()" style="font-size:14px;font-weight:700">
         <div id="basePartDropdown" style="display:none;position:absolute;left:0;right:0;top:100%;background:#fff;border:1.5px solid #1565c0;border-top:none;border-radius:0 0 8px 8px;max-height:180px;overflow-y:auto;z-index:100;box-shadow:0 4px 12px rgba(0,0,0,.15)"></div>
       </div>
@@ -1026,13 +1026,20 @@ async function insertDefaultTree(){
   }
 }
 
-// 품번트리 → 기준품번 항목관리 자동 동기화 (최종 출하품번 = heat_part 또는 surface_part)
+// 품번트리 → 설정 항목관리 자동 동기화
+// 기준품번 = 소재품번(parent_part), 출하품번 = 최종품번(heat_part 또는 surface_part)
 async function refreshPartCatSubs(){
   const data=await loadPartTreeData();
-  const allFinals=[...new Set(data.map(r=>getFinalPart(r)))].sort();
+  // 기준품번 (소재품번)
+  const allParents=[...new Set(data.map(r=>r.parent_part))].sort();
   const catIdx=cats.findIndex(c=>c.name==='기준품번');
-  if(catIdx>=0){cats[catIdx].subs=allFinals.length?allFinals:['항목없음']}
-  else{cats.push({name:'기준품번',subs:allFinals.length?allFinals:['항목없음']})}
+  if(catIdx>=0){cats[catIdx].subs=allParents.length?allParents:['항목없음']}
+  else{cats.push({name:'기준품번',subs:allParents.length?allParents:['항목없음']})}
+  // 출하품번 (최종품번)
+  const allFinals=[...new Set(data.map(r=>getFinalPart(r)))].sort();
+  const shipIdx=cats.findIndex(c=>c.name==='출하품번');
+  if(shipIdx>=0){cats[shipIdx].subs=allFinals.length?allFinals:['항목없음']}
+  else{cats.push({name:'출하품번',subs:allFinals.length?allFinals:['항목없음']})}
   localStorage.setItem('LOT_TJ_CATS',JSON.stringify(cats));
 }
 
@@ -1090,7 +1097,8 @@ const DEFAULT_CATS=[
   {name:'도착지',subs:['자재실','생산라인','세척실','거명정밀','동진금속','한성특수','SBC','SKF씰','진양오일씰','세동산업','일진글로벌']},
   {name:'고객사',subs:['SBC','SKF씰','진양오일씰','세동산업','일진글로벌']},
   {name:'외주업체',subs:['거명정밀','동진금속','한성특수']},
-  {name:'기준품번',subs:['1113E Inner','1113E Outer','품번3','품번4']}
+  {name:'기준품번',subs:['1106','1113','1124','1156','1159','1165','1179']},
+  {name:'출하품번',subs:['자동 동기화됨']}
 ];
 
 let cats=JSON.parse(localStorage.getItem('LOT_TJ_CATS')||'null')||JSON.parse(JSON.stringify(DEFAULT_CATS));
@@ -1124,16 +1132,42 @@ function filterBasePart(){
   const drop=document.getElementById('basePartDropdown');
   const val=inp.value.trim().toLowerCase();
 
-  // 선택된 고객사 기준으로 품번 목록 필터링
   let partList=[];
-  if(_partTree&&_partTree.length){
-    const custData=selectedCustomer?_partTree.filter(r=>r.customer===selectedCustomer):_partTree;
-    partList=[...new Set(custData.map(r=>getFinalPart(r)))].sort();
-  }
-  // 폴백: cats에서 가져오기
-  if(!partList.length){
-    const partCat=cats.find(c=>c.name==='기준품번');
-    if(partCat)partList=partCat.subs;
+  const procId=selectedProcess?selectedProcess.id:'';
+
+  if(procId==='production'){
+    // 생산 공정: 기종(소재품번) 목록
+    if(_partTree&&_partTree.length){
+      const custData=selectedCustomer?_partTree.filter(r=>r.customer===selectedCustomer):_partTree;
+      partList=[...new Set(custData.map(r=>r.parent_part))].sort();
+    }
+    if(!partList.length){const mc=cats.find(c=>c.name==='기준품번');if(mc)partList=mc.subs}
+  }else if(procId==='heat'){
+    // 열처리: 생산품번(소재+Inner/Outer) 목록
+    if(_partTree&&_partTree.length){
+      const custData=selectedCustomer?_partTree.filter(r=>r.customer===selectedCustomer):_partTree;
+      partList=[...new Set(custData.map(r=>r.heat_part))].sort();
+    }
+  }else if(procId==='surface'){
+    // 표면처리: 열처리품번 중 표면처리 경로만
+    if(_partTree&&_partTree.length){
+      const custData=selectedCustomer?_partTree.filter(r=>r.customer===selectedCustomer):_partTree;
+      partList=[...new Set(custData.filter(r=>r.process_route==='heat_surface').map(r=>r.surface_part||r.heat_part))].sort();
+    }
+  }else if(procId==='shipment'){
+    // 출하: 출하품번 목록
+    if(_partTree&&_partTree.length){
+      const custData=selectedCustomer?_partTree.filter(r=>r.customer===selectedCustomer):_partTree;
+      partList=[...new Set(custData.map(r=>getFinalPart(r)))].sort();
+    }
+    if(!partList.length){const mc=cats.find(c=>c.name==='출하품번');if(mc)partList=mc.subs}
+  }else{
+    // 기타 공정: 전체 최종품번
+    if(_partTree&&_partTree.length){
+      const custData=selectedCustomer?_partTree.filter(r=>r.customer===selectedCustomer):_partTree;
+      partList=[...new Set(custData.map(r=>getFinalPart(r)))].sort();
+    }
+    if(!partList.length){const mc=cats.find(c=>c.name==='출하품번');if(mc)partList=mc.subs}
   }
   if(!partList.length){drop.style.display='none';return}
 
@@ -1189,6 +1223,15 @@ async function openRegModal(barcodeValue,format){
   const matchArea=document.getElementById('modalMatchArea');
   const dualArea=document.getElementById('dualRegArea');
   dualArea.style.display='none';dualArea.innerHTML='';
+
+  // 공정별 라벨 변경
+  const lbl=document.getElementById('basePartLabel');
+  const procId=selectedProcess?selectedProcess.id:'';
+  if(procId==='production')lbl.innerHTML='기준품번 (소재품번) <span style="font-size:10px;color:#888;font-weight:400">입력하면 검색됨</span>';
+  else if(procId==='heat')lbl.innerHTML='열처리 품번 <span style="font-size:10px;color:#888;font-weight:400">자동변경 또는 선택</span>';
+  else if(procId==='surface')lbl.innerHTML='표면처리 품번 <span style="font-size:10px;color:#888;font-weight:400">자동변경</span>';
+  else if(procId==='shipment')lbl.innerHTML='출하품번 <span style="font-size:10px;color:#888;font-weight:400">입력하면 검색됨</span>';
+  else lbl.innerHTML='품번 <span style="font-size:10px;color:#888;font-weight:400">입력하면 검색됨</span>';
   matchArea.innerHTML='<div style="text-align:center;padding:10px;color:#1565c0;font-size:12px">🔍 DB 조회 중...</div>';
 
   document.getElementById('singleQtyArea').style.display='block';
