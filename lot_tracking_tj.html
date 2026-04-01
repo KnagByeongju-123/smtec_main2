@@ -414,7 +414,7 @@
     <div class="card-tit" style="justify-content:space-between"><span>⚙ 분류 항목 관리</span><button class="btn btn-sm btn-gray" onclick="resetCats()">기본값</button></div>
     <div id="catEditor"></div>
     <button class="add-btn" onclick="addCat()" style="margin-top:8px;padding:10px;font-size:13px">+ 분류 추가</button>
-    <div style="margin-top:12px"><button class="btn btn-green" onclick="saveCats()">적용 저장</button></div>
+    <div style="margin-top:12px"><button class="btn btn-green" onclick="saveCats()">💾 설정 서버저장</button></div>
   </div>
   <div class="card" style="border:2px solid #00897b">
     <div class="card-tit"><span>🗄 Supabase 연결 설정</span></div>
@@ -511,6 +511,11 @@ async function sbDelete(table,filters){
   Object.entries(filters).forEach(([col,cond])=>{const s=String(cond);if(s.startsWith('eq.'))q=q.eq(col,s.slice(3));else q=q.eq(col,cond)});
   const{error}=await q;if(error)throw error;
 }
+async function sbUpsert(table,data,conflictCol){
+  const sb=getSb();if(!sb)throw new Error('Supabase 미설정');
+  const{error}=await sb.from(table).upsert(data,{onConflict:conflictCol});
+  if(error)throw error;
+}
 async function sbTestConnection(){
   const sb=getSb();if(!sb)return{success:false,status:'미설정'};
   try{const{error}=await sb.from('move_history_tj').select('id',{count:'exact',head:true});return{success:!error,status:error?error.message:'OK'}}
@@ -605,7 +610,17 @@ CREATE POLICY "allow_all_scan_relay" ON scan_relay FOR ALL USING (true) WITH CHE
 );
 ALTER TABLE part_hierarchy ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "allow_all_part_hierarchy" ON part_hierarchy;
-CREATE POLICY "allow_all_part_hierarchy" ON part_hierarchy FOR ALL USING (true) WITH CHECK (true);`
+CREATE POLICY "allow_all_part_hierarchy" ON part_hierarchy FOR ALL USING (true) WITH CHECK (true);`,
+
+`CREATE TABLE IF NOT EXISTS lot_setting_tj (
+  id BIGSERIAL PRIMARY KEY,
+  setting_key TEXT UNIQUE NOT NULL,
+  setting_value TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE lot_setting_tj ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "allow_all_lot_setting_tj" ON lot_setting_tj;
+CREATE POLICY "allow_all_lot_setting_tj" ON lot_setting_tj FOR ALL USING (true) WITH CHECK (true);`
   ];
   let ok=0,fail=0;
   for(const sql of sqlStatements){
@@ -1802,7 +1817,14 @@ function moveCat(i,d){const n=i+d;if(n<0||n>=cats.length)return;[cats[i],cats[n]
 function addSub(ci){cats[ci].subs.push('새 항목');renderCatEditor()}
 function delSub(ci,si){if(cats[ci].subs.length<=1){showToast('최소 1개 필요');return}cats[ci].subs.splice(si,1);renderCatEditor()}
 function moveSub(ci,si,d){const n=si+d;if(n<0||n>=cats[ci].subs.length)return;[cats[ci].subs[si],cats[ci].subs[n]]=[cats[ci].subs[n],cats[ci].subs[si]];renderCatEditor()}
-function saveCats(){localStorage.setItem('LOT_TJ_CATS',JSON.stringify(cats));renderRegFields();showToast('항목 저장 완료')}
+async function saveCats(){
+  localStorage.setItem('LOT_TJ_CATS',JSON.stringify(cats));
+  renderRegFields();
+  try{
+    await sbUpsert('lot_setting_tj',{setting_key:'cats',setting_value:JSON.stringify(cats)},'setting_key');
+    showToast('✅ 설정 서버저장 완료');
+  }catch(e){showToast('⚠ 서버 저장 실패 (로컬 저장됨): '+e.message)}
+}
 function resetCats(){if(!confirm('기본값으로 복원?'))return;cats=JSON.parse(JSON.stringify(DEFAULT_CATS));localStorage.setItem('LOT_TJ_CATS',JSON.stringify(cats));renderCatEditor();renderRegFields();showToast('기본값 복원')}
 
 let tt;function showToast(m){const el=document.getElementById('toast');el.textContent=m;el.classList.add('show');clearTimeout(tt);tt=setTimeout(()=>el.classList.remove('show'),2000)}
@@ -1810,7 +1832,20 @@ let tt;function showToast(m){const el=document.getElementById('toast');el.textCo
 // ============================================================
 //  초기화
 // ============================================================
-renderRegFields();
+// 서버에서 설정 불러오기
+(async function loadCatsFromServer(){
+  try{
+    const data=await sbSelect('lot_setting_tj',{setting_key:'eq.cats'},'',1);
+    if(data&&data.length&&data[0].setting_value){
+      const serverCats=JSON.parse(data[0].setting_value);
+      if(serverCats&&serverCats.length){
+        cats=serverCats;
+        localStorage.setItem('LOT_TJ_CATS',JSON.stringify(cats));
+      }
+    }
+  }catch(e){}
+  renderRegFields();
+})();
 renderRecentList();
 renderProcessGrid();
 
