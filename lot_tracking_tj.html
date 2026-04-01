@@ -151,13 +151,11 @@
       </div>
       <div class="modal-body">
         <div id="regFields"></div>
-        <!-- 생산 공정 전용: 작업자/설비 -->
-        <div id="prodExtraFields" style="display:none">
-          <div class="modal-row2">
-            <div class="fg"><label>작업자명</label><input type="text" id="inpWorker" placeholder="작업자명 입력"></div>
-            <div class="fg"><label>설비호기</label><input type="text" id="inpEquip" placeholder="설비호기 입력"></div>
-          </div>
+        <div class="modal-row2">
+          <div class="fg"><label>작업자명</label><input type="text" id="inpWorker" placeholder="작업자명 입력"></div>
+          <div class="fg"><label>설비호기</label><input type="text" id="inpEquip" placeholder="설비호기 입력"></div>
         </div>
+        <div class="fg"><label>소재중량 (kg)</label><input type="number" id="inpWeight" placeholder="소재중량 입력" inputmode="decimal" step="0.1"></div>
         <button class="btn btn-blue" onclick="goToScanStep()" style="font-size:15px;padding:13px;margin-top:6px">📟 바코드 리딩 시작 →</button>
         <!-- 최근 이력 미니 -->
         <div style="margin-top:14px;border-top:1px solid #eee;padding-top:10px">
@@ -168,8 +166,10 @@
     </div>
   </div>
 
-  <!-- STEP 3: 스캔 팝업 오버레이 (전체화면) -->
-  <div id="scanOverlay" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:#f0f2f5;z-index:8000;overflow-y:auto;-webkit-overflow-scrolling:touch">
+</div><!-- /pnl0 -->
+
+<!-- STEP 3: 스캔 팝업 오버레이 (전체화면, pnl0 밖) -->
+<div id="scanOverlay" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:#f0f2f5;z-index:8000;overflow-y:auto;-webkit-overflow-scrolling:touch">
     <div style="padding:12px;max-width:500px;margin:0 auto">
 
       <!-- 상단 요약바 -->
@@ -215,6 +215,18 @@
         </div>
       </div>
 
+      <!-- 스캔 누적 -->
+      <div class="card" id="scanAccumCard" style="display:none;border:2px solid #2e7d32">
+        <div class="card-tit" style="justify-content:space-between">
+          <span>📦 스캔 항목 (<span id="scanAccumCnt">0</span>건)</span>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-sm btn-red" onclick="clearScanAccum()" style="font-size:10px;padding:4px 8px">초기화</button>
+            <button class="btn btn-sm btn-green" onclick="openRegFromAccum()" style="font-size:12px;padding:6px 14px">✅ 등록</button>
+          </div>
+        </div>
+        <div id="scanAccumList" style="font-size:13px;font-weight:600;color:#2e7d32;word-break:break-all"></div>
+      </div>
+
       <!-- 최근 등록 이력 -->
       <div class="card">
         <div class="card-tit" style="justify-content:space-between">
@@ -224,7 +236,6 @@
         <div id="recentList" style="max-height:250px;overflow-y:auto"><div class="h-empty">이력이 없습니다</div></div>
       </div>
     </div>
-  </div>
 </div>
 
 <!-- ===== 스캔 결과 + 수량 입력 팝업 ===== -->
@@ -483,10 +494,11 @@ function selectProcess(proc){
   renderRegFields();
   renderRecentList2();
 
-  // 작업자/설비 복원 (모든 공정)
-  document.getElementById('prodExtraFields').style.display='block';
+  // 작업자/설비 복원
   document.getElementById('inpWorker').value=savedInfo.worker||'';
   document.getElementById('inpEquip').value=savedInfo.equip||'';
+  // 소재중량은 매번 새로 입력
+  document.getElementById('inpWeight').value='';
 
   const modal=document.getElementById('moveSetupModal');
   modal.classList.add('show','center');
@@ -498,14 +510,18 @@ function closeMoveSetup(){
   document.body.style.overflow='';
 }
 
+// 스캔 누적 배열
+let scanAccum=[];
+
 function goToScanStep(){
   if(!selectedProcess){showToast('공정을 먼저 선택하세요');return}
   // 출발지/도착지 값 저장
   cats.forEach((cat,i)=>{const el=document.getElementById('sel_'+i);if(el&&el.value)savedSelections[cat.name]=el.value});
 
-  // 공정별 설정 임시저장 (출발지/도착지/작업자/설비)
+  // 공정별 설정 임시저장 (출발지/도착지/작업자/설비 — 소재중량 제외)
   const worker=document.getElementById('inpWorker').value.trim();
   const equip=document.getElementById('inpEquip').value.trim();
+  const weight=document.getElementById('inpWeight').value.trim();
   localStorage.setItem('LOT_TJ_PROC_'+selectedProcess.id,JSON.stringify({
     from:savedSelections['출발지']||'',
     to:savedSelections['도착지']||'',
@@ -515,22 +531,25 @@ function goToScanStep(){
   const from=savedSelections['출발지']||'-';
   const to=savedSelections['도착지']||'-';
 
-  // 이동등록 팝업 닫기
   closeMoveSetup();
+
+  // 스캔 누적 초기화
+  scanAccum=[];
 
   // 스캔 팝업 열기
   document.getElementById('scanProcName2').textContent=selectedProcess.icon+' '+selectedProcess.name;
   let locText=from+' → '+to;
   if(worker||equip)locText+=' | '+(worker||'-')+' / '+(equip||'-');
+  if(weight)locText+=' | '+weight+'kg';
   document.getElementById('scanLocSummary2').textContent=locText;
   document.getElementById('scanOverlay').style.display='block';
   document.body.style.overflow='hidden';
-  // 탭 미선택 표시
+  // 탭 미선택
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('on'));
   document.querySelectorAll('.pnl').forEach(p=>p.classList.remove('on'));
 
-  // 리딩기 포커스
-  setTimeout(()=>{const inp=document.getElementById('bcReaderInput');if(inp)inp.focus()},300);
+  // 리딩기 포커스 OFF (터치로 직접 선택)
+  window.scrollTo({top:0,behavior:'smooth'});
 }
 
 function closeScanOverlay(){
@@ -617,6 +636,46 @@ function onBasePartSelect(){
   else{inp.style.display='none';inp.value=''}
 }
 
+function addToScanAccum(val,fmt){
+  if(!val)return;
+  if(!scanAccum.find(s=>s.value===val)){
+    scanAccum.push({value:val,format:fmt});
+  }
+  showToast('✅ '+val+' ('+scanAccum.length+'건)');
+  renderScanAccum();
+}
+
+function renderScanAccum(){
+  const card=document.getElementById('scanAccumCard');
+  const list=document.getElementById('scanAccumList');
+  const cnt=document.getElementById('scanAccumCnt');
+  if(!scanAccum.length){card.style.display='none';return}
+  card.style.display='block';
+  cnt.textContent=scanAccum.length;
+  list.innerHTML=scanAccum.map((s,i)=>`<span style="display:inline-block;margin:2px 4px 2px 0;padding:4px 10px;background:#e8f5e9;border-radius:6px;font-size:12px">${s.value} <span style="color:#888;font-size:10px">${s.format}</span><button onclick="removeScanAccum(${i})" style="border:none;background:none;color:#c62828;font-weight:700;cursor:pointer;margin-left:4px;font-size:11px">✕</button></span>`).join('');
+}
+
+function removeScanAccum(idx){
+  scanAccum.splice(idx,1);
+  renderScanAccum();
+}
+
+function clearScanAccum(){
+  scanAccum=[];
+  renderScanAccum();
+  showToast('스캔 초기화');
+}
+
+function openRegFromAccum(){
+  if(!scanAccum.length){showToast('스캔 항목이 없습니다');return}
+  const combined=scanAccum.map(s=>s.value).join(' // ');
+  const fmt=scanAccum.length===1?scanAccum[0].format:'복합('+scanAccum.length+'건)';
+  openRegModal(combined,fmt);
+}
+
+// 등록 팝업에서 사용할 임시저장 키
+const REG_SAVE_KEY='LOT_TJ_REG_SAVE';
+
 async function openRegModal(barcodeValue,format){
   modalScanData={value:barcodeValue,format:format||'리딩기'};
   const modal=document.getElementById('regModal');
@@ -624,14 +683,15 @@ async function openRegModal(barcodeValue,format){
   const matchArea=document.getElementById('modalMatchArea');
   matchArea.innerHTML='<div style="text-align:center;padding:10px;color:#1565c0;font-size:12px">🔍 DB 조회 중...</div>';
 
-  ['mInpBasePart','mInpLot','mInpQty','mInpNote'].forEach(id=>document.getElementById(id).value='');
+  // 임시저장 복원 (수량 제외)
+  const regSave=JSON.parse(localStorage.getItem(REG_SAVE_KEY)||'{}');
+  document.getElementById('mInpBasePart').value=regSave.basePart||'';
+  document.getElementById('mInpLot').value=barcodeValue; // 로트 = 스캔값
+  document.getElementById('mInpQty').value=''; // 수량은 매번 새로
+  document.getElementById('mInpNote').value=regSave.note||'';
   document.getElementById('mInpBasePart').style.display='block';
   document.getElementById('mSelBasePart').style.display='none';
   document.getElementById('modalNewMapping').style.display='none';
-
-  const parsed=clientParseBarcode(barcodeValue);
-  if(parsed.lot)document.getElementById('mInpLot').value=parsed.lot;
-  if(parsed.qty)document.getElementById('mInpQty').value=parsed.qty;
 
   modal.classList.add('show','center');
 
@@ -687,9 +747,13 @@ async function doRegisterFromModal(){
   const qty=document.getElementById('mInpQty').value.trim();
   const note=document.getElementById('mInpNote').value.trim();
 
+  // 임시저장 (수량 제외)
+  localStorage.setItem(REG_SAVE_KEY,JSON.stringify({basePart,note}));
+
   // 공정별 저장된 설정에서 출발지/도착지/작업자/설비 가져오기
   const procInfo=selectedProcess?JSON.parse(localStorage.getItem('LOT_TJ_PROC_'+selectedProcess.id)||'{}'):{};
   const fields={'출발지':procInfo.from||savedSelections['출발지']||'','도착지':procInfo.to||savedSelections['도착지']||''};
+  const weight=document.getElementById('inpWeight')?document.getElementById('inpWeight').value.trim():'';
 
   const now=new Date();
   const entry={
@@ -699,6 +763,7 @@ async function doRegisterFromModal(){
     process:selectedProcess?selectedProcess.name:'',
     worker:procInfo.worker||'',
     equip:procInfo.equip||'',
+    weight:weight,
     fields,barcode:modalScanData.value,basePart,lot,
     format:modalScanData.format,qty,note,ts:now.toISOString()
   };
@@ -709,6 +774,8 @@ async function doRegisterFromModal(){
   showToast('✅ 등록: '+(basePart||entry.barcode)+' 수량:'+qty);
   if(navigator.vibrate)navigator.vibrate([100]);
   closeRegModal();
+  // 스캔 누적 초기화
+  scanAccum=[];renderScanAccum();
   renderRecentList();
   renderRecentList2();
 }
@@ -732,7 +799,8 @@ async function doAddMappingFromModal(){
 async function saveHistToServer(entry){
   try{
     let noteText=entry.note||'';
-    if(entry.worker||entry.equip)noteText=('[작업자:'+( entry.worker||'-')+' 설비:'+(entry.equip||'-')+'] '+(noteText)).trim();
+    if(entry.worker||entry.equip)noteText=('[작업자:'+(entry.worker||'-')+' 설비:'+(entry.equip||'-')+'] '+(noteText)).trim();
+    if(entry.weight)noteText=('[중량:'+entry.weight+'kg] '+(noteText)).trim();
     await sbInsert('move_history_tj',{
       move_date:entry.date, move_time:entry.time,
       process:entry.process||'',
@@ -756,7 +824,7 @@ async function saveHistToServer(entry){
 // ============================================================
 document.getElementById('bcReaderInput').addEventListener('keydown',function(e){
   if(e.key==='Enter'){e.preventDefault();const val=this.value.trim();if(!val)return;this.value='';
-    if(navigator.vibrate)navigator.vibrate([50,30,50]);showToast('✅ 리딩: '+val);openRegModal(val,'리딩기')}
+    if(navigator.vibrate)navigator.vibrate([50,30,50]);addToScanAccum(val,'리딩기')}
 });
 
 // 사진 바코드
@@ -787,7 +855,7 @@ function fmtN(f){if(!f)return'?';const s=f.toString().toUpperCase();return{'QR_C
 function photoScanOk(val,fmt){
   const sr=document.getElementById('scanResult');sr.classList.remove('fail');sr.classList.add('show');
   document.getElementById('srVal').textContent=val;document.getElementById('srFmt').textContent='형식: '+fmtN(fmt);
-  if(navigator.vibrate)navigator.vibrate([50,30,50]);showToast('✅ '+val);openRegModal(val,fmtN(fmt));
+  if(navigator.vibrate)navigator.vibrate([50,30,50]);addToScanAccum(val,fmtN(fmt));
 }
 
 // QR
@@ -813,7 +881,7 @@ async function analyzeQr(img){
     if(!found){try{const blob=await new Promise(r=>cv.toBlob(r,'image/jpeg',.95));const f=new File([blob],'qr2.jpg',{type:'image/jpeg'});const qr=new Html5Qrcode('analysisCv');const res=await qr.scanFileV2(f,true);if(res&&res.decodedText){qrScanOk(res.decodedText,'QR_CODE');found=true}qr.clear()}catch(e){}}}
   if(!found){const sr=document.getElementById('qrResult');sr.classList.add('fail');document.getElementById('qrVal').textContent='인식 실패';document.getElementById('qrFmt').textContent='QR코드를 중앙에 놓고 재촬영하세요';showToast('QR 인식 실패')}
 }
-function qrScanOk(val,fmt){const sr=document.getElementById('qrResult');sr.classList.remove('fail');sr.classList.add('show');document.getElementById('qrVal').textContent=val;document.getElementById('qrFmt').textContent='형식: '+fmtN(fmt);if(navigator.vibrate)navigator.vibrate([50,30,50]);showToast('✅ '+val);openRegModal(val,fmtN(fmt))}
+function qrScanOk(val,fmt){const sr=document.getElementById('qrResult');sr.classList.remove('fail');sr.classList.add('show');document.getElementById('qrVal').textContent=val;document.getElementById('qrFmt').textContent='형식: '+fmtN(fmt);if(navigator.vibrate)navigator.vibrate([50,30,50]);addToScanAccum(val,fmtN(fmt))}
 function stopQr(){}
 
 // OCR
@@ -836,7 +904,7 @@ function handleOcrFile(file){
     try{
       const result=await Tesseract.recognize(cv,'eng+kor',{logger:m=>{if(m.status==='recognizing text')document.getElementById('ocrFmt').textContent='인식 진행: '+Math.round(m.progress*100)+'%'}});
       let text=result.data.text.trim().replace(/\n/g,' ').replace(/\s+/g,' ').replace(/[^A-Za-z0-9가-힣\-_./ ]/g,'').trim();
-      if(text){document.getElementById('ocrVal').textContent=text;document.getElementById('ocrFmt').textContent='OCR 완료 (신뢰도: '+Math.round(result.data.confidence)+'%)';sr.classList.remove('fail');if(navigator.vibrate)navigator.vibrate([50,30,50]);showToast('OCR: '+text);openRegModal(text,'OCR')}
+      if(text){document.getElementById('ocrVal').textContent=text;document.getElementById('ocrFmt').textContent='OCR 완료 (신뢰도: '+Math.round(result.data.confidence)+'%)';sr.classList.remove('fail');if(navigator.vibrate)navigator.vibrate([50,30,50]);addToScanAccum(text,'OCR')}
       else{document.getElementById('ocrVal').textContent='문자를 인식하지 못했습니다';sr.classList.add('fail');showToast('OCR 인식 실패')}
     }catch(e){document.getElementById('ocrVal').textContent='OCR 오류';sr.classList.add('fail')}
     URL.revokeObjectURL(imgUrl);
@@ -845,7 +913,7 @@ function handleOcrFile(file){
 
 // 직접입력
 document.getElementById('manualInput').addEventListener('keydown',function(e){
-  if(e.key==='Enter'){e.preventDefault();const v=this.value.trim();if(!v)return;this.value='';showToast('✅ 입력: '+v);openRegModal(v,'직접입력')}
+  if(e.key==='Enter'){e.preventDefault();const v=this.value.trim();if(!v)return;this.value='';addToScanAccum(v,'직접입력')}
 });
 
 // ============================================================
@@ -854,7 +922,7 @@ document.getElementById('manualInput').addEventListener('keydown',function(e){
 function swTab(n){
   document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('on',i===n));
   document.querySelectorAll('.pnl').forEach((p,i)=>p.classList.toggle('on',i===n));
-  if(n===0){renderRegFields();renderRecentList();renderRecentList2();renderProcessGrid();setTimeout(()=>{if(selectedProcess&&document.getElementById('scanSection').style.display!=='none'){const inp=document.getElementById('bcReaderInput');if(inp)inp.focus()}},200)}
+  if(n===0){renderRegFields();renderRecentList();renderRecentList2();renderProcessGrid();setTimeout(()=>{if(selectedProcess&&document.getElementById('scanOverlay').style.display!=='none'){const inp=document.getElementById('bcReaderInput');if(inp)inp.focus()}},200)}
   if(n===1){renderCatEditor();loadSbConfigUI()}
 }
 
@@ -916,8 +984,8 @@ function renderRecentList2(){
 function expXlsx(){
   if(!hist.length){showToast('이력 없음');return}
   const wb=XLSX.utils.book_new();
-  const hd=['일자','시간','공정','작업자','설비','출발지','도착지','바코드','기준품번','로트','수량','비고','서버저장'];
-  const rows=hist.map(h=>[h.date,h.time,h.process||'',h.worker||'',h.equip||'',(h.fields&&h.fields['출발지'])||'',(h.fields&&h.fields['도착지'])||'',h.barcode,h.basePart||'',h.lot||'',h.qty||'',h.note||'',h.sheetSaved?'O':'X']);
+  const hd=['일자','시간','공정','작업자','설비','소재중량','출발지','도착지','바코드','기준품번','로트','수량','비고','서버저장'];
+  const rows=hist.map(h=>[h.date,h.time,h.process||'',h.worker||'',h.equip||'',h.weight||'',(h.fields&&h.fields['출발지'])||'',(h.fields&&h.fields['도착지'])||'',h.barcode,h.basePart||'',h.lot||'',h.qty||'',h.note||'',h.sheetSaved?'O':'X']);
   const ws=XLSX.utils.aoa_to_sheet([hd,...rows]);
   ws['!cols']=[{wch:11},{wch:9},{wch:10},{wch:14},{wch:14},{wch:24},{wch:16},{wch:14},{wch:8},{wch:20},{wch:6}];
   XLSX.utils.book_append_sheet(wb,ws,'이동이력');
