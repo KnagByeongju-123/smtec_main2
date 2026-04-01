@@ -171,6 +171,12 @@
       </div>
       <div class="modal-body">
         <div id="moveSetupInputs">
+          <div class="fg" style="margin-bottom:10px">
+            <label>🏢 고객사</label>
+            <select id="selCustomer" onchange="onCustomerChange()" style="font-size:15px;padding:11px;border:2px solid #1a237e;background:#e8eaf6;font-weight:700;color:#1a237e">
+              <option value="">고객사 선택</option>
+            </select>
+          </div>
           <div id="regFields"></div>
           <div class="modal-row2">
             <div class="fg"><label>작업자명</label><input type="text" id="inpWorker" placeholder="작업자명 입력"></div>
@@ -589,6 +595,7 @@ const PROCESSES=[
 ];
 
 let selectedProcess=null;
+let selectedCustomer=''; // 선택된 고객사
 
 function renderProcessGrid(){
   const grid=document.getElementById('procGrid');grid.innerHTML='';
@@ -601,6 +608,38 @@ function renderProcessGrid(){
   });
 }
 
+// 고객사 셀렉트 렌더링 (설정 > 항목관리의 '고객사' 분류에서 가져옴)
+function renderCustomerSelect(){
+  const sel=document.getElementById('selCustomer');
+  if(!sel)return;
+  const custCat=cats.find(c=>c.name==='고객사');
+  const customers=custCat?custCat.subs:[];
+  const prev=selectedCustomer||localStorage.getItem('LOT_TJ_SEL_CUST')||'';
+  sel.innerHTML='<option value="">고객사 선택</option>'+customers.map(c=>'<option value="'+c+'"'+(c===prev?' selected':'')+'>'+c+'</option>').join('');
+  if(prev&&customers.includes(prev)){selectedCustomer=prev;sel.value=prev}
+  else if(customers.length===1){selectedCustomer=customers[0];sel.value=customers[0]}
+}
+
+function onCustomerChange(){
+  const sel=document.getElementById('selCustomer');
+  selectedCustomer=sel?sel.value:'';
+  localStorage.setItem('LOT_TJ_SEL_CUST',selectedCustomer);
+}
+
+// 선택된 고객사 기준품번 목록 (최종출하품번)
+async function getCustomerFinalParts(customer){
+  const data=await loadPartTreeData();
+  if(!customer)return data.map(r=>getFinalPart(r));
+  return data.filter(r=>r.customer===customer).map(r=>getFinalPart(r));
+}
+
+// 선택된 고객사 소재품번 목록
+async function getCustomerParentParts(customer){
+  const data=await loadPartTreeData();
+  if(!customer)return [...new Set(data.map(r=>r.parent_part))];
+  return [...new Set(data.filter(r=>r.customer===customer).map(r=>r.parent_part))];
+}
+
 function selectProcess(proc){
   selectedProcess=proc;
   renderProcessGrid();
@@ -609,6 +648,7 @@ function selectProcess(proc){
   savedSelections['출발지']=savedInfo.from||proc.defaultFrom;
   savedSelections['도착지']=savedInfo.to||proc.defaultTo;
   renderRegFields();
+  renderCustomerSelect();
   renderRecentList2();
   document.getElementById('inpWorker').value=savedInfo.worker||'';
   document.getElementById('inpEquip').value=savedInfo.equip||'';
@@ -628,6 +668,8 @@ function closeMoveSetup(){
 }
 
 function showMoveConfirm(){
+  onCustomerChange();
+  if(!selectedCustomer){showToast('고객사를 선택하세요');return}
   cats.forEach((cat,i)=>{const el=document.getElementById('sel_'+i);if(el&&el.value)savedSelections[cat.name]=el.value});
   const from=savedSelections['출발지']||'-',to=savedSelections['도착지']||'-';
   const worker=document.getElementById('inpWorker').value.trim()||'-';
@@ -635,6 +677,7 @@ function showMoveConfirm(){
   const weight=document.getElementById('inpWeight').value.trim();
   const summary=document.getElementById('moveConfirmSummary');
   let html='';
+  html+=`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #c5cae9"><span style="color:#555">고객사</span><span style="font-weight:700;color:#1a237e">🏢 ${selectedCustomer}</span></div>`;
   html+=`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #c5cae9"><span style="color:#555">공정</span><span style="font-weight:700;color:#1a237e">${selectedProcess.icon} ${selectedProcess.name}</span></div>`;
   html+=`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #c5cae9"><span style="color:#555">출발지</span><span style="font-weight:700">${from}</span></div>`;
   html+=`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #c5cae9"><span style="color:#555">도착지</span><span style="font-weight:700">${to}</span></div>`;
@@ -679,7 +722,7 @@ function goToScanStep(){
   const from=savedSelections['출발지']||'-',to=savedSelections['도착지']||'-';
   closeMoveSetup();
   scanAccum=[];
-  document.getElementById('scanProcName2').textContent=selectedProcess.icon+' '+selectedProcess.name;
+  document.getElementById('scanProcName2').textContent=selectedProcess.icon+' '+selectedProcess.name+(selectedCustomer?' ['+selectedCustomer+']':'');
   let locText=from+' → '+to;
   if(worker||equip)locText+=' | '+(worker||'-')+' / '+(equip||'-');
   if(weight)locText+=' | '+weight+'kg';
@@ -1002,34 +1045,39 @@ function getFinalPart(row){
 // 생산품번 = 소재품번 + Inner/Outer
 function getProdPart(row){return row.parent_part+' '+row.child_type}
 
-// 소재품번으로 자식 찾기
+// 소재품번으로 자식 찾기 (고객사 필터 적용)
 async function findChildrenByParent(parentPart){
   const data=await loadPartTreeData();
-  return data.filter(r=>r.parent_part===parentPart);
+  const filtered=selectedCustomer?data.filter(r=>r.customer===selectedCustomer):data;
+  return filtered.filter(r=>r.parent_part===parentPart);
 }
 
-// 열처리품번으로 레코드 찾기
+// 열처리품번으로 레코드 찾기 (고객사 필터)
 async function findByHeatPart(heatPart){
   const data=await loadPartTreeData();
-  return data.find(r=>r.heat_part===heatPart)||null;
+  const filtered=selectedCustomer?data.filter(r=>r.customer===selectedCustomer):data;
+  return filtered.find(r=>r.heat_part===heatPart)||null;
 }
 
-// 생산품번(소재+Inner/Outer)으로 레코드 찾기
+// 생산품번(소재+Inner/Outer)으로 레코드 찾기 (고객사 필터)
 async function findByProdPart(prodPart){
   const data=await loadPartTreeData();
-  return data.find(r=>getProdPart(r)===prodPart)||null;
+  const filtered=selectedCustomer?data.filter(r=>r.customer===selectedCustomer):data;
+  return filtered.find(r=>getProdPart(r)===prodPart)||null;
 }
 
-// 열처리 후 품번 조회: 생산품번 → 열처리품번 목록
+// 열처리 후 품번 조회: 생산품번 → 열처리품번 목록 (고객사 필터)
 async function getHeatParts(parentPart,childType){
   const data=await loadPartTreeData();
-  return data.filter(r=>r.parent_part===parentPart&&r.child_type===childType);
+  const filtered=selectedCustomer?data.filter(r=>r.customer===selectedCustomer):data;
+  return filtered.filter(r=>r.parent_part===parentPart&&r.child_type===childType);
 }
 
-// 표면처리 후 품번 변환: 열처리품번 → 표면처리품번
+// 표면처리 후 품번 변환: 열처리품번 → 표면처리품번 (고객사 필터)
 async function getSurfacePartFromHeat(heatPart){
   const data=await loadPartTreeData();
-  const found=data.find(r=>r.heat_part===heatPart&&r.process_route==='heat_surface');
+  const filtered=selectedCustomer?data.filter(r=>r.customer===selectedCustomer):data;
+  const found=filtered.find(r=>r.heat_part===heatPart&&r.process_route==='heat_surface');
   if(found&&found.surface_part)return found.surface_part;
   return null;
 }
@@ -1075,9 +1123,21 @@ function filterBasePart(){
   const inp=document.getElementById('mInpBasePart');
   const drop=document.getElementById('basePartDropdown');
   const val=inp.value.trim().toLowerCase();
-  const partCat=cats.find(c=>c.name==='기준품번');
-  if(!partCat||!partCat.subs.length){drop.style.display='none';return}
-  const filtered=val?partCat.subs.filter(s=>s.toLowerCase().includes(val)):partCat.subs;
+
+  // 선택된 고객사 기준으로 품번 목록 필터링
+  let partList=[];
+  if(_partTree&&_partTree.length){
+    const custData=selectedCustomer?_partTree.filter(r=>r.customer===selectedCustomer):_partTree;
+    partList=[...new Set(custData.map(r=>getFinalPart(r)))].sort();
+  }
+  // 폴백: cats에서 가져오기
+  if(!partList.length){
+    const partCat=cats.find(c=>c.name==='기준품번');
+    if(partCat)partList=partCat.subs;
+  }
+  if(!partList.length){drop.style.display='none';return}
+
+  const filtered=val?partList.filter(s=>s.toLowerCase().includes(val)):partList;
   if(!filtered.length){drop.style.display='none';return}
   drop.style.display='block';
   drop.innerHTML=filtered.map(s=>{
@@ -1294,6 +1354,7 @@ async function doRegisterFromModal(){
       const qty=qtyEl?qtyEl.value.trim():'';
       const entry={
         id:'E'+(now.getTime()+i),date:dateStr,time:timeStr,
+        customer:selectedCustomer||'',
         process:selectedProcess?selectedProcess.name:'',
         worker:procInfo.worker||'',equip:procInfo.equip||'',weight,incomingDate,
         fields,barcode:modalScanData.value,
@@ -1322,6 +1383,7 @@ async function doRegisterFromModal(){
 
   const entry={
     id:'E'+now.getTime(),date:dateStr,time:timeStr,
+    customer:selectedCustomer||'',
     process:selectedProcess?selectedProcess.name:'',
     worker:procInfo.worker||'',equip:procInfo.equip||'',weight,incomingDate,
     fields,barcode:modalScanData.value,basePart,lot,
@@ -1484,8 +1546,9 @@ function renderRecentList(){
     const badge=saved?'<span style="font-size:9px;background:#e8f5e9;color:#2e7d32;border-radius:3px;padding:1px 5px">☁</span>':'<span style="font-size:9px;background:#ffebee;color:#c62828;border-radius:3px;padding:1px 5px">⚠</span>';
     const from=(h.fields&&h.fields['출발지'])||'';const to=(h.fields&&h.fields['도착지'])||'';
     const typeTag=h.childType?`<span style="font-size:9px;padding:1px 5px;border-radius:3px;font-weight:700;${h.childType==='Inner'?'background:#e3f2fd;color:#1565c0':'background:#fce4ec;color:#c62828'}">${h.childType}</span>`:'';
+    const custTag=h.customer?`<span style="font-size:9px;padding:1px 5px;border-radius:3px;font-weight:700;background:#e8eaf6;color:#1a237e">${h.customer}</span>`:'';
     const d=document.createElement('div');d.className='h-item';d.style.padding='6px 0';
-    d.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:12px;font-weight:700;color:#1a237e">${h.basePart||h.barcode} ${typeTag} ${badge}</span><span style="font-size:10px;color:#aaa">${h.date} ${h.time}</span></div><div style="font-size:10px;color:#666;margin-top:2px"><span style="display:inline-block;background:#e8eaf6;padding:1px 5px;border-radius:3px;font-weight:600;color:#1a237e;margin-right:4px">${h.process||'-'}</span>${from?from+' → ':''}${to||''} ${h.qty?'수량:'+h.qty:''} ${h.lot?'LOT:'+h.lot:''}</div><div class="hi-acts"><button class="ha-del" onclick="delHist('${h.id}')">🗑삭제</button></div>`;
+    d.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:12px;font-weight:700;color:#1a237e">${h.basePart||h.barcode} ${typeTag} ${custTag} ${badge}</span><span style="font-size:10px;color:#aaa">${h.date} ${h.time}</span></div><div style="font-size:10px;color:#666;margin-top:2px"><span style="display:inline-block;background:#e8eaf6;padding:1px 5px;border-radius:3px;font-weight:600;color:#1a237e;margin-right:4px">${h.process||'-'}</span>${from?from+' → ':''}${to||''} ${h.qty?'수량:'+h.qty:''} ${h.lot?'LOT:'+h.lot:''}</div><div class="hi-acts"><button class="ha-del" onclick="delHist('${h.id}')">🗑삭제</button></div>`;
     c.appendChild(d);
   });
 }
@@ -1509,8 +1572,8 @@ function renderRecentList2(){
 function expXlsx(){
   if(!hist.length){showToast('이력 없음');return}
   const wb=XLSX.utils.book_new();
-  const hd=['일자','시간','공정','작업자','설비','소재중량','입고일','출발지','도착지','바코드','기준품번','부모품번','Inner/Outer','로트','생산수량','비고','서버저장'];
-  const rows=hist.map(h=>[h.date,h.time,h.process||'',h.worker||'',h.equip||'',h.weight||'',h.incomingDate||'',(h.fields&&h.fields['출발지'])||'',(h.fields&&h.fields['도착지'])||'',h.barcode,h.basePart||'',h.parentPart||'',h.childType||'',h.lot||'',h.qty||'',h.note||'',h.sheetSaved?'O':'X']);
+  const hd=['일자','시간','고객사','공정','작업자','설비','소재중량','입고일','출발지','도착지','바코드','기준품번','부모품번','Inner/Outer','로트','생산수량','비고','서버저장'];
+  const rows=hist.map(h=>[h.date,h.time,h.customer||'',h.process||'',h.worker||'',h.equip||'',h.weight||'',h.incomingDate||'',(h.fields&&h.fields['출발지'])||'',(h.fields&&h.fields['도착지'])||'',h.barcode,h.basePart||'',h.parentPart||'',h.childType||'',h.lot||'',h.qty||'',h.note||'',h.sheetSaved?'O':'X']);
   const ws=XLSX.utils.aoa_to_sheet([hd,...rows]);
   XLSX.utils.book_append_sheet(wb,ws,'이동이력');
   XLSX.writeFile(wb,'프레스_이동이력_'+new Date().toISOString().split('T')[0].replace(/-/g,'')+'.xlsx');
