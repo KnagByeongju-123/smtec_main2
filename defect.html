@@ -51,7 +51,6 @@
     .zone-editing .rh-br{bottom:-9px;right:-9px;cursor:nwse-resize}
     .zone-confirm-bar{display:flex;gap:6px;justify-content:center;margin-top:6px}
     .zone-confirm-bar button{padding:8px 16px;border-radius:8px;border:none;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit}
-    /* 검사수 입력 행 */
     .inspect-qty-row{display:flex;align-items:center;gap:10px;padding:10px 12px;background:linear-gradient(135deg,#e3f2fd,#bbdefb);border-radius:10px;margin-bottom:12px;border:1.5px solid #90caf9}
     .inspect-qty-row .iq-label{font-size:13px;font-weight:700;color:var(--accent);white-space:nowrap}
     .inspect-qty-row .iq-input{flex:1;padding:8px 12px;border:1.5px solid #90caf9;border-radius:8px;font-size:20px;font-weight:800;color:var(--accent);text-align:center;font-family:inherit;background:#fff;max-width:120px}
@@ -78,6 +77,18 @@
     .stat-row{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
     .stat-card{background:var(--card);border-radius:10px;padding:12px 10px;text-align:center;box-shadow:var(--shadow)}.stat-val{font-size:22px;font-weight:800}.stat-label{font-size:10px;color:var(--gray);margin-top:2px}
     .empty{text-align:center;padding:24px;color:#bbb;font-size:13px}
+    /* ★ 수정 팝업 */
+    .edit-popup-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);z-index:200;display:none;align-items:center;justify-content:center;padding:0}
+    .edit-popup-overlay.show{display:flex}
+    .edit-popup{background:#fff;border-radius:16px;padding:16px;margin:16px;max-width:420px;width:calc(100% - 32px);max-height:85vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,.25)}
+    .edit-popup .ep-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+    .edit-popup .ep-title{font-size:15px;font-weight:800;color:var(--accent)}
+    .edit-popup .ep-close{padding:6px 12px;border-radius:8px;border:1px solid #ddd;background:#f5f5f5;color:#555;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit}
+    .edit-popup .ep-row{display:flex;gap:8px;margin-bottom:10px;align-items:center}
+    .edit-popup .ep-label{font-size:12px;font-weight:700;color:#555;min-width:60px;text-align:right}
+    .edit-popup .ep-input{flex:1;padding:8px 10px;border:1.5px solid #ddd;border-radius:8px;font-size:14px;font-family:inherit}
+    .edit-popup .ep-input:focus{border-color:var(--accent);outline:none}
+    .edit-popup select.ep-input{appearance:auto}
   </style>
 </head>
 <body>
@@ -103,14 +114,11 @@
   <div class="card" id="defectInputCard" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);z-index:200;padding:0;margin:0;box-shadow:none;border-radius:0;align-items:center;justify-content:center">
     <div style="background:#fff;border-radius:16px;padding:16px;margin:16px;max-width:420px;width:calc(100% - 32px);max-height:85vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,.25)">
       <div class="card-tit" style="justify-content:space-between;margin-bottom:12px"><span>🔴 불량 등록 — <span id="selZoneName" style="color:var(--primary)"></span></span><button class="btn btn-sm btn-gray" onclick="closeDefectInput()">✕</button></div>
-
-      <!-- ★ 검사수 입력 행 -->
       <div class="inspect-qty-row">
         <span class="iq-label">🔢 검사수</span>
         <input type="number" class="iq-input" id="inspectQtyInput" placeholder="0" min="0" inputmode="numeric" value="">
         <span class="iq-unit">EA</span>
       </div>
-
       <div id="defectCounters"></div>
       <div class="fg"><label>비고</label><textarea id="defectNote" placeholder="추가 메모" rows="2"></textarea></div>
       <button class="btn btn-primary" onclick="saveDefect()">✅ 불량 등록</button>
@@ -135,6 +143,68 @@
     </div>
     <div style="display:flex;gap:6px;margin-bottom:8px"><select id="histModel" style="flex:1;padding:8px;border:1px solid #ddd;border-radius:8px;font-size:12px;font-family:inherit"><option value="">전체 기종</option></select><input type="date" id="histDateFrom" style="flex:1;padding:8px;border:1px solid #ddd;border-radius:8px;font-size:12px"><input type="date" id="histDateTo" style="flex:1;padding:8px;border:1px solid #ddd;border-radius:8px;font-size:12px"></div><div class="btn-row"><button class="btn btn-sm btn-blue" onclick="loadHistory()">🔍 조회</button><button class="btn btn-sm btn-gray" onclick="exportHistory()">📥 엑셀</button></div></div>
   <div class="card"><div class="card-tit">📋 결과 (<span id="histCount">0</span>건)</div><div style="overflow-x:auto"><table class="hist-table"><thead><tr><th>일시</th><th>기종</th><th>면</th><th>영역</th><th>불량유형</th><th>검사수</th><th>수량</th><th>작업자</th><th>라인</th><th>비고</th><th></th></tr></thead><tbody id="histBody"><tr><td colspan="11" class="empty">조회 버튼을 눌러주세요</td></tr></tbody></table></div></div>
+</div>
+
+<!-- ★ 수정 팝업 (이력 탭용) -->
+<div class="edit-popup-overlay" id="editPopupOverlay">
+  <div class="edit-popup">
+    <div class="ep-header">
+      <span class="ep-title">✏️ 이력 수정</span>
+      <button class="ep-close" onclick="closeEditPopup()">✕ 닫기</button>
+    </div>
+    <input type="hidden" id="editRecordId">
+    <div class="ep-row">
+      <span class="ep-label">일자</span>
+      <input type="date" class="ep-input" id="editDate">
+    </div>
+    <div class="ep-row">
+      <span class="ep-label">기종</span>
+      <select class="ep-input" id="editModel"></select>
+    </div>
+    <div class="ep-row">
+      <span class="ep-label">면</span>
+      <select class="ep-input" id="editSide">
+        <option value="TOP">TOP</option>
+        <option value="BOT">BOT</option>
+      </select>
+    </div>
+    <div class="ep-row">
+      <span class="ep-label">영역</span>
+      <input type="text" class="ep-input" id="editZone" placeholder="영역명">
+    </div>
+    <div class="ep-row">
+      <span class="ep-label">불량유형</span>
+      <select class="ep-input" id="editDefectType"></select>
+    </div>
+    <div class="ep-row">
+      <span class="ep-label">검사수</span>
+      <input type="number" class="ep-input" id="editInspectQty" min="0" inputmode="numeric" style="font-weight:800;color:var(--accent)">
+    </div>
+    <div class="ep-row">
+      <span class="ep-label">수량</span>
+      <input type="number" class="ep-input" id="editQty" min="0" inputmode="numeric" style="font-weight:800;color:var(--primary)">
+    </div>
+    <div class="ep-row">
+      <span class="ep-label">작업자</span>
+      <select class="ep-input" id="editWorker"></select>
+    </div>
+    <div class="ep-row">
+      <span class="ep-label">검사라인</span>
+      <select class="ep-input" id="editInspLine"></select>
+    </div>
+    <div class="ep-row">
+      <span class="ep-label">생산라인</span>
+      <select class="ep-input" id="editProdLine"></select>
+    </div>
+    <div class="ep-row">
+      <span class="ep-label">비고</span>
+      <textarea class="ep-input" id="editNote" rows="2" placeholder="비고"></textarea>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <button class="btn btn-blue" onclick="saveEditRecord()" style="flex:1">💾 수정 저장</button>
+      <button class="btn btn-gray" onclick="closeEditPopup()" style="flex:0;width:80px">취소</button>
+    </div>
+  </div>
 </div>
 
 <!-- 통계 -->
@@ -504,9 +574,6 @@ function openDefectInput(z){
   document.getElementById('selZoneName').textContent=z.name;
   const card=document.getElementById('defectInputCard');card.style.display='flex';
   document.getElementById('defectNote').value='';
-  // ★ 검사수 초기화 (이전 영역 값 유지: 같은 검사 세션이면 편리하도록 비우지 않음)
-  // 필요시 아래 주석 해제하면 매번 초기화
-  // document.getElementById('inspectQtyInput').value='';
   defectCounts={};
   const c=document.getElementById('defectCounters');
   if(!cachedDefectTypes.length){c.innerHTML='<div class="empty">불량유형 등록 필요 (설정탭)</div>';return}
@@ -514,7 +581,6 @@ function openDefectInput(z){
     defectCounts[t.name]=0;const sid=t.name.replace(/\s/g,'_');
     return`<div class="defect-counter"><span class="dc-name">${t.name} <span class="chip chip-blue">${t.category}</span></span><button class="dc-btn dc-minus" onclick="adjCount('${t.name}',-1)">−</button><input type="number" class="dc-count" id="cnt_${sid}" value="0" min="0" inputmode="numeric" onchange="onCountInput('${t.name}',this.value)"><button class="dc-btn dc-plus" onclick="adjCount('${t.name}',1)">+</button></div>`
   }).join('');
-  // 팝업 열리면 검사수 필드에 포커스
   setTimeout(()=>document.getElementById('inspectQtyInput').focus(),100);
   document.querySelectorAll('#regZoneMarkers .zone-marker').forEach(m=>m.classList.toggle('active',m.textContent===z.name));
 }
@@ -523,17 +589,13 @@ document.getElementById('defectInputCard').addEventListener('click',function(e){
 function adjCount(t,d){defectCounts[t]=Math.max(0,(defectCounts[t]||0)+d);const e=document.getElementById('cnt_'+t.replace(/\s/g,'_'));if(e)e.value=defectCounts[t]}
 function onCountInput(t,v){defectCounts[t]=Math.max(0,parseInt(v)||0);const e=document.getElementById('cnt_'+t.replace(/\s/g,'_'));if(e)e.value=defectCounts[t]}
 
-// ★ saveDefect — inspect_qty 포함 저장
 async function saveDefect(){
   if(!selectedZone)return;
   const ent=Object.entries(defectCounts).filter(([,v])=>v>0);
   if(!ent.length){showToast('수량 입력');return}
   const worker=document.getElementById('selWorker').value;
   if(!worker){showToast('⚠ 작업자를 선택하세요');closeDefectInput();return}
-
-  // ★ 검사수 읽기
   const inspectQty=parseInt(document.getElementById('inspectQtyInput').value)||0;
-
   const now=new Date(),dt=now.toISOString().split('T')[0],tm=now.toTimeString().split(' ')[0];
   const note=document.getElementById('defectNote').value.trim();
   const inspLine=document.getElementById('selInspLine').value,prodLine=document.getElementById('selProdLine').value;
@@ -542,7 +604,7 @@ async function saveDefect(){
     const rows=ent.map(([type,qty])=>({
       defect_date:dt,defect_time:tm,model_name:currentModel,side:currentSide,
       zone_name:selectedZone.name,defect_type:type,qty:qty,
-      inspect_qty:inspectQty,   // ★ 검사수
+      inspect_qty:inspectQty,
       note:note,worker:worker,inspect_line:inspLine,prod_line:prodLine
     }));
     await sbInsert('defect_history',rows);
@@ -560,8 +622,6 @@ async function loadTodayStats(){
     if(currentModel)filters.model_name='eq.'+currentModel;
     const l=await sbSelect('defect_history',filters,'',1000);
     document.getElementById('statTotal').textContent=l.reduce((s,r)=>s+(r.qty||0),0);
-    // ★ 검사수: 같은 영역+시간대 중복 제거 없이 합산 (등록 단위로 최대값)
-    // 실무상 같은 라인에서 여러번 영역 입력 가능하므로 가장 최근값 기준으로 max 표시
     const inspMax=l.reduce((s,r)=>s+(r.inspect_qty||0),0);
     document.getElementById('statInspect').textContent=inspMax;
     document.getElementById('statTypes').textContent=new Set(l.map(r=>r.defect_type).filter(Boolean)).size;
@@ -605,12 +665,84 @@ async function loadHistory(){
       <td style="font-size:10px">${r.worker||''}</td>
       <td style="font-size:10px">${r.inspect_line||''}${r.prod_line?'/'+r.prod_line:''}</td>
       <td style="font-size:10px;color:#888">${r.note||''}</td>
-      <td><button class="btn btn-sm" style="background:#ffebee;color:#c62828;padding:4px 6px;font-size:10px" onclick="deleteHistRecord(${r.id})">삭제</button></td></tr>`).join('');
+      <td style="white-space:nowrap"><button class="btn btn-sm" style="background:var(--accent-light);color:var(--accent);padding:4px 6px;font-size:10px;margin-bottom:2px" onclick="openEditRecord(${r.id})">수정</button><button class="btn btn-sm" style="background:#ffebee;color:#c62828;padding:4px 6px;font-size:10px" onclick="deleteHistRecord(${r.id})">삭제</button></td></tr>`).join('');
   }catch(e){document.getElementById('histBody').innerHTML='<tr><td colspan="11" class="empty">오류: '+e.message+'</td></tr>'}
   hideLoading();
 }
 async function deleteHistRecord(id){if(!confirm('삭제?'))return;try{await sbDelete('defect_history',{id:'eq.'+id});loadHistory()}catch(e){}}
 function exportHistory(){window.open(SB_DASHBOARD_URL,'_blank')}
+
+// ===== ★ 수정 팝업 기능 =====
+async function openEditRecord(id){
+  showLoading('불러오는 중...');
+  try{
+    const rows=await sbSelect('defect_history',{id:'eq.'+id},'',1);
+    if(!rows.length){showToast('레코드를 찾을 수 없습니다');hideLoading();return}
+    const r=rows[0];
+
+    document.getElementById('editRecordId').value=r.id;
+    document.getElementById('editDate').value=r.defect_date||'';
+    document.getElementById('editSide').value=r.side||'TOP';
+    document.getElementById('editZone').value=r.zone_name||'';
+    document.getElementById('editInspectQty').value=r.inspect_qty||0;
+    document.getElementById('editQty').value=r.qty||0;
+    document.getElementById('editNote').value=r.note||'';
+
+    // 기종 셀렉트 채우기
+    const editModelSel=document.getElementById('editModel');
+    editModelSel.innerHTML='<option value="">선택</option>'+cachedModels.map(m=>`<option value="${m.name}"${m.name===r.model_name?' selected':''}>${m.name}</option>`).join('');
+
+    // 불량유형 셀렉트 채우기
+    const editTypeSel=document.getElementById('editDefectType');
+    editTypeSel.innerHTML='<option value="">선택</option>'+cachedDefectTypes.map(t=>`<option value="${t.name}"${t.name===r.defect_type?' selected':''}>${t.name}</option>`).join('');
+
+    // 작업자 셀렉트 채우기
+    const editWorkerSel=document.getElementById('editWorker');
+    editWorkerSel.innerHTML='<option value="">선택</option>'+cachedCommon.workers.map(w=>`<option value="${w.name}"${w.name===r.worker?' selected':''}>${w.name}</option>`).join('');
+
+    // 검사라인 셀렉트 채우기
+    const editInspSel=document.getElementById('editInspLine');
+    editInspSel.innerHTML='<option value="">선택</option>'+cachedCommon.inspLines.map(w=>`<option value="${w.name}"${w.name===r.inspect_line?' selected':''}>${w.name}</option>`).join('');
+
+    // 생산라인 셀렉트 채우기
+    const editProdSel=document.getElementById('editProdLine');
+    editProdSel.innerHTML='<option value="">선택</option>'+cachedCommon.prodLines.map(w=>`<option value="${w.name}"${w.name===r.prod_line?' selected':''}>${w.name}</option>`).join('');
+
+    document.getElementById('editPopupOverlay').classList.add('show');
+  }catch(e){showToast('로드 실패: '+e.message)}
+  hideLoading();
+}
+
+function closeEditPopup(){document.getElementById('editPopupOverlay').classList.remove('show')}
+document.getElementById('editPopupOverlay').addEventListener('click',function(e){if(e.target===this)closeEditPopup()});
+
+async function saveEditRecord(){
+  const id=document.getElementById('editRecordId').value;
+  if(!id){showToast('레코드 ID 없음');return}
+
+  const updateData={
+    defect_date:document.getElementById('editDate').value,
+    model_name:document.getElementById('editModel').value,
+    side:document.getElementById('editSide').value,
+    zone_name:document.getElementById('editZone').value,
+    defect_type:document.getElementById('editDefectType').value,
+    inspect_qty:parseInt(document.getElementById('editInspectQty').value)||0,
+    qty:parseInt(document.getElementById('editQty').value)||0,
+    worker:document.getElementById('editWorker').value,
+    inspect_line:document.getElementById('editInspLine').value,
+    prod_line:document.getElementById('editProdLine').value,
+    note:document.getElementById('editNote').value.trim()
+  };
+
+  showLoading('수정 중...');
+  try{
+    await sbUpdate('defect_history',{id:'eq.'+id},updateData);
+    showToast('✅ 수정 완료');
+    closeEditPopup();
+    loadHistory(); // 목록 새로고침
+  }catch(e){showToast('수정 실패: '+e.message)}
+  hideLoading();
+}
 
 // ===== 통계 =====
 async function loadStats(){
@@ -625,7 +757,6 @@ async function loadStats(){
   showLoading('통계...');
   try{
     const l=await sbSelect('defect_history',filters,'',1000);
-    // ★ 검사수/불량수 요약
     const totalDefect=l.reduce((s,r)=>s+(r.qty||0),0);
     const totalInspect=l.reduce((s,r)=>s+(r.inspect_qty||0),0);
     const ppm=totalInspect>0?Math.round((totalDefect/totalInspect)*1000000):0;
@@ -635,13 +766,11 @@ async function loadStats(){
         <div style="background:#ffebee;border-radius:8px;padding:10px"><div style="font-size:20px;font-weight:800;color:var(--primary)">${totalDefect.toLocaleString()}</div><div style="font-size:10px;color:#555;margin-top:2px">불량수 합계</div></div>
         <div style="background:#fff3e0;border-radius:8px;padding:10px"><div style="font-size:20px;font-weight:800;color:var(--warn)">${ppm.toLocaleString()}</div><div style="font-size:10px;color:#555;margin-top:2px">불량 PPM</div></div>
       </div>`;
-    // 영역별
     const bz={};l.forEach(r=>{const z=r.zone_name||'?';bz[z]=(bz[z]||0)+(r.qty||0)});
     const zs=Object.entries(bz).sort((a,b)=>b[1]-a[1]);
     const zC=document.getElementById('statByZone');
     if(!zs.length)zC.innerHTML='<div class="empty">없음</div>';
     else{const mx=zs[0][1];zC.innerHTML=zs.map(([n,q])=>`<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><span style="font-size:12px;font-weight:600;width:60px;text-align:right">${n}</span><div style="flex:1;background:#f5f5f5;border-radius:4px;height:20px;overflow:hidden"><div style="width:${(q/mx*100).toFixed(1)}%;background:linear-gradient(90deg,#ef5350,#c62828);height:100%;border-radius:4px"></div></div><span style="font-size:13px;font-weight:800;color:var(--primary);width:36px;text-align:right">${q}</span></div>`).join('')}
-    // 유형별
     const bt={};l.forEach(r=>{const t=r.defect_type||'?';bt[t]=(bt[t]||0)+(r.qty||0)});
     const ts=Object.entries(bt).sort((a,b)=>b[1]-a[1]);
     const tC=document.getElementById('statByType');
