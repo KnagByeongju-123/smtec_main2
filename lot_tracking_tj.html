@@ -175,8 +175,8 @@
         <button class="modal-close" onclick="closeMoveSetup()">✕</button>
       </div>
       <div class="modal-body">
-        <!-- ★ 일괄/개별 탭 -->
-        <div style="display:flex;gap:0;margin-bottom:14px;border-radius:10px;overflow:hidden;border:2px solid #e0e0e0">
+        <!-- ★ 일괄/개별 탭 (소재입고에서만 표시) -->
+        <div id="moveRegTabBar" style="display:flex;gap:0;margin-bottom:14px;border-radius:10px;overflow:hidden;border:2px solid #e0e0e0">
           <button class="move-reg-tab on" id="moveTabBatch" onclick="switchMoveRegTab('batch')" style="flex:1;padding:11px;text-align:center;font-size:13px;font-weight:700;cursor:pointer;border:none;font-family:inherit;transition:all .15s;background:#e65100;color:#fff">📤 일괄등록</button>
           <button class="move-reg-tab" id="moveTabSingle" onclick="switchMoveRegTab('single')" style="flex:1;padding:11px;text-align:center;font-size:13px;font-weight:700;cursor:pointer;border:none;font-family:inherit;transition:all .15s;background:#f5f5f5;color:#888">✏️ 개별등록</button>
         </div>
@@ -852,6 +852,29 @@ function selectProcess(proc){
   const dateField=document.getElementById('fgIncomingDate');
   if(proc.id==='incoming'){dateField.style.display='block';document.getElementById('inpIncomingDate').value=new Date().toISOString().split('T')[0]}
   else dateField.style.display='none';
+
+  // ★ 소재입고만 일괄/개별 탭 표시, 나머지는 개별등록만
+  const tabBar=document.getElementById('moveRegTabBar');
+  const batchArea=document.getElementById('moveRegBatchArea');
+  const singleArea=document.getElementById('moveRegSingleArea');
+  if(proc.id==='incoming'){
+    tabBar.style.display='flex';
+    switchMoveRegTab('batch'); // 소재입고는 일괄탭 기본
+  }else{
+    tabBar.style.display='none';
+    batchArea.style.display='none';
+    singleArea.style.display='block';
+  }
+
+  // 일괄등록 초기화
+  _batchData=[];
+  const previewArea=document.getElementById('batchPreviewArea');
+  if(previewArea)previewArea.style.display='none';
+  const fileInput=document.getElementById('batchFileInput');
+  if(fileInput)fileInput.value='';
+  const batchSt=document.getElementById('batchStatus');
+  if(batchSt)batchSt.style.display='none';
+
   const modal=document.getElementById('moveSetupModal');
   modal.classList.add('show','center');document.body.style.overflow='hidden';
 }
@@ -2140,15 +2163,19 @@ async function doBatchRegister(){
     if(BATCH_COL_MAP[key])colMap[sc]=BATCH_COL_MAP[key];
   });
 
-  // 행 → DB row 변환
+  // 행 → DB row 변환 (현재 공정 설정을 기본값으로 사용)
   const rows=[];
   const now=new Date();
   const todayStr=now.toISOString().split('T')[0];
   const timeStr=String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0');
+  const defProcess=selectedProcess?selectedProcess.name:'소재입고';
+  const procInfo=selectedProcess?JSON.parse(localStorage.getItem('LOT_TJ_PROC_'+selectedProcess.id)||'{}'):{};
+  const defFrom=procInfo.from||savedSelections['출발지']||'';
+  const defTo=procInfo.to||savedSelections['도착지']||'';
 
   _batchData.forEach((raw,idx)=>{
     const row={
-      move_date:todayStr,move_time:timeStr,process:'',departure:'',destination:'',
+      move_date:todayStr,move_time:timeStr,process:defProcess,departure:defFrom,destination:defTo,
       barcode_raw:'',base_part:'',lot:'',qty:null,note:'',format:'엑셀일괄',
       worker:'',equipment:'',weight:null,incoming_date:null,
       parent_part:null,child_type:null,model_type:'raceway',general_model:null
