@@ -301,8 +301,9 @@
       </div>
     </div>
     <p style="font-size:11px;color:#666;background:#f5f5f5;border-radius:6px;padding:8px;margin-bottom:10px;line-height:1.5">
-      고객사 → 소재품번(부모) → Inner/Outer(자식) 구조로 관리합니다.<br>
-      <span style="color:#e65100;font-weight:600">🎨 표면처리 후</span> 품번이 변경되는 경우 표면처리품번을 지정하세요.
+      소재품번(프레스) → Inner/Outer 생산 → 🔥열처리 품번변경 → 🎨표면처리(해당시)<br>
+      <span style="color:#1565c0;font-weight:600">흰색</span> = 열처리만 &nbsp;
+      <span style="color:#e65100;font-weight:600">회색</span> = 열처리 + 표면처리
     </p>
     <div id="partTreeContainer"><div class="h-empty">로딩 중...</div></div>
   </div>
@@ -331,20 +332,34 @@
         <button class="modal-close" onclick="document.getElementById('addPartModal').classList.remove('show','center')">✕</button>
       </div>
       <div class="modal-body">
-        <div class="fg"><label>소재품번 (부모)</label><input type="text" id="newParentPart" placeholder="예: 1113E"></div>
+        <div class="fg"><label>소재품번 (프레스 생산)</label><input type="text" id="newParentPart" placeholder="예: 1106, 1113, 1179"></div>
         <div style="background:#e3f2fd;border-radius:8px;padding:10px;margin-bottom:10px">
-          <div style="font-size:12px;font-weight:700;color:#1565c0;margin-bottom:6px">자식품번 자동생성</div>
+          <div style="font-size:12px;font-weight:700;color:#1565c0;margin-bottom:6px">Inner / Outer 생성</div>
           <label style="display:flex;align-items:center;gap:6px;font-size:12px;margin-bottom:4px;cursor:pointer">
-            <input type="checkbox" id="chkInner" checked> Inner 자동생성
+            <input type="checkbox" id="chkInner" checked> Inner
           </label>
-          <label style="display:flex;align-items:center;gap:6px;font-size:12px;margin-bottom:4px;cursor:pointer">
-            <input type="checkbox" id="chkOuter" checked> Outer 자동생성
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">
+            <input type="checkbox" id="chkOuter" checked> Outer
           </label>
         </div>
+        <div style="background:#ffebee;border-radius:8px;padding:10px;margin-bottom:10px">
+          <div style="font-size:12px;font-weight:700;color:#c62828;margin-bottom:6px">🔥 열처리 후 품번</div>
+          <p style="font-size:10px;color:#888;margin-bottom:6px">열처리 후 변경되는 품번 입력 (예: 1106 → 1106CB)</p>
+          <div class="fg" style="margin-bottom:6px"><label style="font-size:10px">Inner 열처리품번</label><input type="text" id="newInnerHeat" placeholder="예: 1106CB Inner"></div>
+          <div class="fg" style="margin-bottom:0"><label style="font-size:10px">Outer 열처리품번</label><input type="text" id="newOuterHeat" placeholder="예: 1106CB Outer"></div>
+        </div>
         <div style="background:#fff3e0;border-radius:8px;padding:10px;margin-bottom:10px">
-          <div style="font-size:12px;font-weight:700;color:#e65100;margin-bottom:6px">🎨 표면처리 후 품번 (선택)</div>
-          <div class="fg" style="margin-bottom:6px"><label style="font-size:10px">Inner 표면처리 품번</label><input type="text" id="newInnerSurface" placeholder="비워두면 동일"></div>
-          <div class="fg" style="margin-bottom:0"><label style="font-size:10px">Outer 표면처리 품번</label><input type="text" id="newOuterSurface" placeholder="비워두면 동일"></div>
+          <div style="font-size:12px;font-weight:700;color:#e65100;margin-bottom:6px">🎨 공정 경로</div>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;margin-bottom:6px;cursor:pointer;padding:6px;background:#fff;border-radius:6px;border:1.5px solid #ddd">
+            <input type="radio" name="procRoute" value="heat_only" checked onchange="toggleSurfaceFields()"> 🔥 열처리만 (흰색)
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;padding:6px;background:#fff;border-radius:6px;border:1.5px solid #ddd">
+            <input type="radio" name="procRoute" value="heat_surface" onchange="toggleSurfaceFields()"> 🔥+🎨 열처리+표면처리 (회색)
+          </label>
+          <div id="surfaceFields" style="display:none;margin-top:8px">
+            <div class="fg" style="margin-bottom:6px"><label style="font-size:10px">Inner 표면처리 후 품번</label><input type="text" id="newInnerSurface" placeholder="비워두면 열처리품번과 동일"></div>
+            <div class="fg" style="margin-bottom:0"><label style="font-size:10px">Outer 표면처리 후 품번</label><input type="text" id="newOuterSurface" placeholder="비워두면 열처리품번과 동일"></div>
+          </div>
         </div>
         <button class="btn btn-green" onclick="doAddParentPart()">추가</button>
       </div>
@@ -529,9 +544,10 @@ CREATE POLICY "allow_all_scan_relay" ON scan_relay FOR ALL USING (true) WITH CHE
   id BIGSERIAL PRIMARY KEY,
   customer TEXT NOT NULL,
   parent_part TEXT NOT NULL,
-  child_part TEXT NOT NULL,
   child_type TEXT NOT NULL CHECK (child_type IN ('Inner','Outer')),
+  heat_part TEXT NOT NULL DEFAULT '',
   surface_part TEXT DEFAULT '',
+  process_route TEXT NOT NULL DEFAULT 'heat_only' CHECK (process_route IN ('heat_only','heat_surface')),
   sort_order INTEGER DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -563,13 +579,13 @@ CREATE POLICY "allow_all_part_hierarchy" ON part_hierarchy FOR ALL USING (true) 
 //  공정 정의
 // ============================================================
 const PROCESSES=[
-  {id:'incoming', name:'소재입고', icon:'📥', sub:'소재 입고 검수', defaultFrom:'외부 공급업체', defaultTo:'소재입고'},
-  {id:'production',name:'생산',    icon:'🏭', sub:'프레스 생산 (Inner/Outer 동시)', defaultFrom:'자재실', defaultTo:'생산'},
-  {id:'cleaning',  name:'세척',    icon:'🧹', sub:'세척 공정',     defaultFrom:'생산',         defaultTo:'세척'},
-  {id:'machining', name:'가공',    icon:'⚙️', sub:'거명정밀',      defaultFrom:'세척',         defaultTo:'가공'},
-  {id:'surface',   name:'표면처리',icon:'🎨', sub:'동진금속 (품번 자동변경)', defaultFrom:'가공', defaultTo:'표면처리'},
-  {id:'heat',      name:'열처리',  icon:'🔥', sub:'한성특수',      defaultFrom:'표면처리',     defaultTo:'열처리'},
-  {id:'shipment',  name:'출하',    icon:'🚚', sub:'고객사 출하',   defaultFrom:'열처리',       defaultTo:'출하'}
+  {id:'incoming', name:'소재입고', icon:'📥', sub:'소재 입고 검수', defaultFrom:'외부 공급업체', defaultTo:'자재실'},
+  {id:'production',name:'생산',    icon:'🏭', sub:'프레스 생산 (Inner/Outer 동시)', defaultFrom:'자재실', defaultTo:'생산라인'},
+  {id:'cleaning',  name:'세척',    icon:'🧹', sub:'세척 공정',     defaultFrom:'생산라인',      defaultTo:'세척실'},
+  {id:'machining', name:'가공',    icon:'⚙️', sub:'거명정밀',      defaultFrom:'세척실',        defaultTo:'거명정밀'},
+  {id:'heat',      name:'열처리',  icon:'🔥', sub:'한성특수 (품번변경: CB,CA,T...)', defaultFrom:'거명정밀', defaultTo:'한성특수'},
+  {id:'surface',   name:'표면처리',icon:'🎨', sub:'동진금속 (해당 품번만)', defaultFrom:'한성특수', defaultTo:'동진금속'},
+  {id:'shipment',  name:'출하',    icon:'🚚', sub:'고객사 출하',   defaultFrom:'출하대기장',    defaultTo:'고객사'}
 ];
 
 let selectedProcess=null;
@@ -633,9 +649,13 @@ function showMoveConfirm(){
   if(selectedProcess&&selectedProcess.id==='production'){
     html+=`<div style="margin-top:8px;padding:8px;background:#fff3e0;border-radius:8px;font-size:12px;color:#e65100;font-weight:600">🏭 생산 공정: 소재품번 스캔 시 Inner/Outer 동시등록됩니다</div>`;
   }
-  // 표면처리 → 품번 자동변경 안내
+  // 열처리 → 품번 변경 안내
+  if(selectedProcess&&selectedProcess.id==='heat'){
+    html+=`<div style="margin-top:8px;padding:8px;background:#ffebee;border-radius:8px;font-size:12px;color:#c62828;font-weight:600">🔥 열처리: 품번이 자동 변경됩니다 (예: 1106→1106CB)</div>`;
+  }
+  // 표면처리 → 해당 품번만 안내
   if(selectedProcess&&selectedProcess.id==='surface'){
-    html+=`<div style="margin-top:8px;padding:8px;background:#fce4ec;border-radius:8px;font-size:12px;color:#c62828;font-weight:600">🎨 표면처리: 표면처리 품번이 등록된 경우 자동 변경됩니다</div>`;
+    html+=`<div style="margin-top:8px;padding:8px;background:#fce4ec;border-radius:8px;font-size:12px;color:#c62828;font-weight:600">🎨 표면처리: 열처리+표면처리 경로 품번만 해당됩니다</div>`;
   }
   summary.innerHTML=html;
   document.getElementById('moveSetupInputs').style.display='none';
@@ -715,7 +735,7 @@ async function loadPartTree(){
   const tree=buildTreeStructure(data);
   const customers=Object.keys(tree).sort();
   if(!customers.length){
-    container.innerHTML='<div class="h-empty">등록된 품번이 없습니다.<br><br><button class="btn btn-sm btn-blue" onclick="insertDefaultTree()">📦 기본 데이터 등록</button></div>';
+    container.innerHTML='<div class="h-empty">등록된 품번이 없습니다.<br><br><button class="btn btn-sm btn-blue" onclick="insertDefaultTree()">📦 SBC 기본 데이터 등록</button></div>';
     return;
   }
   container.innerHTML='';
@@ -738,11 +758,19 @@ async function loadPartTree(){
       const children=parts[pp];
       const partDiv=document.createElement('div');partDiv.className='tree-part';
       let childrenHtml=children.map(ch=>{
-        const hasSurface=ch.surface_part&&ch.surface_part!==ch.child_part;
-        return `<div class="tree-child">
+        const route=ch.process_route||'heat_only';
+        const isHS=route==='heat_surface';
+        const routeLabel=isHS?'🔥+🎨 열처리+표면처리':'🔥 열처리만';
+        const routeColor=isHS?'#e65100':'#1565c0';
+        const routeBg=isHS?'#fff3e0':'#e3f2fd';
+        const prodPart=pp+' '+ch.child_type; // 생산품번
+        return `<div class="tree-child" style="flex-wrap:wrap">
           <span class="tree-child-type ${ch.child_type.toLowerCase()}">${ch.child_type}</span>
-          <span class="tree-child-name">${ch.child_part}</span>
-          ${hasSurface?'<span class="tree-child-surface active">→ '+ch.surface_part+'</span>':'<span class="tree-child-surface" style="opacity:.4">표면처리 없음</span>'}
+          <span class="tree-child-name" style="flex:none">${prodPart}</span>
+          <span style="color:#888;font-size:10px">→</span>
+          <span style="font-size:11px;font-weight:700;color:#c62828">🔥${ch.heat_part||prodPart}</span>
+          ${isHS&&ch.surface_part?'<span style="color:#888;font-size:10px">→</span><span style="font-size:11px;font-weight:700;color:#e65100">🎨'+ch.surface_part+'</span>':''}
+          <span style="font-size:9px;padding:1px 5px;border-radius:3px;background:${routeBg};color:${routeColor};font-weight:600;margin-left:auto">${routeLabel}</span>
           <button class="tree-child-del" onclick="delPartChild(${ch.id})" title="삭제">✕</button>
         </div>`;
       }).join('');
@@ -757,7 +785,6 @@ async function loadPartTree(){
       body.appendChild(partDiv);
     });
 
-    // 소재품번 추가 버튼
     const addBtn=document.createElement('button');
     addBtn.className='add-btn';addBtn.style.marginTop='6px';
     addBtn.textContent='+ '+cust+' 소재품번 추가';
@@ -786,9 +813,21 @@ function showAddPartModal(customer){
   document.getElementById('newParentPart').value='';
   document.getElementById('chkInner').checked=true;
   document.getElementById('chkOuter').checked=true;
-  document.getElementById('newInnerSurface').value='';
-  document.getElementById('newOuterSurface').value='';
+  document.getElementById('newInnerHeat').value='';
+  document.getElementById('newOuterHeat').value='';
+  if(document.getElementById('newInnerSurface'))document.getElementById('newInnerSurface').value='';
+  if(document.getElementById('newOuterSurface'))document.getElementById('newOuterSurface').value='';
+  const heatOnly=document.querySelector('input[name="procRoute"][value="heat_only"]');
+  if(heatOnly)heatOnly.checked=true;
+  toggleSurfaceFields();
   document.getElementById('addPartModal').classList.add('show','center');
+}
+
+function toggleSurfaceFields(){
+  const checked=document.querySelector('input[name="procRoute"]:checked');
+  const route=checked?checked.value:'heat_only';
+  const sf=document.getElementById('surfaceFields');
+  if(sf)sf.style.display=route==='heat_surface'?'block':'none';
 }
 
 async function doAddParentPart(){
@@ -797,30 +836,41 @@ async function doAddParentPart(){
   const doInner=document.getElementById('chkInner').checked;
   const doOuter=document.getElementById('chkOuter').checked;
   if(!doInner&&!doOuter){showToast('Inner 또는 Outer를 선택하세요');return}
-  const innerSurface=document.getElementById('newInnerSurface').value.trim();
-  const outerSurface=document.getElementById('newOuterSurface').value.trim();
+  const innerHeat=document.getElementById('newInnerHeat').value.trim();
+  const outerHeat=document.getElementById('newOuterHeat').value.trim();
+  const routeEl=document.querySelector('input[name="procRoute"]:checked');
+  const route=routeEl?routeEl.value:'heat_only';
+  const innerSurface=document.getElementById('newInnerSurface')?document.getElementById('newInnerSurface').value.trim():'';
+  const outerSurface=document.getElementById('newOuterSurface')?document.getElementById('newOuterSurface').value.trim():'';
 
   const inserts=[];
-  if(doInner)inserts.push({customer:_addPartCustomer,parent_part:parent,child_part:parent+' Inner',child_type:'Inner',surface_part:innerSurface||'',sort_order:0});
-  if(doOuter)inserts.push({customer:_addPartCustomer,parent_part:parent,child_part:parent+' Outer',child_type:'Outer',surface_part:outerSurface||'',sort_order:1});
+  if(doInner)inserts.push({
+    customer:_addPartCustomer,parent_part:parent,child_type:'Inner',
+    heat_part:innerHeat||parent+' Inner',
+    surface_part:route==='heat_surface'?(innerSurface||innerHeat||parent+' Inner'):'',
+    process_route:route,sort_order:0
+  });
+  if(doOuter)inserts.push({
+    customer:_addPartCustomer,parent_part:parent,child_type:'Outer',
+    heat_part:outerHeat||parent+' Outer',
+    surface_part:route==='heat_surface'?(outerSurface||outerHeat||parent+' Outer'):'',
+    process_route:route,sort_order:1
+  });
 
   try{
     await sbInsert('part_hierarchy',inserts);
     _partTree=null;
     showToast('✅ '+parent+' 등록 완료');
     document.getElementById('addPartModal').classList.remove('show','center');
-    await loadPartTree();
-    refreshPartCatSubs();
+    await loadPartTree();refreshPartCatSubs();
   }catch(e){
-    // 로컬 폴백
     const local=JSON.parse(localStorage.getItem('LOT_TJ_PART_TREE')||'[]');
     inserts.forEach((ins,i)=>{ins.id='L'+(Date.now()+i);local.push(ins)});
     localStorage.setItem('LOT_TJ_PART_TREE',JSON.stringify(local));
     _partTree=null;
-    showToast('⚠ 서버 실패, 로컬 저장됨: '+e.message);
+    showToast('⚠ 서버 실패, 로컬 저장: '+e.message);
     document.getElementById('addPartModal').classList.remove('show','center');
-    await loadPartTree();
-    refreshPartCatSubs();
+    await loadPartTree();refreshPartCatSubs();
   }
 }
 
@@ -844,34 +894,38 @@ async function delPartParent(cust,parent){
   showToast('삭제됨');
 }
 
-// 기본 데이터 등록 (이미지 기준)
+// 기본 데이터 등록 (SBC 고객사)
 async function insertDefaultTree(){
+  // 소재품번 → 열처리후품번, 공정경로
+  // 흰색(열처리만): 1106→1106CB, 1106→1106CA, 1113→1113AA, 1113→1113E, 1124→1124BA, 1165→1165A
+  // 회색(열처리+표면처리): 1179→1179T, 1179→1179C, 1159→1159C, 1159→1159B, 1156→1156, 1156→1156A
   const defaults=[
-    // 비회색 = 표면처리 없음
-    {c:'에스엠텍',p:'1106CB',children:[{t:'Inner',s:''},{t:'Outer',s:''}]},
-    {c:'에스엠텍',p:'1106CA',children:[{t:'Inner',s:''},{t:'Outer',s:''}]},
-    {c:'에스엠텍',p:'1113AA',children:[{t:'Inner',s:''},{t:'Outer',s:''}]},
-    {c:'에스엠텍',p:'1113E',children:[{t:'Inner',s:''},{t:'Outer',s:''}]},
-    {c:'에스엠텍',p:'1124BA',children:[{t:'Inner',s:''},{t:'Outer',s:''}]},
-    {c:'에스엠텍',p:'1165A',children:[{t:'Inner',s:''},{t:'Outer',s:''}]},
-    // 회색 = 표면처리 후 품번 (표면처리품번은 원래품번과 동일한 패턴이되 T→표면처리 로 구분)
-    {c:'에스엠텍',p:'1179T',children:[{t:'Inner',s:'1179T Inner'},{t:'Outer',s:'1179T Outer'}]},
-    {c:'에스엠텍',p:'1179C',children:[{t:'Inner',s:'1179C Inner'},{t:'Outer',s:'1179C Outer'}]},
-    {c:'에스엠텍',p:'1159C',children:[{t:'Inner',s:'1159C Inner'},{t:'Outer',s:'1159C Outer'}]},
-    {c:'에스엠텍',p:'1159B',children:[{t:'Inner',s:'1159B Inner'},{t:'Outer',s:'1159B Outer'}]},
-    {c:'에스엠텍',p:'1156',children:[{t:'Inner',s:'1156 Inner'},{t:'Outer',s:'1156 Outer'}]},
-    {c:'에스엠텍',p:'1156A',children:[{t:'Inner',s:'1156A Inner'},{t:'Outer',s:'1156A Outer'}]},
+    // 흰색 = heat_only
+    {p:'1106',heat:'1106CB',route:'heat_only'},
+    {p:'1106',heat:'1106CA',route:'heat_only'},
+    {p:'1113',heat:'1113AA',route:'heat_only'},
+    {p:'1113',heat:'1113E',route:'heat_only'},
+    {p:'1124',heat:'1124BA',route:'heat_only'},
+    {p:'1165',heat:'1165A',route:'heat_only'},
+    // 회색 = heat_surface
+    {p:'1179',heat:'1179T',route:'heat_surface'},
+    {p:'1179',heat:'1179C',route:'heat_surface'},
+    {p:'1159',heat:'1159C',route:'heat_surface'},
+    {p:'1159',heat:'1159B',route:'heat_surface'},
+    {p:'1156',heat:'1156',route:'heat_surface'},
+    {p:'1156',heat:'1156A',route:'heat_surface'},
   ];
 
   const inserts=[];
   defaults.forEach(d=>{
-    d.children.forEach((ch,i)=>{
+    ['Inner','Outer'].forEach((ct,i)=>{
       inserts.push({
-        customer:d.c,
+        customer:'SBC',
         parent_part:d.p,
-        child_part:d.p+' '+ch.t,
-        child_type:ch.t,
-        surface_part:ch.s,
+        child_type:ct,
+        heat_part:d.heat+' '+ct,
+        surface_part:d.route==='heat_surface'?d.heat+' '+ct:'',
+        process_route:d.route,
         sort_order:i
       });
     });
@@ -880,51 +934,66 @@ async function insertDefaultTree(){
   try{
     await sbInsert('part_hierarchy',inserts);
     _partTree=null;
-    showToast('✅ 기본 데이터 '+inserts.length+'건 등록');
-    await loadPartTree();
-    refreshPartCatSubs();
+    showToast('✅ SBC 기본 데이터 '+inserts.length+'건 등록');
+    await loadPartTree();refreshPartCatSubs();
   }catch(e){
-    // 로컬 폴백
     const local=[];
     inserts.forEach((ins,i)=>{ins.id='L'+(Date.now()+i);local.push(ins)});
     localStorage.setItem('LOT_TJ_PART_TREE',JSON.stringify(local));
     _partTree=null;
     showToast('⚠ 서버 실패, 로컬 저장: '+e.message);
-    await loadPartTree();
-    refreshPartCatSubs();
+    await loadPartTree();refreshPartCatSubs();
   }
 }
 
-// 품번트리 → 기준품번 항목관리 자동 동기화
+// 품번트리 → 기준품번 항목관리 자동 동기화 (최종 출하품번 = heat_part 또는 surface_part)
 async function refreshPartCatSubs(){
   const data=await loadPartTreeData();
-  const allChildren=[...new Set(data.map(r=>r.child_part))].sort();
+  const allFinals=[...new Set(data.map(r=>getFinalPart(r)))].sort();
   const catIdx=cats.findIndex(c=>c.name==='기준품번');
-  if(catIdx>=0){cats[catIdx].subs=allChildren.length?allChildren:['항목없음']}
-  else{cats.push({name:'기준품번',subs:allChildren.length?allChildren:['항목없음']})}
+  if(catIdx>=0){cats[catIdx].subs=allFinals.length?allFinals:['항목없음']}
+  else{cats.push({name:'기준품번',subs:allFinals.length?allFinals:['항목없음']})}
   localStorage.setItem('LOT_TJ_CATS',JSON.stringify(cats));
 }
 
-// 소재품번으로 자식품번 찾기
+// 최종 출하품번 결정
+function getFinalPart(row){
+  if(row.process_route==='heat_surface'&&row.surface_part)return row.surface_part;
+  return row.heat_part||(row.parent_part+' '+row.child_type);
+}
+
+// 생산품번 = 소재품번 + Inner/Outer
+function getProdPart(row){return row.parent_part+' '+row.child_type}
+
+// 소재품번으로 자식 찾기
 async function findChildrenByParent(parentPart){
   const data=await loadPartTreeData();
   return data.filter(r=>r.parent_part===parentPart);
 }
 
-// 자식품번으로 부모/형제 찾기
-async function findByChildPart(childPart){
+// 열처리품번으로 레코드 찾기
+async function findByHeatPart(heatPart){
   const data=await loadPartTreeData();
-  const found=data.find(r=>r.child_part===childPart);
-  if(!found)return null;
-  const siblings=data.filter(r=>r.parent_part===found.parent_part);
-  return{parent:found.parent_part,customer:found.customer,self:found,siblings};
+  return data.find(r=>r.heat_part===heatPart)||null;
 }
 
-// 표면처리 품번 변환
-async function getSurfacePart(childPart){
+// 생산품번(소재+Inner/Outer)으로 레코드 찾기
+async function findByProdPart(prodPart){
   const data=await loadPartTreeData();
-  const found=data.find(r=>r.child_part===childPart);
-  if(found&&found.surface_part&&found.surface_part!==childPart)return found.surface_part;
+  return data.find(r=>getProdPart(r)===prodPart)||null;
+}
+
+// 열처리 후 품번 조회: 생산품번 → 열처리품번 목록
+async function getHeatParts(parentPart,childType){
+  const data=await loadPartTreeData();
+  return data.filter(r=>r.parent_part===parentPart&&r.child_type===childType);
+}
+
+// 표면처리 후 품번 변환: 열처리품번 → 표면처리품번
+async function getSurfacePartFromHeat(heatPart){
+  const data=await loadPartTreeData();
+  const found=data.find(r=>r.heat_part===heatPart&&r.process_route==='heat_surface');
+  if(found&&found.surface_part)return found.surface_part;
   return null;
 }
 
@@ -1036,28 +1105,32 @@ async function openRegModal(barcodeValue,format){
 
   modal.classList.add('show','center');
 
-  // ===== 생산 공정: 소재품번으로 자식품번 조회 → 동시등록 =====
+  // ===== 생산 공정: 소재품번 → Inner/Outer 동시등록 =====
   if(selectedProcess&&selectedProcess.id==='production'){
-    // 바코드에서 소재품번 추출 시도
     const searchPart=barcodeValue.split(' // ')[0].trim();
     const children=await findChildrenByParent(searchPart);
     if(children.length>=2){
+      // 소재품번 → 유니크 child_type별 그룹 (Inner 1개, Outer 1개)
+      const uniqueTypes=[];
+      ['Inner','Outer'].forEach(ct=>{const found=children.find(c=>c.child_type===ct);if(found)uniqueTypes.push(found)});
       _dualMode=true;
-      _dualChildren=children;
+      _dualChildren=uniqueTypes;
       document.getElementById('modalTitle').textContent='🏭 동시등록 (Inner/Outer)';
-      matchArea.innerHTML=`<div class="modal-match found"><div class="mm-title">✅ 소재품번 ${searchPart} → ${children.length}개 자식품번</div></div>`;
+      matchArea.innerHTML=`<div class="modal-match found"><div class="mm-title">✅ 소재품번 ${searchPart} → Inner + Outer 동시생산</div></div>`;
       document.getElementById('mInpBasePart').value=searchPart;
       document.getElementById('basePartField').style.display='none';
       document.getElementById('singleQtyArea').style.display='none';
-      // 동시등록 UI
       dualArea.style.display='block';
       dualArea.innerHTML=`<div class="dual-reg">
         <div class="dual-reg-tit">🏭 생산수량 입력 (Inner/Outer 각각)</div>
-        ${children.map((ch,i)=>`<div class="dual-item">
-          <span class="di-type ${ch.child_type.toLowerCase()}">${ch.child_type}</span>
-          <span class="di-name">${ch.child_part}</span>
-          <span class="di-qty"><input type="number" id="dualQty_${i}" placeholder="수량" inputmode="numeric"></span>
-        </div>`).join('')}
+        ${uniqueTypes.map((ch,i)=>{
+          const prodP=getProdPart(ch);
+          return `<div class="dual-item">
+            <span class="di-type ${ch.child_type.toLowerCase()}">${ch.child_type}</span>
+            <span class="di-name">${prodP}</span>
+            <span class="di-qty"><input type="number" id="dualQty_${i}" placeholder="수량" inputmode="numeric"></span>
+          </div>`;
+        }).join('')}
         <div style="margin-top:8px">
           <div class="fg" style="margin-bottom:0"><label style="font-size:10px">로트 (공통)</label><input type="text" id="dualLot" placeholder="로트번호" value="${barcodeValue}"></div>
         </div>
@@ -1065,31 +1138,63 @@ async function openRegModal(barcodeValue,format){
       setTimeout(()=>{const q=document.getElementById('dualQty_0');if(q)q.focus()},400);
       return;
     }
-    // 자식품번으로 입력한 경우
-    const childInfo=await findByChildPart(searchPart);
-    if(childInfo){
-      matchArea.innerHTML=`<div class="modal-match found"><div class="mm-title">✅ ${childInfo.parent} → ${childInfo.self.child_type}</div>
-        <table><tr><td>부모</td><td>${childInfo.parent}</td></tr><tr><td>타입</td><td>${childInfo.self.child_type}</td></tr></table></div>`;
-      document.getElementById('mInpBasePart').value=searchPart;
-      document.getElementById('basePartField').style.display='block';
-      setTimeout(()=>{const q=document.getElementById('mInpQty');if(q)q.focus()},400);
-      return;
+  }
+
+  // ===== 열처리 공정: 생산품번 → 열처리품번 변경 =====
+  if(selectedProcess&&selectedProcess.id==='heat'){
+    const searchPart=barcodeValue.split(' // ')[0].trim();
+    // 생산품번(예: 1106 Inner)에서 부모+타입 분리
+    const match=searchPart.match(/^(.+)\s+(Inner|Outer)$/i);
+    if(match){
+      const parentP=match[1].trim();
+      const childT=match[2];
+      const heatOptions=await getHeatParts(parentP,childT);
+      if(heatOptions.length===1){
+        // 열처리품번이 1개뿐이면 자동 적용
+        const hp=heatOptions[0].heat_part;
+        document.getElementById('modalTitle').textContent='🔥 열처리 → 품번변경';
+        matchArea.innerHTML=`<div class="modal-match found"><div class="mm-title">🔥 열처리 품번 자동변경</div>
+          <table><tr><td>생산품번</td><td>${searchPart}</td></tr><tr><td style="color:#c62828;font-weight:700">열처리 후</td><td style="color:#c62828;font-weight:700;font-size:14px">${hp}</td></tr></table></div>`;
+        document.getElementById('mInpBasePart').value=hp;
+        document.getElementById('basePartField').style.display='block';
+        setTimeout(()=>{const q=document.getElementById('mInpQty');if(q)q.focus()},400);
+        return;
+      }else if(heatOptions.length>1){
+        // 여러 열처리품번 → 선택 UI
+        document.getElementById('modalTitle').textContent='🔥 열처리 → 품번 선택';
+        matchArea.innerHTML=`<div class="modal-match found"><div class="mm-title">🔥 열처리 품번 선택 (${heatOptions.length}종)</div>
+          <div style="margin-top:6px">${heatOptions.map(h=>`<button onclick="document.getElementById('mInpBasePart').value='${h.heat_part}';this.parentElement.querySelectorAll('button').forEach(b=>b.style.background='#fff');this.style.background='#c8e6c9'" style="display:block;width:100%;text-align:left;padding:8px 10px;margin-bottom:4px;border:1.5px solid #ddd;border-radius:6px;background:#fff;cursor:pointer;font-family:inherit;font-size:13px;font-weight:600">${h.heat_part} <span style="font-size:10px;color:#888;font-weight:400">(${h.process_route==='heat_surface'?'🔥+🎨':'🔥'})</span></button>`).join('')}</div></div>`;
+        document.getElementById('mInpBasePart').value=heatOptions[0].heat_part;
+        document.getElementById('basePartField').style.display='block';
+        setTimeout(()=>{const q=document.getElementById('mInpQty');if(q)q.focus()},400);
+        return;
+      }
     }
   }
 
-  // ===== 표면처리 공정: 품번 자동변경 =====
+  // ===== 표면처리 공정: 열처리품번 → 표면처리품번 =====
   if(selectedProcess&&selectedProcess.id==='surface'){
     _surfaceMode=true;
     const searchPart=barcodeValue.split(' // ')[0].trim();
-    const surfacePart=await getSurfacePart(searchPart);
+    const surfacePart=await getSurfacePartFromHeat(searchPart);
     if(surfacePart){
       document.getElementById('modalTitle').textContent='🎨 표면처리 → 품번변경';
-      matchArea.innerHTML=`<div class="modal-match found"><div class="mm-title">🎨 품번 자동변경</div>
-        <table><tr><td>원래품번</td><td>${searchPart}</td></tr><tr><td style="color:#e65100;font-weight:700">변경 후</td><td style="color:#e65100;font-weight:700;font-size:14px">${surfacePart}</td></tr></table></div>`;
+      matchArea.innerHTML=`<div class="modal-match found"><div class="mm-title">🎨 표면처리 품번 자동변경</div>
+        <table><tr><td>열처리품번</td><td>${searchPart}</td></tr><tr><td style="color:#e65100;font-weight:700">표면처리 후</td><td style="color:#e65100;font-weight:700;font-size:14px">${surfacePart}</td></tr></table></div>`;
       document.getElementById('mInpBasePart').value=surfacePart;
       document.getElementById('basePartField').style.display='block';
       setTimeout(()=>{const q=document.getElementById('mInpQty');if(q)q.focus()},400);
       return;
+    }else{
+      // 표면처리 불필요 품번 (heat_only)
+      const heatRec=await findByHeatPart(searchPart);
+      if(heatRec&&heatRec.process_route==='heat_only'){
+        matchArea.innerHTML=`<div class="modal-match notfound"><div class="mm-title">ℹ️ 표면처리 불필요 품번</div><div style="font-size:11px;color:#795548">${searchPart}은 열처리만 거치는 품번입니다 (흰색)</div></div>`;
+        document.getElementById('mInpBasePart').value=searchPart;
+        document.getElementById('basePartField').style.display='block';
+        setTimeout(()=>{const q=document.getElementById('mInpQty');if(q)q.focus()},400);
+        return;
+      }
     }
   }
 
@@ -1155,7 +1260,7 @@ async function doRegisterFromModal(){
         process:selectedProcess?selectedProcess.name:'',
         worker:procInfo.worker||'',equip:procInfo.equip||'',weight,incomingDate,
         fields,barcode:modalScanData.value,
-        basePart:ch.child_part,
+        basePart:getProdPart(ch),
         parentPart:ch.parent_part,
         childType:ch.child_type,
         lot,format:modalScanData.format,qty,note,ts:now.toISOString()
