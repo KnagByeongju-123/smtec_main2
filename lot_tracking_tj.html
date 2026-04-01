@@ -304,6 +304,10 @@
     </div>
     <div class="modal-body">
       <div class="modal-barcode" id="modalBarcode"><span>스캔된 코드</span>-</div>
+
+      <!-- ★ 소재입고 로트 추적 결과 -->
+      <div id="lotTraceArea" style="display:none;margin-bottom:10px"></div>
+
       <div id="modalMatchArea"></div>
 
       <!-- ★ 기종 선택 탭 (소재입고/생산 공정에서만 표시) -->
@@ -1254,7 +1258,13 @@ async function onShipmentModelSelect(){
   document.getElementById('mInpBasePart').value=val;
   const cr=document.getElementById('conversionResult');
   const procId=selectedProcess?selectedProcess.id:'';
-  if(!val){cr.style.display='none';return}
+  if(!val){
+    cr.style.display='none';
+    document.getElementById('lotTraceArea').style.display='none';
+    return;
+  }
+  // 이전 공정 이력 확인 (기종 선택 즉시)
+  checkPrevProcessHist(val, procId);
 
   if(procId==='heat'){
     // 생산기종(공백없음) 입력 → 열처리기종 자동변환 표시
@@ -1284,6 +1294,177 @@ async function onShipmentModelSelect(){
   }else{cr.style.display='none'}
 }
 
+// ============================================================
+//  로트 추적 검증
+// ============================================================
+
+// [생산 공정] 스캔된 로트가 소재입고 이력에 있는지 확인
+async function checkLotTrace(barcodeValue){
+  const area=document.getElementById('lotTraceArea');
+  if(!area)return;
+  area.style.display='block';
+  area.innerHTML=`<div style="padding:8px 10px;background:#f5f5f5;border-radius:8px;font-size:11px;color:#888">🔍 소재입고 로트 대조 중...</div>`;
+
+  const scannedLots=barcodeValue.split(' // ').map(v=>v.trim()).filter(Boolean);
+
+  try{
+    const incomingHist=await sbSelect('move_history_tj',{process:'eq.소재입고'},'created_at.desc',1000);
+
+    if(!incomingHist.length){
+      area.innerHTML=`<div style="padding:10px 12px;background:#ffebee;border:2px solid #ef5350;border-radius:8px">
+        <div style="font-size:13px;font-weight:800;color:#c62828;margin-bottom:2px">❌ 소재입고 이력 없음</div>
+        <div style="font-size:11px;color:#888">소재입고를 먼저 등록하세요</div>
+      </div>`;
+      if(navigator.vibrate)navigator.vibrate([200,100,200]);
+      return;
+    }
+
+    const matched=[], notMatched=[];
+    scannedLots.forEach(lot=>{
+      const found=incomingHist.find(h=>
+        (h.lot&&h.lot.trim()===lot)||
+        (h.barcode_raw&&h.barcode_raw.trim()===lot)
+      );
+      if(found)matched.push({lot,record:found});
+      else notMatched.push(lot);
+    });
+
+    if(matched.length>0&&notMatched.length===0){
+      // ✅ 일치
+      const r=matched[0].record;
+      const inDate=r.incoming_date||'';
+      const wt=r.weight||'';
+      area.innerHTML=`<div style="padding:10px 12px;background:#e8f5e9;border:2px solid #66bb6a;border-radius:8px">
+        <div style="font-size:13px;font-weight:800;color:#2e7d32;margin-bottom:6px">✅ 소재입고 로트 확인</div>
+        <table style="width:100%;font-size:11px;border-collapse:collapse">
+          <tr><td style="color:#888;padding:2px 4px;width:58px">입고로트</td><td style="font-weight:700;color:#1a237e">${matched[0].lot}</td></tr>
+          <tr><td style="color:#888;padding:2px 4px">기준기종</td><td style="font-weight:700">${r.base_part||'-'}</td></tr>
+          ${inDate?`<tr><td style="color:#888;padding:2px 4px">입고일자</td><td style="font-weight:700;color:#1565c0">${inDate}</td></tr>`:''}
+          ${wt?`<tr><td style="color:#888;padding:2px 4px">소재중량</td><td style="font-weight:700;color:#e65100">${wt} kg</td></tr>`:''}
+          <tr><td style="color:#888;padding:2px 4px">등록일시</td><td style="font-size:10px;color:#888">${r.move_date||''} ${r.move_time||''}</td></tr>
+        </table>
+      </div>`;
+    }else if(matched.length>0&&notMatched.length>0){
+      // ⚠ 일부 일치
+      area.innerHTML=`<div style="padding:10px 12px;background:#fff3e0;border:2px solid #ffb74d;border-radius:8px">
+        <div style="font-size:13px;font-weight:800;color:#e65100;margin-bottom:4px">⚠ 일부 로트 미확인</div>
+        <div style="font-size:11px;color:#2e7d32;margin-bottom:2px">✅ 입고확인: ${matched.map(m=>m.lot).join(', ')}</div>
+        <div style="font-size:11px;color:#c62828">❌ 입고이력 없음: <b>${notMatched.join(', ')}</b></div>
+      </div>`;
+      if(navigator.vibrate)navigator.vibrate([200,100,200]);
+    }else{
+      // ❌ 불일치
+      const recent=incomingHist.slice(0,3).map(h=>h.lot||h.barcode_raw||'-').join(', ');
+      area.innerHTML=`<div style="padding:10px 12px;background:#ffebee;border:2px solid #ef5350;border-radius:8px">
+        <div style="font-size:13px;font-weight:800;color:#c62828;margin-bottom:4px">❌ 입고 소재 로트 없음</div>
+        <div style="font-size:11px;color:#c62828;margin-bottom:4px">로트 <b>[${scannedLots.join(', ')}]</b>의 소재입고 이력이 없습니다</div>
+        <div style="font-size:10px;color:#888">최근 입고로트: ${recent}</div>
+      </div>`;
+      if(navigator.vibrate)navigator.vibrate([200,100,200]);
+    }
+  }catch(e){
+    area.innerHTML=`<div style="padding:8px 10px;background:#f5f5f5;border-radius:8px;font-size:11px;color:#888">⚠ 로트 대조 실패: ${e.message}</div>`;
+  }
+}
+
+// [이후 공정: 세척/가공/열처리/표면처리/출하]
+// 기종 선택 후 이전 공정 등록일시 확인 (레이스웨이/일반기종 통합)
+async function checkPrevProcessHist(basePart, procId){
+  const area=document.getElementById('lotTraceArea');
+  if(!area||!basePart)return;
+  area.style.display='block';
+  area.innerHTML=`<div style="padding:8px 10px;background:#f5f5f5;border-radius:8px;font-size:11px;color:#888">🔍 이전 공정 이력 확인 중...</div>`;
+
+  const PROC_ORDER=['소재입고','생산','세척','가공','열처리','표면처리','출하'];
+  const curName=procId==='cleaning'?'세척':procId==='machining'?'가공':procId==='heat'?'열처리':
+    procId==='surface'?'표면처리':procId==='shipment'?'출하':'';
+  const curIdx=PROC_ORDER.indexOf(curName);
+  const prevProcs=curIdx>0?PROC_ORDER.slice(0,curIdx):[];
+
+  try{
+    const sb=getSb();if(!sb)throw new Error('Supabase 미설정');
+    // base_part 또는 general_model이 일치하는 최근 이력 (7일)
+    const sevenDaysAgo=new Date();sevenDaysAgo.setDate(sevenDaysAgo.getDate()-7);
+    const sinceDate=sevenDaysAgo.toISOString().split('T')[0];
+
+    // base_part 또는 general_model 중 하나로 조회
+    const {data:hist,error}=await sb.from('move_history_tj')
+      .select('*')
+      .or(`base_part.eq.${basePart},general_model.eq.${basePart}`)
+      .gte('move_date',sinceDate)
+      .order('move_date',{ascending:false})
+      .order('move_time',{ascending:false})
+      .limit(50);
+    if(error)throw error;
+
+    if(!hist||!hist.length){
+      // 7일 내 이력 전혀 없음
+      area.innerHTML=`<div style="padding:10px 12px;background:#ffebee;border:2px solid #ef5350;border-radius:8px">
+        <div style="font-size:13px;font-weight:800;color:#c62828;margin-bottom:4px">❌ 최근 7일 이력 없음</div>
+        <div style="font-size:11px;color:#c62828">기종 <b>[${basePart}]</b>의 최근 등록 이력이 없습니다</div>
+        <div style="font-size:10px;color:#888;margin-top:2px">이전 공정이 먼저 등록되어 있어야 합니다</div>
+      </div>`;
+      if(navigator.vibrate)navigator.vibrate([200,100,200]);
+      return;
+    }
+
+    // 이전 공정 이력 필터
+    const prevFound=hist.filter(h=>prevProcs.includes(h.process));
+    const curFound=hist.filter(h=>h.process===curName);
+
+    if(prevFound.length>0){
+      const latest=prevFound[0];
+      const today=new Date().toISOString().split('T')[0];
+      const isToday=latest.move_date===today;
+      area.innerHTML=`<div style="padding:10px 12px;background:#e8f5e9;border:2px solid #66bb6a;border-radius:8px">
+        <div style="font-size:13px;font-weight:800;color:#2e7d32;margin-bottom:6px">✅ 이전 공정 이력 확인</div>
+        <table style="width:100%;font-size:11px;border-collapse:collapse">
+          <tr><td style="color:#888;padding:2px 4px;width:58px">기종</td><td style="font-weight:700;color:#1a237e">${basePart}</td></tr>
+          <tr><td style="color:#888;padding:2px 4px">이전공정</td><td style="font-weight:700">${latest.process}</td></tr>
+          <tr><td style="color:#888;padding:2px 4px">등록일시</td><td style="font-weight:700;color:${isToday?'#2e7d32':'#e65100'}">${latest.move_date} ${latest.move_time||''}${isToday?' (오늘)':' ⚠ 오늘아님'}</td></tr>
+          ${latest.lot?`<tr><td style="color:#888;padding:2px 4px">로트</td><td style="font-weight:700">${latest.lot}</td></tr>`:''}
+          ${latest.qty?`<tr><td style="color:#888;padding:2px 4px">수량</td><td style="font-weight:700">${latest.qty}</td></tr>`:''}
+        </table>
+        ${curFound.length>0?`<div style="margin-top:6px;padding:5px 8px;background:#fff3e0;border-radius:5px;font-size:10px;color:#e65100">⚠ 이 공정 이미 ${curFound.length}건 등록됨 (최근: ${curFound[0].move_date} ${curFound[0].move_time||''})</div>`:''}
+      </div>`;
+    }else{
+      // 이전 공정 이력 없음
+      const lastAny=hist[0];
+      area.innerHTML=`<div style="padding:10px 12px;background:#ffebee;border:2px solid #ef5350;border-radius:8px">
+        <div style="font-size:13px;font-weight:800;color:#c62828;margin-bottom:4px">❌ 이전 공정 이력 없음</div>
+        <div style="font-size:11px;color:#c62828;margin-bottom:2px"><b>${basePart}</b>의 ${prevProcs.slice(-2).join('/')} 이력이 없습니다</div>
+        <div style="font-size:10px;color:#888">마지막 등록: ${lastAny.move_date} / ${lastAny.process} (${lastAny.qty||'-'}개)</div>
+      </div>`;
+      if(navigator.vibrate)navigator.vibrate([200,100,200]);
+    }
+  }catch(e){
+    area.innerHTML=`<div style="padding:8px 10px;background:#f5f5f5;border-radius:8px;font-size:11px;color:#888">⚠ 이력 확인 실패: ${e.message}</div>`;
+  }
+}
+
+// 소재입고 중복 체크 (같은 로트 재입고 방지)
+async function _checkDuplicateIncoming(barcodeValue){
+  const area=document.getElementById('lotTraceArea');
+  if(!area)return;
+  const lots=barcodeValue.split(' // ').map(v=>v.trim()).filter(Boolean);
+  try{
+    const hist=await sbSelect('move_history_tj',{process:'eq.소재입고'},'created_at.desc',500);
+    const dups=[];
+    lots.forEach(lot=>{
+      const found=hist.find(h=>(h.lot&&h.lot.trim()===lot)||(h.barcode_raw&&h.barcode_raw.trim()===lot));
+      if(found)dups.push({lot,record:found});
+    });
+    if(dups.length>0){
+      area.style.display='block';
+      area.innerHTML=`<div style="padding:10px 12px;background:#fff3e0;border:2px solid #ffb74d;border-radius:8px">
+        <div style="font-size:13px;font-weight:800;color:#e65100;margin-bottom:4px">⚠ 이미 입고된 로트</div>
+        ${dups.map(d=>`<div style="font-size:11px;color:#c62828;margin-bottom:2px">로트 <b>${d.lot}</b> — ${d.record.move_date} ${d.record.move_time} 입고됨</div>`).join('')}
+        <div style="font-size:10px;color:#888;margin-top:2px">계속 진행하려면 등록하세요</div>
+      </div>`;
+    }
+  }catch(e){}
+}
+
 async function openRegModal(barcodeValue,format){
   modalScanData={value:barcodeValue,format:format||'리딩기'};
   _dualMode=false;_dualChildren=[];
@@ -1297,6 +1478,9 @@ async function openRegModal(barcodeValue,format){
   document.getElementById('singleQtyArea').style.display='block';
   document.getElementById('mInpBasePart').value='';
   document.getElementById('modalMatchArea').innerHTML='';
+  // 로트추적 영역 초기화
+  document.getElementById('lotTraceArea').style.display='none';
+  document.getElementById('lotTraceArea').innerHTML='';
   // 이후공정 선택 영역 숨김 초기화
   document.getElementById('shipmentModelArea').style.display='none';
   document.getElementById('conversionResult').style.display='none';
@@ -1319,14 +1503,22 @@ async function openRegModal(barcodeValue,format){
     document.getElementById('generalModelArea').style.display='none';
     document.getElementById('selRacewayPart').value='';
     document.getElementById('modalMatchArea').innerHTML=`<div style="font-size:11px;color:#888;padding:4px 0">⬆ 기종 유형과 기준기종을 선택하세요</div>`;
+    // 소재입고 공정: 로트 중복 체크
+    if(procId==='incoming') _checkDuplicateIncoming(barcodeValue);
+    // 생산 공정: 소재입고 로트 대조
+    if(procId==='production') checkLotTrace(barcodeValue);
   }else{
     // ===== 이후공정: 출하기종 select 콤보 =====
+    // 레이스웨이: 기종변환(열처리/표면처리), 일반기종: 기종명 동일
     document.getElementById('modelTypeSwitcher').style.display='none';
     document.getElementById('shipmentModelArea').style.display='block';
     await loadGeneralModels();
     await fillShipmentSelect(selectedCustomer,procId);
     document.getElementById('selShipmentModel').value='';
-    // 바코드 값으로 자동 매칭 시도
+    // 이후공정은 기종 선택 후 onShipmentModelSelect에서 checkPrevProcessHist 호출
+    document.getElementById('lotTraceArea').innerHTML=`<div style="padding:8px 10px;background:#e8eaf6;border-radius:8px;font-size:11px;color:#3949ab">📋 기종 선택 시 이전 공정 등록일시를 확인합니다</div>`;
+    document.getElementById('lotTraceArea').style.display='block';
+    // 바코드 값으로 기종 자동 매칭 → 매칭되면 onShipmentModelSelect 자동 호출
     _autoMatchShipment(barcodeValue,procId);
   }
 
@@ -1345,9 +1537,10 @@ async function _autoMatchShipment(barcodeValue,procId){
     if(row&&row.base_part){
       matchArea.innerHTML=`<div class="modal-match found"><div class="mm-title">✅ 기종 자동매핑</div><div style="font-size:13px;font-weight:700;color:#2e7d32">${row.base_part}</div></div>`;
       document.getElementById('mInpBasePart').value=row.base_part;
-      // select에서 해당 기종 선택
       const sel=document.getElementById('selShipmentModel');
       if(sel){for(let o of sel.options){if(o.value===row.base_part){sel.value=row.base_part;break}}}
+      // 자동 매핑 성공 시 이전 공정 이력 확인
+      checkPrevProcessHist(row.base_part, procId);
       return;
     }
   }catch(e){}
