@@ -150,8 +150,9 @@
 <div class="hdr"><h1>🏭 프레스 양산 로트추적</h1><p>Supabase 기반 · 공정별 이동관리 · 품번계층 · 바코드/QR 스캔</p></div>
 <div class="tabs">
   <div class="tab on" id="tab0" onclick="swTab(0)"><span class="ti">📦</span>이동관리</div>
-  <div class="tab"    id="tab1" onclick="swTab(1)"><span class="ti">🌳</span>품번트리</div>
-  <div class="tab"    id="tab2" onclick="swTab(2)"><span class="ti">⚙</span>설정</div>
+  <div class="tab"    id="tab1" onclick="swTab(1)"><span class="ti">📋</span>이력</div>
+  <div class="tab"    id="tab2" onclick="swTab(2)"><span class="ti">🌳</span>품번트리</div>
+  <div class="tab"    id="tab3" onclick="swTab(3)"><span class="ti">⚙</span>설정</div>
 </div>
 
 <!-- ===== 이동관리 ===== -->
@@ -198,6 +199,40 @@
           <div id="recentList2" style="max-height:140px;overflow-y:auto;font-size:12px"><div class="h-empty" style="padding:10px">이력이 없습니다</div></div>
         </div>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 이력 조회 ===== -->
+<div class="pnl" id="pnl1">
+  <div class="card">
+    <div class="card-tit" style="justify-content:space-between">
+      <span>📋 이동이력 조회</span>
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-sm btn-blue" onclick="loadServerHist()" style="font-size:11px">🔄 서버조회</button>
+        <button class="btn btn-sm btn-green" onclick="expServerXlsx()" style="font-size:11px">📥 엑셀</button>
+      </div>
+    </div>
+    <!-- 필터 -->
+    <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
+      <select id="histFiltProc" onchange="renderServerHist()" style="flex:1;min-width:80px;padding:7px;border:1px solid #ddd;border-radius:6px;font-size:12px;font-family:inherit">
+        <option value="">전체 공정</option>
+      </select>
+      <select id="histFiltCust" onchange="renderServerHist()" style="flex:1;min-width:80px;padding:7px;border:1px solid #ddd;border-radius:6px;font-size:12px;font-family:inherit">
+        <option value="">전체 고객사</option>
+      </select>
+      <input type="date" id="histFiltDate" onchange="renderServerHist()" style="flex:1;min-width:110px;padding:7px;border:1px solid #ddd;border-radius:6px;font-size:12px;font-family:inherit">
+    </div>
+    <div style="display:flex;gap:6px;margin-bottom:10px">
+      <input type="text" id="histFiltSearch" oninput="renderServerHist()" placeholder="품번/바코드 검색" style="flex:1;padding:7px;border:1px solid #ddd;border-radius:6px;font-size:12px;font-family:inherit">
+      <button class="btn btn-sm btn-gray" onclick="clearHistFilter()" style="font-size:11px;flex-shrink:0">초기화</button>
+    </div>
+    <!-- 통계 -->
+    <div id="histStats" style="display:none;padding:8px 10px;background:#e8eaf6;border-radius:8px;margin-bottom:10px;font-size:12px;color:#1a237e;font-weight:600"></div>
+    <!-- 목록 -->
+    <div id="serverHistList"><div class="h-empty">🔄 서버조회 버튼을 눌러주세요</div></div>
+    <div id="histLoadMore" style="display:none;text-align:center;padding:8px">
+      <button class="btn btn-sm btn-gray" onclick="loadMoreServerHist()">더 불러오기</button>
     </div>
   </div>
 </div>
@@ -297,7 +332,7 @@
 </div>
 
 <!-- ===== 품번 트리 관리 ===== -->
-<div class="pnl" id="pnl1">
+<div class="pnl" id="pnl2">
   <div class="card" style="border:2px solid #1a237e">
     <div class="card-tit" style="justify-content:space-between">
       <span>🌳 품번 계층관리</span>
@@ -374,7 +409,7 @@
 </div>
 
 <!-- ===== 설정 ===== -->
-<div class="pnl" id="pnl2">
+<div class="pnl" id="pnl3">
   <div class="card">
     <div class="card-tit" style="justify-content:space-between"><span>⚙ 분류 항목 관리</span><button class="btn btn-sm btn-gray" onclick="resetCats()">기본값</button></div>
     <div id="catEditor"></div>
@@ -1556,8 +1591,9 @@ function swTab(n){
   document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('on',i===n));
   document.querySelectorAll('.pnl').forEach((p,i)=>p.classList.toggle('on',i===n));
   if(n===0){renderRegFields();renderRecentList();renderRecentList2();renderProcessGrid()}
-  if(n===1){loadPartTree()}
-  if(n===2){renderCatEditor();loadSbConfigUI()}
+  if(n===1){initHistTab()}
+  if(n===2){loadPartTree()}
+  if(n===3){renderCatEditor();loadSbConfigUI()}
 }
 
 // ============================================================
@@ -1621,6 +1657,128 @@ function expXlsx(){
   XLSX.utils.book_append_sheet(wb,ws,'이동이력');
   XLSX.writeFile(wb,'프레스_이동이력_'+new Date().toISOString().split('T')[0].replace(/-/g,'')+'.xlsx');
   showToast('📥 엑셀 다운로드 완료');
+}
+
+// ============================================================
+//  이력 조회 (서버 Supabase)
+// ============================================================
+let _serverHist=[];
+let _serverHistPage=0;
+const SERVER_HIST_LIMIT=50;
+
+function initHistTab(){
+  // 필터 셀렉트 초기화
+  const procSel=document.getElementById('histFiltProc');
+  if(procSel&&procSel.options.length<=1){
+    PROCESSES.forEach(p=>{const o=document.createElement('option');o.value=p.name;o.textContent=p.icon+' '+p.name;procSel.appendChild(o)});
+  }
+  const custSel=document.getElementById('histFiltCust');
+  if(custSel&&custSel.options.length<=1){
+    const custCat=cats.find(c=>c.name==='고객사');
+    if(custCat)custCat.subs.forEach(c=>{const o=document.createElement('option');o.value=c;o.textContent=c;custSel.appendChild(o)});
+  }
+  if(!_serverHist.length)loadServerHist();
+}
+
+async function loadServerHist(){
+  const container=document.getElementById('serverHistList');
+  container.innerHTML='<div style="text-align:center;padding:12px;color:#1565c0;font-size:12px">🔄 서버에서 불러오는 중...</div>';
+  _serverHistPage=0;
+  try{
+    _serverHist=await sbSelect('move_history_tj',{},'created_at.desc',500);
+    renderServerHist();
+    showToast('✅ '+_serverHist.length+'건 조회됨');
+  }catch(e){
+    container.innerHTML='<div class="h-empty">⚠ 서버 조회 실패: '+e.message+'<br><br>로컬 이력을 표시합니다.</div>';
+    _serverHist=hist.map(h=>({
+      move_date:h.date,move_time:h.time,process:h.process||'',
+      departure:(h.fields&&h.fields['출발지'])||'',destination:(h.fields&&h.fields['도착지'])||'',
+      barcode_raw:h.barcode,base_part:h.basePart||'',lot:h.lot||'',
+      qty:h.qty?parseInt(h.qty):null,note:h.note||'',format:h.format||'',
+      worker:h.worker||'',equipment:h.equip||'',parent_part:h.parentPart||'',child_type:h.childType||'',
+      _customer:h.customer||''
+    }));
+    renderServerHist();
+  }
+}
+
+function getFilteredServerHist(){
+  const proc=document.getElementById('histFiltProc')?document.getElementById('histFiltProc').value:'';
+  const cust=document.getElementById('histFiltCust')?document.getElementById('histFiltCust').value:'';
+  const date=document.getElementById('histFiltDate')?document.getElementById('histFiltDate').value:'';
+  const search=(document.getElementById('histFiltSearch')?document.getElementById('histFiltSearch').value:'').trim().toLowerCase();
+
+  let filtered=_serverHist;
+  if(proc)filtered=filtered.filter(h=>h.process===proc);
+  if(cust)filtered=filtered.filter(h=>(h._customer||h.note||'').includes(cust));
+  if(date)filtered=filtered.filter(h=>h.move_date===date);
+  if(search)filtered=filtered.filter(h=>(h.base_part||'').toLowerCase().includes(search)||(h.barcode_raw||'').toLowerCase().includes(search)||(h.lot||'').toLowerCase().includes(search));
+  return filtered;
+}
+
+function renderServerHist(){
+  const container=document.getElementById('serverHistList');
+  const statsEl=document.getElementById('histStats');
+  const filtered=getFilteredServerHist();
+
+  // 통계
+  if(filtered.length){
+    const totalQty=filtered.reduce((s,h)=>s+(h.qty||0),0);
+    const procs={};filtered.forEach(h=>{const p=h.process||'기타';procs[p]=(procs[p]||0)+1});
+    const procSummary=Object.entries(procs).map(([k,v])=>k+':'+v+'건').join(' · ');
+    statsEl.style.display='block';
+    statsEl.innerHTML='총 <b>'+filtered.length+'</b>건 · 총수량 <b>'+totalQty.toLocaleString()+'</b>개<br>'+procSummary;
+  }else{statsEl.style.display='none'}
+
+  if(!filtered.length){container.innerHTML='<div class="h-empty">조회된 이력이 없습니다</div>';return}
+
+  const pageSize=30;
+  const showing=filtered.slice(0,((_serverHistPage+1)*pageSize));
+  container.innerHTML='';
+
+  showing.forEach(h=>{
+    const d=document.createElement('div');d.className='h-item';d.style.padding='8px 0';
+    const procBadge=h.process?`<span style="display:inline-block;background:#e8eaf6;padding:1px 5px;border-radius:3px;font-weight:600;color:#1a237e;font-size:10px;margin-right:4px">${h.process}</span>`:'';
+    const typeBadge=h.child_type?`<span style="font-size:9px;padding:1px 5px;border-radius:3px;font-weight:700;${h.child_type==='Inner'?'background:#e3f2fd;color:#1565c0':'background:#fce4ec;color:#c62828'}">${h.child_type}</span>`:'';
+    const from=h.departure||'';const to=h.destination||'';
+    d.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center">
+      <span style="font-size:13px;font-weight:700;color:#1a237e">${h.base_part||h.barcode_raw||'-'} ${typeBadge}</span>
+      <span style="font-size:10px;color:#aaa">${h.move_date||''} ${h.move_time||''}</span>
+    </div>
+    <div style="font-size:10px;color:#666;margin-top:3px">
+      ${procBadge}${from?from+' → ':''}${to||''} ${h.qty?'<b>수량:'+h.qty+'</b>':''} ${h.lot?'LOT:'+h.lot:''}
+    </div>
+    ${h.worker||h.equipment?'<div style="font-size:10px;color:#888;margin-top:1px">👤'+(h.worker||'-')+' 🏭'+(h.equipment||'-')+(h.note?' · '+h.note:'')+'</div>':''}`;
+    container.appendChild(d);
+  });
+
+  // 더보기
+  const moreEl=document.getElementById('histLoadMore');
+  if(showing.length<filtered.length){moreEl.style.display='block'}else{moreEl.style.display='none'}
+}
+
+function loadMoreServerHist(){_serverHistPage++;renderServerHist()}
+
+function clearHistFilter(){
+  if(document.getElementById('histFiltProc'))document.getElementById('histFiltProc').value='';
+  if(document.getElementById('histFiltCust'))document.getElementById('histFiltCust').value='';
+  if(document.getElementById('histFiltDate'))document.getElementById('histFiltDate').value='';
+  if(document.getElementById('histFiltSearch'))document.getElementById('histFiltSearch').value='';
+  renderServerHist();
+}
+
+// 서버 이력 엑셀 다운로드
+function expServerXlsx(){
+  const filtered=getFilteredServerHist();
+  if(!filtered.length){showToast('이력 없음');return}
+  const wb=XLSX.utils.book_new();
+  const hd=['일자','시간','공정','출발지','도착지','바코드','기준품번','부모품번','Inner/Outer','로트','수량','작업자','설비','비고'];
+  const rows=filtered.map(h=>[h.move_date||'',h.move_time||'',h.process||'',h.departure||'',h.destination||'',h.barcode_raw||'',h.base_part||'',h.parent_part||'',h.child_type||'',h.lot||'',h.qty||'',h.worker||'',h.equipment||'',h.note||'']);
+  const ws=XLSX.utils.aoa_to_sheet([hd,...rows]);
+  ws['!cols']=[{wch:11},{wch:9},{wch:10},{wch:12},{wch:12},{wch:20},{wch:16},{wch:10},{wch:8},{wch:14},{wch:8},{wch:10},{wch:10},{wch:24}];
+  XLSX.utils.book_append_sheet(wb,ws,'이동이력');
+  XLSX.writeFile(wb,'프레스_이동이력_'+new Date().toISOString().split('T')[0].replace(/-/g,'')+'.xlsx');
+  showToast('📥 엑셀 다운로드 ('+filtered.length+'건)');
 }
 
 // ============================================================
