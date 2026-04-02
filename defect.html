@@ -71,14 +71,6 @@
     .stat-table td{padding:5px 4px;border-bottom:1px solid #f0f0f0;text-align:center;font-size:11px}
     .stat-table tr:hover{background:#fafafa}
     .stat-table .st-total{background:#f5f5f5;font-weight:700}
-    .chart-bar-wrap{display:flex;align-items:flex-end;gap:2px;height:140px;padding:0 4px;margin-bottom:4px}
-    .chart-bar-group{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;min-width:0}
-    .chart-bars{display:flex;gap:1px;align-items:flex-end;width:100%;justify-content:center;height:110px}
-    .chart-bar{border-radius:3px 3px 0 0;min-width:6px;max-width:18px;flex:1;transition:height .3s}
-    .chart-bar-label{font-size:8px;color:#888;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
-    .chart-legend{display:flex;gap:12px;justify-content:center;margin-top:6px;font-size:10px;font-weight:600}
-    .chart-legend span{display:flex;align-items:center;gap:3px}
-    .chart-legend i{width:10px;height:10px;border-radius:2px;display:inline-block}
     .hist-table th{background:#f5f5f5;padding:6px 4px;text-align:left;font-weight:700;border-bottom:2px solid var(--border);white-space:nowrap}
     .hist-table td{padding:6px 4px;border-bottom:1px solid #f0f0f0;vertical-align:top}
     .cfg-item{display:flex;align-items:center;gap:6px;padding:8px;border-bottom:1px solid #f0f0f0}
@@ -209,8 +201,6 @@
     </div>
   </div>
   <div class="card"><div class="card-tit">🔢 검사수 / 불량수 요약</div><div id="statSummary" class="empty">조회하세요</div></div>
-  <div class="card"><div class="card-tit">📈 월별 추이</div><div id="statMonthlyChart" class="empty">조회하세요</div><div id="statMonthlyTable" style="margin-top:8px"></div></div>
-  <div class="card"><div class="card-tit">🔴 영역별 Top</div><div id="statByZone" class="empty">조회하세요</div></div>
   <div class="card"><div class="card-tit">🏷 유형별 Top</div><div id="statByType" class="empty">조회하세요</div></div>
   <div class="card"><div class="card-tit">📋 일별 상세 데이터</div><div id="statDailyTable" class="empty">조회하세요</div></div>
 </div>
@@ -538,7 +528,7 @@ async function saveModelEdit(){
 function downloadModelTemplate(){
   const hd=[['고객사','대분류','소분류','기종명']];
   cachedModels.forEach(m=>hd.push([m.customer||'',m.cat1||'',m.cat2||'',m.name||'']));
-  if(hd.length===1)hd.push(['예시고객','SMT','리플로우','MODEL-A']);
+  if(hd.length===1)hd.push(['예시고객','분류1','분류2','MODEL-A']);
   const wb=XLSX.utils.book_new();
   const ws=XLSX.utils.aoa_to_sheet(hd);
   ws['!cols']=[{wch:16},{wch:14},{wch:14},{wch:20}];
@@ -961,16 +951,6 @@ async function loadStats(){
         <div style="background:#f3e5f5;border-radius:8px;padding:10px"><div style="font-size:18px;font-weight:800;color:#7b1fa2">${defectRate}%</div><div style="font-size:9px;color:#555;margin-top:2px">불량률</div></div>
       </div>`;
 
-    // === 월별 추이 ===
-    renderMonthlyChart(l, defectRows);
-
-    // === 영역별 ===
-    const bz={};defectRows.forEach(r=>{const z=r.zone_name||'?';bz[z]=(bz[z]||0)+(r.qty||0)});
-    const zs=Object.entries(bz).sort((a,b)=>b[1]-a[1]);
-    const zC=document.getElementById('statByZone');
-    if(!zs.length)zC.innerHTML='<div class="empty">없음</div>';
-    else{const mx=zs[0][1];zC.innerHTML=zs.map(([n,q])=>`<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><span style="font-size:12px;font-weight:600;width:60px;text-align:right">${n}</span><div style="flex:1;background:#f5f5f5;border-radius:4px;height:20px;overflow:hidden"><div style="width:${(q/mx*100).toFixed(1)}%;background:linear-gradient(90deg,#ef5350,#c62828);height:100%;border-radius:4px"></div></div><span style="font-size:13px;font-weight:800;color:var(--primary);width:36px;text-align:right">${q}</span></div>`).join('')}
-
     // === 유형별 ===
     const bt={};defectRows.forEach(r=>{const t=r.defect_type||'?';bt[t]=(bt[t]||0)+(r.qty||0)});
     const ts=Object.entries(bt).sort((a,b)=>b[1]-a[1]);
@@ -981,70 +961,8 @@ async function loadStats(){
     // === 일별 상세 테이블 ===
     renderDailyTable(l, defectRows);
 
-  }catch(e){document.getElementById('statByZone').innerHTML='<div class="empty">오류: '+e.message+'</div>'}
+  }catch(e){document.getElementById('statSummary').innerHTML='<div class="empty">오류: '+e.message+'</div>'}
   hideLoading();
-}
-
-// === 월별 추이 차트 + 테이블 ===
-function renderMonthlyChart(allRows, defectRows){
-  // 월별 집계
-  const monthly={};
-  allRows.forEach(r=>{
-    const ym=(r.defect_date||'').substring(0,7); // YYYY-MM
-    if(!ym)return;
-    if(!monthly[ym])monthly[ym]={inspect:0,defect:0};
-    monthly[ym].inspect+=(r.inspect_qty||0);
-  });
-  defectRows.forEach(r=>{
-    const ym=(r.defect_date||'').substring(0,7);
-    if(!ym||!monthly[ym])return;
-    monthly[ym].defect+=(r.qty||0);
-  });
-
-  const months=Object.keys(monthly).sort();
-  const chartC=document.getElementById('statMonthlyChart');
-  const tableC=document.getElementById('statMonthlyTable');
-
-  if(!months.length){chartC.innerHTML='<div class="empty">데이터 없음</div>';tableC.innerHTML='';return}
-
-  // 최대값
-  const maxInsp=Math.max(...months.map(m=>monthly[m].inspect),1);
-  const maxDef=Math.max(...months.map(m=>monthly[m].defect),1);
-  const maxVal=Math.max(maxInsp,maxDef);
-
-  // 바 차트
-  let chartHtml='<div class="chart-bar-wrap">';
-  months.forEach(ym=>{
-    const d=monthly[ym];
-    const hI=Math.max(2,d.inspect/maxVal*110);
-    const hD=Math.max(2,d.defect/maxVal*110);
-    const label=ym.substring(2); // YY-MM
-    chartHtml+=`<div class="chart-bar-group">
-      <div class="chart-bars">
-        <div class="chart-bar" style="height:${hI}px;background:linear-gradient(180deg,#42a5f5,#1565c0)" title="검사수: ${d.inspect.toLocaleString()}"></div>
-        <div class="chart-bar" style="height:${hD}px;background:linear-gradient(180deg,#ef5350,#c62828)" title="불량수: ${d.defect.toLocaleString()}"></div>
-      </div>
-      <div class="chart-bar-label">${label}</div>
-    </div>`;
-  });
-  chartHtml+='</div>';
-  chartHtml+='<div class="chart-legend"><span><i style="background:#1565c0"></i> 검사수</span><span><i style="background:#c62828"></i> 불량수</span></div>';
-  chartC.innerHTML=chartHtml;
-
-  // 테이블
-  let tHtml='<div style="overflow-x:auto"><table class="stat-table"><thead><tr><th>월</th><th>검사수</th><th>불량수</th><th>PPM</th><th>불량률</th></tr></thead><tbody>';
-  let sumI=0,sumD=0;
-  months.forEach(ym=>{
-    const d=monthly[ym];sumI+=d.inspect;sumD+=d.defect;
-    const ppm=d.inspect>0?Math.round(d.defect/d.inspect*1000000):0;
-    const rate=d.inspect>0?(d.defect/d.inspect*100).toFixed(2):'0';
-    tHtml+=`<tr><td style="font-weight:600">${ym}</td><td>${d.inspect.toLocaleString()}</td><td style="color:var(--primary);font-weight:700">${d.defect.toLocaleString()}</td><td>${ppm.toLocaleString()}</td><td>${rate}%</td></tr>`;
-  });
-  const totalPpm=sumI>0?Math.round(sumD/sumI*1000000):0;
-  const totalRate=sumI>0?(sumD/sumI*100).toFixed(2):'0';
-  tHtml+=`<tr class="st-total"><td>합계</td><td>${sumI.toLocaleString()}</td><td style="color:var(--primary)">${sumD.toLocaleString()}</td><td>${totalPpm.toLocaleString()}</td><td>${totalRate}%</td></tr>`;
-  tHtml+='</tbody></table></div>';
-  tableC.innerHTML=tHtml;
 }
 
 // === 일별 상세 테이블 ===
@@ -1152,13 +1070,7 @@ CREATE POLICY IF NOT EXISTS "allow_all" ON board_image FOR ALL USING (true) WITH
 CREATE POLICY IF NOT EXISTS "allow_all" ON defect_zone FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY IF NOT EXISTS "allow_all" ON defect_type FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY IF NOT EXISTS "allow_all" ON defect_history FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY IF NOT EXISTS "allow_all" ON common_code FOR ALL USING (true) WITH CHECK (true);
-INSERT INTO defect_type (type_name, category) VALUES
-  ('쇼트','납땜'),('오픈','납땜'),('미납','납땜'),('브릿지','납땜'),
-  ('들뜸','납땜'),('냉납','납땜'),('크랙','부품'),('오삽','부품'),
-  ('역삽','부품'),('누락','부품'),('파손','부품'),('이물','기타'),
-  ('스크래치','기타'),('기타','기타')
-ON CONFLICT DO NOTHING;`;
+CREATE POLICY IF NOT EXISTS "allow_all" ON common_code FOR ALL USING (true) WITH CHECK (true);`;
   try{await navigator.clipboard.writeText(sql);st.innerHTML='<span style="color:var(--ok)">✅ SQL이 클립보드에 복사되었습니다. Supabase Dashboard > SQL Editor에 붙여넣기 하세요.</span><br><span style="color:#e65100;font-size:10px">※ 기존 테이블이 있으면 첫 줄 ALTER TABLE만 실행하면 됩니다.</span>'}
   catch(e){st.innerHTML='<textarea style="width:100%;height:200px;font-size:10px;font-family:monospace;margin-top:8px" readonly>'+sql+'</textarea>'}
 }
