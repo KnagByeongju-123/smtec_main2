@@ -322,7 +322,7 @@ function cancelEdit(){editingMaskId=null;document.getElementById('setMaskNo').va
 async function deleteMask(id,name){if(!confirm(name+' 삭제?'))return;try{await sbDelete('mask_register',{id:'eq.'+id});toast('🗑 삭제됨');loadMasks()}catch(e){toast('⚠ 삭제 실패: '+e.message)}}
 function addModelTag(){const inp=document.getElementById('setModelInput');const val=inp.value.trim();if(!val){toast('기종명을 입력하세요');return}if(setModelList.includes(val)){toast('이미 추가된 기종');return}setModelList.push(val);inp.value='';renderModelTags()}
 function renderModelTags(){const c=document.getElementById('setModelTags');c.innerHTML='';if(!setModelList.length){c.innerHTML='<span style="font-size:12px;color:var(--sub);padding:4px">기종을 추가하세요 (없으면 공용)</span>';return}setModelList.forEach((v,i)=>{const t=document.createElement('span');t.className='model-tag';t.innerHTML=v+'<button onclick="setModelList.splice('+i+',1);renderModelTags()">✕</button>';c.appendChild(t)})}
-async function registerMask(){const maskNo=document.getElementById('setMaskNo').value.trim();const model=setModelList.length?setModelList.join(','):'공용';const arrayQty=parseInt(document.getElementById('setArrayQty').value)||1;const lifespan=parseInt(document.getElementById('setLifespan').value)||0;const safetyStock=parseInt(document.getElementById('setSafetyStock').value)||0;const manager=document.getElementById('setMaskManager').value;if(!maskNo){toast('소모품번호를 입력하세요');return}try{const res=await sbInsert('mask_register',{mask_id:maskNo,model:model,qty:0,use_count:arrayQty,note:String(lifespan),safety_stock:safetyStock,maker:manager,status:'사용중',location:'보관함'});if(res&&res.length){toast('✅ 소모품 등록 완료');document.getElementById('setMaskNo').value='';setModelList=[];renderModelTags();document.getElementById('setArrayQty').value='';document.getElementById('setLifespan').value='';document.getElementById('setSafetyStock').value='';loadMasks()}else toast('⚠ 등록 실패')}catch(e){toast('⚠ 오류: '+e.message)}}
+async function registerMask(){const maskNo=document.getElementById('setMaskNo').value.trim();const model=setModelList.length?setModelList.join(','):'공용';const arrayQty=parseInt(document.getElementById('setArrayQty').value)||1;const lifespan=parseInt(document.getElementById('setLifespan').value)||0;const safetyStock=parseInt(document.getElementById('setSafetyStock').value)||0;const manager=document.getElementById('setMaskManager').value;if(!maskNo){toast('소모품번호를 입력하세요');return}try{const dup=await sbSelect('mask_register',{mask_id:'eq.'+maskNo},'',1);if(dup&&dup.length){toast('⚠ 이미 등록된 소모품번호입니다: '+maskNo);return}const res=await sbInsert('mask_register',{mask_id:maskNo,model:model,qty:0,use_count:arrayQty,note:String(lifespan),safety_stock:safetyStock,maker:manager,status:'사용중',location:'보관함'});if(res&&res.length){toast('✅ 소모품 등록 완료');document.getElementById('setMaskNo').value='';setModelList=[];renderModelTags();document.getElementById('setArrayQty').value='';document.getElementById('setLifespan').value='';document.getElementById('setSafetyStock').value='';loadMasks()}else toast('⚠ 등록 실패')}catch(e){toast('⚠ 오류: '+e.message)}}
 
 // ===== 소모품 일괄등록 =====
 function downloadMaskTemplate(){
@@ -349,10 +349,25 @@ document.getElementById('maskFileInput').addEventListener('change',async functio
     const items=[];
     for(let i=1;i<rows.length;i++){const maskNo=String(rows[i][cMask]||'').trim();if(!maskNo)continue;const model=cModel>=0?String(rows[i][cModel]||'').trim()||'공용':'공용';const arrayQty=cArr>=0?(parseInt(rows[i][cArr])||1):1;const lifespan=cLife>=0?(parseInt(rows[i][cLife])||0):0;const safetyStock=cSafe>=0?(parseInt(rows[i][cSafe])||0):0;const qty=cQty>=0?(parseInt(rows[i][cQty])||0):0;const manager=cMgr>=0?String(rows[i][cMgr]||'').trim():'';items.push({mask_id:maskNo,model:model,qty:qty,use_count:arrayQty,note:String(lifespan),safety_stock:safetyStock,maker:manager,status:'사용중',location:'보관함'})}
     if(!items.length){toast('유효한 데이터 없음');prog.style.display='none';return}
-    if(!confirm(items.length+'건의 소모품을 일괄 등록합니다.\n기존 동일 번호가 있으면 중복 등록됩니다.\n\n진행하시겠습니까?')){prog.style.display='none';return}
+    // 기존 등록된 소모품번호 조회
+    prog.textContent='기존 데이터 확인 중...';
+    const existing=await sbSelect('mask_register',{},'',1000);
+    const existMap={};existing.forEach(r=>{existMap[r.mask_id||'']=r});
+    const newItems=items.filter(it=>!existMap[it.mask_id]);
+    const dupeItems=items.filter(it=>existMap[it.mask_id]);
+    let msg=''
+    if(newItems.length)msg+='신규 '+newItems.length+'건 등록';
+    if(dupeItems.length)msg+=(msg?'\n':'')+'중복 '+dupeItems.length+'건 → 현재고·안전재고 덮어쓰기';
+    if(!msg){toast('처리할 항목 없음');prog.style.display='none';return}
+    if(!confirm(msg+'\n\n진행하시겠습니까?')){prog.style.display='none';return}
+    // 신규 INSERT (50건씩)
     const BATCH=50;let done=0;
-    for(let i=0;i<items.length;i+=BATCH){const chunk=items.slice(i,i+BATCH);await sbInsert('mask_register',chunk);done+=chunk.length;prog.textContent='등록 중... '+done+'/'+items.length}
-    prog.style.display='none';toast('✅ '+items.length+'건 일괄 등록 완료');loadMasks();
+    for(let i=0;i<newItems.length;i+=BATCH){const chunk=newItems.slice(i,i+BATCH);await sbInsert('mask_register',chunk);done+=chunk.length;prog.textContent='신규 등록 중... '+done+'/'+newItems.length}
+    // 중복 UPDATE (현재고+안전재고만)
+    for(let i=0;i<dupeItems.length;i++){const it=dupeItems[i];const ex=existMap[it.mask_id];await sbUpdate('mask_register',{id:'eq.'+ex.id},{qty:it.qty,safety_stock:it.safety_stock});if(i%10===0)prog.textContent='덮어쓰기 중... '+(i+1)+'/'+dupeItems.length}
+    prog.style.display='none';
+    const msgs=[];if(newItems.length)msgs.push('신규 '+newItems.length+'건');if(dupeItems.length)msgs.push('덮어쓰기 '+dupeItems.length+'건');
+    toast('✅ '+msgs.join(' / ')+' 완료');loadMasks();
   }catch(e){prog.style.display='none';toast('일괄등록 실패: '+e.message)}
 });
 
