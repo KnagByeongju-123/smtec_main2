@@ -77,10 +77,6 @@
     .vm-btn.vm-inspect .vm-val{color:var(--accent)}
     .vm-btn.has-value{border-color:#a5d6a7;background:#f1f8e9}
     .vm-btn.has-value .vm-val{color:var(--ok)}
-    .vm-btn.vm-recording{border-color:#c62828;background:#ffebee;animation:vmPulse 1s infinite}
-    @keyframes vmPulse{0%,100%{box-shadow:0 0 0 0 rgba(198,40,40,.3)}50%{box-shadow:0 0 0 6px rgba(198,40,40,0)}}
-    .vm-btn .vm-mic-icon{position:absolute;top:6px;right:8px;font-size:12px;opacity:.4}
-    .vm-btn.vm-recording .vm-mic-icon{opacity:1;font-size:14px}
     /* 음성모드 하단 컨트롤 */
     .vm-controls{display:flex;gap:8px;margin-bottom:12px}
     .vm-controls .btn{flex:1}
@@ -100,17 +96,6 @@
     .vm-log-item .vl-val{font-weight:800;color:var(--primary);margin-left:auto}
     .vm-log-item .vl-val.accent{color:var(--accent)}
     .vm-log-item .vl-undo{padding:2px 8px;border:1px solid #ddd;border-radius:4px;background:#fff;font-size:10px;font-weight:600;cursor:pointer;color:#c62828;margin-left:4px;font-family:inherit}
-    /* 음성 확인 팝업 */
-    .vm-confirm{position:fixed;bottom:0;left:0;right:0;background:#fff;border-radius:20px 20px 0 0;padding:20px 16px;box-shadow:0 -4px 24px rgba(0,0,0,.15);z-index:210;transform:translateY(100%);transition:transform .25s ease}
-    .vm-confirm.show{transform:translateY(0)}
-    .vm-confirm-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.3);z-index:209;display:none}
-    .vm-confirm-overlay.show{display:block}
-    .vm-confirm .vmc-target{font-size:13px;font-weight:600;color:#888;text-align:center;margin-bottom:6px}
-    .vm-confirm .vmc-transcript{font-size:14px;color:#e65100;text-align:center;min-height:20px;margin-bottom:4px}
-    .vm-confirm .vmc-number{font-size:42px;font-weight:800;text-align:center;color:var(--primary);margin-bottom:4px;min-height:50px}
-    .vm-confirm .vmc-number.accent{color:var(--accent)}
-    .vm-confirm .vmc-actions{display:flex;gap:10px}
-    .vm-confirm .vmc-actions .btn{flex:1;padding:14px;font-size:15px}
     .defect-counter{display:flex;align-items:center;gap:8px;padding:8px 12px;background:#fafafa;border-radius:8px;margin-bottom:6px}
     .defect-counter .dc-name{flex:1;font-size:13px;font-weight:600;color:#333}
     .defect-counter .dc-btn{width:36px;height:36px;border-radius:8px;border:none;font-size:18px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:transform .1s}
@@ -201,8 +186,7 @@
         <div id="vcLog" class="vm-log" style="display:none"></div>
 
         <div id="voiceStatus" class="voice-status" style="display:none"></div>
-        <div style="font-size:10px;color:#888;text-align:center;margin-bottom:8px">또는 아래 버튼을 터치하여 개별 입력</div>
-        <div id="vmGrid" class="vm-grid"></div>
+        <div id="vmGrid" class="vm-grid" style="pointer-events:none"></div>
       </div>
 
       <div class="fg"><label>비고</label><textarea id="defectNote" placeholder="추가 메모" rows="2"></textarea></div>
@@ -210,19 +194,7 @@
     </div>
   </div>
 
-  <!-- 음성 확인 바텀시트 -->
-  <div class="vm-confirm-overlay" id="vmConfirmOverlay" onclick="vmCancelConfirm()"></div>
-  <div class="vm-confirm" id="vmConfirm">
-    <div class="vmc-target" id="vmcTarget">검사수</div>
-    <div class="vmc-transcript" id="vmcTranscript"></div>
-    <div class="vmc-number" id="vmcNumber">-</div>
-    <div class="vmc-actions">
-      <button class="btn btn-gray" onclick="vmRetry()">🔄 다시</button>
-      <button class="btn btn-primary" onclick="vmApply()">✅ 등록</button>
-      <button class="btn btn-gray" onclick="vmCancelConfirm()" style="flex:0;width:60px">✕</button>
-    </div>
-  </div>
-
+  <!-- 오늘 현황 -->
   <div class="card"><div class="card-tit" style="justify-content:space-between"><span>📊 오늘 현황</span><button class="btn btn-sm btn-gray" onclick="loadTodayStats()">🔄</button></div>
     <div class="stat-row">
       <div class="stat-card"><div class="stat-val" style="color:var(--accent)" id="statInspect">0</div><div class="stat-label">검사수</div></div>
@@ -803,7 +775,7 @@ function openDefectInput(z){
   document.getElementById('voiceMode').style.display = 'none';
   const micBtn = document.getElementById('micBtn'); if(micBtn) micBtn.classList.remove('active-mode');
   const vs=document.getElementById('voiceStatus');if(vs)vs.style.display='none';
-  vmCancelConfirm();
+  vcStop();
   defectCounts={};
   delete defectCounts['__inspect__'];
   const c=document.getElementById('defectCounters');
@@ -819,10 +791,7 @@ function closeDefectInput(){
   document.getElementById('defectInputCard').style.display='none';selectedZone=null;
   document.querySelectorAll('.zone-marker').forEach(m=>m.classList.remove('active'));
   voiceModeOn = false;
-  if(isRecording&&voiceRecognition){try{voiceRecognition.stop()}catch(e){}}
-  stopVoiceRecording();
-  vcStop(); // 연속모드 중지
-  vmCancelConfirm();
+  vcStop();
 }
 document.getElementById('defectInputCard').addEventListener('click',function(e){if(e.target===this)closeDefectInput()});
 function adjCount(t,d){defectCounts[t]=Math.max(0,(defectCounts[t]||0)+d);const e=document.getElementById('cnt_'+t.replace(/\s/g,'_'));if(e)e.value=defectCounts[t]}
@@ -1098,75 +1067,13 @@ ON CONFLICT DO NOTHING;`;
 }
 
 // ===== 음성 모드 (Voice Mode) =====
-let voiceRecognition = null;
 let isRecording = false;
 let voiceModeOn = false;
-let vmCurrentTarget = null; // {key:'검사수'|불량유형명, isInspect:bool}
-let vmPendingNum = null;
-let vmPendingTranscript = '';
 
 function initVoiceEngine() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   const btn = document.getElementById('micBtn');
   if (!SR) { if (btn) btn.classList.add('unsupported'); return false; }
-  if (voiceRecognition) return true;
-  voiceRecognition = new SR();
-  voiceRecognition.lang = 'ko-KR';
-  voiceRecognition.continuous = false;
-  voiceRecognition.interimResults = true;
-  voiceRecognition.maxAlternatives = 3;
-
-  voiceRecognition.onstart = function() {
-    isRecording = true;
-    // 현재 타겟 버튼 recording 표시
-    document.querySelectorAll('.vm-btn').forEach(b => b.classList.remove('vm-recording'));
-    if (vmCurrentTarget) {
-      const btn = document.getElementById('vm_' + vmCurrentTarget.key.replace(/\s/g,'_'));
-      if (btn) btn.classList.add('vm-recording');
-    }
-    showVoiceStatus('listening', '🎙️ 듣는 중... 숫자를 말하세요');
-  };
-
-  voiceRecognition.onresult = function(event) {
-    let transcript = '', isFinal = false;
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      transcript = event.results[i][0].transcript.trim();
-      isFinal = event.results[i].isFinal;
-    }
-    if (!isFinal) {
-      showVoiceStatus('listening', '🎙️ "' + transcript + '" ...');
-      return;
-    }
-    // 최종 결과 → 숫자 변환 (여러 alternative 시도)
-    let num = parseKoreanNumber(transcript);
-    let usedTranscript = transcript;
-    if (num === null || num < 0) {
-      for (let i = event.resultIndex; i < event.results.length && num === null; i++) {
-        for (let j = 0; j < event.results[i].length; j++) {
-          const alt = event.results[i][j].transcript.trim();
-          const altNum = parseKoreanNumber(alt);
-          if (altNum !== null && altNum >= 0) { num = altNum; usedTranscript = alt; break; }
-        }
-      }
-    }
-    stopVoiceRecording();
-    if (num !== null && num >= 0) {
-      vmPendingNum = num;
-      vmPendingTranscript = usedTranscript;
-      showVmConfirm(num, usedTranscript);
-    } else {
-      showVoiceStatus('fail', '❌ "' + transcript + '" → 숫자 인식 실패');
-      if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
-    }
-  };
-
-  voiceRecognition.onerror = function(event) {
-    const msgs = {'no-speech':'음성이 감지되지 않았습니다','not-allowed':'마이크 권한을 허용해주세요'};
-    showVoiceStatus('fail', '⚠️ ' + (msgs[event.error] || event.error));
-    stopVoiceRecording();
-  };
-
-  voiceRecognition.onend = function() { stopVoiceRecording(); };
   return true;
 }
 
@@ -1182,10 +1089,7 @@ function enterVoiceMode() {
 
 function exitVoiceMode() {
   voiceModeOn = false;
-  if (isRecording && voiceRecognition) try { voiceRecognition.stop(); } catch(e) {}
-  stopVoiceRecording();
-  vcStop(); // 연속모드 중지
-  vmCancelConfirm();
+  vcStop();
   document.getElementById('manualMode').style.display = 'block';
   document.getElementById('voiceMode').style.display = 'none';
   document.getElementById('micBtn').classList.remove('active-mode');
@@ -1203,28 +1107,26 @@ function syncVoiceToManual() {
   });
 }
 
-// === 음성모드 그리드 렌더링 ===
+// === 음성모드 그리드 렌더링 (현황 표시용) ===
 function renderVmGrid() {
   const c = document.getElementById('vmGrid');
   if (!c) return;
   let html = '';
-  // 검사수 버튼 (전체 너비)
+  // 검사수 (전체 너비)
   const iqVal = defectCounts['__inspect__'] || parseInt(document.getElementById('inspectQtyInput').value) || 0;
-  html += `<div class="vm-btn vm-inspect${iqVal ? ' has-value' : ''}" id="vm___inspect__" onclick="vmTapBtn('__inspect__',true)" style="grid-column:1/-1">
-    <span class="vm-mic-icon">🎤</span>
+  html += `<div class="vm-btn vm-inspect${iqVal ? ' has-value' : ''}" id="vm___inspect__" style="grid-column:1/-1">
     <span class="vm-name">🔢 검사수</span>
-    <span class="vm-val">${iqVal || '터치하여 입력'}</span>
+    <span class="vm-val">${iqVal || '-'}</span>
     ${iqVal ? '<span style="font-size:10px;color:var(--ok);font-weight:600">EA</span>' : ''}
   </div>`;
-  // 불량유형 버튼들
+  // 불량유형
   if (!cachedDefectTypes.length) {
     html += '<div class="empty" style="grid-column:1/-1">불량유형 등록 필요 (설정탭)</div>';
   } else {
     cachedDefectTypes.forEach(t => {
       const val = defectCounts[t.name] || 0;
       const sid = t.name.replace(/\s/g, '_');
-      html += `<div class="vm-btn${val ? ' has-value' : ''}" id="vm_${sid}" onclick="vmTapBtn('${t.name}',false)">
-        <span class="vm-mic-icon">🎤</span>
+      html += `<div class="vm-btn${val ? ' has-value' : ''}" id="vm_${sid}">
         <span class="vm-cat">${t.category}</span>
         <span class="vm-name">${t.name}</span>
         <span class="vm-val">${val || '-'}</span>
@@ -1232,77 +1134,6 @@ function renderVmGrid() {
     });
   }
   c.innerHTML = html;
-}
-
-// === 버튼 터치 → 음성인식 시작 ===
-function vmTapBtn(key, isInspect) {
-  // 연속모드 켜져있으면 먼저 중지
-  if (vcActive) vcStop();
-  if (isRecording) { try { voiceRecognition.stop(); } catch(e){} }
-  vmCurrentTarget = { key, isInspect };
-  vmPendingNum = null;
-  vmPendingTranscript = '';
-  // 약간 딜레이 후 시작 (이전 stop 완료 대기)
-  setTimeout(() => {
-    try { voiceRecognition.start(); }
-    catch(e) {
-      try { voiceRecognition.stop(); } catch(e2){}
-      setTimeout(() => { try { voiceRecognition.start(); } catch(e3){} }, 300);
-    }
-  }, isRecording ? 300 : 50);
-}
-
-function stopVoiceRecording() {
-  isRecording = false;
-  document.querySelectorAll('.vm-btn').forEach(b => b.classList.remove('vm-recording'));
-}
-
-// === 확인 바텀시트 ===
-function showVmConfirm(num, transcript) {
-  const target = vmCurrentTarget;
-  if (!target) return;
-  document.getElementById('vmcTarget').textContent = target.isInspect ? '🔢 검사수' : '🔴 ' + target.key;
-  document.getElementById('vmcTranscript').textContent = '"' + transcript + '"';
-  const numEl = document.getElementById('vmcNumber');
-  numEl.textContent = num.toLocaleString() + (target.isInspect ? ' EA' : ' 건');
-  numEl.className = 'vmc-number' + (target.isInspect ? ' accent' : '');
-  document.getElementById('vmConfirmOverlay').classList.add('show');
-  document.getElementById('vmConfirm').classList.add('show');
-  if (navigator.vibrate) navigator.vibrate([50, 30, 50]);
-  showVoiceStatus('success', '✅ "' + transcript + '" → ' + num.toLocaleString());
-}
-
-function vmApply() {
-  if (vmPendingNum === null || !vmCurrentTarget) return;
-  const target = vmCurrentTarget;
-  if (target.isInspect) {
-    defectCounts['__inspect__'] = vmPendingNum;
-    document.getElementById('inspectQtyInput').value = vmPendingNum;
-  } else {
-    defectCounts[target.key] = vmPendingNum;
-  }
-  showToast('✅ ' + (target.isInspect ? '검사수' : target.key) + ': ' + vmPendingNum.toLocaleString());
-  vmCloseConfirm();
-  renderVmGrid();
-  // 상태 메시지 숨김
-  const vs = document.getElementById('voiceStatus'); if (vs) vs.style.display = 'none';
-}
-
-function vmRetry() {
-  vmCloseConfirm();
-  if (vmCurrentTarget) vmTapBtn(vmCurrentTarget.key, vmCurrentTarget.isInspect);
-}
-
-function vmCancelConfirm() {
-  vmCloseConfirm();
-  vmPendingNum = null;
-  vmCurrentTarget = null;
-  const vs = document.getElementById('voiceStatus'); if (vs) vs.style.display = 'none';
-}
-
-function vmCloseConfirm() {
-  document.getElementById('vmConfirmOverlay').classList.remove('show');
-  document.getElementById('vmConfirm').classList.remove('show');
 }
 
 // ===== 연속 음성 입력 (Continuous Voice) =====
@@ -1491,9 +1322,6 @@ function vcToggle() {
   if (vcActive) { vcStop(); return; }
   if (!initVoiceEngine()) { showToast('⚠️ 음성인식 미지원'); return; }
   if (!vcInitEngine()) { showToast('⚠️ 음성인식 미지원'); return; }
-
-  // 개별모드 녹음 중이면 중지
-  if (isRecording && voiceRecognition) { try { voiceRecognition.stop(); } catch(e){} stopVoiceRecording(); }
 
   vcLog = [];
   renderVcLog();
