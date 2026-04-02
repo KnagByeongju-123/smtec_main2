@@ -155,7 +155,13 @@
     <div style="display:flex;gap:6px;font-size:12px;color:#888;margin-bottom:8px">
       <span id="addInfo">박스단위를 자동 조회합니다</span>
     </div>
-    <button class="btn btn-primary" onclick="addWorkItem()">➕ 추가</button>
+    <div class="btn-row">
+      <button class="btn btn-primary" onclick="addWorkItem()">➕ 추가</button>
+      <button class="btn btn-orange" onclick="importWorkExcel()" style="flex:0 0 auto;width:auto;padding:12px 16px">📤 일괄등록</button>
+      <button class="btn btn-gray" onclick="downloadWorkTemplate()" style="flex:0 0 auto;width:auto;padding:12px 16px">📥 양식</button>
+    </div>
+    <input type="file" id="workFileInput" accept=".xlsx,.xls,.csv" style="display:none">
+    <div id="workImportProgress" style="display:none;text-align:center;padding:8px;font-size:12px;color:#1565c0"></div>
   </div>
 
   <!-- 작업 목록 -->
@@ -571,6 +577,120 @@ async function clearAllWork() {
   try { await sbDelete('shipment_work', 'status=eq.working'); toast('전체 삭제됨'); loadWork(); }
   catch (e) { toast('삭제 실패: ' + e.message); }
 }
+
+// ========================================
+// 엑셀 일괄 불러오기 (출하작업)
+// ========================================
+function downloadWorkTemplate() {
+  const hd = ['품번', '수량', '로트번호'];
+  const sample = [
+    ['1972-383', 16800, '250513/250514'],
+    ['1967-391', 10500, ''],
+    ['', '', '']
+  ];
+  const ws = XLSX.utils.aoa_to_sheet([hd, ...sample]);
+  ws['!cols'] = [{ wch: 20 }, { wch: 10 }, { wch: 20 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '출하입력');
+  XLSX.writeFile(wb, '출하입력양식.xlsx');
+  toast('📥 입력 양식 다운로드');
+}
+
+function importWorkExcel() {
+  document.getElementById('workFileInput').click();
+}
+
+document.getElementById('workFileInput').addEventListener('change', async function(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  e.target.value = '';
+
+  const prog = document.getElementById('workImportProgress');
+  prog.style.display = 'block';
+  prog.textContent = '파일 읽는 중...';
+
+  try {
+    const data = await file.arrayBuffer();
+    const wb = XLSX.read(data, { type: 'array' });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
+
+    if (rows.length < 2) { toast('데이터가 없습니다'); prog.style.display = 'none'; return; }
+
+    // 헤더 분석: 품번, 수량, 로트번호 컬럼 자동 탐지
+    const hdr = rows[0].map(h => String(h || '').trim());
+    let colPart = -1, colQty = -1, colLot = -1, colBoxCount = -1;
+    hdr.forEach((h, i) => {
+      const lc = h.toLowerCase();
+      if (colPart < 0 && (h === '품번' || lc === 'part' || lc === 'part_no')) colPart = i;
+      if (colQty < 0 && (h === '수량' || lc === 'qty' || lc === 'quantity')) colQty = i;
+      if (colLot < 0 && (h === '로트번호' || h === '로트' || h === 'LOT' || lc === 'lot' || lc === 'lot_no')) colLot = i;
+      if (colBoxCount < 0 && (h === '박스수량' || h === '박스수' || lc === 'box_count')) colBoxCount = i;
+    });
+
+    // 최소 품번 컬럼은 필요, 없으면 첫번째 열을 품번으로
+    if (colPart < 0) colPart = 0;
+    if (colQty < 0 && hdr.length > 1) {
+      // 두번째 열이 숫자면 수량으로 간주
+      for (let i = 1; i < hdr.length; i++) {
+        const sample = rows.length > 1 ? rows[1][i] : null;
+        if (sample && !isNaN(sample)) { colQty = i; break; }
+      }
+    }
+
+    const items = [];
+    for (let i = 1; i < rows.length; i++) {
+      const partNo = String(rows[i][colPart] || '').trim();
+      if (!partNo) continue;
+
+      const qty = colQty >= 0 ? (parseInt(rows[i][colQty]) || 0) : 0;
+      const lot = colLot >= 0 ? String(rows[i][colLot] || '').trim() : '';
+      const boxCountRaw = colBoxCount >= 0 ? (parseInt(rows[i][colBoxCount]) || 0) : 0;
+
+      const boxSize = findBoxSize(partNo);
+      let boxCount = boxCountRaw;
+      if (!boxCount && boxSize && qty) boxCount = Math.ceil(qty / boxSize);
+
+      items.push({
+        part_no: partNo,
+        box_size: boxSize,
+        box_count: boxCount,
+        qty: qty || null,
+        lot_no: lot,
+        sort_order: workItems.length + items.length,
+        status: 'working'
+      });
+    }
+
+    if (!items.length) { toast('유효한 품목 없음'); prog.style.display = 'none'; return; }
+
+    // 미리보기 정보
+    const lotCnt = items.filter(it => it.lot_no).length;
+    const info = items.length + '건 (로트 ' + lotCnt + '건 포함)';
+    if (!confirm('📤 엑셀에서 ' + info + '을 불러옵니다.\n\n' +
+      '인식된 컬럼:\n' +
+      '  품번: ' + (hdr[colPart] || '열' + (colPart+1)) + '\n' +
+      '  수량: ' + (colQty >= 0 ? (hdr[colQty] || '열' + (colQty+1)) : '없음') + '\n' +
+      '  로트: ' + (colLot >= 0 ? (hdr[colLot] || '열' + (colLot+1)) : '없음') + '\n\n' +
+      '진행하시겠습니까?')) {
+      prog.style.display = 'none'; return;
+    }
+
+    // 배치 INSERT (50건씩)
+    const BATCH = 50;
+    let done = 0;
+    for (let i = 0; i < items.length; i += BATCH) {
+      const chunk = items.slice(i, i + BATCH);
+      await sbInsert('shipment_work', chunk);
+      done += chunk.length;
+      prog.textContent = '등록 중... ' + done + '/' + items.length;
+    }
+
+    prog.style.display = 'none';
+    toast('✅ ' + items.length + '건 일괄 등록 완료');
+    loadWork();
+  } catch (e) { prog.style.display = 'none'; toast('불러오기 실패: ' + e.message); }
+});
 
 // ========================================
 // 이력 등록 (작업 → 이력)
