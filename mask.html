@@ -106,6 +106,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
     <div style="display:flex;gap:8px;align-items:center">
       <button class="btn btn-blue" onclick="loadStock()" style="flex:1;padding:10px;font-size:13px">☁ 재고 불러오기</button>
       <select id="stkFilter" onchange="renderStock()" style="flex:1;padding:10px;border:1.5px solid var(--bdr);border-radius:8px;font-size:12px;font-family:inherit"><option value="">전체 위치</option></select>
+      <button class="btn btn-red btn-sm" onclick="deleteAllStock()" style="flex:0 0 auto;padding:10px 12px;font-size:11px">전체삭제</button>
     </div>
     <div id="stkSummary" style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap"></div>
   </div>
@@ -382,6 +383,20 @@ async function submitMovement(){const from=document.getElementById('mvFrom').val
 
 async function loadHistory(){try{const today=new Date().toISOString().split('T')[0];const data=await sbSelect('mask_move_history',{move_date:'eq.'+today},'created_at.desc',100);renderHistory(data.map(r=>({id:r.id,maskNo:r.mask_id||'',date:r.move_date||'',time:r.move_time||'',from:r.from_location||'',to:r.to_location||'',model:r.model||'',prodQty:parseInt(r.prod_qty)||0,usage:parseInt(r.usage_count)||0,manager:r.worker||'',note:r.note||''})))}catch(e){}}
 function renderHistory(list){const c=document.getElementById('histList');if(!list.length){c.innerHTML='<div class="empty"><div class="empty-icon">📋</div>이력이 없습니다</div>';return}c.innerHTML='';list.forEach(h=>{const d=document.createElement('div');d.className='hist-item';const id=h.to==='폐기';d.innerHTML='<div class="hi-row"><span class="hi-mask">'+h.maskNo+'</span><span class="hi-time">'+h.date+' '+h.time+'</span></div><div class="hi-flow"><span class="hi-loc" style="'+(id?'background:var(--red-lt);color:var(--red)':'')+'">'+h.from+'</span><span style="color:var(--sub)">→</span><span class="hi-loc" style="'+(id?'background:var(--red-lt);color:var(--red)':'')+'">'+h.to+'</span>'+(h.manager?'<span style="font-size:10px;color:var(--sub);margin-left:4px">'+h.manager+'</span>':'')+'</div>'+(h.prodQty?'<div class="hi-prod">'+(h.model?'['+h.model+'] ':'')+'생산: '+h.prodQty.toLocaleString()+'개 → 사용: '+h.usage.toLocaleString()+'회</div>':'')+(h.note?'<div style="font-size:11px;color:var(--sub);margin-top:2px">📝 '+h.note+'</div>':'')+(h.id?'<div style="display:flex;gap:4px;margin-top:4px"><button class="btn btn-sm" onclick="deleteMoveHist('+h.id+')" style="background:var(--red-lt);color:var(--red);padding:3px 8px;font-size:10px">🗑삭제</button></div>':'');c.appendChild(d)})}
+
+async function deleteAllStock(){
+  if(!stockData.length&&!masks.length){toast('삭제할 데이터 없음');return}
+  if(!confirm('⚠ 등록된 소모품(재고) 전체를 삭제합니다.\n\n(이동이력·폐기이력은 유지됩니다)\n\n복구할 수 없습니다. 진행하시겠습니까?'))return;
+  if(!confirm('정말 삭제하시겠습니까? (최종 확인)'))return;
+  try{
+    const sb=getSb();if(!sb){toast('Supabase 미설정');return}
+    await sb.from('mask_register').delete().gte('id',0);
+    masks=[];stockData=[];
+    document.getElementById('stkList').innerHTML='<div class="empty"><div class="empty-icon">📦</div>재고 없음</div>';
+    document.getElementById('stkSummary').innerHTML='';
+    toast('🗑 재고 전체 삭제 완료');
+  }catch(e){toast('⚠ 삭제 실패: '+e.message)}
+}
 
 async function loadStock(){toast('재고 불러오는 중...');try{const[mr,hr]=await Promise.all([sbSelect('mask_register',{},'',200),sbSelect('mask_move_history',{},'created_at.desc',1000)]);masks=mr.map(r=>({id:r.id,maskNo:r.mask_id||'',model:r.model||'공용',qty:parseInt(r.qty)||0,arrayQty:parseInt(r.use_count)||1,lifespan:parseInt(r.note)||0,safetyStock:parseInt(r.safety_stock)||0,manager:r.maker||'',status:r.status||'사용중'}));stockData=[];const maskMap={};masks.forEach(m=>{if(!maskMap[m.maskNo])maskMap[m.maskNo]={ids:[m.id],maskNo:m.maskNo,model:m.model,qty:m.qty||0,arrayQty:m.arrayQty,lifespan:m.lifespan,safetyStock:m.safetyStock,manager:m.manager,status:m.status};else{maskMap[m.maskNo].ids.push(m.id);maskMap[m.maskNo].qty+=(m.qty||0)}});Object.values(maskMap).forEach(m=>{const mh=hr.filter(h=>(h.mask_id||'')===m.maskNo);const tu=mh.reduce((s,h)=>s+(parseInt(h.usage_count)||0),0);let loc=m.qty>0?'보관함':'-';if(m.qty>0&&mh.length>0){const lastMove=mh.find(h=>h.to_location&&h.to_location!=='폐기');if(lastMove)loc=lastMove.to_location||'보관함'}const isInfinite=!m.lifespan||m.lifespan<=0;const rem=isInfinite?999999:Math.max(0,m.lifespan-tu);const pct=isInfinite?100:(m.lifespan>0?Math.round(rem/m.lifespan*100):100);stockData.push({ids:m.ids,maskNo:m.maskNo,model:m.model,qty:m.qty,arrayQty:m.arrayQty,lifespan:m.lifespan,safetyStock:m.safetyStock,totalUsage:tu,remaining:rem,pct,remProd:isInfinite?999999:rem*m.arrayQty,location:loc,manager:m.manager,isInfinite,status:m.status})});renderStock();toast('✅ 재고 불러오기 완료 ('+stockData.length+'건)')}catch(e){toast('⚠ 재고 불러오기 실패: '+e.message)}}
 
