@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>불량관리 시스템</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&display=swap');
     *{box-sizing:border-box;margin:0;padding:0}
@@ -43,6 +44,8 @@
     .draw-toggle .dt-btn.active{border-color:var(--primary);background:var(--primary-light);color:var(--primary)}
     .zone-marker{position:absolute;border:2px solid rgba(255,82,82,.8);background:rgba(255,82,82,.15);border-radius:4px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.6);transition:all .15s;overflow:hidden;line-height:1}
     .zone-marker:hover,.zone-marker.active{background:rgba(255,82,82,.4);border-color:#ff5252;box-shadow:0 0 8px rgba(255,82,82,.5)}
+    .zone-marker.general-zone{font-size:14px;border:2px dashed rgba(144,164,174,.8);background:rgba(144,164,174,.12);color:#546e7a;text-shadow:none;border-radius:10px}
+    .zone-marker.general-zone:hover,.zone-marker.general-zone.active{background:rgba(144,164,174,.3);border-color:#78909c;box-shadow:0 0 8px rgba(144,164,174,.4)}
     .zone-editing{position:absolute;border:2.5px dashed #ff5252;background:rgba(255,82,82,.2);border-radius:4px;cursor:move;z-index:10;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.7);overflow:hidden}
     .zone-editing .rh{position:absolute;width:18px;height:18px;background:#fff;border:2px solid #c62828;border-radius:50%;z-index:11;touch-action:none}
     .zone-editing .rh-tl{top:-9px;left:-9px;cursor:nwse-resize}
@@ -77,7 +80,6 @@
     .stat-row{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
     .stat-card{background:var(--card);border-radius:10px;padding:12px 10px;text-align:center;box-shadow:var(--shadow)}.stat-val{font-size:22px;font-weight:800}.stat-label{font-size:10px;color:var(--gray);margin-top:2px}
     .empty{text-align:center;padding:24px;color:#bbb;font-size:13px}
-    /* ★ 수정 팝업 */
     .edit-popup-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);z-index:200;display:none;align-items:center;justify-content:center;padding:0}
     .edit-popup-overlay.show{display:flex}
     .edit-popup{background:#fff;border-radius:16px;padding:16px;margin:16px;max-width:420px;width:calc(100% - 32px);max-height:85vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,.25)}
@@ -89,6 +91,7 @@
     .edit-popup .ep-input{flex:1;padding:8px 10px;border:1.5px solid #ddd;border-radius:8px;font-size:14px;font-family:inherit}
     .edit-popup .ep-input:focus{border-color:var(--accent);outline:none}
     .edit-popup select.ep-input{appearance:auto}
+    .no-image-placeholder{width:100%;min-height:80px;background:linear-gradient(135deg,#eceff1,#cfd8dc);display:flex;align-items:center;justify-content:center;border-radius:8px;position:relative}
   </style>
 </head>
 <body>
@@ -106,11 +109,11 @@
     <div class="fg"><select id="selCustomer" onchange="onCustomerSelect()" style="font-size:13px"><option value="">전체 고객사</option></select></div>
     <div class="fg"><select id="selModel" onchange="onModelSelect()"><option value="">기종을 선택하세요</option></select></div>
     <div class="fg"><label>면 선택</label><div class="btn-row"><button class="btn btn-sm" id="btnTop" onclick="selectSide('TOP')" style="flex:1;background:var(--accent-light);color:var(--accent);border:2px solid var(--accent)">🔝 TOP</button><button class="btn btn-sm" id="btnBot" onclick="selectSide('BOT')" style="flex:1;background:#f5f5f5;color:#888;border:2px solid #ddd">🔽 BOT</button></div></div></div>
-  <div class="card" id="boardCard" style="display:none"><div class="card-tit">📐 기판 영역 <span style="font-size:10px;color:var(--gray);font-weight:400" id="boardInfo"></span></div>
+  <div class="card" id="boardCard" style="display:none"><div class="card-tit">📐 영역 <span style="font-size:10px;color:var(--gray);font-weight:400" id="boardInfo"></span></div>
     <div class="board-wrap" id="regBoardWrap"><div class="board-inner" id="regBoardInner"><img id="boardImg" src=""><div id="regZoneMarkers"></div></div><div class="zoom-info" id="regZoomInfo">1.0x</div><div class="zoom-btns"><button onclick="pzReset('reg')">↺</button><button onclick="pzZoomBtn('reg',-1)">−</button><button onclick="pzZoomBtn('reg',1)">+</button></div></div>
-    <div style="font-size:10px;color:var(--gray);margin-top:6px;text-align:center">두 손가락 확대/축소 · 영역 터치→불량등록</div></div>
+    <div style="font-size:10px;color:var(--gray);margin-top:6px;text-align:center">영역 터치 → 불량등록 · 두 손가락 확대/축소</div></div>
 
-  <!-- ★ 불량등록 팝업 -->
+  <!-- 불량등록 팝업 -->
   <div class="card" id="defectInputCard" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);z-index:200;padding:0;margin:0;box-shadow:none;border-radius:0;align-items:center;justify-content:center">
     <div style="background:#fff;border-radius:16px;padding:16px;margin:16px;max-width:420px;width:calc(100% - 32px);max-height:85vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,.25)">
       <div class="card-tit" style="justify-content:space-between;margin-bottom:12px"><span>🔴 불량 등록 — <span id="selZoneName" style="color:var(--primary)"></span></span><button class="btn btn-sm btn-gray" onclick="closeDefectInput()">✕</button></div>
@@ -145,7 +148,7 @@
   <div class="card"><div class="card-tit">📋 결과 (<span id="histCount">0</span>건)</div><div style="overflow-x:auto"><table class="hist-table"><thead><tr><th>일시</th><th>기종</th><th>면</th><th>영역</th><th>불량유형</th><th>검사수</th><th>수량</th><th>작업자</th><th>라인</th><th>비고</th><th></th></tr></thead><tbody id="histBody"><tr><td colspan="11" class="empty">조회 버튼을 눌러주세요</td></tr></tbody></table></div></div>
 </div>
 
-<!-- ★ 수정 팝업 (이력 탭용) -->
+<!-- 수정 팝업 -->
 <div class="edit-popup-overlay" id="editPopupOverlay">
   <div class="edit-popup">
     <div class="ep-header">
@@ -153,53 +156,17 @@
       <button class="ep-close" onclick="closeEditPopup()">✕ 닫기</button>
     </div>
     <input type="hidden" id="editRecordId">
-    <div class="ep-row">
-      <span class="ep-label">일자</span>
-      <input type="date" class="ep-input" id="editDate">
-    </div>
-    <div class="ep-row">
-      <span class="ep-label">기종</span>
-      <select class="ep-input" id="editModel"></select>
-    </div>
-    <div class="ep-row">
-      <span class="ep-label">면</span>
-      <select class="ep-input" id="editSide">
-        <option value="TOP">TOP</option>
-        <option value="BOT">BOT</option>
-      </select>
-    </div>
-    <div class="ep-row">
-      <span class="ep-label">영역</span>
-      <input type="text" class="ep-input" id="editZone" placeholder="영역명">
-    </div>
-    <div class="ep-row">
-      <span class="ep-label">불량유형</span>
-      <select class="ep-input" id="editDefectType"></select>
-    </div>
-    <div class="ep-row">
-      <span class="ep-label">검사수</span>
-      <input type="number" class="ep-input" id="editInspectQty" min="0" inputmode="numeric" style="font-weight:800;color:var(--accent)">
-    </div>
-    <div class="ep-row">
-      <span class="ep-label">수량</span>
-      <input type="number" class="ep-input" id="editQty" min="0" inputmode="numeric" style="font-weight:800;color:var(--primary)">
-    </div>
-    <div class="ep-row">
-      <span class="ep-label">작업자</span>
-      <select class="ep-input" id="editWorker"></select>
-    </div>
-    <div class="ep-row">
-      <span class="ep-label">검사라인</span>
-      <select class="ep-input" id="editInspLine"></select>
-    </div>
-    <div class="ep-row">
-      <span class="ep-label">생산라인</span>
-      <select class="ep-input" id="editProdLine"></select>
-    </div>
-    <div class="ep-row">
-      <span class="ep-label">비고</span>
-      <textarea class="ep-input" id="editNote" rows="2" placeholder="비고"></textarea>
-    </div>
+    <div class="ep-row"><span class="ep-label">일자</span><input type="date" class="ep-input" id="editDate"></div>
+    <div class="ep-row"><span class="ep-label">기종</span><select class="ep-input" id="editModel"></select></div>
+    <div class="ep-row"><span class="ep-label">면</span><select class="ep-input" id="editSide"><option value="TOP">TOP</option><option value="BOT">BOT</option></select></div>
+    <div class="ep-row"><span class="ep-label">영역</span><input type="text" class="ep-input" id="editZone" placeholder="영역명"></div>
+    <div class="ep-row"><span class="ep-label">불량유형</span><select class="ep-input" id="editDefectType"></select></div>
+    <div class="ep-row"><span class="ep-label">검사수</span><input type="number" class="ep-input" id="editInspectQty" min="0" inputmode="numeric" style="font-weight:800;color:var(--accent)"></div>
+    <div class="ep-row"><span class="ep-label">수량</span><input type="number" class="ep-input" id="editQty" min="0" inputmode="numeric" style="font-weight:800;color:var(--primary)"></div>
+    <div class="ep-row"><span class="ep-label">작업자</span><select class="ep-input" id="editWorker"></select></div>
+    <div class="ep-row"><span class="ep-label">검사라인</span><select class="ep-input" id="editInspLine"></select></div>
+    <div class="ep-row"><span class="ep-label">생산라인</span><select class="ep-input" id="editProdLine"></select></div>
+    <div class="ep-row"><span class="ep-label">비고</span><textarea class="ep-input" id="editNote" rows="2" placeholder="비고"></textarea></div>
     <div style="display:flex;gap:8px;margin-top:14px">
       <button class="btn btn-blue" onclick="saveEditRecord()" style="flex:1">💾 수정 저장</button>
       <button class="btn btn-gray" onclick="closeEditPopup()" style="flex:0;width:80px">취소</button>
@@ -249,7 +216,41 @@
     <div id="prodLineList" class="empty">로드 필요</div>
     <div style="margin-top:6px;display:flex;gap:6px"><input id="newProdLine" placeholder="생산라인명" style="flex:1;padding:8px;border:1px solid #ddd;border-radius:8px;font-size:13px;font-family:inherit"><button class="btn btn-sm btn-green" onclick="addCommonCode('생산라인')">추가</button></div>
   </div>
-  <div class="card"><div class="card-tit">🏭 기종마스터</div><div id="modelList" class="empty">로드 필요</div><div style="margin-top:8px;display:grid;grid-template-columns:1fr 1fr;gap:6px"><input id="newModelCustomer" placeholder="고객사" style="padding:8px;border:1px solid #ddd;border-radius:8px;font-size:13px;font-family:inherit"><input id="newModelCat1" placeholder="대분류" style="padding:8px;border:1px solid #ddd;border-radius:8px;font-size:13px;font-family:inherit"><input id="newModelCat2" placeholder="소분류" style="padding:8px;border:1px solid #ddd;border-radius:8px;font-size:13px;font-family:inherit"><input id="newModelName" placeholder="기종명" style="padding:8px;border:1px solid #ddd;border-radius:8px;font-size:13px;font-family:inherit"></div><button class="btn btn-sm btn-green" onclick="addModel()" style="margin-top:6px;width:100%">➕ 기종 추가</button></div>
+  <div class="card"><div class="card-tit" style="justify-content:space-between"><span>🏭 기종마스터</span><span style="font-size:10px;color:var(--gray);font-weight:400" id="modelCountInfo"></span></div>
+    <div id="modelList" class="empty">로드 필요</div>
+    <div style="margin-top:8px;display:grid;grid-template-columns:1fr 1fr;gap:6px">
+      <input id="newModelCustomer" placeholder="고객사" style="padding:8px;border:1px solid #ddd;border-radius:8px;font-size:13px;font-family:inherit">
+      <input id="newModelCat1" placeholder="대분류" style="padding:8px;border:1px solid #ddd;border-radius:8px;font-size:13px;font-family:inherit">
+      <input id="newModelCat2" placeholder="소분류" style="padding:8px;border:1px solid #ddd;border-radius:8px;font-size:13px;font-family:inherit">
+      <input id="newModelName" placeholder="기종명" style="padding:8px;border:1px solid #ddd;border-radius:8px;font-size:13px;font-family:inherit">
+    </div>
+    <button class="btn btn-sm btn-green" onclick="addModel()" style="margin-top:6px;width:100%">➕ 기종 추가</button>
+    <div style="margin-top:10px;padding-top:10px;border-top:1.5px dashed #e0e0e0">
+      <div style="font-size:12px;font-weight:700;color:#555;margin-bottom:6px">📥 일괄등록</div>
+      <div class="btn-row">
+        <button class="btn btn-sm" onclick="downloadModelTemplate()" style="flex:1;background:#e3f2fd;color:#1565c0;border:1px solid #90caf9">📋 양식 다운로드</button>
+        <button class="btn btn-sm" onclick="document.getElementById('bulkModelInput').click()" style="flex:1;background:#e8f5e9;color:#2e7d32;border:1px solid #a5d6a7">📤 엑셀 일괄등록</button>
+      </div>
+      <input type="file" id="bulkModelInput" accept=".xlsx,.xls,.csv" style="display:none">
+      <div id="bulkModelStatus" style="font-size:11px;color:#555;margin-top:4px"></div>
+    </div>
+  </div>
+
+  <!-- 기종 수정 팝업 -->
+  <div class="edit-popup-overlay" id="modelEditOverlay">
+    <div class="edit-popup">
+      <div class="ep-header"><span class="ep-title">✏️ 기종 수정</span><button class="ep-close" onclick="closeModelEdit()">✕ 닫기</button></div>
+      <input type="hidden" id="editModelId">
+      <div class="ep-row"><span class="ep-label">고객사</span><input type="text" class="ep-input" id="editModelCustomer"></div>
+      <div class="ep-row"><span class="ep-label">대분류</span><input type="text" class="ep-input" id="editModelCat1"></div>
+      <div class="ep-row"><span class="ep-label">소분류</span><input type="text" class="ep-input" id="editModelCat2"></div>
+      <div class="ep-row"><span class="ep-label">기종명</span><input type="text" class="ep-input" id="editModelName" style="font-weight:700"></div>
+      <div style="display:flex;gap:8px;margin-top:14px">
+        <button class="btn btn-blue" onclick="saveModelEdit()" style="flex:1">💾 수정 저장</button>
+        <button class="btn btn-gray" onclick="closeModelEdit()" style="flex:0;width:80px">취소</button>
+      </div>
+    </div>
+  </div>
   <div class="card"><div class="card-tit">🖼 기종이미지</div><div class="fg"><select id="imgModel" onchange="loadBoardImages()"><option value="">기종 선택</option></select></div><div class="btn-row"><button class="btn btn-sm" onclick="uploadBoardImage('TOP')" style="flex:1;background:var(--accent-light);color:var(--accent)">📷 TOP</button><button class="btn btn-sm" onclick="uploadBoardImage('BOT')" style="flex:1;background:var(--warn-light);color:var(--warn)">📷 BOT</button></div><div id="boardImgList" class="empty">기종 선택</div><input type="file" id="boardImgInput" accept="image/*" style="display:none"></div>
   <div class="card"><div class="card-tit">📐 영역 설정</div><div class="fg"><select id="zoneModel" onchange="loadZoneSetup()"><option value="">기종 선택</option></select></div><div class="fg"><label>면</label><div class="btn-row"><button class="btn btn-sm" id="zoneBtnTop" onclick="selectZoneSide('TOP')" style="flex:1;background:var(--accent-light);color:var(--accent);border:2px solid var(--accent)">TOP</button><button class="btn btn-sm" id="zoneBtnBot" onclick="selectZoneSide('BOT')" style="flex:1;background:#f5f5f5;color:#888;border:2px solid #ddd">BOT</button></div></div>
     <div id="zoneEditor" style="display:none"><div class="draw-toggle"><button class="dt-btn" id="dtDraw" onclick="toggleDrawMode(true)">✏️ 그리기</button><button class="dt-btn active" id="dtView" onclick="toggleDrawMode(false)">🔍 보기/줌</button><span style="flex:1"></span><button class="btn btn-sm btn-green" onclick="saveZones()">💾 적용</button></div>
@@ -453,14 +454,119 @@ async function loadModels(){
 }
 function renderModelList(){
   const c=document.getElementById('modelList');
+  const ci=document.getElementById('modelCountInfo');
+  if(ci)ci.textContent=cachedModels.length+'건';
   if(!cachedModels.length){c.innerHTML='<div class="empty">등록된 기종 없음</div>';return}
-  c.innerHTML=cachedModels.map(m=>{const tg=[m.customer?`<span class="chip chip-blue">${m.customer}</span>`:'',m.cat1?`<span class="chip chip-green">${m.cat1}</span>`:'',m.cat2?`<span class="chip chip-orange">${m.cat2}</span>`:''].filter(Boolean).join('');return`<div class="cfg-item"><span class="cfg-label">${m.name}</span>${tg}<button class="btn btn-sm" style="background:#ffebee;color:#c62828;flex:0" onclick="deleteModel(${m.id})">삭제</button></div>`}).join('');
+  c.innerHTML=cachedModels.map(m=>{
+    const tg=[
+      m.customer?`<span class="chip chip-blue">${m.customer}</span>`:'',
+      m.cat1?`<span class="chip chip-green">${m.cat1}</span>`:'',
+      m.cat2?`<span class="chip chip-orange">${m.cat2}</span>`:''
+    ].filter(Boolean).join('');
+    return`<div class="cfg-item"><span class="cfg-label">${m.name}</span>${tg}<button class="btn btn-sm" style="background:var(--accent-light);color:var(--accent);flex:0;padding:4px 8px" onclick="openModelEdit(${m.id})">수정</button><button class="btn btn-sm" style="background:#ffebee;color:#c62828;flex:0;padding:4px 8px" onclick="deleteModel(${m.id})">삭제</button></div>`
+  }).join('');
 }
 async function addModel(){
   const n=document.getElementById('newModelName').value.trim();if(!n){showToast('기종명 입력');return}
   try{await sbInsert('defect_model',{model_name:n,customer:document.getElementById('newModelCustomer').value.trim(),category1:document.getElementById('newModelCat1').value.trim(),category2:document.getElementById('newModelCat2').value.trim()});['newModelName','newModelCustomer','newModelCat1','newModelCat2'].forEach(id=>document.getElementById(id).value='');await loadModels();showToast('✅ 기종 추가 완료')}catch(e){showToast('추가 실패: '+e.message)}
 }
 async function deleteModel(id){if(!confirm('삭제?'))return;try{await sbDelete('defect_model',{id:'eq.'+id});await loadModels()}catch(e){showToast('실패')}}
+
+// ===== 기종 수정 =====
+function openModelEdit(id){
+  const m=cachedModels.find(mm=>mm.id===id);if(!m)return;
+  document.getElementById('editModelId').value=m.id;
+  document.getElementById('editModelCustomer').value=m.customer||'';
+  document.getElementById('editModelCat1').value=m.cat1||'';
+  document.getElementById('editModelCat2').value=m.cat2||'';
+  document.getElementById('editModelName').value=m.name||'';
+  document.getElementById('modelEditOverlay').classList.add('show');
+}
+function closeModelEdit(){document.getElementById('modelEditOverlay').classList.remove('show')}
+document.getElementById('modelEditOverlay').addEventListener('click',function(e){if(e.target===this)closeModelEdit()});
+async function saveModelEdit(){
+  const id=document.getElementById('editModelId').value;if(!id)return;
+  const name=document.getElementById('editModelName').value.trim();
+  if(!name){showToast('기종명 필수');return}
+  showLoading('수정 중...');
+  try{
+    await sbUpdate('defect_model',{id:'eq.'+id},{
+      model_name:name,
+      customer:document.getElementById('editModelCustomer').value.trim(),
+      category1:document.getElementById('editModelCat1').value.trim(),
+      category2:document.getElementById('editModelCat2').value.trim()
+    });
+    showToast('✅ 기종 수정 완료');closeModelEdit();await loadModels();
+  }catch(e){showToast('수정 실패: '+e.message)}
+  hideLoading();
+}
+
+// ===== 기종 일괄등록 (엑셀) =====
+function downloadModelTemplate(){
+  const hd=[['고객사','대분류','소분류','기종명']];
+  // 기존 데이터도 포함
+  cachedModels.forEach(m=>hd.push([m.customer||'',m.cat1||'',m.cat2||'',m.name||'']));
+  if(hd.length===1)hd.push(['예시고객','SMT','리플로우','MODEL-A']);
+  const wb=XLSX.utils.book_new();
+  const ws=XLSX.utils.aoa_to_sheet(hd);
+  ws['!cols']=[{wch:16},{wch:14},{wch:14},{wch:20}];
+  XLSX.utils.book_append_sheet(wb,ws,'기종마스터');
+  const today=new Date().toISOString().split('T')[0].replace(/-/g,'');
+  XLSX.writeFile(wb,'기종마스터_양식_'+today+'.xlsx');
+  showToast('📋 양식 다운로드 완료');
+}
+
+document.getElementById('bulkModelInput').addEventListener('change',async function(e){
+  const file=e.target.files[0];if(!file){return}
+  this.value='';
+  const st=document.getElementById('bulkModelStatus');
+  st.textContent='파일 읽는 중...';st.style.color='#555';
+  try{
+    const data=await file.arrayBuffer();
+    const wb=XLSX.read(data,{type:'array'});
+    const ws=wb.Sheets[wb.SheetNames[0]];
+    const rows=XLSX.utils.sheet_to_json(ws,{header:1});
+    if(rows.length<2){st.textContent='⚠ 데이터가 없습니다 (헤더 제외 1행 이상 필요)';st.style.color='#c62828';return}
+    // 헤더 검증 (첫 행)
+    const header=rows[0].map(h=>(h||'').toString().trim());
+    const ciCust=header.indexOf('고객사'),ciCat1=header.indexOf('대분류'),ciCat2=header.indexOf('소분류'),ciName=header.indexOf('기종명');
+    if(ciName<0){st.textContent='⚠ "기종명" 열이 없습니다. 양식을 확인하세요.';st.style.color='#c62828';return}
+    // 데이터 수집
+    const newModels=[];
+    const existingNames=new Set(cachedModels.map(m=>m.name));
+    let skipCount=0;
+    for(let i=1;i<rows.length;i++){
+      const r=rows[i];if(!r||!r.length)continue;
+      const name=(r[ciName]||'').toString().trim();
+      if(!name)continue;
+      if(existingNames.has(name)){skipCount++;continue}
+      newModels.push({
+        model_name:name,
+        customer:ciCust>=0?(r[ciCust]||'').toString().trim():'',
+        category1:ciCat1>=0?(r[ciCat1]||'').toString().trim():'',
+        category2:ciCat2>=0?(r[ciCat2]||'').toString().trim():''
+      });
+      existingNames.add(name);
+    }
+    if(!newModels.length){
+      st.innerHTML='⚠ 신규 등록할 기종이 없습니다'+(skipCount?' (중복 '+skipCount+'건 건너뜀)':'');
+      st.style.color='#e65100';return;
+    }
+    if(!confirm('신규 '+newModels.length+'건 등록합니다.'+(skipCount?' (중복 '+skipCount+'건 건너뜀)':'')+'\n\n진행하시겠습니까?'))return;
+    showLoading('일괄 등록 중... ('+newModels.length+'건)');
+    // 10개씩 배치 삽입
+    for(let i=0;i<newModels.length;i+=10){
+      const batch=newModels.slice(i,i+10);
+      await sbInsert('defect_model',batch);
+    }
+    st.innerHTML='<span style="color:var(--ok)">✅ '+newModels.length+'건 등록 완료</span>'+(skipCount?' <span style="color:var(--warn)">(중복 '+skipCount+'건 건너뜀)</span>':'');
+    await loadModels();
+    showToast('✅ 일괄 등록 완료: '+newModels.length+'건');
+    hideLoading();
+  }catch(err){
+    st.textContent='❌ 오류: '+err.message;st.style.color='#c62828';hideLoading();
+  }
+});
 
 function rms(){
   const cs=document.getElementById('selCustomer'),cp=cs.value;
@@ -561,12 +667,44 @@ async function onModelSelect(){currentModel=document.getElementById('selModel').
 function selectSide(s){currentSide=s;document.getElementById('btnTop').style.cssText=`flex:1;border:2px solid ${s==='TOP'?'var(--accent)':'#ddd'};background:${s==='TOP'?'var(--accent-light)':'#f5f5f5'};color:${s==='TOP'?'var(--accent)':'#888'}`;document.getElementById('btnBot').style.cssText=`flex:1;border:2px solid ${s==='BOT'?'var(--warn)':'#ddd'};background:${s==='BOT'?'var(--warn-light)':'#f5f5f5'};color:${s==='BOT'?'var(--warn)':'#888'}`;if(currentModel)loadBoard()}
 async function loadBoard(){
   document.getElementById('boardCard').style.display='block';document.getElementById('boardInfo').textContent=currentModel+'/'+currentSide;
-  try{const d=await sbSelect('board_image',{model_name:'eq.'+currentModel,side:'eq.'+currentSide},'',1);const img=document.getElementById('boardImg');if(d.length&&d[0].image_url){img.src=d[0].image_url;img.style.display='block'}else{img.src='';img.style.display='none'}}catch(e){}
-  try{const d=await sbSelect('defect_zone',{model_name:'eq.'+currentModel,side:'eq.'+currentSide},'id.asc',200);cachedZones=d.map(r=>({id:r.id,name:r.zone_name||'',x:r.x_pct||0,y:r.y_pct||0,w:r.w_pct||10,h:r.h_pct||10,color:'#ff5252'}));renderRegZoneMarkers()}catch(e){cachedZones=[]}
+  let hasImage=false;
+  try{const d=await sbSelect('board_image',{model_name:'eq.'+currentModel,side:'eq.'+currentSide},'',1);const img=document.getElementById('boardImg');if(d.length&&d[0].image_url){img.src=d[0].image_url;img.style.display='block';hasImage=true}else{img.src='';img.style.display='none'}}catch(e){}
+  try{const d=await sbSelect('defect_zone',{model_name:'eq.'+currentModel,side:'eq.'+currentSide},'id.asc',200);cachedZones=d.map(r=>({id:r.id,name:r.zone_name||'',x:r.x_pct||0,y:r.y_pct||0,w:r.w_pct||10,h:r.h_pct||10,color:'#ff5252'}))}catch(e){cachedZones=[]}
+
+  // ★ 이미지가 없고 영역도 없으면 placeholder 표시 + 일반영역 자동생성
+  if(!hasImage&&!cachedZones.length){
+    const inner=document.getElementById('regBoardInner');
+    // placeholder가 없으면 추가
+    let ph=inner.querySelector('.no-image-placeholder');
+    if(!ph){ph=document.createElement('div');ph.className='no-image-placeholder';inner.insertBefore(ph,inner.firstChild)}
+    ph.style.display='flex';
+  }else{
+    const ph=document.getElementById('regBoardInner').querySelector('.no-image-placeholder');
+    if(ph)ph.style.display='none';
+  }
+
+  renderRegZoneMarkers();
   if(!cachedDefectTypes.length)try{await loadDefectTypes()}catch(e){}
   pzReset('reg');
 }
-function renderRegZoneMarkers(){const c=document.getElementById('regZoneMarkers');c.innerHTML='';cachedZones.forEach(z=>{const m=document.createElement('div');m.className='zone-marker';m.style.cssText=`left:${z.x}%;top:${z.y}%;width:${z.w}%;height:${z.h}%;border-color:${z.color};background:${z.color}20`;m.textContent=z.name;m.onclick=()=>openDefectInput(z);c.appendChild(m)})}
+
+// ★ 수정된 renderRegZoneMarkers: 영역이 없으면 '일반영역' 자동 생성
+function renderRegZoneMarkers(){
+  const c=document.getElementById('regZoneMarkers');c.innerHTML='';
+  let zones=cachedZones;
+  // 영역 설정이 없는 경우 → 일반영역 자동 생성
+  if(!zones.length){
+    zones=[{id:null,name:'일반영역',x:0,y:0,w:100,h:100,color:'#90a4ae'}];
+  }
+  zones.forEach(z=>{
+    const m=document.createElement('div');
+    m.className='zone-marker'+(z.name==='일반영역'&&!z.id?' general-zone':'');
+    m.style.cssText=`left:${z.x}%;top:${z.y}%;width:${z.w}%;height:${z.h}%;border-color:${z.color};background:${z.color}20`;
+    m.textContent=z.name;
+    m.onclick=()=>openDefectInput(z);
+    c.appendChild(m);
+  });
+}
 
 // ===== 불량입력 팝업 =====
 function openDefectInput(z){
@@ -581,7 +719,7 @@ function openDefectInput(z){
     defectCounts[t.name]=0;const sid=t.name.replace(/\s/g,'_');
     return`<div class="defect-counter"><span class="dc-name">${t.name} <span class="chip chip-blue">${t.category}</span></span><button class="dc-btn dc-minus" onclick="adjCount('${t.name}',-1)">−</button><input type="number" class="dc-count" id="cnt_${sid}" value="0" min="0" inputmode="numeric" onchange="onCountInput('${t.name}',this.value)"><button class="dc-btn dc-plus" onclick="adjCount('${t.name}',1)">+</button></div>`
   }).join('');
-  setTimeout(()=>document.getElementById('inspectQtyInput').focus(),100);
+  setTimeout(()=>{/* 키보드 올라오지 않도록 포커스 제거 */},100);
   document.querySelectorAll('#regZoneMarkers .zone-marker').forEach(m=>m.classList.toggle('active',m.textContent===z.name));
 }
 function closeDefectInput(){document.getElementById('defectInputCard').style.display='none';selectedZone=null;document.querySelectorAll('.zone-marker').forEach(m=>m.classList.remove('active'))}
@@ -672,14 +810,13 @@ async function loadHistory(){
 async function deleteHistRecord(id){if(!confirm('삭제?'))return;try{await sbDelete('defect_history',{id:'eq.'+id});loadHistory()}catch(e){}}
 function exportHistory(){window.open(SB_DASHBOARD_URL,'_blank')}
 
-// ===== ★ 수정 팝업 기능 =====
+// ===== 수정 팝업 기능 =====
 async function openEditRecord(id){
   showLoading('불러오는 중...');
   try{
     const rows=await sbSelect('defect_history',{id:'eq.'+id},'',1);
     if(!rows.length){showToast('레코드를 찾을 수 없습니다');hideLoading();return}
     const r=rows[0];
-
     document.getElementById('editRecordId').value=r.id;
     document.getElementById('editDate').value=r.defect_date||'';
     document.getElementById('editSide').value=r.side||'TOP';
@@ -687,39 +824,25 @@ async function openEditRecord(id){
     document.getElementById('editInspectQty').value=r.inspect_qty||0;
     document.getElementById('editQty').value=r.qty||0;
     document.getElementById('editNote').value=r.note||'';
-
-    // 기종 셀렉트 채우기
     const editModelSel=document.getElementById('editModel');
     editModelSel.innerHTML='<option value="">선택</option>'+cachedModels.map(m=>`<option value="${m.name}"${m.name===r.model_name?' selected':''}>${m.name}</option>`).join('');
-
-    // 불량유형 셀렉트 채우기
     const editTypeSel=document.getElementById('editDefectType');
     editTypeSel.innerHTML='<option value="">선택</option>'+cachedDefectTypes.map(t=>`<option value="${t.name}"${t.name===r.defect_type?' selected':''}>${t.name}</option>`).join('');
-
-    // 작업자 셀렉트 채우기
     const editWorkerSel=document.getElementById('editWorker');
     editWorkerSel.innerHTML='<option value="">선택</option>'+cachedCommon.workers.map(w=>`<option value="${w.name}"${w.name===r.worker?' selected':''}>${w.name}</option>`).join('');
-
-    // 검사라인 셀렉트 채우기
     const editInspSel=document.getElementById('editInspLine');
     editInspSel.innerHTML='<option value="">선택</option>'+cachedCommon.inspLines.map(w=>`<option value="${w.name}"${w.name===r.inspect_line?' selected':''}>${w.name}</option>`).join('');
-
-    // 생산라인 셀렉트 채우기
     const editProdSel=document.getElementById('editProdLine');
     editProdSel.innerHTML='<option value="">선택</option>'+cachedCommon.prodLines.map(w=>`<option value="${w.name}"${w.name===r.prod_line?' selected':''}>${w.name}</option>`).join('');
-
     document.getElementById('editPopupOverlay').classList.add('show');
   }catch(e){showToast('로드 실패: '+e.message)}
   hideLoading();
 }
-
 function closeEditPopup(){document.getElementById('editPopupOverlay').classList.remove('show')}
 document.getElementById('editPopupOverlay').addEventListener('click',function(e){if(e.target===this)closeEditPopup()});
-
 async function saveEditRecord(){
   const id=document.getElementById('editRecordId').value;
   if(!id){showToast('레코드 ID 없음');return}
-
   const updateData={
     defect_date:document.getElementById('editDate').value,
     model_name:document.getElementById('editModel').value,
@@ -733,13 +856,12 @@ async function saveEditRecord(){
     prod_line:document.getElementById('editProdLine').value,
     note:document.getElementById('editNote').value.trim()
   };
-
   showLoading('수정 중...');
   try{
     await sbUpdate('defect_history',{id:'eq.'+id},updateData);
     showToast('✅ 수정 완료');
     closeEditPopup();
-    loadHistory(); // 목록 새로고침
+    loadHistory();
   }catch(e){showToast('수정 실패: '+e.message)}
   hideLoading();
 }
