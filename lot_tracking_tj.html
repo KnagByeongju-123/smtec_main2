@@ -1723,8 +1723,8 @@ function onCustomerChange(){
   }
   // 이후공정 출하기종 콤보도 갱신
   if(selectedProcess&&selectedProcess.id!=='incoming')fillShipmentSelect(selectedCustomer,selectedProcess.id);
-  // 가공: 기종명 셀렉트도 고객사 필터 갱신
-  if(selectedProcess&&selectedProcess.id==='machining')fillSimpleProcModelSelect('machining');
+  // 가공/열처리/표면처리: 기종명 셀렉트도 고객사 필터 갱신
+  if(selectedProcess&&['machining','heat','surface'].includes(selectedProcess.id))fillSimpleProcModelSelect(selectedProcess.id);
 }
 
 async function selectProcess(proc){
@@ -1734,9 +1734,9 @@ async function selectProcess(proc){
   savedSelections['출발지']=savedInfo.from||proc.defaultFrom;
   savedSelections['도착지']=savedInfo.to||proc.defaultTo;
   renderRegFields();renderCustomerSelect();renderRecentList2();
-  // 소재입고/가공: 고객사 선택 표시
+  // 소재입고/가공/열처리/표면처리: 고객사 선택 표시
   const fgCustomer=document.getElementById('selCustomer').parentElement;
-  if(proc.id==='incoming'||proc.id==='machining'){
+  if(['incoming','machining','heat','surface'].includes(proc.id)){
     fgCustomer.style.display='block';
   }else{
     fgCustomer.style.display='none';
@@ -2296,24 +2296,36 @@ async function fillSimpleProcModelSelect(procId){
   const sel=document.getElementById('inpModelName');if(!sel)return;
   sel.innerHTML='<option value="">기종 선택</option>';
   if(procId==='heat'||procId==='surface'){
-    // 열처리/표면처리: 레이스웨이 Inner/Outer 기종
-    const data=await loadPartTreeData();
-    const filtered=(selectedCustomer&&data.length>0)?data.filter(r=>r.customer===selectedCustomer):data;
-    let parts;
-    if(procId==='surface'){
-      parts=[...new Set(filtered.filter(r=>r.process_route==='heat_surface').map(r=>getProdPart(r)))].sort();
+    // 열처리/표면처리: SBC → 레이스웨이 Inner/Outer, 그 외 → 일반기종
+    if(selectedCustomer==='SBC'){
+      const data=await loadPartTreeData();
+      const filtered=data.filter(r=>r.customer==='SBC');
+      let parts;
+      if(procId==='surface'){
+        parts=[...new Set(filtered.filter(r=>r.process_route==='heat_surface').map(r=>getProdPart(r)))].sort();
+      }else{
+        parts=[...new Set(filtered.map(r=>getProdPart(r)))].sort();
+      }
+      if(parts.length) sel.innerHTML+='<optgroup label="🔩 레이스웨이 (SBC)">'+parts.map(p=>`<option value="${p}">${p}</option>`).join('')+'</optgroup>';
     }else{
-      parts=[...new Set(filtered.map(r=>getProdPart(r)))].sort();
+      // SBC 아닌 고객사 → 일반기종마스터
+      const models=await loadGeneralModels(true);
+      const allModels=models&&models.length?models:_generalModels;
+      const filtered=selectedCustomer?allModels.filter(m=>m.customer===selectedCustomer):allModels;
+      const names=[...new Set(filtered.map(m=>m.model_name))].sort();
+      if(names.length){
+        const label=selectedCustomer?'🏭 '+selectedCustomer:'🏭 일반기종';
+        sel.innerHTML+='<optgroup label="'+label+'">'+names.map(n=>`<option value="${n}">${n}</option>`).join('')+'</optgroup>';
+      }else{
+        sel.innerHTML+='<option value="" disabled>등록된 기종 없음</option>';
+      }
     }
-    if(parts.length) sel.innerHTML+='<optgroup label="🔩 레이스웨이">'+parts.map(p=>`<option value="${p}">${p}</option>`).join('')+'</optgroup>';
   }else{
     // 가공: 일반기종마스터
     const models=await loadGeneralModels(true);
     const allModels=models&&models.length?models:_generalModels;
     const filtered=(selectedCustomer&&allModels.length>0)?allModels.filter(m=>m.customer===selectedCustomer):allModels;
-    const names=[...new Set(filtered.map(m=>m.model_name))].sort();
-    if(names.length){
-      // 고객사별 그룹
+    if(filtered.length){
       const byCust={};
       filtered.forEach(m=>{if(!byCust[m.customer])byCust[m.customer]=[];byCust[m.customer].push(m)});
       Object.entries(byCust).sort(([a],[b])=>a.localeCompare(b)).forEach(([cust,ms])=>{
