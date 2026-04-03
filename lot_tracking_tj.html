@@ -589,7 +589,12 @@
         <input id="mmNewPitch" placeholder="피치 (12.5)" oninput="previewMmName()" style="padding:8px;border:1px solid #ddd;border-radius:8px;font-size:13px;font-family:inherit">
       </div>
       <div id="mmNamePreview" style="padding:6px 8px;background:#e8eaf6;border-radius:6px;font-size:13px;font-weight:700;color:#1a237e;margin-bottom:6px;display:none"></div>
-      <div class="fg" style="margin-bottom:6px"><input id="mmNewModels" placeholder="매핑기종 (쉼표 구분: 1106,1113)" style="padding:8px;border:1px solid #ddd;border-radius:8px;font-size:13px;font-family:inherit;width:100%"></div>
+      <div class="fg" style="margin-bottom:6px">
+        <div style="display:flex;gap:4px">
+          <input id="mmNewModels" placeholder="매핑기종 (쉼표 구분)" style="flex:1;padding:8px;border:1px solid #ddd;border-radius:8px;font-size:13px;font-family:inherit">
+          <button class="btn btn-sm" onclick="openModelPicker('mmNewModels')" style="flex-shrink:0;background:#e65100;color:#fff;font-size:11px;white-space:nowrap">📋 기종가져오기</button>
+        </div>
+      </div>
       <div class="fg" style="margin-bottom:6px"><input id="mmNewCustomer" placeholder="고객사 (비워두면 공용)" style="padding:8px;border:1px solid #ddd;border-radius:8px;font-size:13px;font-family:inherit;width:100%"></div>
       <button class="btn btn-sm" onclick="addMaterialMaster()" style="width:100%;background:#1565c0;color:#fff;font-size:13px">➕ 소재 추가</button>
     </div>
@@ -1147,7 +1152,7 @@ function editMaterialMaster(id){
         <div class="fg"><label>피치</label><input id="mmEditPitch" value="${m.pitch||''}" placeholder="12.5" oninput="previewMmEditName()"></div>
       </div>
       <div id="mmEditNamePreview" style="padding:6px 8px;background:#e8eaf6;border-radius:6px;font-size:13px;font-weight:700;color:#1a237e;margin-bottom:8px">📌 소재명: ${m.material_name}</div>
-      <div class="fg"><label>매핑기종 (쉼표 구분)</label><input id="mmEditModels" value="${m.mapped_models||''}" placeholder="1106,1113"></div>
+      <div class="fg"><label>매핑기종 (쉼표 구분)</label><div style="display:flex;gap:4px"><input id="mmEditModels" value="${m.mapped_models||''}" placeholder="1106,1113" style="flex:1"><button class="btn btn-sm" onclick="openModelPicker('mmEditModels')" style="flex-shrink:0;background:#e65100;color:#fff;font-size:11px;white-space:nowrap" type="button">📋 기종가져오기</button></div></div>
       <div class="fg"><label>고객사</label><input id="mmEditCustomer" value="${m.customer||''}" placeholder="비워두면 공용"></div>
       <div style="display:flex;gap:8px;margin-top:12px">
         <button class="btn btn-gray" onclick="closeMmEdit()" style="flex:1">취소</button>
@@ -1205,7 +1210,94 @@ async function saveMaterialMasterEdit(id){
   }catch(e){showToast('⚠ 수정 실패: '+e.message)}
 }
 
-// 엑셀 템플릿 다운로드
+// ===== 기종 가져오기 팝업 =====
+let _modelPickerTarget='';
+async function openModelPicker(targetInputId){
+  _modelPickerTarget=targetInputId;
+  // 일반기종 데이터 로드
+  if(!_generalModels.length)await loadGeneralModels(true);
+  if(!_generalModels.length){showToast('등록된 일반기종이 없습니다');return}
+
+  // 기존 입력값 파싱 (이미 선택된 기종)
+  const targetEl=document.getElementById(targetInputId);
+  const existing=targetEl?targetEl.value.split(',').map(s=>s.trim()).filter(Boolean):[];
+
+  // 고객사별 그룹
+  const byCust={};
+  _generalModels.forEach(m=>{const k=m.customer||'공용';if(!byCust[k])byCust[k]=[];byCust[k].push(m)});
+
+  let listHtml='';
+  Object.entries(byCust).sort(([a],[b])=>a.localeCompare(b)).forEach(([cust,models])=>{
+    listHtml+=`<div style="margin-bottom:8px">
+      <div style="display:flex;align-items:center;gap:6px;padding:6px 8px;background:#fff3e0;border-radius:6px;margin-bottom:4px">
+        <label style="font-size:12px;font-weight:700;color:#e65100;flex:1;cursor:pointer" onclick="togglePickerCust(this,'${cust}')">🏢 ${cust} (${models.length}종)</label>
+        <button class="btn btn-sm" style="padding:2px 8px;font-size:10px;background:#e65100;color:#fff" onclick="selectAllPickerCust('${cust}')">전체선택</button>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px;padding:0 4px">`;
+    models.forEach(m=>{
+      const checked=existing.includes(m.model_name)?'checked':'';
+      listHtml+=`<label style="display:flex;align-items:center;gap:4px;padding:4px 8px;background:#f5f5f5;border-radius:6px;font-size:12px;cursor:pointer;border:1px solid #e0e0e0">
+        <input type="checkbox" class="mp-chk" data-model="${m.model_name}" data-cust="${cust}" ${checked} style="width:16px;height:16px">
+        <span style="font-weight:600">${m.model_name}</span>
+      </label>`;
+    });
+    listHtml+=`</div></div>`;
+  });
+
+  let overlay=document.getElementById('modelPickerOverlay');
+  if(overlay)overlay.remove();
+  overlay=document.createElement('div');
+  overlay.id='modelPickerOverlay';
+  overlay.className='modal-overlay show';
+  overlay.innerHTML=`<div class="modal-box" style="max-height:85vh">
+    <div class="modal-handle"></div>
+    <div class="modal-hdr">
+      <span class="modal-hdr-tit">📋 기종 가져오기</span>
+      <button class="modal-close" onclick="closeModelPicker()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="display:flex;gap:6px;margin-bottom:10px">
+        <button class="btn btn-sm btn-gray" onclick="document.querySelectorAll('.mp-chk').forEach(c=>c.checked=true)" style="flex:1;font-size:11px">✅ 전체선택</button>
+        <button class="btn btn-sm btn-gray" onclick="document.querySelectorAll('.mp-chk').forEach(c=>c.checked=false)" style="flex:1;font-size:11px">🔲 전체해제</button>
+      </div>
+      <div style="max-height:55vh;overflow-y:auto">${listHtml}</div>
+      <div style="display:flex;gap:8px;margin-top:14px">
+        <button class="btn btn-gray" onclick="closeModelPicker()" style="flex:1">취소</button>
+        <button class="btn btn-green" onclick="applyModelPicker()" style="flex:2">✅ 적용</button>
+      </div>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click',function(e){if(e.target===overlay)closeModelPicker()});
+}
+
+function selectAllPickerCust(cust){
+  document.querySelectorAll('.mp-chk[data-cust="'+cust+'"]').forEach(c=>c.checked=true);
+}
+
+function closeModelPicker(){
+  const overlay=document.getElementById('modelPickerOverlay');
+  if(overlay)overlay.remove();
+}
+
+function applyModelPicker(){
+  const selected=[];
+  document.querySelectorAll('.mp-chk:checked').forEach(c=>selected.push(c.dataset.model));
+  const targetEl=document.getElementById(_modelPickerTarget);
+  if(targetEl){
+    // 기존에 수동 입력된 값도 보존
+    const existing=targetEl.value.split(',').map(s=>s.trim()).filter(Boolean);
+    const merged=[...new Set([...existing,...selected])];
+    // 선택 해제된 것은 제거
+    const allInPicker=[];
+    document.querySelectorAll('.mp-chk').forEach(c=>allInPicker.push(c.dataset.model));
+    const unchecked=allInPicker.filter(m=>!selected.includes(m));
+    const final=merged.filter(m=>!unchecked.includes(m));
+    targetEl.value=final.join(',');
+  }
+  closeModelPicker();
+  showToast('✅ '+selected.length+'개 기종 적용');
+}
 function downloadMmTemplate(){
   const wb=XLSX.utils.book_new();
   const ws=XLSX.utils.aoa_to_sheet([
