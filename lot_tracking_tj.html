@@ -681,6 +681,31 @@
 
 <script>
 // ============================================================
+//  한국시간(KST) 유틸리티
+// ============================================================
+function getKST(d){
+  // Date 객체를 한국시간 기준 Date-like로 변환
+  const utc=d.getTime()+d.getTimezoneOffset()*60000;
+  return new Date(utc+9*3600000);
+}
+function kstDateStr(d){
+  // 한국시간 기준 YYYY-MM-DD
+  const k=getKST(d||new Date());
+  return k.getFullYear()+'-'+String(k.getMonth()+1).padStart(2,'0')+'-'+String(k.getDate()).padStart(2,'0');
+}
+function kstTimeStr(d){
+  // 한국시간 기준 HH:mm:ss
+  const k=getKST(d||new Date());
+  return String(k.getHours()).padStart(2,'0')+':'+String(k.getMinutes()).padStart(2,'0')+':'+String(k.getSeconds()).padStart(2,'0');
+}
+function kstISO(d){
+  // 한국시간 기준 ISO 문자열 (+09:00)
+  const k=getKST(d||new Date());
+  return k.getFullYear()+'-'+String(k.getMonth()+1).padStart(2,'0')+'-'+String(k.getDate()).padStart(2,'0')
+    +'T'+String(k.getHours()).padStart(2,'0')+':'+String(k.getMinutes()).padStart(2,'0')+':'+String(k.getSeconds()).padStart(2,'0')+'+09:00';
+}
+
+// ============================================================
 //  Supabase 설정
 // ============================================================
 const SB_STORAGE_KEY='LOT_TJ_SB_CFG';
@@ -1671,7 +1696,7 @@ async function selectProcess(proc){
   document.getElementById('inpEquip').value=savedInfo.equip||'';
   document.getElementById('inpWeight').value='';
   const dateField=document.getElementById('fgIncomingDate');
-  if(proc.id==='incoming'){dateField.style.display='block';document.getElementById('inpIncomingDate').value=new Date().toISOString().split('T')[0]}
+  if(proc.id==='incoming'){dateField.style.display='block';document.getElementById('inpIncomingDate').value=kstDateStr()}
   else dateField.style.display='none';
 
   // ★ 소재입고만 일괄/개별 탭 표시, 나머지는 개별등록만
@@ -1701,7 +1726,7 @@ async function selectProcess(proc){
     fgEquip.style.display='none';weRow.style.gridTemplateColumns='1fr';
     fgProdDates.style.display='block';
     _prodDates=[];renderProdDateTags();
-    document.getElementById('inpProdDate').value=new Date().toISOString().split('T')[0];
+    document.getElementById('inpProdDate').value=kstDateStr();
     if(savedInfo.worker){document.getElementById('inpWorker').style.borderColor='#2e7d32';document.getElementById('inpWorker').style.background='#e8f5e9'}
     document.getElementById('fgMaterialSel').style.display='none';
     // 출하기종 셀렉트 표시
@@ -1734,7 +1759,7 @@ async function selectProcess(proc){
     // 일자+기종명 표시
     document.getElementById('fgSimpleProcFields').style.display='block';
     document.getElementById('inpMoveDate').parentElement.style.display=''; // 이동일자 표시
-    document.getElementById('inpMoveDate').value=new Date().toISOString().split('T')[0];
+    document.getElementById('inpMoveDate').value=kstDateStr();
     document.getElementById('inpModelName').value='';
     await fillSimpleProcModelSelect(proc.id);
   }else{
@@ -1870,8 +1895,8 @@ async function doShipmentRegister(){
   const weight=document.getElementById('inpWeight').value.trim();
   const fields={'출발지':procInfo.from||savedSelections['출발지']||'','도착지':procInfo.to||savedSelections['도착지']||''};
   const now=new Date();
-  const dateStr=now.toISOString().split('T')[0];
-  const timeStr=String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0');
+  const dateStr=kstDateStr(now);
+  const timeStr=kstTimeStr(now);
   // 로트 = 생산일자
   const lot=_prodDates.length?_prodDates.join(','):'';
 
@@ -1880,7 +1905,7 @@ async function doShipmentRegister(){
     customer:selectedCustomer||'',process:'출하',
     worker:procInfo.worker||'',equip:'',weight,incomingDate:'',fields,
     barcode:'',basePart,lot,format:'출하직접',qty:weight||'',note,
-    prodDates:_prodDates,ts:now.toISOString()
+    prodDates:_prodDates,ts:kstISO(now)
   };
   hist.unshift(entry);if(hist.length>500)hist.length=500;
   localStorage.setItem('LOT_TJ_HIST',JSON.stringify(hist));
@@ -1904,14 +1929,14 @@ async function doShipDirectFromInput(){
   localStorage.setItem('LOT_TJ_PROC_shipment',JSON.stringify({from:fields['출발지'],to:fields['도착지'],worker:workerVal,equip:''}));
   const lot=_prodDates.length?_prodDates.join(','):'';
   const now=new Date();
-  const dateStr=now.toISOString().split('T')[0];
-  const timeStr=String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0');
+  const dateStr=kstDateStr(now);
+  const timeStr=kstTimeStr(now);
   const entry={
     id:'E'+now.getTime(),date:dateStr,time:timeStr,
     customer:selectedCustomer||'',process:'출하',
     worker:workerVal,equip:'',weight,incomingDate:'',fields,
     barcode:'',basePart,lot,format:'출하직접',qty:weight||'',note:'',
-    prodDates:_prodDates,ts:now.toISOString()
+    prodDates:_prodDates,ts:kstISO(now)
   };
   hist.unshift(entry);if(hist.length>500)hist.length=500;
   localStorage.setItem('LOT_TJ_HIST',JSON.stringify(hist));
@@ -2603,8 +2628,8 @@ async function checkPrevProcessHist(basePart, procId){
   try{
     const sb=getSb();if(!sb)throw new Error('Supabase 미설정');
     // base_part 또는 general_model이 일치하는 최근 이력 (7일)
-    const sevenDaysAgo=new Date();sevenDaysAgo.setDate(sevenDaysAgo.getDate()-7);
-    const sinceDate=sevenDaysAgo.toISOString().split('T')[0];
+    const sevenDaysAgo=new Date(Date.now()-7*86400000);
+    const sinceDate=kstDateStr(sevenDaysAgo);
 
     // base_part 또는 general_model 중 하나로 조회
     const {data:hist,error}=await sb.from('move_history_tj')
@@ -2633,7 +2658,7 @@ async function checkPrevProcessHist(basePart, procId){
 
     if(prevFound.length>0){
       const latest=prevFound[0];
-      const today=new Date().toISOString().split('T')[0];
+      const today=kstDateStr();
       const isToday=latest.move_date===today;
       area.innerHTML=`<div style="padding:10px 12px;background:#e8f5e9;border:2px solid #66bb6a;border-radius:8px">
         <div style="font-size:13px;font-weight:800;color:#2e7d32;margin-bottom:6px">✅ 이전 공정 이력 확인</div>
@@ -2923,8 +2948,8 @@ async function doRegisterFromModal(){
   const incomingDate=(selectedProcess&&selectedProcess.id==='incoming'&&document.getElementById('inpIncomingDate'))?document.getElementById('inpIncomingDate').value:'';
   const note=document.getElementById('mInpNote').value.trim();
   const now=new Date();
-  const dateStr=now.toISOString().split('T')[0];
-  const timeStr=String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0');
+  const dateStr=kstDateStr(now);
+  const timeStr=kstTimeStr(now);
 
   const procId=selectedProcess?selectedProcess.id:'';
   const isModelTypeProc=MODEL_TYPE_PROC_IDS.includes(procId);
@@ -2947,7 +2972,7 @@ async function doRegisterFromModal(){
         barcode:modalScanData.value,basePart:getProdPart(ch),
         parentPart:ch.parent_part,childType:ch.child_type,
         modelType:'raceway',generalModel:'',
-        lot,format:modalScanData.format,qty,note,ts:now.toISOString(),
+        lot,format:modalScanData.format,qty,note,ts:kstISO(now),
         lotConsumed:i===_dualChildren.length-1?lotConsumed:false
       };
       hist.unshift(entry);await saveHistToServer(entry);registered++;
@@ -2973,7 +2998,7 @@ async function doRegisterFromModal(){
       worker:procInfo.worker||'',equip:procInfo.equip||'',weight,incomingDate,fields,
       barcode:modalScanData.value,basePart:racewayPart,
       modelType:'raceway',generalModel:'',materialInfo:materialInfoStr,
-      lot,format:modalScanData.format,qty,note,ts:now.toISOString(),
+      lot,format:modalScanData.format,qty,note,ts:kstISO(now),
       lotConsumed
     };
     hist.unshift(entry);if(hist.length>500)hist.length=500;
@@ -2998,7 +3023,7 @@ async function doRegisterFromModal(){
       worker:procInfo.worker||'',equip:procInfo.equip||'',weight,incomingDate,fields,
       barcode:modalScanData.value,basePart:generalModel,
       modelType:'general',generalModel:generalModel,materialInfo:materialInfoStr,
-      lot,format:modalScanData.format,qty,note,ts:now.toISOString(),
+      lot,format:modalScanData.format,qty,note,ts:kstISO(now),
       lotConsumed
     };
     hist.unshift(entry);if(hist.length>500)hist.length=500;
@@ -3024,7 +3049,7 @@ async function doRegisterFromModal(){
       barcode:modalScanData.value,basePart,lot,format:modalScanData.format,qty,note,
       prodDates:procInfo.prodDates||_prodDates||[],
       moveDate:procInfo.moveDate||'',modelName:procInfo.modelName||'',
-      ts:now.toISOString()
+      ts:kstISO(now)
     };
     hist.unshift(entry);if(hist.length>500)hist.length=500;
     localStorage.setItem('LOT_TJ_HIST',JSON.stringify(hist));
@@ -3220,7 +3245,7 @@ function expXlsx(){
   const rows=hist.map(h=>[h.date,h.time,h.customer||'',h.process||'',h.modelType||'',h.generalModel||'',h.worker||'',h.equip||'',h.weight||'',h.incomingDate||'',(h.fields&&h.fields['출발지'])||'',(h.fields&&h.fields['도착지'])||'',h.barcode,h.basePart||'',h.parentPart||'',h.childType||'',h.lot||'',h.qty||'',h.note||'',h.sheetSaved?'O':'X']);
   const ws=XLSX.utils.aoa_to_sheet([hd,...rows]);
   XLSX.utils.book_append_sheet(wb,ws,'이동이력');
-  XLSX.writeFile(wb,'프레스_이동이력_'+new Date().toISOString().split('T')[0].replace(/-/g,'')+'.xlsx');
+  XLSX.writeFile(wb,'프레스_이동이력_'+kstDateStr().replace(/-/g,'')+'.xlsx');
   showToast('📥 엑셀 다운로드 완료');
 }
 
@@ -3235,8 +3260,8 @@ function initHistTab(){
   const custSel=document.getElementById('histFiltCust');
   if(custSel&&custSel.options.length<=1){const custCat=cats.find(c=>c.name==='고객사');if(custCat)custCat.subs.forEach(c=>{const o=document.createElement('option');o.value=c;o.textContent=c;custSel.appendChild(o)})}
   // 날짜 범위 기본값: 오늘 기준 7일
-  const today=new Date().toISOString().split('T')[0];
-  const weekAgo=new Date(Date.now()-7*86400000).toISOString().split('T')[0];
+  const today=kstDateStr();
+  const weekAgo=kstDateStr(new Date(Date.now()-7*86400000));
   const dfEl=document.getElementById('histDateFrom');
   const dtEl=document.getElementById('histDateTo');
   if(dfEl&&!dfEl.value)dfEl.value=weekAgo;
@@ -3337,8 +3362,8 @@ function loadMoreServerHist(){_serverHistPage++;renderServerHist()}
 function clearHistFilter(){
   ['histFiltProc','histFiltCust','histFiltModel','histFiltSearch'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=''});
   // 날짜 범위 초기화: 최근 7일
-  const today=new Date().toISOString().split('T')[0];
-  const weekAgo=new Date(Date.now()-7*86400000).toISOString().split('T')[0];
+  const today=kstDateStr();
+  const weekAgo=kstDateStr(new Date(Date.now()-7*86400000));
   const dfEl=document.getElementById('histDateFrom');if(dfEl)dfEl.value=weekAgo;
   const dtEl=document.getElementById('histDateTo');if(dtEl)dtEl.value=today;
   loadServerHist();
@@ -3441,7 +3466,7 @@ function expServerXlsx(){
   const hd=['일자','시간','공정','기종유형','일반기종','출발지','도착지','바코드','기준품번','부모품번','Inner/Outer','소재정보','로트','수량','작업자','설비','비고'];
   const rows=filtered.map(h=>[h.move_date||'',h.move_time||'',h.process||'',h.model_type||'',h.general_model||'',h.departure||'',h.destination||'',h.barcode_raw||'',h.base_part||'',h.parent_part||'',h.child_type||'',h.material_info||'',h.lot||'',h.qty||'',h.worker||'',h.equipment||'',h.note||'']);
   const ws=XLSX.utils.aoa_to_sheet([hd,...rows]);XLSX.utils.book_append_sheet(wb,ws,'이동이력');
-  XLSX.writeFile(wb,'프레스_이동이력_'+new Date().toISOString().split('T')[0].replace(/-/g,'')+'.xlsx');
+  XLSX.writeFile(wb,'프레스_이동이력_'+kstDateStr().replace(/-/g,'')+'.xlsx');
   showToast('📥 엑셀 다운로드 ('+filtered.length+'건)');
 }
 
@@ -3845,7 +3870,7 @@ function renderBatchPreview(){
   showRows.forEach(row=>{
     tbl+='<tr>'+srcCols.map(c=>{
       let v=row[c];
-      if(v instanceof Date)v=v.toISOString().split('T')[0];
+      if(v instanceof Date)v=kstDateStr(v);
       return '<td style="padding:3px 6px;border:1px solid #eee;white-space:nowrap;max-width:100px;overflow:hidden;text-overflow:ellipsis">'+(v||'')+'</td>';
     }).join('')+'</tr>';
   });
@@ -3880,8 +3905,8 @@ async function doBatchRegister(){
   // 행 → DB row 변환 (현재 공정 설정을 기본값으로 사용)
   const rows=[];
   const now=new Date();
-  const todayStr=now.toISOString().split('T')[0];
-  const timeStr=String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0');
+  const todayStr=kstDateStr(now);
+  const timeStr=kstTimeStr(now);
   const defProcess=selectedProcess?selectedProcess.name:'소재입고';
   const procInfo=selectedProcess?JSON.parse(localStorage.getItem('LOT_TJ_PROC_'+selectedProcess.id)||'{}'):{};
   const defFrom=procInfo.from||savedSelections['출발지']||'';
@@ -3900,7 +3925,7 @@ async function doBatchRegister(){
     srcCols.forEach(sc=>{
       const target=colMap[sc];if(!target)return;
       let v=raw[sc];
-      if(v instanceof Date)v=v.toISOString().split('T')[0];
+      if(v instanceof Date)v=kstDateStr(v);
       v=String(v||'').trim();
       if(!v)return;
       if(target==='_material_type'){_mType=v}
@@ -3944,7 +3969,7 @@ async function doBatchRegister(){
       id:'B'+(now.getTime()+idx),date:r.move_date,time:r.move_time,
       process:r.process,fields:{'출발지':r.departure,'도착지':r.destination},
       barcode:r.barcode_raw,basePart:r.base_part,lot:r.lot,
-      format:'엑셀일괄',qty:r.qty||'',note:r.note,ts:now.toISOString(),
+      format:'엑셀일괄',qty:r.qty||'',note:r.note,ts:kstISO(now),
       sheetSaved:true
     };
     hist.unshift(entry);
