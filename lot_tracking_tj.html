@@ -254,6 +254,7 @@
             <div class="fg" id="fgWeight"><label id="lblWeight">소재중량 (kg)</label><input type="number" id="inpWeight" placeholder="소재중량 입력" inputmode="decimal" step="0.1"></div>
             <div class="fg" id="fgIncomingDate" style="display:none"><label>소재입고일자</label><input type="date" id="inpIncomingDate"></div>
             <button class="btn btn-blue" id="btnMoveConfirm" onclick="showMoveConfirm()" style="font-size:15px;padding:13px;margin-top:6px">확인 →</button>
+            <button class="btn btn-green" id="btnShipDirect" onclick="doShipDirectFromInput()" style="display:none;font-size:16px;padding:14px;margin-top:6px">✅ 출하 등록</button>
             <!-- 출하 공정: 확인 없이 바로 기종선택+등록 -->
             <div id="shipDirectArea" style="display:none;margin-top:10px">
               <div class="fg" style="margin-bottom:8px">
@@ -1778,6 +1779,9 @@ async function selectProcess(proc){
     document.getElementById('inpMoveDate').parentElement.style.display='none'; // 이동일자는 숨김 (생산일자로 대체)
     document.getElementById('inpModelName').value='';
     await fillShipmentModelForInput();
+    // 출하: 확인→ 대신 바로 출하등록 버튼
+    document.getElementById('btnMoveConfirm').style.display='none';
+    document.getElementById('btnShipDirect').style.display='block';
   }else if(proc.id==='incoming'){
     lblW.textContent='소재중량 (kg)';inpW.placeholder='소재중량 입력';inpW.step='0.1';inpW.inputMode='decimal';
     fgEquip.style.display='none';weRow.style.gridTemplateColumns='1fr';
@@ -1819,6 +1823,12 @@ async function selectProcess(proc){
   if(fileInput)fileInput.value='';
   const batchSt=document.getElementById('batchStatus');
   if(batchSt)batchSt.style.display='none';
+
+  // 출하 외 공정: 확인→ 버튼 복원
+  if(proc.id!=='shipment'){
+    document.getElementById('btnMoveConfirm').style.display='block';
+    document.getElementById('btnShipDirect').style.display='none';
+  }
 
   const modal=document.getElementById('moveSetupModal');
   modal.classList.add('show','center');document.body.style.overflow='hidden';
@@ -1946,6 +1956,36 @@ async function doShipmentRegister(){
   localStorage.setItem('LOT_TJ_HIST',JSON.stringify(hist));
   await saveHistToServer(entry);
 
+  showToast('✅ 출하 등록: '+basePart+(lot?' 생산일:'+lot:''));
+  if(navigator.vibrate)navigator.vibrate([100,50,100]);
+  closeMoveSetup();
+  renderRecentList();renderRecentList2();
+}
+
+// 출하: 입력단계에서 바로 등록 (로트리딩/확인화면 생략)
+async function doShipDirectFromInput(){
+  const basePart=document.getElementById('inpModelName')?document.getElementById('inpModelName').value:'';
+  if(!basePart){showToast('출하기종을 선택하세요');return}
+  cats.forEach((cat,i)=>{const el=document.getElementById('sel_'+i);if(el&&el.value)savedSelections[cat.name]=el.value});
+  const weight=document.getElementById('inpWeight').value.trim();
+  const workerVal=document.getElementById('inpWorker').value.trim();
+  const fields={'출발지':savedSelections['출발지']||'','도착지':savedSelections['도착지']||''};
+  // 임시저장
+  localStorage.setItem('LOT_TJ_PROC_shipment',JSON.stringify({from:fields['출발지'],to:fields['도착지'],worker:workerVal,equip:''}));
+  const lot=_prodDates.length?_prodDates.join(','):'';
+  const now=new Date();
+  const dateStr=now.toISOString().split('T')[0];
+  const timeStr=String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0');
+  const entry={
+    id:'E'+now.getTime(),date:dateStr,time:timeStr,
+    customer:selectedCustomer||'',process:'출하',
+    worker:workerVal,equip:'',weight,incomingDate:'',fields,
+    barcode:'',basePart,lot,format:'출하직접',qty:weight||'',note:'',
+    prodDates:_prodDates,ts:now.toISOString()
+  };
+  hist.unshift(entry);if(hist.length>500)hist.length=500;
+  localStorage.setItem('LOT_TJ_HIST',JSON.stringify(hist));
+  await saveHistToServer(entry);
   showToast('✅ 출하 등록: '+basePart+(lot?' 생산일:'+lot:''));
   if(navigator.vibrate)navigator.vibrate([100,50,100]);
   closeMoveSetup();
