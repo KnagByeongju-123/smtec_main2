@@ -309,17 +309,30 @@
         <button class="btn btn-sm btn-green" onclick="expServerXlsx()" style="font-size:11px">📥 엑셀</button>
       </div>
     </div>
-    <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
-      <select id="histFiltProc" onchange="renderServerHist()" style="flex:1;min-width:80px;padding:7px;border:1px solid #ddd;border-radius:6px;font-size:12px;font-family:inherit">
+    <!-- 날짜 범위 -->
+    <div style="display:flex;gap:4px;align-items:center;margin-bottom:8px">
+      <input type="date" id="histDateFrom" onchange="renderServerHist()" style="flex:1;padding:8px;border:1.5px solid #1a237e;border-radius:6px;font-size:13px;font-family:inherit;font-weight:600;background:#e8eaf6;color:#1a237e">
+      <span style="font-size:14px;font-weight:700;color:#555;flex-shrink:0">~</span>
+      <input type="date" id="histDateTo" onchange="renderServerHist()" style="flex:1;padding:8px;border:1.5px solid #1a237e;border-radius:6px;font-size:13px;font-family:inherit;font-weight:600;background:#e8eaf6;color:#1a237e">
+    </div>
+    <!-- 공정 / 고객사 -->
+    <div style="display:flex;gap:6px;margin-bottom:8px">
+      <select id="histFiltProc" onchange="renderServerHist()" style="flex:1;padding:7px;border:1px solid #ddd;border-radius:6px;font-size:12px;font-family:inherit">
         <option value="">전체 공정</option>
       </select>
-      <select id="histFiltCust" onchange="renderServerHist()" style="flex:1;min-width:80px;padding:7px;border:1px solid #ddd;border-radius:6px;font-size:12px;font-family:inherit">
+      <select id="histFiltCust" onchange="renderServerHist()" style="flex:1;padding:7px;border:1px solid #ddd;border-radius:6px;font-size:12px;font-family:inherit">
         <option value="">전체 고객사</option>
       </select>
-      <input type="date" id="histFiltDate" onchange="renderServerHist()" style="flex:1;min-width:110px;padding:7px;border:1px solid #ddd;border-radius:6px;font-size:12px;font-family:inherit">
     </div>
+    <!-- 기종 선택 -->
+    <div style="display:flex;gap:6px;margin-bottom:8px">
+      <select id="histFiltModel" onchange="renderServerHist()" style="flex:1;padding:7px;border:1.5px solid #1565c0;border-radius:6px;font-size:12px;font-family:inherit;font-weight:600;color:#1565c0;background:#e3f2fd">
+        <option value="">전체 기종</option>
+      </select>
+    </div>
+    <!-- 검색 (기종/바코드/로트) -->
     <div style="display:flex;gap:6px;margin-bottom:10px">
-      <input type="text" id="histFiltSearch" oninput="renderServerHist()" placeholder="기종/바코드 검색" style="flex:1;padding:7px;border:1px solid #ddd;border-radius:6px;font-size:12px;font-family:inherit">
+      <input type="text" id="histFiltSearch" oninput="renderServerHist()" placeholder="기종/바코드/로트 검색" style="flex:1;padding:7px;border:1px solid #ddd;border-radius:6px;font-size:12px;font-family:inherit">
       <button class="btn btn-sm btn-gray" onclick="clearHistFilter()" style="font-size:11px;flex-shrink:0">초기화</button>
     </div>
     <div id="histStats" style="display:none;padding:8px 10px;background:#e8eaf6;border-radius:8px;margin-bottom:10px;font-size:12px;color:#1a237e;font-weight:600"></div>
@@ -3127,24 +3140,71 @@ function initHistTab(){
   if(procSel&&procSel.options.length<=1)PROCESSES.forEach(p=>{const o=document.createElement('option');o.value=p.name;o.textContent=p.icon+' '+p.name;procSel.appendChild(o)});
   const custSel=document.getElementById('histFiltCust');
   if(custSel&&custSel.options.length<=1){const custCat=cats.find(c=>c.name==='고객사');if(custCat)custCat.subs.forEach(c=>{const o=document.createElement('option');o.value=c;o.textContent=c;custSel.appendChild(o)})}
+  // 날짜 범위 기본값: 오늘 기준 7일
+  const today=new Date().toISOString().split('T')[0];
+  const weekAgo=new Date(Date.now()-7*86400000).toISOString().split('T')[0];
+  const dfEl=document.getElementById('histDateFrom');
+  const dtEl=document.getElementById('histDateTo');
+  if(dfEl&&!dfEl.value)dfEl.value=weekAgo;
+  if(dtEl&&!dtEl.value)dtEl.value=today;
+  // 기종 셀렉트 채우기 (레이스웨이 + 일반기종)
+  fillHistModelSelect();
   if(!_serverHist.length)loadServerHist();
+}
+async function fillHistModelSelect(){
+  const sel=document.getElementById('histFiltModel');if(!sel)return;
+  const prev=sel.value;
+  sel.innerHTML='<option value="">전체 기종</option>';
+  // 레이스웨이 기종
+  const ptData=await loadPartTreeData();
+  const rwParts=[...new Set((ptData||[]).map(r=>getProdPart(r)))].sort();
+  const finals=[...new Set((ptData||[]).map(r=>getFinalPart(r)))].sort();
+  const rwAll=[...new Set([...rwParts,...finals])].sort();
+  // 일반기종
+  await loadGeneralModels(true);
+  const gmNames=[...new Set((_generalModels||[]).map(m=>m.model_name))].sort();
+  if(rwAll.length){sel.innerHTML+='<optgroup label="🔩 레이스웨이">'+rwAll.map(p=>`<option value="${p}">${p}</option>`).join('')+'</optgroup>'}
+  if(gmNames.length){sel.innerHTML+='<optgroup label="🏭 일반기종">'+gmNames.map(g=>`<option value="${g}">${g}</option>`).join('')+'</optgroup>'}
+  if(prev){sel.value=prev}
 }
 async function loadServerHist(){
   const container=document.getElementById('serverHistList');container.innerHTML='<div style="text-align:center;padding:12px;color:#1565c0;font-size:12px">🔄 서버에서 불러오는 중...</div>';
   _serverHistPage=0;
-  try{_serverHist=await sbSelect('move_history_tj',{},'created_at.desc',500);renderServerHist();showToast('✅ '+_serverHist.length+'건 조회됨')}
-  catch(e){container.innerHTML='<div class="h-empty">⚠ 서버 조회 실패: '+e.message+'</div>';_serverHist=[];renderServerHist()}
+  // 날짜 범위로 서버 쿼리
+  const dateFrom=document.getElementById('histDateFrom')?document.getElementById('histDateFrom').value:'';
+  const dateTo=document.getElementById('histDateTo')?document.getElementById('histDateTo').value:'';
+  const filters={};
+  if(dateFrom)filters.move_date='gte.'+dateFrom;
+  if(dateTo){
+    // gte와 lte 동시 적용을 위해 별도 처리
+    if(dateFrom) filters._lte_move_date='lte.'+dateTo;
+    else filters.move_date='lte.'+dateTo;
+  }
+  try{
+    const sb=getSb();if(!sb)throw new Error('Supabase 미설정');
+    let q=sb.from('move_history_tj').select('*');
+    if(dateFrom)q=q.gte('move_date',dateFrom);
+    if(dateTo)q=q.lte('move_date',dateTo);
+    q=q.order('created_at',{ascending:false}).limit(1000);
+    const{data,error}=await q;if(error)throw error;
+    _serverHist=data||[];
+    renderServerHist();showToast('✅ '+_serverHist.length+'건 조회됨');
+  }catch(e){container.innerHTML='<div class="h-empty">⚠ 서버 조회 실패: '+e.message+'</div>';_serverHist=[];renderServerHist()}
 }
 function getFilteredServerHist(){
   const proc=document.getElementById('histFiltProc')?document.getElementById('histFiltProc').value:'';
   const cust=document.getElementById('histFiltCust')?document.getElementById('histFiltCust').value:'';
-  const date=document.getElementById('histFiltDate')?document.getElementById('histFiltDate').value:'';
+  const dateFrom=document.getElementById('histDateFrom')?document.getElementById('histDateFrom').value:'';
+  const dateTo=document.getElementById('histDateTo')?document.getElementById('histDateTo').value:'';
+  const model=document.getElementById('histFiltModel')?document.getElementById('histFiltModel').value:'';
   const search=(document.getElementById('histFiltSearch')?document.getElementById('histFiltSearch').value:'').trim().toLowerCase();
   let filtered=_serverHist;
   if(proc)filtered=filtered.filter(h=>h.process===proc);
-  if(cust)filtered=filtered.filter(h=>(h.note||'').includes(cust));
-  if(date)filtered=filtered.filter(h=>h.move_date===date);
-  if(search)filtered=filtered.filter(h=>(h.base_part||'').toLowerCase().includes(search)||(h.barcode_raw||'').toLowerCase().includes(search)||(h.lot||'').toLowerCase().includes(search)||(h.general_model||'').toLowerCase().includes(search));
+  if(cust)filtered=filtered.filter(h=>(h.note||'').includes(cust)||(h.departure||'').includes(cust)||(h.destination||'').includes(cust));
+  if(dateFrom)filtered=filtered.filter(h=>h.move_date>=dateFrom);
+  if(dateTo)filtered=filtered.filter(h=>h.move_date<=dateTo);
+  if(model)filtered=filtered.filter(h=>(h.base_part||'')===model||(h.general_model||'')===model||(h.parent_part||'')+((h.child_type||''))===model);
+  if(search)filtered=filtered.filter(h=>(h.base_part||'').toLowerCase().includes(search)||(h.barcode_raw||'').toLowerCase().includes(search)||(h.lot||'').toLowerCase().includes(search)||(h.general_model||'').toLowerCase().includes(search)||(h.note||'').toLowerCase().includes(search));
   return filtered;
 }
 function renderServerHist(){
@@ -3180,7 +3240,15 @@ function renderServerHist(){
   document.getElementById('histLoadMore').style.display=showing.length<filtered.length?'block':'none';
 }
 function loadMoreServerHist(){_serverHistPage++;renderServerHist()}
-function clearHistFilter(){['histFiltProc','histFiltCust','histFiltDate','histFiltSearch'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=''});renderServerHist()}
+function clearHistFilter(){
+  ['histFiltProc','histFiltCust','histFiltModel','histFiltSearch'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=''});
+  // 날짜 범위 초기화: 최근 7일
+  const today=new Date().toISOString().split('T')[0];
+  const weekAgo=new Date(Date.now()-7*86400000).toISOString().split('T')[0];
+  const dfEl=document.getElementById('histDateFrom');if(dfEl)dfEl.value=weekAgo;
+  const dtEl=document.getElementById('histDateTo');if(dtEl)dtEl.value=today;
+  loadServerHist();
+}
 
 // ===== 이력 개별 삭제 =====
 async function deleteServerHist(id){
