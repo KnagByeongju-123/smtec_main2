@@ -971,7 +971,7 @@ async function importModelsFromMaterial(){
   if(!_materialMaster.length){st.style.background='#fff3e0';st.style.color='#e65100';st.textContent='⚠ 등록된 소재가 없습니다';return}
 
   // 소재마스터의 mapped_models에서 고객사+기종 추출
-  const toImport=[]; // {customer, model_name}
+  const toImport=[];
   _materialMaster.forEach(m=>{
     if(!m.mapped_models)return;
     const cust=m.customer||'공용';
@@ -1000,31 +1000,34 @@ async function importModelsFromMaterial(){
   if(!confirm(msg))return;
 
   st.textContent='등록 중...';
-  const rows=newItems.map(m=>({customer:m.customer,model_name:m.model_name,note:'소재마스터 가져오기',sort_order:0}));
 
-  // 10건씩 batch
-  let ok=0,fail=0;
-  const CHUNK=10;
-  for(let i=0;i<rows.length;i+=CHUNK){
-    const chunk=rows.slice(i,i+CHUNK);
+  // 개별 건별 등록 (batch insert 에러 방지)
+  let ok=0,fail=0,lastErr='';
+  for(const m of newItems){
+    const row={customer:m.customer,model_name:m.model_name,note:'소재마스터 가져오기',sort_order:0};
     try{
-      const sb=getSb();const{error}=await sb.from('general_model_tj').insert(chunk);
-      if(error)throw error;ok+=chunk.length;
+      await sbInsert('general_model_tj',row);
+      ok++;
     }catch(e){
-      for(const r of chunk){try{await sbInsert('general_model_tj',r);ok++}catch(e2){fail++}}
+      fail++;
+      lastErr=e.message||JSON.stringify(e);
+      console.log('일반기종 등록 실패:',row,e);
     }
-    st.textContent='등록 중... '+ok+'/'+(ok+fail);
+    st.textContent='등록 중... '+ok+'/'+(ok+fail)+' (전체: '+newItems.length+')';
   }
 
   _generalModels=[];await loadGeneralModels(true);
 
   if(fail===0){
     st.style.background='#e8f5e9';st.style.color='#2e7d32';
-    st.textContent='✅ '+ok+'건 일반기종 등록 완료 (소재마스터에서 가져옴)';
+    st.textContent='✅ '+ok+'건 일반기종 등록 완료';
     showToast('✅ '+ok+'건 기종 가져오기 완료');
-  }else{
+  }else if(ok>0){
     st.style.background='#fff3e0';st.style.color='#e65100';
-    st.textContent='⚠ 성공 '+ok+'건, 실패 '+fail+'건';
+    st.textContent='⚠ 성공 '+ok+'건, 실패 '+fail+'건 ('+lastErr+')';
+  }else{
+    st.style.background='#ffebee';st.style.color='#c62828';
+    st.textContent='❌ 전체 실패 '+fail+'건: '+lastErr;
   }
 }
 // ============================================================
