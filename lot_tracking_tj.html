@@ -231,6 +231,13 @@
               <div class="fg" id="fgWorker"><label>작업자명</label><input type="text" id="inpWorker" placeholder="작업자명 입력"></div>
               <div class="fg" id="fgEquip"><label>설비호기</label><input type="text" id="inpEquip" placeholder="설비호기 입력"></div>
             </div>
+            <!-- 세척/가공/열처리/표면처리: 일자 + 기종명 -->
+            <div id="fgSimpleProcFields" style="display:none">
+              <div class="modal-row2">
+                <div class="fg"><label>📅 이동일자</label><input type="date" id="inpMoveDate" style="font-size:14px;padding:10px"></div>
+                <div class="fg"><label>📦 기종명</label><input type="text" id="inpModelName" placeholder="기종명 입력" style="font-size:14px;padding:10px"></div>
+              </div>
+            </div>
             <!-- 출하 공정: 생산일자 (복수) -->
             <div class="fg" id="fgProdDates" style="display:none">
               <label>생산일자 <span style="font-size:10px;color:#888;font-weight:400">여러 날짜 추가 가능</span></label>
@@ -1713,6 +1720,7 @@ function selectProcess(proc){
     document.getElementById('inpProdDate').value=new Date().toISOString().split('T')[0];
     if(savedInfo.worker){document.getElementById('inpWorker').style.borderColor='#2e7d32';document.getElementById('inpWorker').style.background='#e8f5e9'}
     document.getElementById('fgMaterialSel').style.display='none';
+    document.getElementById('fgSimpleProcFields').style.display='none';
   }else if(proc.id==='incoming'){
     lblW.textContent='소재중량 (kg)';inpW.placeholder='소재중량 입력';inpW.step='0.1';inpW.inputMode='decimal';
     fgEquip.style.display='none';weRow.style.gridTemplateColumns='1fr';
@@ -1721,7 +1729,21 @@ function selectProcess(proc){
     document.getElementById('inpWorker').style.borderColor='#ddd';document.getElementById('inpWorker').style.background='#fff';
     // 소재 선택 표시 + 채우기
     document.getElementById('fgMaterialSel').style.display='block';
+    document.getElementById('fgSimpleProcFields').style.display='none';
     fillMaterialSelect(selectedCustomer);
+  }else if(['cleaning','machining','heat','surface'].includes(proc.id)){
+    // 세척/가공/열처리/표면처리: 설비호기+소재중량 숨기고 수량만
+    const fgW=document.getElementById('fgWeight');
+    lblW.textContent='수량';inpW.placeholder='수량 입력';inpW.step='1';inpW.inputMode='numeric';
+    fgEquip.style.display='none';weRow.style.gridTemplateColumns='1fr';
+    fgProdDates.style.display='none';
+    _prodDates=[];
+    document.getElementById('inpWorker').style.borderColor='#ddd';document.getElementById('inpWorker').style.background='#fff';
+    document.getElementById('fgMaterialSel').style.display='none';
+    // 일자+기종명 표시
+    document.getElementById('fgSimpleProcFields').style.display='block';
+    document.getElementById('inpMoveDate').value=new Date().toISOString().split('T')[0];
+    document.getElementById('inpModelName').value='';
   }else{
     lblW.textContent='소재중량 (kg)';inpW.placeholder='소재중량 입력';inpW.step='0.1';inpW.inputMode='decimal';
     fgEquip.style.display='block';weRow.style.gridTemplateColumns='1fr 1fr';
@@ -1729,6 +1751,7 @@ function selectProcess(proc){
     _prodDates=[];
     document.getElementById('inpWorker').style.borderColor='#ddd';document.getElementById('inpWorker').style.background='#fff';
     document.getElementById('fgMaterialSel').style.display='none';
+    document.getElementById('fgSimpleProcFields').style.display='none';
   }
 
   const previewArea=document.getElementById('batchPreviewArea');
@@ -1765,25 +1788,32 @@ function showMoveConfirm(){
   html+=`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #c5cae9"><span style="color:#555">출발지</span><span style="font-weight:700">${from}</span></div>`;
   html+=`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #c5cae9"><span style="color:#555">도착지</span><span style="font-weight:700">${to}</span></div>`;
   html+=`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #c5cae9"><span style="color:#555">작업자명</span><span style="font-weight:700">${worker}</span></div>`;
-  // 출하: 생산일자, 소재입고: 설비호기 없음, 기타: 설비호기
+  // 출하: 생산일자, 소재입고: 설비호기 없음, 세척/가공/열처리/표면처리: 설비호기 없음, 생산: 설비호기
   const isShipment=selectedProcess&&selectedProcess.id==='shipment';
   const isIncoming=selectedProcess&&selectedProcess.id==='incoming';
+  const isSimpleProc=['cleaning','machining','heat','surface'].includes(selectedProcess&&selectedProcess.id);
   if(isShipment){
     const pdStr=_prodDates.length?_prodDates.join(', '):'⚠ 미입력';
     const pdColor=_prodDates.length?'#1a237e':'#c62828';
     const pdBg=_prodDates.length?'#e8eaf6':'#ffebee';
     html+=`<div style="display:flex;justify-content:space-between;align-items:flex-start;padding:6px 0;border-bottom:1px solid #c5cae9;background:${pdBg};margin:0 -4px;padding-left:4px;padding-right:4px;border-radius:4px"><span style="color:${pdColor};font-weight:700;white-space:nowrap">📅 생산일자</span><span style="font-weight:700;color:${pdColor};font-size:12px;text-align:right">${pdStr}</span></div>`;
-  }else if(!isIncoming){
+  }else if(!isIncoming&&!isSimpleProc){
     html+=`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #c5cae9"><span style="color:#555">설비호기</span><span style="font-weight:700">${equip}</span></div>`;
   }
-  const weightLabel=isShipment?'📦 수량':'⚖ 소재중량';
-  const weightUnit=isShipment?'개':'kg';
+  const weightLabel=(isShipment||isSimpleProc)?'📦 수량':'⚖ 소재중량';
+  const weightUnit=(isShipment||isSimpleProc)?'개':'kg';
   if(weight){
     html+=`<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #c5cae9;background:#fff3e0;margin:0 -4px;padding-left:4px;padding-right:4px;border-radius:4px"><span style="color:#e65100;font-weight:700">${weightLabel}</span><span style="font-weight:800;color:#e65100;font-size:16px">${weight} ${weightUnit}</span></div>`;
   }else{
     html+=`<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #ffcdd2;background:#ffebee;margin:0 -4px;padding-left:4px;padding-right:4px;border-radius:4px"><span style="color:#c62828;font-weight:700">${weightLabel}</span><span style="font-weight:700;color:#c62828">⚠ 미입력</span></div>`;
   }
   // 소재입고일자: 소재입고 공정에서 항상 표시
+  if(isSimpleProc){
+    const moveDate=document.getElementById('inpMoveDate').value||'';
+    const modelName=document.getElementById('inpModelName').value.trim()||'-';
+    html+=`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #c5cae9"><span style="color:#555">📅 이동일자</span><span style="font-weight:700;color:#1a237e">${moveDate||'오늘'}</span></div>`;
+    html+=`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #c5cae9"><span style="color:#555">📦 기종명</span><span style="font-weight:700;color:#1a237e">${modelName}</span></div>`;
+  }
   if(selectedProcess&&selectedProcess.id==='incoming'){
     const inDate=document.getElementById('inpIncomingDate').value||'';
     if(inDate){
@@ -1887,10 +1917,17 @@ function goToScanStep(){
   }else if(isShipment){
     if(!weight){if(!confirm('⚠ 수량 미입력\n\n이대로 로트 리딩을 진행하시겠습니까?'))return}
     if(!_prodDates.length){if(!confirm('⚠ 생산일자 미입력\n\n이대로 로트 리딩을 진행하시겠습니까?'))return}
+  }else if(['cleaning','machining','heat','surface'].includes(selectedProcess.id)){
+    // 세척/가공/열처리/표면처리: 수량은 선택사항 (리딩 후 입력 가능)
   }else if(!weight){
     if(!confirm('⚠ 소재중량 미입력\n\n이대로 로트 리딩을 진행하시겠습니까?'))return;
   }
   const saveData={from:savedSelections['출발지']||'',to:savedSelections['도착지']||'',worker,equip};
+  // 세척/가공/열처리/표면처리: 일자+기종명 저장
+  if(['cleaning','machining','heat','surface'].includes(selectedProcess.id)){
+    saveData.moveDate=document.getElementById('inpMoveDate').value||'';
+    saveData.modelName=document.getElementById('inpModelName').value.trim()||'';
+  }
   // 생산일자는 매번 새로 입력하므로 저장하지 않음
   localStorage.setItem('LOT_TJ_PROC_'+selectedProcess.id,JSON.stringify(saveData));
   closeMoveSetup();scanAccum=[];
@@ -2210,9 +2247,9 @@ async function fillShipmentSelect(customer,procId){
     document.getElementById('selShipmentModel').style.background='#ffebee';
     document.getElementById('selShipmentModel').style.color='#c62828';
   }else if(procId==='surface'){
-    // 표면처리: 열처리기종 목록만
-    opts=[...new Set(filtered.filter(r=>r.process_route==='heat_surface').map(r=>r.heat_part))].sort();
-    document.getElementById('shipmentModelLabel').textContent='열처리기종 선택 → 표면처리기종 자동변환';
+    // 표면처리: 생산기종(Inner/Outer) 선택 → 표면처리기종 자동변환
+    opts=[...new Set(filtered.filter(r=>r.process_route==='heat_surface').map(r=>getProdPart(r)))].sort();
+    document.getElementById('shipmentModelLabel').textContent='생산기종 선택 → 표면처리기종 자동변환';
     document.getElementById('selShipmentModel').style.borderColor='#e65100';
     document.getElementById('selShipmentModel').style.background='#fff3e0';
     document.getElementById('selShipmentModel').style.color='#e65100';
@@ -2246,8 +2283,8 @@ async function onShipmentModelSelect(){
     document.getElementById('lotTraceArea').style.display='none';
     return;
   }
-  // 이전 공정 이력 확인 (기종 선택 즉시)
-  checkPrevProcessHist(val, procId);
+  // 이전 공정 이력 확인 (기종 선택 즉시) — surface는 변환 후 별도 호출
+  if(procId!=='surface') checkPrevProcessHist(val, procId);
 
   if(procId==='heat'){
     // 생산기종(공백없음) 입력 → 열처리기종 자동변환 표시
@@ -2267,12 +2304,26 @@ async function onShipmentModelSelect(){
       }else{cr.style.display='none'}
     }else{cr.style.display='none'}
   }else if(procId==='surface'){
-    // 열처리기종 → 표면처리기종 자동변환
-    const surfacePart=await getSurfacePartFromHeat(val);
-    if(surfacePart){
-      document.getElementById('mInpBasePart').value=surfacePart;
-      cr.style.display='block';cr.style.background='#fff3e0';cr.style.borderColor='#ffcc80';
-      cr.innerHTML=`<span style="color:#888">열처리기종</span> <b>${val}</b> → <span style="color:#888">표면처리기종</span> <b style="color:#e65100;font-size:15px">${surfacePart}</b>`;
+    // 생산기종(Inner/Outer) → 열처리기종 → 표면처리기종 자동변환
+    const match=val.match(/^(.+?)(Inner|Outer)$/i);
+    if(match){
+      const parentP=match[1],childT=match[2];
+      const heatOptions=await getHeatParts(parentP,childT);
+      // heat_surface 경로인 것만 필터
+      const surfaceOptions=heatOptions.filter(h=>h.process_route==='heat_surface'&&h.surface_part);
+      if(surfaceOptions.length===1){
+        const sp=surfaceOptions[0].surface_part;
+        const hp=surfaceOptions[0].heat_part;
+        document.getElementById('mInpBasePart').value=sp;
+        cr.style.display='block';cr.style.background='#fff3e0';cr.style.borderColor='#ffcc80';
+        cr.innerHTML=`<span style="color:#888">생산기종</span> <b>${val}</b> → <span style="color:#888">열처리</span> <b>${hp}</b> → <span style="color:#888">표면처리</span> <b style="color:#e65100;font-size:15px">${sp}</b>`;
+        // 이전 공정(열처리) 이력은 열처리기종으로 확인
+        checkPrevProcessHist(hp, procId);
+      }else if(surfaceOptions.length>1){
+        cr.style.display='block';cr.style.background='#fff3e0';cr.style.borderColor='#ffcc80';
+        cr.innerHTML='<div style="font-size:11px;color:#e65100;font-weight:700;margin-bottom:4px">표면처리기종 선택</div>'+
+          surfaceOptions.map(h=>`<button onclick="document.getElementById('mInpBasePart').value='${h.surface_part}';document.getElementById('conversionResult').querySelectorAll('button').forEach(b=>b.style.background='#fff');this.style.background='#c8e6c9';checkPrevProcessHist('${h.heat_part}','surface')" style="display:block;width:100%;text-align:left;padding:7px 10px;margin-bottom:4px;border:1.5px solid #ddd;border-radius:6px;background:#fff;cursor:pointer;font-family:inherit;font-size:13px;font-weight:600">${h.heat_part} → ${h.surface_part}</button>`).join('');
+      }else{cr.style.display='none'}
     }else{cr.style.display='none'}
   }else{cr.style.display='none'}
 }
@@ -2847,7 +2898,9 @@ async function doRegisterFromModal(){
       customer:selectedCustomer||'',process:selectedProcess?selectedProcess.name:'',
       worker:procInfo.worker||'',equip:procInfo.equip||'',weight,incomingDate,fields,
       barcode:modalScanData.value,basePart,lot,format:modalScanData.format,qty,note,
-      prodDates:procInfo.prodDates||_prodDates||[],ts:now.toISOString()
+      prodDates:procInfo.prodDates||_prodDates||[],
+      moveDate:procInfo.moveDate||'',modelName:procInfo.modelName||'',
+      ts:now.toISOString()
     };
     hist.unshift(entry);if(hist.length>500)hist.length=500;
     localStorage.setItem('LOT_TJ_HIST',JSON.stringify(hist));
@@ -2878,8 +2931,11 @@ async function saveHistToServer(entry){
     if(entry.incomingDate)noteText=('[입고일:'+entry.incomingDate+'] '+(noteText)).trim();
     if(entry.prodDates&&entry.prodDates.length)noteText=('[생산일:'+entry.prodDates.join(',')+'] '+(noteText)).trim();
     if(entry.materialInfo)noteText=('[소재:'+entry.materialInfo+'] '+(noteText)).trim();
+    if(entry.modelName)noteText=('[기종:'+entry.modelName+'] '+(noteText)).trim();
+    // 이동일자가 별도 지정된 경우 move_date 덮어쓰기
+    const moveDate=entry.moveDate||entry.date;
     await sbInsert('move_history_tj',{
-      move_date:entry.date,move_time:entry.time,
+      move_date:moveDate,move_time:entry.time,
       process:entry.process||'',departure:entry.fields&&entry.fields['출발지']||'',
       destination:entry.fields&&entry.fields['도착지']||'',barcode_raw:entry.barcode,
       base_part:entry.basePart||'',lot:entry.lot||'',
