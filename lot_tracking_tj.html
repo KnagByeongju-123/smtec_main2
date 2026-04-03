@@ -1065,11 +1065,11 @@ function renderMaterialMasterList(){
     const hdr=document.createElement('div');hdr.style.cssText='padding:8px 12px;background:#e3f2fd;font-size:13px;font-weight:700;color:#1565c0';
     hdr.textContent='🏢 '+cust+' ('+items.length+'건)';sec.appendChild(hdr);
     const tbl=document.createElement('table');tbl.style.cssText='width:100%;border-collapse:collapse;font-size:11px';
-    tbl.innerHTML='<thead><tr><th style="padding:4px 6px;border-bottom:1.5px solid #c5cae9;text-align:left;background:#f5f5f5">소재명</th><th style="padding:4px 6px;border-bottom:1.5px solid #c5cae9;text-align:left;background:#f5f5f5">재질/두께/폭/피치</th><th style="padding:4px 6px;border-bottom:1.5px solid #c5cae9;text-align:left;background:#f5f5f5">기종</th><th style="padding:4px 6px;border-bottom:1.5px solid #c5cae9;width:40px;background:#f5f5f5">삭제</th></tr></thead>';
+    tbl.innerHTML='<thead><tr><th style="padding:4px 6px;border-bottom:1.5px solid #c5cae9;text-align:left;background:#f5f5f5">소재명</th><th style="padding:4px 6px;border-bottom:1.5px solid #c5cae9;text-align:left;background:#f5f5f5">재질/두께/폭/피치</th><th style="padding:4px 6px;border-bottom:1.5px solid #c5cae9;text-align:left;background:#f5f5f5">기종</th><th style="padding:4px 6px;border-bottom:1.5px solid #c5cae9;width:70px;background:#f5f5f5">관리</th></tr></thead>';
     const tbody=document.createElement('tbody');
     items.forEach(m=>{
       const tr=document.createElement('tr');
-      tr.innerHTML=`<td style="padding:4px 6px;border-bottom:1px solid #eee;font-weight:600">${m.material_name}</td><td style="padding:4px 6px;border-bottom:1px solid #eee">${m.material_type||'-'}/${m.thickness||'-'}/${m.width||'-'}/${m.pitch||'-'}</td><td style="padding:4px 6px;border-bottom:1px solid #eee;font-size:10px;color:#1565c0">${m.mapped_models||'-'}</td><td style="padding:4px 6px;border-bottom:1px solid #eee"><button class="btn btn-sm btn-red" style="padding:2px 6px;font-size:10px" onclick="deleteMaterialMaster(${m.id})">삭제</button></td>`;
+      tr.innerHTML=`<td style="padding:4px 6px;border-bottom:1px solid #eee;font-weight:600">${m.material_name}</td><td style="padding:4px 6px;border-bottom:1px solid #eee">${m.material_type||'-'}/${m.thickness||'-'}/${m.width||'-'}/${m.pitch||'-'}</td><td style="padding:4px 6px;border-bottom:1px solid #eee;font-size:10px;color:#1565c0">${m.mapped_models||'-'}</td><td style="padding:4px 6px;border-bottom:1px solid #eee;white-space:nowrap"><button class="btn btn-sm btn-blue" style="padding:2px 6px;font-size:10px;margin-right:2px" onclick="editMaterialMaster(${m.id})">수정</button><button class="btn btn-sm btn-red" style="padding:2px 6px;font-size:10px" onclick="deleteMaterialMaster(${m.id})">삭제</button></td>`;
       tbody.appendChild(tr);
     });
     tbl.appendChild(tbody);sec.appendChild(tbl);c.appendChild(sec);
@@ -1122,6 +1122,87 @@ async function deleteMaterialMaster(id){
   if(!confirm('삭제?'))return;
   try{await sbDelete('material_master_tj',{id})}catch(e){}
   _materialMaster=[];await loadMaterialMaster(true);showToast('삭제됨');
+}
+
+function editMaterialMaster(id){
+  const m=_materialMaster.find(mm=>mm.id===id);
+  if(!m){showToast('소재 정보를 찾을 수 없습니다');return}
+  // 모달 동적 생성
+  let overlay=document.getElementById('mmEditOverlay');
+  if(overlay)overlay.remove();
+  overlay=document.createElement('div');
+  overlay.id='mmEditOverlay';
+  overlay.className='modal-overlay show center';
+  overlay.innerHTML=`<div class="modal-box" style="border-radius:16px;max-width:440px;margin:16px">
+    <div class="modal-handle"></div>
+    <div class="modal-hdr"><span class="modal-hdr-tit">🧱 소재 수정</span><button class="modal-close" onclick="closeMmEdit()">✕</button></div>
+    <div class="modal-body">
+      <div style="padding:6px 8px;background:#e3f2fd;border-radius:6px;font-size:12px;font-weight:600;color:#1565c0;margin-bottom:10px">ID: ${m.id}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">
+        <div class="fg"><label>재질</label><input id="mmEditType" value="${m.material_type||''}" placeholder="SPCC" oninput="previewMmEditName()"></div>
+        <div class="fg"><label>두께</label><input id="mmEditThick" value="${m.thickness||''}" placeholder="0.6" oninput="previewMmEditName()"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">
+        <div class="fg"><label>폭</label><input id="mmEditWidth" value="${m.width||''}" placeholder="32" oninput="previewMmEditName()"></div>
+        <div class="fg"><label>피치</label><input id="mmEditPitch" value="${m.pitch||''}" placeholder="12.5" oninput="previewMmEditName()"></div>
+      </div>
+      <div id="mmEditNamePreview" style="padding:6px 8px;background:#e8eaf6;border-radius:6px;font-size:13px;font-weight:700;color:#1a237e;margin-bottom:8px">📌 소재명: ${m.material_name}</div>
+      <div class="fg"><label>매핑기종 (쉼표 구분)</label><input id="mmEditModels" value="${m.mapped_models||''}" placeholder="1106,1113"></div>
+      <div class="fg"><label>고객사</label><input id="mmEditCustomer" value="${m.customer||''}" placeholder="비워두면 공용"></div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn btn-gray" onclick="closeMmEdit()" style="flex:1">취소</button>
+        <button class="btn btn-green" onclick="saveMaterialMasterEdit(${m.id})" style="flex:2">✅ 저장</button>
+      </div>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click',function(e){if(e.target===overlay)closeMmEdit()});
+}
+
+function closeMmEdit(){
+  const overlay=document.getElementById('mmEditOverlay');
+  if(overlay)overlay.remove();
+}
+
+function previewMmEditName(){
+  const t=document.getElementById('mmEditType').value.trim();
+  const th=document.getElementById('mmEditThick').value.trim();
+  const w=document.getElementById('mmEditWidth').value.trim();
+  const p=document.getElementById('mmEditPitch').value.trim();
+  let name=t||'';
+  if(th)name+='-'+th+'T';
+  if(w)name+='-'+w+'W';
+  if(p)name+='-P'+p;
+  const el=document.getElementById('mmEditNamePreview');
+  if(name){el.textContent='📌 소재명: '+name;el.style.display='block'}
+  else{el.style.display='none'}
+}
+
+async function saveMaterialMasterEdit(id){
+  const t=document.getElementById('mmEditType').value.trim();
+  if(!t){showToast('재질을 입력하세요');return}
+  let name=t;
+  const th=document.getElementById('mmEditThick').value.trim();
+  const w=document.getElementById('mmEditWidth').value.trim();
+  const p=document.getElementById('mmEditPitch').value.trim();
+  if(th)name+='-'+th+'T';
+  if(w)name+='-'+w+'W';
+  if(p)name+='-P'+p;
+  const data={
+    material_name:name,
+    material_type:t,
+    thickness:th,
+    width:w,
+    pitch:p,
+    mapped_models:document.getElementById('mmEditModels').value.trim(),
+    customer:document.getElementById('mmEditCustomer').value.trim()
+  };
+  try{
+    await sbUpdate('material_master_tj',{id:'eq.'+id},data);
+    showToast('✅ 소재 수정 완료: '+name);
+    closeMmEdit();
+    _materialMaster=[];await loadMaterialMaster(true);
+  }catch(e){showToast('⚠ 수정 실패: '+e.message)}
 }
 
 // 엑셀 템플릿 다운로드
