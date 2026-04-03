@@ -611,6 +611,33 @@ function getTgBot() { return getSettings().tg_bot || ''; }
 function getTgUsers() {
   try { return JSON.parse(getSettings().tg_users || '[]'); } catch(e) { return []; }
 }
+
+// common_code fallback용 캐시
+let _ccTgBot='',_ccTgUsers=[];
+
+function decodeTgToken(encoded){
+  const key='smtec';
+  const decoded=atob(encoded);
+  let result='';
+  for(let i=0;i<decoded.length;i++)result+=String.fromCharCode(decoded.charCodeAt(i)^key.charCodeAt(i%key.length));
+  return result;
+}
+
+async function loadTgFromCommonCode(){
+  try{
+    const data=await sbSelect('common_code',{code_group:'eq.telegram'},'sort_order.asc',20);
+    if(data&&data.length){
+      data.forEach(r=>{
+        const v=String(r.code_value||'').trim();
+        if(r.sort_order===0)_ccTgBot=decodeTgToken(v);
+        else if(v)_ccTgUsers.push({name:r.note||'수신자'+r.sort_order,chat_id:v});
+      });
+    }
+  }catch(e){console.log('common_code 텔레그램 로드 실패:',e)}
+}
+
+// 페이지 로드 시 common_code도 미리 로드
+setTimeout(()=>{if(isConfigured())loadTgFromCommonCode()},1000);
 function isConfigured() { return !!(getSbUrl() && getSbKey()); }
 
 async function sbInsert(table, data) {
@@ -863,7 +890,7 @@ document.getElementById("inspectionForm").addEventListener("submit", async funct
   try {
     await sbInsert('qc_machine_check', row);
     alert("제출 완료되었습니다.");
-    sendTelegram(data);
+    await sendTelegram(data);
     const prev = form.inspector.value;
     form.reset();
     setDateTimeNow();
@@ -891,11 +918,18 @@ document.getElementById("inspectionForm").addEventListener("submit", async funct
   }
 });
 
-// === 텔레그램 알림 (localStorage) ===
+// === 텔레그램 알림 (localStorage → common_code fallback) ===
 async function sendTelegram(data){
-  const TG_BOT = getTgBot();
-  const TG_USERS = getTgUsers();
-  if (!TG_BOT || !TG_USERS.length) return; // 설정 없으면 스킵
+  let TG_BOT = getTgBot();
+  let TG_USERS = getTgUsers();
+
+  // localStorage에 없으면 common_code fallback
+  if(!TG_BOT||!TG_USERS.length){
+    if(!_ccTgBot)await loadTgFromCommonCode();
+    if(!TG_BOT&&_ccTgBot)TG_BOT=_ccTgBot;
+    if(!TG_USERS.length&&_ccTgUsers.length)TG_USERS=_ccTgUsers;
+  }
+  if(!TG_BOT||!TG_USERS.length)return;
 
   const checks=Object.entries(data.inputs).map(([k,v])=>(v==='NG'?'❌':'✅')+' '+k+': '+v).join('\n');
   const ngItems=Object.entries(data.inputs).filter(([k,v])=>v==='NG');
@@ -987,10 +1021,17 @@ async function testSbConnection(){
 
 async function testTelegram(){
   const st=document.getElementById('stgTgStatus');
-  const bot=document.getElementById('stgTgBot').value.trim();
-  const users=getTgUsers();
-  if(!bot){st.textContent='❌ Bot Token을 입력하세요';st.style.color='#ef4444';return}
-  if(!users.length){st.textContent='❌ 수신자를 추가하세요';st.style.color='#ef4444';return}
+  let bot=document.getElementById('stgTgBot').value.trim();
+  let users=getTgUsers();
+
+  // localStorage에 없으면 common_code fallback
+  if(!bot||!users.length){
+    if(!_ccTgBot)await loadTgFromCommonCode();
+    if(!bot&&_ccTgBot)bot=_ccTgBot;
+    if(!users.length&&_ccTgUsers.length)users=_ccTgUsers;
+  }
+  if(!bot){st.textContent='❌ Bot Token 없음 (설정 또는 common_code)';st.style.color='#ef4444';return}
+  if(!users.length){st.textContent='❌ 수신자 없음 (설정 또는 common_code)';st.style.color='#ef4444';return}
   st.textContent='전송 중...';st.style.color='var(--accent)';
   let ok=0;
   for(const u of users){
@@ -1012,7 +1053,12 @@ function updateConnInfo(){
   const c=document.getElementById('stgConnInfo');
   const sbOk=!!(s.sb_url&&s.sb_key);
   const tgOk=!!(s.tg_bot&&getTgUsers().length);
-  c.innerHTML=`${sbOk?'🟢':'🔴'} Supabase: ${sbOk?'설정됨':'미설정'}<br>${tgOk?'🟢':'🔴'} 텔레그램: ${tgOk?getTgUsers().length+'명 수신':'미설정'}`;
+  const ccOk=!!(_ccTgBot&&_ccTgUsers.length);
+  let tgLabel='';
+  if(tgOk)tgLabel='🟢 텔레그램: '+getTgUsers().length+'명 수신 (로컬설정)';
+  else if(ccOk)tgLabel='🟢 텔레그램: '+_ccTgUsers.length+'명 수신 (DB설정)';
+  else tgLabel='🔴 텔레그램: 미설정';
+  c.innerHTML=`${sbOk?'🟢':'🔴'} Supabase: ${sbOk?'설정됨':'미설정'}<br>${tgLabel}`;
 }
 
 window.addEventListener("DOMContentLoaded", () => {
