@@ -430,7 +430,14 @@
         <div id="singleQtyArea">
           <div class="modal-row2">
             <div class="fg"><label>로트</label><input type="text" id="mInpLot" placeholder="로트번호"></div>
-            <div class="fg"><label>수량</label><input type="number" id="mInpQty" placeholder="수량" inputmode="numeric" style="border:2px solid #2e7d32;background:#e8f5e9;font-size:16px;font-weight:700"></div>
+            <div class="fg"><label>생산수량</label><input type="number" id="mInpQty" placeholder="생산수량" inputmode="numeric" style="border:2px solid #2e7d32;background:#e8f5e9;font-size:16px;font-weight:700"></div>
+          </div>
+          <div id="lotConsumedArea" style="display:none;margin-top:6px">
+            <label style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:#fff3e0;border:1.5px solid #ffcc80;border-radius:8px;cursor:pointer;user-select:none">
+              <input type="checkbox" id="chkLotConsumed" style="width:20px;height:20px;accent-color:#e65100">
+              <span style="font-size:13px;font-weight:700;color:#e65100">소재 사용완료 (잔량 없음)</span>
+            </label>
+            <p style="font-size:10px;color:#888;margin-top:3px;padding-left:4px">체크 시 이 로트는 다음 생산에서 목록에 나타나지 않습니다</p>
           </div>
         </div>
 
@@ -678,6 +685,24 @@
 
   </div><!-- /settingsCardContainer -->
 
+  <!-- ★ 데이터 관리 카드 -->
+  <div class="card" style="border:2px solid #c62828;margin-top:12px">
+    <div class="card-tit" style="color:#c62828">🗑 데이터 삭제</div>
+    <p style="font-size:11px;color:#888;margin-bottom:10px">일자 범위를 선택하여 해당 기간의 데이터를 삭제합니다. <b style="color:#c62828">삭제된 데이터는 복구할 수 없습니다.</b></p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px">
+      <div class="fg" style="margin-bottom:0"><label style="font-size:11px">시작일</label><input type="date" id="delDateFrom" style="font-size:13px;padding:8px"></div>
+      <div class="fg" style="margin-bottom:0"><label style="font-size:11px">종료일</label><input type="date" id="delDateTo" style="font-size:13px;padding:8px"></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:6px">
+      <button class="btn btn-sm btn-red" onclick="deleteDataByRange('소재입고')" style="flex:1;font-size:12px;padding:10px">🗑 소재입고 삭제</button>
+      <button class="btn btn-sm btn-red" onclick="deleteDataByRange('생산')" style="flex:1;font-size:12px;padding:10px">🗑 생산내역 삭제</button>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-sm" onclick="deleteDataByRange('all')" style="flex:1;font-size:12px;padding:10px;background:#c62828;color:#fff">🗑 전체공정 삭제</button>
+    </div>
+    <div id="delDataStatus" style="display:none;margin-top:8px;padding:8px 10px;border-radius:6px;font-size:12px;font-weight:600"></div>
+  </div>
+
   <!-- ★ 통합 저장 버튼 -->
   <button class="btn btn-green" onclick="saveAllSettings()" style="font-size:16px;padding:14px;margin:0 12px 20px">💾 전체 설정 저장</button>
   <div id="saveAllStatus" style="text-align:center;font-size:12px;padding:6px;display:none;margin:0 12px"></div>
@@ -868,6 +893,10 @@ DROP POLICY IF EXISTS "allow_all_material_master_tj" ON material_master_tj;
 CREATE POLICY "allow_all_material_master_tj" ON material_master_tj FOR ALL USING (true) WITH CHECK (true);`,
 `DO $$ BEGIN
   ALTER TABLE move_history_tj ADD COLUMN IF NOT EXISTS material_info TEXT;
+EXCEPTION WHEN undefined_table THEN NULL;
+END $$;`,
+`DO $$ BEGIN
+  ALTER TABLE move_history_tj ADD COLUMN IF NOT EXISTS lot_consumed BOOLEAN DEFAULT false;
 EXCEPTION WHEN undefined_table THEN NULL;
 END $$;`
   ];
@@ -2157,11 +2186,22 @@ async function checkLotTrace(barcodeValue){
 
   try{
     const incomingHist=await sbSelect('move_history_tj',{process:'eq.소재입고'},'created_at.desc',1000);
-    // 직접선택 목록 생성 함수
+    // 사용완료된 로트 목록 조회
+    let consumedLots=new Set();
+    try{
+      const consumed=await sbSelect('move_history_tj',{lot_consumed:'eq.true'},'',1000);
+      if(consumed)consumed.forEach(r=>{if(r.lot)consumedLots.add(r.lot.trim());if(r.barcode_raw)consumedLots.add(r.barcode_raw.trim())});
+    }catch(e){}
+    // 사용완료 로트 제외한 입고 이력
+    const activeIncoming=incomingHist.filter(h=>{
+      const lotKey=(h.lot||h.barcode_raw||'').trim();
+      return !consumedLots.has(lotKey);
+    });
+    // 직접선택 목록 생성 함수 (사용완료 제외)
     const buildManualSelect=(msg)=>{
-      if(!incomingHist.length)return '';
+      if(!activeIncoming.length)return '';
       const seen=new Set();
-      const opts=incomingHist.filter(h=>{
+      const opts=activeIncoming.filter(h=>{
         const key=(h.base_part||'')+'|'+(h.lot||h.barcode_raw||'');
         if(seen.has(key))return false;seen.add(key);return true;
       }).slice(0,50);
@@ -2493,6 +2533,13 @@ function goRegStep2(){
   // step2 먼저 표시
   document.getElementById('regStep1').style.display='none';
   document.getElementById('regStep2').style.display='block';
+  // 소재 사용완료 체크박스 표시 (생산 공정에서만)
+  const consumedArea=document.getElementById('lotConsumedArea');
+  if(consumedArea){
+    const procId=selectedProcess?selectedProcess.id:'';
+    consumedArea.style.display=(procId==='production')?'block':'none';
+    document.getElementById('chkLotConsumed').checked=false;
+  }
   // 로트 요약
   let summary='📋 로트: <b>'+lot+'</b>';
   if(basePart)summary+=' · 기종: <b>'+basePart+'</b>';
@@ -2647,13 +2694,15 @@ async function doRegisterFromModal(){
     if(!generalModel){showToast('기종을 선택하세요');return}
     const lot=document.getElementById('mInpLot').value.trim();
     const qty=document.getElementById('mInpQty').value.trim();
+    const lotConsumed=document.getElementById('chkLotConsumed')?document.getElementById('chkLotConsumed').checked:false;
     const entry={
       id:'E'+now.getTime(),date:dateStr,time:timeStr,
       customer:selectedCustomer||'',process:selectedProcess?selectedProcess.name:'',
       worker:procInfo.worker||'',equip:procInfo.equip||'',weight,incomingDate,fields,
       barcode:modalScanData.value,basePart:generalModel,
       modelType:'general',generalModel:generalModel,materialInfo:materialInfoStr,
-      lot,format:modalScanData.format,qty,note,ts:now.toISOString()
+      lot,format:modalScanData.format,qty,note,ts:now.toISOString(),
+      lotConsumed
     };
     hist.unshift(entry);if(hist.length>500)hist.length=500;
     localStorage.setItem('LOT_TJ_HIST',JSON.stringify(hist));
@@ -2717,7 +2766,8 @@ async function saveHistToServer(entry){
       weight:entry.weight?parseFloat(entry.weight):null,incoming_date:entry.incomingDate||null,
       parent_part:entry.parentPart||null,child_type:entry.childType||null,
       model_type:entry.modelType||'raceway',general_model:entry.generalModel||null,
-      material_info:entry.materialInfo||null
+      material_info:entry.materialInfo||null,
+      lot_consumed:entry.lotConsumed||false
     });
     entry.sheetSaved=true;hist=hist.map(h=>h.id===entry.id?{...h,sheetSaved:true}:h);
     localStorage.setItem('LOT_TJ_HIST',JSON.stringify(hist));
@@ -3020,7 +3070,58 @@ function restoreCardOrder(){
   });
 }
 
-// ===== 레이스웨이 기종 마스터 카드 (설정탭) =====
+// ===== 데이터 삭제 (일자 범위) =====
+async function deleteDataByRange(processFilter){
+  const st=document.getElementById('delDataStatus');
+  const from=document.getElementById('delDateFrom').value;
+  const to=document.getElementById('delDateTo').value;
+  if(!from||!to){showToast('시작일과 종료일을 선택하세요');st.style.display='none';return}
+  if(from>to){showToast('시작일이 종료일보다 큽니다');return}
+
+  let label='';
+  if(processFilter==='소재입고')label='소재입고';
+  else if(processFilter==='생산')label='생산';
+  else label='전체공정';
+
+  const msg=`⚠ ${label} 데이터 삭제\n\n기간: ${from} ~ ${to}\n\n삭제된 데이터는 복구할 수 없습니다.\n정말 삭제하시겠습니까?`;
+  if(!confirm(msg))return;
+  // 2차 확인
+  if(!confirm('⚠⚠ 최종 확인: '+label+' ('+from+'~'+to+') 데이터를 영구 삭제합니다.'))return;
+
+  st.style.display='block';st.style.background='#e3f2fd';st.style.color='#1565c0';
+  st.textContent='삭제 중...';
+
+  const sb=getSb();
+  if(!sb){st.style.background='#ffebee';st.style.color='#c62828';st.textContent='❌ Supabase 미연결';return}
+
+  try{
+    let q=sb.from('move_history_tj').delete().gte('move_date',from).lte('move_date',to);
+    if(processFilter==='소재입고')q=q.eq('process','소재입고');
+    else if(processFilter==='생산')q=q.eq('process','생산');
+    // 'all'이면 process 필터 없이 전체 삭제
+
+    const{data,error}=await q.select('id');
+    if(error)throw error;
+    const cnt=data?data.length:0;
+
+    // 로컬 이력도 동기화
+    hist=hist.filter(h=>{
+      if(h.date<from||h.date>to)return true;
+      if(processFilter==='소재입고')return h.process!=='소재입고';
+      if(processFilter==='생산')return h.process!=='생산';
+      return false; // all
+    });
+    localStorage.setItem('LOT_TJ_HIST',JSON.stringify(hist));
+
+    st.style.background='#e8f5e9';st.style.color='#2e7d32';
+    st.textContent='✅ '+cnt+'건 삭제 완료 ('+label+': '+from+' ~ '+to+')';
+    showToast('🗑 '+cnt+'건 삭제 완료');
+    renderRecentList();renderRecentList2();
+  }catch(e){
+    st.style.background='#ffebee';st.style.color='#c62828';
+    st.textContent='❌ 삭제 실패: '+e.message;
+  }
+}
 async function loadRacewayMasterCard(){
   const c=document.getElementById('racewayMasterList');
   c.innerHTML='<div style="text-align:center;padding:10px;color:#1565c0;font-size:12px">🔄 불러오는 중...</div>';
