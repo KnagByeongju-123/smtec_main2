@@ -1725,6 +1725,8 @@ function onCustomerChange(){
   if(selectedProcess&&selectedProcess.id!=='incoming')fillShipmentSelect(selectedCustomer,selectedProcess.id);
   // 가공/열처리/표면처리: 기종명 셀렉트도 고객사 필터 갱신
   if(selectedProcess&&['machining','heat','surface'].includes(selectedProcess.id))fillSimpleProcModelSelect(selectedProcess.id);
+  // 출하: 기종명 셀렉트 갱신
+  if(selectedProcess&&selectedProcess.id==='shipment')fillShipmentModelForInput();
 }
 
 async function selectProcess(proc){
@@ -1778,7 +1780,11 @@ async function selectProcess(proc){
     document.getElementById('inpProdDate').value=new Date().toISOString().split('T')[0];
     if(savedInfo.worker){document.getElementById('inpWorker').style.borderColor='#2e7d32';document.getElementById('inpWorker').style.background='#e8f5e9'}
     document.getElementById('fgMaterialSel').style.display='none';
-    document.getElementById('fgSimpleProcFields').style.display='none';
+    // 출하기종 셀렉트 표시
+    document.getElementById('fgSimpleProcFields').style.display='block';
+    document.getElementById('inpMoveDate').parentElement.style.display='none'; // 이동일자는 숨김 (생산일자로 대체)
+    document.getElementById('inpModelName').value='';
+    await fillShipmentModelForInput();
   }else if(proc.id==='incoming'){
     lblW.textContent='소재중량 (kg)';inpW.placeholder='소재중량 입력';inpW.step='0.1';inpW.inputMode='decimal';
     fgEquip.style.display='none';weRow.style.gridTemplateColumns='1fr';
@@ -1800,6 +1806,7 @@ async function selectProcess(proc){
     document.getElementById('fgMaterialSel').style.display='none';
     // 일자+기종명 표시
     document.getElementById('fgSimpleProcFields').style.display='block';
+    document.getElementById('inpMoveDate').parentElement.style.display=''; // 이동일자 표시
     document.getElementById('inpMoveDate').value=new Date().toISOString().split('T')[0];
     document.getElementById('inpModelName').value='';
     await fillSimpleProcModelSelect(proc.id);
@@ -1898,6 +1905,7 @@ function showMoveConfirm(){
     document.getElementById('confirmBtnNormal').style.display='none';
     document.getElementById('confirmBtnShipment').style.display='block';
     document.getElementById('shipConfirmNote').value='';
+    const preSelected=document.getElementById('inpModelName')?document.getElementById('inpModelName').value:'';
     // 출하기종 콤보 채우기: SBC → 레이스웨이 출하기종, 그 외 → 일반기종
     (async()=>{
       const sel=document.getElementById('selShipConfirmModel');
@@ -1915,6 +1923,8 @@ function showMoveConfirm(){
         if(gmNames.length) sel.innerHTML+='<optgroup label="'+label+'">'+gmNames.map(g=>`<option value="${g}">${g}</option>`).join('')+'</optgroup>';
         else sel.innerHTML+='<option value="" disabled>등록된 기종 없음</option>';
       }
+      // 입력단계에서 선택한 기종 자동 선택
+      if(preSelected){for(let o of sel.options){if(o.value===preSelected){sel.value=preSelected;break}}}
     })();
   }else{
     document.getElementById('confirmBtnNormal').style.display='flex';
@@ -2294,6 +2304,29 @@ async function fillRacewaySelect(customer){
   const parents=[...new Set(filtered.map(r=>r.parent_part))].sort();
   const sel=document.getElementById('selRacewayPart');if(!sel)return;
   sel.innerHTML='<option value="">기준기종 선택</option>'+parents.map(p=>`<option value="${p}">${p}</option>`).join('');
+}
+
+// 출하: 입력단계 기종 셀렉트 채우기
+async function fillShipmentModelForInput(){
+  const sel=document.getElementById('inpModelName');if(!sel)return;
+  sel.innerHTML='<option value="">출하기종 선택</option>';
+  if(selectedCustomer==='SBC'){
+    const data=await loadPartTreeData();
+    const filtered=data.filter(r=>r.customer==='SBC');
+    const finals=[...new Set(filtered.map(r=>getFinalPart(r)))].sort();
+    if(finals.length) sel.innerHTML+='<optgroup label="🔩 레이스웨이 출하기종">'+finals.map(f=>`<option value="${f}">${f}</option>`).join('')+'</optgroup>';
+  }else{
+    const models=await loadGeneralModels(true);
+    const allModels=models&&models.length?models:_generalModels;
+    const filtered=selectedCustomer?allModels.filter(m=>m.customer===selectedCustomer):allModels;
+    const names=[...new Set(filtered.map(m=>m.model_name))].sort();
+    if(names.length){
+      const label=selectedCustomer?'🏭 '+selectedCustomer:'🏭 일반기종';
+      sel.innerHTML+='<optgroup label="'+label+'">'+names.map(n=>`<option value="${n}">${n}</option>`).join('')+'</optgroup>';
+    }else{
+      sel.innerHTML+='<option value="" disabled>등록된 기종 없음</option>';
+    }
+  }
 }
 
 // 세척/가공/열처리/표면처리: 이동등록 팝업 기종명 셀렉트 채우기
