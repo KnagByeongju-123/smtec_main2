@@ -3002,13 +3002,109 @@ function renderServerHist(){
     </div>
     ${matBadge?'<div style="margin-top:2px">'+matBadge+'</div>':''}
     <div style="font-size:10px;color:#666;margin-top:3px">${procBadge}${from?from+' → ':''}${to||''} ${h.qty?'<b>수량:'+h.qty+'</b>':''} ${h.lot?'LOT:'+h.lot:''}</div>
-    ${h.worker||h.equipment?'<div style="font-size:10px;color:#888;margin-top:1px">👤'+(h.worker||'-')+' 🏭'+(h.equipment||'-')+(h.note?' · '+h.note:'')+'</div>':''}`;
+    ${h.worker||h.equipment?'<div style="font-size:10px;color:#888;margin-top:1px">👤'+(h.worker||'-')+' 🏭'+(h.equipment||'-')+(h.note?' · '+h.note:'')+'</div>':''}
+    <div style="display:flex;gap:4px;margin-top:4px">
+      <button onclick="editServerHist(${h.id})" style="padding:3px 8px;border:none;border-radius:4px;font-size:10px;font-weight:600;cursor:pointer;font-family:inherit;background:#e3f2fd;color:#1565c0">✏ 수정</button>
+      <button onclick="deleteServerHist(${h.id})" style="padding:3px 8px;border:none;border-radius:4px;font-size:10px;font-weight:600;cursor:pointer;font-family:inherit;background:#ffebee;color:#c62828">🗑 삭제</button>
+    </div>`;
     container.appendChild(d);
   });
   document.getElementById('histLoadMore').style.display=showing.length<filtered.length?'block':'none';
 }
 function loadMoreServerHist(){_serverHistPage++;renderServerHist()}
 function clearHistFilter(){['histFiltProc','histFiltCust','histFiltDate','histFiltSearch'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=''});renderServerHist()}
+
+// ===== 이력 개별 삭제 =====
+async function deleteServerHist(id){
+  if(!confirm('이 이력을 삭제하시겠습니까?'))return;
+  try{
+    await sbDelete('move_history_tj',{id:'eq.'+id});
+    _serverHist=_serverHist.filter(h=>h.id!==id);
+    renderServerHist();
+    showToast('🗑 삭제 완료');
+  }catch(e){showToast('⚠ 삭제 실패: '+e.message)}
+}
+
+// ===== 이력 개별 수정 =====
+function editServerHist(id){
+  const h=_serverHist.find(r=>r.id===id);
+  if(!h){showToast('데이터를 찾을 수 없습니다');return}
+  let overlay=document.getElementById('histEditOverlay');
+  if(overlay)overlay.remove();
+  overlay=document.createElement('div');
+  overlay.id='histEditOverlay';
+  overlay.className='modal-overlay show';
+  overlay.innerHTML=`<div class="modal-box" style="max-height:90vh">
+    <div class="modal-handle"></div>
+    <div class="modal-hdr"><span class="modal-hdr-tit">✏ 이력 수정</span><button class="modal-close" onclick="closeHistEdit()">✕</button></div>
+    <div class="modal-body">
+      <div style="padding:6px 8px;background:#e8eaf6;border-radius:6px;font-size:11px;color:#1a237e;font-weight:600;margin-bottom:10px">ID: ${h.id} · ${h.move_date} ${h.move_time}</div>
+      <div class="modal-row2">
+        <div class="fg"><label>공정</label><select id="heProcess"><option value="소재입고"${h.process==='소재입고'?' selected':''}>소재입고</option><option value="생산"${h.process==='생산'?' selected':''}>생산</option><option value="세척"${h.process==='세척'?' selected':''}>세척</option><option value="열처리"${h.process==='열처리'?' selected':''}>열처리</option><option value="표면처리"${h.process==='표면처리'?' selected':''}>표면처리</option><option value="출하"${h.process==='출하'?' selected':''}>출하</option></select></div>
+        <div class="fg"><label>일자</label><input type="date" id="heMoveDate" value="${h.move_date||''}"></div>
+      </div>
+      <div class="fg"><label>기준기종 / 품번</label><input id="heBasePart" value="${h.base_part||''}"></div>
+      <div class="modal-row2">
+        <div class="fg"><label>출발지</label><input id="heDeparture" value="${h.departure||''}"></div>
+        <div class="fg"><label>도착지</label><input id="heDestination" value="${h.destination||''}"></div>
+      </div>
+      <div class="fg"><label>바코드</label><input id="heBarcodeRaw" value="${(h.barcode_raw||'').replace(/"/g,'&quot;')}"></div>
+      <div class="modal-row2">
+        <div class="fg"><label>로트</label><input id="heLot" value="${(h.lot||'').replace(/"/g,'&quot;')}"></div>
+        <div class="fg"><label>수량</label><input type="number" id="heQty" value="${h.qty||''}"></div>
+      </div>
+      <div class="modal-row2">
+        <div class="fg"><label>작업자</label><input id="heWorker" value="${h.worker||''}"></div>
+        <div class="fg"><label>설비</label><input id="heEquip" value="${h.equipment||''}"></div>
+      </div>
+      <div class="modal-row2">
+        <div class="fg"><label>소재중량 (kg)</label><input type="number" id="heWeight" value="${h.weight||''}" step="0.1"></div>
+        <div class="fg"><label>입고일자</label><input type="date" id="heIncoming" value="${h.incoming_date||''}"></div>
+      </div>
+      <div class="fg"><label>소재정보</label><input id="heMaterialInfo" value="${h.material_info||''}"></div>
+      <div class="fg"><label>비고</label><textarea id="heNote" style="min-height:40px">${h.note||''}</textarea></div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn btn-gray" onclick="closeHistEdit()" style="flex:1">취소</button>
+        <button class="btn btn-green" onclick="saveHistEdit(${h.id})" style="flex:2">✅ 저장</button>
+      </div>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click',function(e){if(e.target===overlay)closeHistEdit()});
+}
+
+function closeHistEdit(){
+  const overlay=document.getElementById('histEditOverlay');
+  if(overlay)overlay.remove();
+}
+
+async function saveHistEdit(id){
+  const data={
+    process:document.getElementById('heProcess').value,
+    move_date:document.getElementById('heMoveDate').value,
+    base_part:document.getElementById('heBasePart').value.trim(),
+    departure:document.getElementById('heDeparture').value.trim(),
+    destination:document.getElementById('heDestination').value.trim(),
+    barcode_raw:document.getElementById('heBarcodeRaw').value.trim(),
+    lot:document.getElementById('heLot').value.trim(),
+    qty:document.getElementById('heQty').value?parseInt(document.getElementById('heQty').value):null,
+    worker:document.getElementById('heWorker').value.trim(),
+    equipment:document.getElementById('heEquip').value.trim(),
+    weight:document.getElementById('heWeight').value?parseFloat(document.getElementById('heWeight').value):null,
+    incoming_date:document.getElementById('heIncoming').value||null,
+    material_info:document.getElementById('heMaterialInfo').value.trim()||null,
+    note:document.getElementById('heNote').value.trim()
+  };
+  try{
+    await sbUpdate('move_history_tj',{id:'eq.'+id},data);
+    // 로컬 캐시도 업데이트
+    const idx=_serverHist.findIndex(h=>h.id===id);
+    if(idx>=0)Object.assign(_serverHist[idx],data);
+    renderServerHist();
+    closeHistEdit();
+    showToast('✅ 수정 완료');
+  }catch(e){showToast('⚠ 수정 실패: '+e.message)}
+}
 function expServerXlsx(){
   const filtered=getFilteredServerHist();if(!filtered.length){showToast('이력 없음');return}
   const wb=XLSX.utils.book_new();
