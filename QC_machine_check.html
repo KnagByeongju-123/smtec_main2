@@ -329,6 +329,18 @@
     }
 
     .disabled-radio { opacity: 0.5; pointer-events: none; }
+
+    /* 탭 */
+    .tabs{display:flex;background:var(--surface);border-bottom:2px solid rgba(255,255,255,.06)}
+    .tab{flex:1;padding:11px 4px;text-align:center;font-size:13px;font-weight:600;cursor:pointer;border-bottom:3px solid transparent;color:var(--text3);transition:all .15s}
+    .tab.on{color:var(--accent);border-bottom-color:var(--accent)}
+    .pnl{display:none}.pnl.on{display:block}
+
+    /* 설정 내 수신자 리스트 */
+    .tg-user-item{display:flex;align-items:center;gap:6px;padding:8px 10px;background:var(--bg);border:1px solid rgba(255,255,255,.06);border-radius:8px;margin-bottom:4px;font-size:12px}
+    .tg-user-item .tg-name{font-weight:600;color:var(--text);min-width:50px}
+    .tg-user-item .tg-id{color:var(--text2);flex:1}
+    .tg-user-item .tg-del{width:24px;height:24px;border:none;border-radius:6px;background:rgba(239,68,68,.15);color:var(--ng);font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0}
   </style>
 </head>
 <body>
@@ -338,6 +350,14 @@
   <p>품질관리팀 · 검사기 일상점검 기록</p>
 </div>
 
+<!-- 탭 -->
+<div class="tabs">
+  <div class="tab on" onclick="swTab(0)">📋 점검</div>
+  <div class="tab" onclick="swTab(1)">⚙ 설정</div>
+</div>
+
+<!-- 점검 패널 -->
+<div class="pnl on" id="pnl0">
 <div class="form-wrap">
   <form id="inspectionForm">
 
@@ -519,6 +539,55 @@
     <button type="submit" class="submit-btn">✅ 점검 제출</button>
   </form>
 </div>
+</div><!-- /pnl0 -->
+
+<!-- 설정 패널 -->
+<div class="pnl" id="pnl1">
+<div class="form-wrap">
+  <div class="card">
+    <div class="card-title">Supabase 연결</div>
+    <div class="fg">
+      <label class="field-label">Supabase URL</label>
+      <input type="text" id="stgSbUrl" placeholder="https://xxxxx.supabase.co">
+    </div>
+    <div class="fg">
+      <label class="field-label">Supabase Anon Key</label>
+      <input type="text" id="stgSbKey" placeholder="eyJhbGciOi...">
+    </div>
+    <button type="button" class="submit-btn" style="font-size:13px;padding:10px;margin-top:4px;background:linear-gradient(135deg,#059669,#34d399)" onclick="testSbConnection()">🔗 연결 테스트</button>
+    <div id="stgSbStatus" style="font-size:11px;margin-top:6px;color:var(--text3)"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">텔레그램 알림</div>
+    <div class="fg">
+      <label class="field-label">Bot Token</label>
+      <input type="text" id="stgTgBot" placeholder="123456789:AAxxxxxxx">
+    </div>
+    <div class="fg">
+      <label class="field-label">수신자 목록</label>
+      <div id="tgUserList"></div>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <input type="text" id="tgNewName" placeholder="이름" style="flex:1;padding:9px 12px;font-size:13px;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit">
+        <input type="text" id="tgNewId" placeholder="Chat ID" style="flex:1;padding:9px 12px;font-size:13px;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit">
+        <button type="button" onclick="addTgUser()" style="padding:9px 14px;background:var(--accent2);border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;flex-shrink:0">+</button>
+      </div>
+    </div>
+    <button type="button" class="submit-btn" style="font-size:13px;padding:10px;margin-top:4px;background:linear-gradient(135deg,#7c3aed,#a78bfa)" onclick="testTelegram()">📨 테스트 발송</button>
+    <div id="stgTgStatus" style="font-size:11px;margin-top:6px;color:var(--text3)"></div>
+  </div>
+
+  <button type="button" class="submit-btn" onclick="saveSettings()">💾 설정 저장</button>
+  <div style="text-align:center;margin-top:10px">
+    <span id="stgSaveStatus" style="font-size:11px;color:var(--text3)"></span>
+  </div>
+
+  <div class="card" style="margin-top:12px">
+    <div class="card-title">연결 상태</div>
+    <div id="stgConnInfo" style="font-size:12px;color:var(--text2);line-height:1.8"></div>
+  </div>
+</div>
+</div><!-- /pnl1 -->
 
 <!-- QR 스캔 프리뷰 -->
 <div id="preview-wrapper">
@@ -531,11 +600,22 @@
 
 <script src="https://unpkg.com/html5-qrcode"></script>
 <script>
-// === Supabase 설정 ===
-const SB_URL='https://omngtyewdaqpphnzeate.supabase.co';
-const SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tbmd0eWV3ZGFxcHBobnplYXRlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4ODk4ODksImV4cCI6MjA5MDQ2NTg4OX0.Zxur3t02JHtOcXforCMSwO3i2mMaf5sViE0tXXUC0-s';
+// === Supabase 설정 (localStorage) ===
+const LS_KEY = 'QC_MACHINE_SETTINGS';
+function getSettings() {
+  return JSON.parse(localStorage.getItem(LS_KEY) || '{}');
+}
+function getSbUrl() { return getSettings().sb_url || ''; }
+function getSbKey() { return getSettings().sb_key || ''; }
+function getTgBot() { return getSettings().tg_bot || ''; }
+function getTgUsers() {
+  try { return JSON.parse(getSettings().tg_users || '[]'); } catch(e) { return []; }
+}
+function isConfigured() { return !!(getSbUrl() && getSbKey()); }
 
 async function sbInsert(table, data) {
+  const SB_URL = getSbUrl(), SB_KEY = getSbKey();
+  if (!SB_URL || !SB_KEY) throw new Error('Supabase 설정이 필요합니다. ⚙ 설정 탭에서 입력하세요.');
   const res = await fetch(`${SB_URL}/rest/v1/${table}`, {
     method: 'POST',
     headers: {
@@ -554,6 +634,8 @@ async function sbInsert(table, data) {
 }
 
 async function sbSelect(table, filter, order, limit) {
+  const SB_URL = getSbUrl(), SB_KEY = getSbKey();
+  if (!SB_URL || !SB_KEY) throw new Error('Supabase 미설정');
   let url = `${SB_URL}/rest/v1/${table}?select=*`;
   if (filter) Object.entries(filter).forEach(([k,v]) => url += `&${k}=${v}`);
   if (order) url += `&order=${order}`;
@@ -567,6 +649,8 @@ async function sbSelect(table, filter, order, limit) {
 
 // 테이블 자동 생성
 async function ensureTable() {
+  const SB_URL = getSbUrl(), SB_KEY = getSbKey();
+  if (!SB_URL || !SB_KEY) return;
   try {
     await fetch(`${SB_URL}/rest/v1/qc_machine_check?select=id&limit=1`, {
       headers: { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY }
@@ -807,25 +891,128 @@ document.getElementById("inspectionForm").addEventListener("submit", async funct
   }
 });
 
-// === 텔레그램 알림 ===
-const TG_BOT='8367539669:AAFzZeMULV8B4adNROtENsUc6wr0MvLpSi0';
-const TG_USERS={'강병주':'7957128115','김상기':'8317824579'};
-
+// === 텔레그램 알림 (localStorage) ===
 async function sendTelegram(data){
+  const TG_BOT = getTgBot();
+  const TG_USERS = getTgUsers();
+  if (!TG_BOT || !TG_USERS.length) return; // 설정 없으면 스킵
+
   const checks=Object.entries(data.inputs).map(([k,v])=>(v==='NG'?'❌':'✅')+' '+k+': '+v).join('\n');
   const ngItems=Object.entries(data.inputs).filter(([k,v])=>v==='NG');
   const status=ngItems.length?'⚠️ NG '+ngItems.length+'건':'✅ 전체 OK';
   const msg=`🔬 검사기 일상점검 결과\n━━━━━━━━━━━━━━\n📅 ${data.date} ${data.time}\n👤 검사자: ${data.inspector}\n🏭 검사기: ${data.machine}\n\n📋 점검결과: ${status}\n${checks}${data.memo?'\n\n📝 비고: '+data.memo:''}`;
 
-  for(const chatId of Object.values(TG_USERS)){
+  for(const u of TG_USERS){
     try{
       await fetch(`https://api.telegram.org/bot${TG_BOT}/sendMessage`,{
         method:'POST',
         headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({chat_id:chatId,text:msg,parse_mode:''})
+        body:JSON.stringify({chat_id:u.chat_id,text:msg,parse_mode:''})
       });
     }catch(e){console.log('텔레그램 전송 실패:',e)}
   }
+}
+
+// === 탭 전환 ===
+function swTab(n){
+  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('on',i===n));
+  document.querySelectorAll('.pnl').forEach((p,i)=>p.classList.toggle('on',i===n));
+  if(n===1) loadSettingsUI();
+}
+
+// === 설정 UI ===
+function loadSettingsUI(){
+  const s=getSettings();
+  document.getElementById('stgSbUrl').value=s.sb_url||'';
+  document.getElementById('stgSbKey').value=s.sb_key||'';
+  document.getElementById('stgTgBot').value=s.tg_bot||'';
+  renderTgUsers();
+  updateConnInfo();
+}
+
+function renderTgUsers(){
+  const users=getTgUsers();
+  const c=document.getElementById('tgUserList');
+  if(!users.length){c.innerHTML='<div style="font-size:11px;color:var(--text3);padding:6px 0">수신자 없음</div>';return}
+  c.innerHTML=users.map((u,i)=>`<div class="tg-user-item"><span class="tg-name">${u.name}</span><span class="tg-id">${u.chat_id}</span><button class="tg-del" onclick="removeTgUser(${i})">✕</button></div>`).join('');
+}
+
+function addTgUser(){
+  const name=document.getElementById('tgNewName').value.trim();
+  const id=document.getElementById('tgNewId').value.trim();
+  if(!name||!id)return;
+  const users=getTgUsers();
+  if(users.find(u=>u.chat_id===id))return;
+  users.push({name,chat_id:id});
+  const s=getSettings();s.tg_users=JSON.stringify(users);
+  localStorage.setItem(LS_KEY,JSON.stringify(s));
+  document.getElementById('tgNewName').value='';
+  document.getElementById('tgNewId').value='';
+  renderTgUsers();
+}
+
+function removeTgUser(idx){
+  const users=getTgUsers();users.splice(idx,1);
+  const s=getSettings();s.tg_users=JSON.stringify(users);
+  localStorage.setItem(LS_KEY,JSON.stringify(s));
+  renderTgUsers();
+}
+
+function saveSettings(){
+  const s={
+    sb_url:document.getElementById('stgSbUrl').value.trim().replace(/\/$/,''),
+    sb_key:document.getElementById('stgSbKey').value.trim(),
+    tg_bot:document.getElementById('stgTgBot').value.trim(),
+    tg_users:JSON.stringify(getTgUsers())
+  };
+  localStorage.setItem(LS_KEY,JSON.stringify(s));
+  document.getElementById('stgSaveStatus').textContent='✅ 저장 완료 ('+new Date().toLocaleTimeString()+')';
+  document.getElementById('stgSaveStatus').style.color='#22c55e';
+  updateConnInfo();
+}
+
+async function testSbConnection(){
+  const st=document.getElementById('stgSbStatus');
+  const url=document.getElementById('stgSbUrl').value.trim().replace(/\/$/,'');
+  const key=document.getElementById('stgSbKey').value.trim();
+  if(!url||!key){st.textContent='❌ URL과 Key를 입력하세요';st.style.color='#ef4444';return}
+  st.textContent='연결 중...';st.style.color='var(--accent)';
+  try{
+    const res=await fetch(`${url}/rest/v1/qc_machine_check?select=id&limit=1`,{headers:{'apikey':key,'Authorization':'Bearer '+key}});
+    if(res.ok){st.textContent='✅ 연결 성공 (테이블 확인됨)';st.style.color='#22c55e'}
+    else if(res.status===404){st.textContent='⚠️ 연결 OK, 테이블 미생성 (SQL 실행 필요)';st.style.color='#f59e0b'}
+    else{st.textContent='❌ 응답 오류: '+res.status;st.style.color='#ef4444'}
+  }catch(e){st.textContent='❌ 연결 실패: '+e.message;st.style.color='#ef4444'}
+}
+
+async function testTelegram(){
+  const st=document.getElementById('stgTgStatus');
+  const bot=document.getElementById('stgTgBot').value.trim();
+  const users=getTgUsers();
+  if(!bot){st.textContent='❌ Bot Token을 입력하세요';st.style.color='#ef4444';return}
+  if(!users.length){st.textContent='❌ 수신자를 추가하세요';st.style.color='#ef4444';return}
+  st.textContent='전송 중...';st.style.color='var(--accent)';
+  let ok=0;
+  for(const u of users){
+    try{
+      const res=await fetch(`https://api.telegram.org/bot${bot}/sendMessage`,{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({chat_id:u.chat_id,text:`🔬 검사기 점검 알림 테스트\n수신자: ${u.name}\n시간: ${new Date().toLocaleString()}`})
+      });
+      const data=await res.json();
+      if(data.ok)ok++;
+    }catch(e){}
+  }
+  st.textContent=ok===users.length?'✅ '+ok+'명 전송 성공':'⚠️ '+ok+'/'+users.length+'명 성공';
+  st.style.color=ok===users.length?'#22c55e':'#f59e0b';
+}
+
+function updateConnInfo(){
+  const s=getSettings();
+  const c=document.getElementById('stgConnInfo');
+  const sbOk=!!(s.sb_url&&s.sb_key);
+  const tgOk=!!(s.tg_bot&&getTgUsers().length);
+  c.innerHTML=`${sbOk?'🟢':'🔴'} Supabase: ${sbOk?'설정됨':'미설정'}<br>${tgOk?'🟢':'🔴'} 텔레그램: ${tgOk?getTgUsers().length+'명 수신':'미설정'}`;
 }
 
 window.addEventListener("DOMContentLoaded", () => {
