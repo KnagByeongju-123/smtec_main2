@@ -238,9 +238,30 @@
           </div>
           <div id="moveSetupConfirm" style="display:none">
             <div id="moveConfirmSummary" style="background:#e8eaf6;border-radius:10px;padding:14px;margin-bottom:12px;font-size:13px;line-height:2"></div>
-            <div style="display:flex;gap:8px">
+            <!-- 일반 공정: 로트 리딩 -->
+            <div id="confirmBtnNormal" style="display:flex;gap:8px">
               <button class="btn btn-gray" onclick="backToMoveInputs()" style="flex:0 0 auto;width:auto;padding:13px 20px;font-size:14px">← 수정</button>
               <button class="btn btn-green" onclick="goToScanStep()" style="flex:1;font-size:15px;padding:13px">📋 로트 리딩 →</button>
+            </div>
+            <!-- 출하 공정: 바로 기종선택+등록 -->
+            <div id="confirmBtnShipment" style="display:none">
+              <!-- 출하기종 선택 -->
+              <div id="shipConfirmModelArea" style="margin-bottom:12px">
+                <div class="fg" style="margin-bottom:8px">
+                  <label style="font-size:12px;font-weight:700;color:#1a237e">📦 출하기종 선택</label>
+                  <select id="selShipConfirmModel" onchange="onShipConfirmModelSelect()" style="font-size:16px;font-weight:700;border:2px solid #1a237e;background:#e8eaf6;color:#1a237e;padding:12px;border-radius:8px;width:100%">
+                    <option value="">기종 선택</option>
+                  </select>
+                </div>
+                <div class="fg" style="margin-bottom:0">
+                  <label style="font-size:11px;color:#888;font-weight:700">비고</label>
+                  <textarea id="shipConfirmNote" placeholder="비고 사항" style="width:100%;padding:9px;border:1.5px solid #ddd;border-radius:7px;font-size:13px;font-family:inherit;min-height:36px;resize:vertical"></textarea>
+                </div>
+              </div>
+              <div style="display:flex;gap:8px">
+                <button class="btn btn-gray" onclick="backToMoveInputs()" style="flex:0 0 auto;width:auto;padding:13px 20px;font-size:14px">← 수정</button>
+                <button class="btn btn-green" onclick="doShipmentRegister()" style="flex:1;font-size:16px;padding:14px">✅ 출하 등록</button>
+              </div>
             </div>
           </div>
         </div>
@@ -959,11 +980,71 @@ function showMoveConfirm(){
   summary.innerHTML=html;
   document.getElementById('moveSetupInputs').style.display='none';
   document.getElementById('moveSetupConfirm').style.display='block';
+
+  // 출하 공정: 로트리딩 대신 바로 기종선택+등록
+  if(isShipment){
+    document.getElementById('confirmBtnNormal').style.display='none';
+    document.getElementById('confirmBtnShipment').style.display='block';
+    document.getElementById('shipConfirmNote').value='';
+    // 출하기종 콤보 채우기 (레이스웨이 최종기종 + 일반기종)
+    (async()=>{
+      const data=await loadPartTreeData();
+      const filtered=selectedCustomer?data.filter(r=>r.customer===selectedCustomer):data;
+      const finals=[...new Set(filtered.map(r=>getFinalPart(r)))].sort();
+      await loadGeneralModels(true);
+      const gmFiltered=selectedCustomer?_generalModels.filter(m=>m.customer===selectedCustomer):_generalModels;
+      const gmNames=gmFiltered.map(m=>m.model_name);
+      const sel=document.getElementById('selShipConfirmModel');
+      sel.innerHTML='<option value="">기종 선택</option>';
+      if(finals.length){sel.innerHTML+='<optgroup label="🔩 레이스웨이">'+finals.map(f=>`<option value="${f}">${f}</option>`).join('')+'</optgroup>'}
+      if(gmNames.length){sel.innerHTML+='<optgroup label="🏭 일반기종">'+gmNames.map(g=>`<option value="${g}">${g}</option>`).join('')+'</optgroup>'}
+    })();
+  }else{
+    document.getElementById('confirmBtnNormal').style.display='flex';
+    document.getElementById('confirmBtnShipment').style.display='none';
+  }
 }
 
 function backToMoveInputs(){
   document.getElementById('moveSetupInputs').style.display='block';
   document.getElementById('moveSetupConfirm').style.display='none';
+}
+
+// 출하기종 선택 시 (확인화면 내)
+function onShipConfirmModelSelect(){
+  const sel=document.getElementById('selShipConfirmModel');
+  if(sel&&sel.value)showToast('✅ '+sel.value+' 선택됨');
+}
+
+// 출하 공정: 로트 리딩 없이 바로 등록
+async function doShipmentRegister(){
+  const basePart=document.getElementById('selShipConfirmModel').value;
+  if(!basePart){showToast('출하기종을 선택하세요');return}
+  const note=document.getElementById('shipConfirmNote').value.trim();
+  const procInfo=JSON.parse(localStorage.getItem('LOT_TJ_PROC_shipment')||'{}');
+  const weight=document.getElementById('inpWeight').value.trim();
+  const fields={'출발지':procInfo.from||savedSelections['출발지']||'','도착지':procInfo.to||savedSelections['도착지']||''};
+  const now=new Date();
+  const dateStr=now.toISOString().split('T')[0];
+  const timeStr=String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0');
+  // 로트 = 생산일자
+  const lot=_prodDates.length?_prodDates.join(','):'';
+
+  const entry={
+    id:'E'+now.getTime(),date:dateStr,time:timeStr,
+    customer:selectedCustomer||'',process:'출하',
+    worker:procInfo.worker||'',equip:'',weight,incomingDate:'',fields,
+    barcode:'',basePart,lot,format:'출하직접',qty:weight||'',note,
+    prodDates:_prodDates,ts:now.toISOString()
+  };
+  hist.unshift(entry);if(hist.length>500)hist.length=500;
+  localStorage.setItem('LOT_TJ_HIST',JSON.stringify(hist));
+  await saveHistToServer(entry);
+
+  showToast('✅ 출하 등록: '+basePart+(lot?' 생산일:'+lot:''));
+  if(navigator.vibrate)navigator.vibrate([100,50,100]);
+  closeMoveSetup();
+  renderRecentList();renderRecentList2();
 }
 
 let scanAccum=[];
