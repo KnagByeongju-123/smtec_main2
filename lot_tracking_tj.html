@@ -522,7 +522,7 @@
 <!-- ===== 설정 ===== -->
 <div class="pnl" id="pnl3">
   <div class="card">
-    <div class="card-tit" style="justify-content:space-between"><span>⚙ 분류 항목 관리</span><button class="btn btn-sm btn-gray" onclick="resetCats()">기본값</button></div>
+    <div class="card-tit" style="justify-content:space-between"><span>⚙ 분류 항목 관리</span><div style="display:flex;gap:4px"><button class="btn btn-sm btn-blue" onclick="syncCatsFromDB()" style="font-size:10px">🔄 기종 동기화</button><button class="btn btn-sm btn-gray" onclick="resetCats()">기본값</button></div></div>
     <div id="catEditor"></div>
     <button class="add-btn" onclick="addCat()" style="margin-top:8px;padding:10px;font-size:13px">+ 분류 추가</button>
   </div>
@@ -3012,8 +3012,34 @@ async function saveAllSettings(){
 }
 function resetCats(){if(!confirm('기본값으로 복원?'))return;cats=JSON.parse(JSON.stringify(DEFAULT_CATS));localStorage.setItem('LOT_TJ_CATS',JSON.stringify(cats));renderCatEditor();renderRegFields();showToast('기본값 복원')}
 
-// ============================================================
-//  생산일자 (출하 공정용, 복수 선택)
+async function syncCatsFromDB(){
+  showToast('DB에서 기종 동기화 중...');
+  try{
+    // 1) 레이스웨이 기준기종 + 출하기종
+    const partData=await loadPartTreeData();
+    const allParents=[...new Set(partData.map(r=>r.parent_part))].sort();
+    const allFinals=[...new Set(partData.map(r=>getFinalPart(r)))].sort();
+
+    // 2) 일반기종도 기준기종에 합치기 (고객사 구분 없이 이름만)
+    await loadGeneralModels(true);
+    const gmNames=_generalModels.map(m=>m.model_name);
+
+    // 기준기종 카테고리 동기화
+    let catIdx=cats.findIndex(c=>c.name==='기준기종'||c.name==='기준품번');
+    const mergedBase=[...new Set([...allParents,...gmNames])].sort();
+    if(catIdx>=0){cats[catIdx].name='기준기종';cats[catIdx].subs=mergedBase.length?mergedBase:['항목없음']}
+    else cats.push({name:'기준기종',subs:mergedBase.length?mergedBase:['항목없음']});
+
+    // 출하기종 카테고리 동기화
+    let shipIdx=cats.findIndex(c=>c.name==='출하기종'||c.name==='출하품번');
+    if(shipIdx>=0){cats[shipIdx].name='출하기종';cats[shipIdx].subs=allFinals.length?allFinals:['항목없음']}
+    else cats.push({name:'출하기종',subs:allFinals.length?allFinals:['항목없음']});
+
+    localStorage.setItem('LOT_TJ_CATS',JSON.stringify(cats));
+    renderCatEditor();renderRegFields();
+    showToast('✅ 기준기종 '+mergedBase.length+'개, 출하기종 '+allFinals.length+'개 동기화 완료');
+  }catch(e){showToast('⚠ 동기화 실패: '+e.message)}
+}
 // ============================================================
 let _prodDates=[];
 
