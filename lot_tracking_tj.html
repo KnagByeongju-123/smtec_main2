@@ -559,6 +559,16 @@
       </div>
       <div id="mmNamePreview" style="padding:6px 8px;background:#e8eaf6;border-radius:6px;font-size:13px;font-weight:700;color:#1a237e;margin-bottom:6px;display:none"></div>
       <div class="fg" style="margin-bottom:6px"><input id="mmNewModels" placeholder="매핑기종 (쉼표 구분: 1106,1113)" style="padding:8px;border:1px solid #ddd;border-radius:8px;font-size:13px;font-family:inherit;width:100%"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px">
+        <input id="mmNewMold" placeholder="금형재번" style="padding:8px;border:1px solid #ddd;border-radius:8px;font-size:13px;font-family:inherit">
+        <input id="mmNewModelCode" placeholder="기종코드" style="padding:8px;border:1px solid #ddd;border-radius:8px;font-size:13px;font-family:inherit">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:6px">
+        <input id="mmNewSG" placeholder="비중 (7.85)" type="number" step="0.01" style="padding:8px;border:1px solid #ddd;border-radius:8px;font-size:13px;font-family:inherit">
+        <input id="mmNewUnitWt" placeholder="소요량(g)" type="number" step="0.1" style="padding:8px;border:1px solid #ddd;border-radius:8px;font-size:13px;font-family:inherit">
+        <input id="mmNewMonthly" placeholder="월발주량" type="number" style="padding:8px;border:1px solid #ddd;border-radius:8px;font-size:13px;font-family:inherit">
+      </div>
+      <div class="fg" style="margin-bottom:6px"><input id="mmNewEstOrder" placeholder="원자재예상발주량(kg)" type="number" step="0.1" style="padding:8px;border:1px solid #ddd;border-radius:8px;font-size:13px;font-family:inherit;width:100%"></div>
       <div class="fg" style="margin-bottom:6px"><input id="mmNewCustomer" placeholder="고객사 (비워두면 공용)" style="padding:8px;border:1px solid #ddd;border-radius:8px;font-size:13px;font-family:inherit;width:100%"></div>
       <button class="btn btn-sm" onclick="addMaterialMaster()" style="width:100%;background:#1565c0;color:#fff;font-size:13px">➕ 소재 추가</button>
     </div>
@@ -900,6 +910,15 @@ END $$;`,
 `DO $$ BEGIN
   ALTER TABLE move_history_tj ADD COLUMN IF NOT EXISTS lot_consumed BOOLEAN DEFAULT false;
 EXCEPTION WHEN undefined_table THEN NULL;
+END $$;`,
+`DO $$ BEGIN
+  ALTER TABLE material_master_tj ADD COLUMN IF NOT EXISTS mold_number TEXT DEFAULT '';
+  ALTER TABLE material_master_tj ADD COLUMN IF NOT EXISTS model_code TEXT DEFAULT '';
+  ALTER TABLE material_master_tj ADD COLUMN IF NOT EXISTS monthly_order NUMERIC DEFAULT 0;
+  ALTER TABLE material_master_tj ADD COLUMN IF NOT EXISTS specific_gravity NUMERIC DEFAULT 7.85;
+  ALTER TABLE material_master_tj ADD COLUMN IF NOT EXISTS unit_weight NUMERIC DEFAULT 0;
+  ALTER TABLE material_master_tj ADD COLUMN IF NOT EXISTS est_material_order NUMERIC DEFAULT 0;
+EXCEPTION WHEN undefined_table THEN NULL;
 END $$;`
   ];
   let ok=0,fail=0;
@@ -1210,15 +1229,26 @@ function renderMaterialMasterList(){
     const sec=document.createElement('div');sec.style.cssText='margin-bottom:10px;border:1px solid #ddd;border-radius:8px;overflow:hidden';
     const hdr=document.createElement('div');hdr.style.cssText='padding:8px 12px;background:#e3f2fd;font-size:13px;font-weight:700;color:#1565c0';
     hdr.textContent='🏢 '+cust+' ('+items.length+'건)';sec.appendChild(hdr);
-    const tbl=document.createElement('table');tbl.style.cssText='width:100%;border-collapse:collapse;font-size:11px';
-    tbl.innerHTML='<thead><tr><th style="padding:4px 6px;border-bottom:1.5px solid #c5cae9;text-align:left;background:#f5f5f5">소재명</th><th style="padding:4px 6px;border-bottom:1.5px solid #c5cae9;text-align:left;background:#f5f5f5">재질/두께/폭/피치</th><th style="padding:4px 6px;border-bottom:1.5px solid #c5cae9;text-align:left;background:#f5f5f5">기종</th><th style="padding:4px 6px;border-bottom:1.5px solid #c5cae9;width:70px;background:#f5f5f5">관리</th></tr></thead>';
-    const tbody=document.createElement('tbody');
+    const listDiv=document.createElement('div');listDiv.style.cssText='padding:4px 0';
     items.forEach(m=>{
-      const tr=document.createElement('tr');
-      tr.innerHTML=`<td style="padding:4px 6px;border-bottom:1px solid #eee;font-weight:600">${m.material_name}</td><td style="padding:4px 6px;border-bottom:1px solid #eee">${m.material_type||'-'}/${m.thickness||'-'}/${m.width||'-'}/${m.pitch||'-'}</td><td style="padding:4px 6px;border-bottom:1px solid #eee;font-size:10px;color:#1565c0">${m.mapped_models||'-'}</td><td style="padding:4px 6px;border-bottom:1px solid #eee;white-space:nowrap"><button class="btn btn-sm btn-blue" style="padding:2px 6px;font-size:10px;margin-right:2px" onclick="editMaterialMaster(${m.id})">수정</button><button class="btn btn-sm btn-red" style="padding:2px 6px;font-size:10px" onclick="deleteMaterialMaster(${m.id})">삭제</button></td>`;
-      tbody.appendChild(tr);
+      const row=document.createElement('div');
+      row.style.cssText='padding:6px 10px;border-bottom:1px solid #eee;font-size:11px';
+      const spec=`${m.material_type||'-'}/${m.thickness||'-'}/${m.width||'-'}${m.pitch?'/'+m.pitch:''}`;
+      const moldInfo=m.mold_number?`<span style="color:#888">금형:</span><b>${m.mold_number}</b> `:'';
+      const modelInfo=m.model_code?`<span style="color:#888">기종:</span><b style="color:#1565c0">${m.model_code}</b> `:'';
+      const weightInfo=m.unit_weight?`<span style="color:#888">소요량:</span><b>${m.unit_weight}g</b> `:'';
+      const sgInfo=m.specific_gravity?`<span style="color:#888">비중:</span>${m.specific_gravity} `:'';
+      const orderInfo=m.monthly_order?`<span style="color:#888">월발주:</span>${Number(m.monthly_order).toLocaleString()} `:'';
+      const estInfo=m.est_material_order?`<span style="color:#888">원자재:</span>${Number(m.est_material_order).toLocaleString()}kg `:'';
+      row.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:12px;font-weight:700;color:#333">${m.material_name}</span>
+        <span style="white-space:nowrap"><button class="btn btn-sm btn-blue" style="padding:2px 6px;font-size:10px;margin-right:2px" onclick="editMaterialMaster(${m.id})">수정</button><button class="btn btn-sm btn-red" style="padding:2px 6px;font-size:10px" onclick="deleteMaterialMaster(${m.id})">삭제</button></span>
+      </div>
+      <div style="color:#666;margin-top:2px">${spec} · <span style="color:#1565c0">${m.mapped_models||'-'}</span></div>
+      ${(moldInfo||modelInfo||weightInfo||sgInfo||orderInfo||estInfo)?'<div style="margin-top:2px;color:#555">'+moldInfo+modelInfo+weightInfo+sgInfo+orderInfo+estInfo+'</div>':''}`;
+      listDiv.appendChild(row);
     });
-    tbl.appendChild(tbody);sec.appendChild(tbl);c.appendChild(sec);
+    sec.appendChild(listDiv);c.appendChild(sec);
   });
 }
 
@@ -1252,12 +1282,18 @@ async function addMaterialMaster(){
     width:document.getElementById('mmNewWidth').value.trim(),
     pitch:document.getElementById('mmNewPitch').value.trim(),
     mapped_models:document.getElementById('mmNewModels').value.trim(),
+    mold_number:document.getElementById('mmNewMold').value.trim(),
+    model_code:document.getElementById('mmNewModelCode').value.trim(),
+    specific_gravity:document.getElementById('mmNewSG').value?parseFloat(document.getElementById('mmNewSG').value):7.85,
+    unit_weight:document.getElementById('mmNewUnitWt').value?parseFloat(document.getElementById('mmNewUnitWt').value):0,
+    monthly_order:document.getElementById('mmNewMonthly').value?parseInt(document.getElementById('mmNewMonthly').value):0,
+    est_material_order:document.getElementById('mmNewEstOrder').value?parseFloat(document.getElementById('mmNewEstOrder').value):0,
     customer:document.getElementById('mmNewCustomer').value.trim(),
     note:'',sort_order:0
   };
   try{
     await sbInsert('material_master_tj',row);
-    ['mmNewType','mmNewThick','mmNewWidth','mmNewPitch','mmNewModels','mmNewCustomer'].forEach(id=>document.getElementById(id).value='');
+    ['mmNewType','mmNewThick','mmNewWidth','mmNewPitch','mmNewModels','mmNewCustomer','mmNewMold','mmNewModelCode','mmNewSG','mmNewUnitWt','mmNewMonthly','mmNewEstOrder'].forEach(id=>document.getElementById(id).value='');
     document.getElementById('mmNamePreview').style.display='none';
     showToast('✅ 소재 추가: '+name);
   }catch(e){showToast('⚠ 추가 실패: '+e.message)}
@@ -1279,7 +1315,7 @@ function editMaterialMaster(id){
   overlay=document.createElement('div');
   overlay.id='mmEditOverlay';
   overlay.className='modal-overlay show center';
-  overlay.innerHTML=`<div class="modal-box" style="border-radius:16px;max-width:440px;margin:16px">
+  overlay.innerHTML=`<div class="modal-box" style="border-radius:16px;max-width:440px;margin:16px;max-height:90vh">
     <div class="modal-handle"></div>
     <div class="modal-hdr"><span class="modal-hdr-tit">🧱 소재 수정</span><button class="modal-close" onclick="closeMmEdit()">✕</button></div>
     <div class="modal-body">
@@ -1294,6 +1330,16 @@ function editMaterialMaster(id){
       </div>
       <div id="mmEditNamePreview" style="padding:6px 8px;background:#e8eaf6;border-radius:6px;font-size:13px;font-weight:700;color:#1a237e;margin-bottom:8px">📌 소재명: ${m.material_name}</div>
       <div class="fg"><label>매핑기종 (쉼표 구분)</label><input id="mmEditModels" value="${m.mapped_models||''}" placeholder="1106,1113"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">
+        <div class="fg"><label>금형재번</label><input id="mmEditMold" value="${m.mold_number||''}" placeholder="9DHA034A"></div>
+        <div class="fg"><label>기종코드</label><input id="mmEditModelCode" value="${m.model_code||''}" placeholder="6906"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:8px">
+        <div class="fg"><label>비중</label><input id="mmEditSG" type="number" step="0.01" value="${m.specific_gravity||''}" placeholder="7.85"></div>
+        <div class="fg"><label>소요량(g)</label><input id="mmEditUnitWt" type="number" step="0.1" value="${m.unit_weight||''}" placeholder="28.6"></div>
+        <div class="fg"><label>월발주량</label><input id="mmEditMonthly" type="number" value="${m.monthly_order||''}" placeholder="70000"></div>
+      </div>
+      <div class="fg"><label>원자재예상발주량(kg)</label><input id="mmEditEstOrder" type="number" step="0.1" value="${m.est_material_order||''}" placeholder="0"></div>
       <div class="fg"><label>고객사</label><input id="mmEditCustomer" value="${m.customer||''}" placeholder="비워두면 공용"></div>
       <div style="display:flex;gap:8px;margin-top:12px">
         <button class="btn btn-gray" onclick="closeMmEdit()" style="flex:1">취소</button>
@@ -1341,6 +1387,12 @@ async function saveMaterialMasterEdit(id){
     width:w,
     pitch:p,
     mapped_models:document.getElementById('mmEditModels').value.trim(),
+    mold_number:document.getElementById('mmEditMold').value.trim(),
+    model_code:document.getElementById('mmEditModelCode').value.trim(),
+    specific_gravity:document.getElementById('mmEditSG').value?parseFloat(document.getElementById('mmEditSG').value):null,
+    unit_weight:document.getElementById('mmEditUnitWt').value?parseFloat(document.getElementById('mmEditUnitWt').value):null,
+    monthly_order:document.getElementById('mmEditMonthly').value?parseInt(document.getElementById('mmEditMonthly').value):null,
+    est_material_order:document.getElementById('mmEditEstOrder').value?parseFloat(document.getElementById('mmEditEstOrder').value):null,
     customer:document.getElementById('mmEditCustomer').value.trim()
   };
   try{
@@ -1353,14 +1405,14 @@ async function saveMaterialMasterEdit(id){
 function downloadMmTemplate(){
   const wb=XLSX.utils.book_new();
   const ws=XLSX.utils.aoa_to_sheet([
-    ['재질','두께','폭','피치','매핑기종','고객사'],
-    ['SPCC','0.6','33','12.5','1560-006','SKF씰'],
-    ['SPCC','0.6','70','15','1642-118-1','SKF씰'],
-    ['304BA','0.5','64','','1642-118-2','SKF씰'],
-    ['SPCC','0.6','90','','1862-0041-01','SKF씰'],
-    ['430-2B','0.6','80','','1862-0041-21','SKF씰']
+    ['재질','두께','폭','피치','매핑기종','금형재번','기종코드','비중','소요량(g)','월발주량','원자재예상발주량(kg)','고객사'],
+    ['SPCC','0.6','33','12.5','1560-006','9DHA034A','6906','7.85','28.6','','0','SKF씰'],
+    ['SPCC','0.6','70','15','1642-118-1','9DHA032','6906','7.85','22.5','','0','SKF씰'],
+    ['304BA','0.5','64','','1642-118-2','0DHA039A','4047','8.00','22.5','','0','SKF씰'],
+    ['SPCC','0.6','90','','1862-0041-01','','','7.85','37.6','','0','SKF씰'],
+    ['SPCC','0.6','70','69','1547-102-1','1DHA089','0092','7.85','22.7','70000','1589','SKF씰']
   ]);
-  ws['!cols']=[{wch:10},{wch:8},{wch:8},{wch:8},{wch:22},{wch:12}];
+  ws['!cols']=[{wch:8},{wch:6},{wch:6},{wch:6},{wch:16},{wch:12},{wch:10},{wch:6},{wch:10},{wch:10},{wch:18},{wch:10}];
   XLSX.utils.book_append_sheet(wb,ws,'소재마스터');
   XLSX.writeFile(wb,'소재마스터_템플릿.xlsx');
   showToast('📋 템플릿 다운로드 (소재명 자동생성)');
@@ -1376,7 +1428,7 @@ function handleMmBatchFile(input){
       const ws=wb.Sheets[wb.SheetNames[0]];
       const raw=XLSX.utils.sheet_to_json(ws,{defval:''});
       _mmBatchData=raw.map(r=>{
-        const keys=Object.keys(r);let o={material_name:'',material_type:'',thickness:'',width:'',pitch:'',mapped_models:'',customer:'',note:''};
+        const keys=Object.keys(r);let o={material_name:'',material_type:'',thickness:'',width:'',pitch:'',mapped_models:'',mold_number:'',model_code:'',specific_gravity:null,unit_weight:null,monthly_order:null,est_material_order:null,customer:'',note:''};
         keys.forEach(k=>{
           const kl=k.trim().toLowerCase().replace(/\s+/g,'');
           if(kl==='소재명'||kl==='material_name'||kl==='name')o.material_name=String(r[k]).trim();
@@ -1385,6 +1437,12 @@ function handleMmBatchFile(input){
           else if(kl==='폭'||kl==='width')o.width=String(r[k]).trim();
           else if(kl==='피치'||kl==='pitch')o.pitch=String(r[k]).trim();
           else if(kl==='매핑기종'||kl==='기종'||kl==='mapped_models'||kl==='models')o.mapped_models=String(r[k]).trim();
+          else if(kl==='금형재번'||kl==='금형'||kl==='mold_number'||kl==='mold')o.mold_number=String(r[k]).trim();
+          else if(kl==='기종코드'||kl==='기종code'||kl==='model_code')o.model_code=String(r[k]).trim();
+          else if(kl==='비중'||kl==='specific_gravity'||kl==='sg')o.specific_gravity=parseFloat(r[k])||null;
+          else if(kl==='소요량'||kl==='소요량(g)'||kl==='unit_weight'||kl==='unitweight')o.unit_weight=parseFloat(r[k])||null;
+          else if(kl==='월발주량'||kl==='(월)발주량'||kl==='monthly_order'||kl==='monthlyorder')o.monthly_order=parseInt(r[k])||null;
+          else if(kl==='원자재예상발주량'||kl==='원자재예상발주량(kg)'||kl==='원자재'||kl==='est_material_order'||kl==='원자재(kg)')o.est_material_order=parseFloat(r[k])||null;
           else if(kl==='고객사'||kl==='customer')o.customer=String(r[k]).trim();
         });
         // 소재명 자동생성 (비어있으면)
@@ -1398,8 +1456,8 @@ function handleMmBatchFile(input){
       }).filter(r=>r.material_name||r.material_type);
       if(!_mmBatchData.length){showToast('유효한 데이터 없음 (재질 필수)');return}
       document.getElementById('mmBatchCnt').textContent=_mmBatchData.length;
-      let tbl='<table style="width:100%;border-collapse:collapse"><thead><tr><th style="padding:3px 6px;border:1px solid #ddd;background:#e3f2fd;text-align:left">소재명</th><th style="padding:3px 6px;border:1px solid #ddd;background:#e3f2fd;text-align:left">재질/두께/폭</th><th style="padding:3px 6px;border:1px solid #ddd;background:#e3f2fd;text-align:left">기종</th></tr></thead><tbody>';
-      _mmBatchData.slice(0,15).forEach(r=>{tbl+='<tr><td style="padding:3px 6px;border:1px solid #eee;font-weight:600">'+r.material_name+'</td><td style="padding:3px 6px;border:1px solid #eee">'+r.material_type+'/'+r.thickness+'/'+r.width+'</td><td style="padding:3px 6px;border:1px solid #eee;font-size:10px">'+r.mapped_models+'</td></tr>'});
+      let tbl='<table style="width:100%;border-collapse:collapse"><thead><tr><th style="padding:3px 6px;border:1px solid #ddd;background:#e3f2fd;text-align:left">소재명</th><th style="padding:3px 6px;border:1px solid #ddd;background:#e3f2fd;text-align:left">재질/두께/폭</th><th style="padding:3px 6px;border:1px solid #ddd;background:#e3f2fd;text-align:left">기종</th><th style="padding:3px 6px;border:1px solid #ddd;background:#e3f2fd;text-align:left">금형</th></tr></thead><tbody>';
+      _mmBatchData.slice(0,15).forEach(r=>{tbl+='<tr><td style="padding:3px 6px;border:1px solid #eee;font-weight:600">'+r.material_name+'</td><td style="padding:3px 6px;border:1px solid #eee">'+r.material_type+'/'+r.thickness+'/'+r.width+'</td><td style="padding:3px 6px;border:1px solid #eee;font-size:10px">'+r.mapped_models+'</td><td style="padding:3px 6px;border:1px solid #eee;font-size:10px">'+(r.mold_number||'-')+'</td></tr>'});
       tbl+='</tbody></table>';
       document.getElementById('mmBatchTable').innerHTML=tbl;
       document.getElementById('mmBatchPreview').style.display='block';
@@ -1439,6 +1497,10 @@ function onMaterialSelect(){
   let html='<b>'+m.material_name+'</b><br>';
   html+='재질: <b>'+m.material_type+'</b> · 두께: <b>'+m.thickness+'</b> · 폭: <b>'+m.width+'</b>';
   if(m.pitch)html+=' · 피치: <b>'+m.pitch+'</b>';
+  if(m.mold_number)html+='<br>금형: <b>'+m.mold_number+'</b>';
+  if(m.model_code)html+=' · 기종: <b style="color:#1565c0">'+m.model_code+'</b>';
+  if(m.unit_weight)html+=' · 소요량: <b>'+m.unit_weight+'g</b>';
+  if(m.specific_gravity)html+=' · 비중: '+m.specific_gravity;
   if(m.mapped_models)html+='<br>📦 매핑기종: <b style="color:#1565c0">'+m.mapped_models+'</b>';
   infoDiv.innerHTML=html;
 }
@@ -1449,8 +1511,9 @@ async function fillMaterialSelect(customer){
   const sel=document.getElementById('selMaterial');if(!sel)return;
   const filtered=customer?_materialMaster.filter(m=>!m.customer||m.customer===customer):_materialMaster;
   sel.innerHTML='<option value="">소재 선택</option>'+filtered.map(m=>{
-    const label=m.material_name+' ('+m.material_type+'/'+m.thickness+'/'+m.width+(m.pitch?'/'+m.pitch:'')+')';
-    return '<option value="'+m.id+'">'+label+'</option>';
+    const spec=m.material_type+'/'+m.thickness+'/'+m.width+(m.pitch?'/'+m.pitch:'');
+    const modelInfo=m.model_code?' ['+m.model_code+']':'';
+    const label=m.material_name+' ('+spec+')'+modelInfo;    return '<option value="'+m.id+'">'+label+'</option>';
   }).join('');
   document.getElementById('materialInfoDisplay').style.display='none';
 }
