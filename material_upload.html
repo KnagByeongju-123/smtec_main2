@@ -171,6 +171,61 @@ async function sbInsert(table,rows){
   if(!res.ok){const t=await res.text();throw new Error(t)}
 }
 
+async function sbSelect(table,filters){
+  let url=SB_URL+'/rest/v1/'+table+'?';
+  Object.entries(filters).forEach(([k,v])=>{url+=k+'='+encodeURIComponent(v)+'&'});
+  const res=await fetch(url,{
+    headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY}
+  });
+  if(!res.ok)return[];
+  return await res.json();
+}
+
+// 텔레그램 알림
+let _tgBotToken='',_tgChatIds=[];
+
+function decodeTgToken(encoded){
+  const key='smtec';
+  const decoded=atob(encoded);
+  let result='';
+  for(let i=0;i<decoded.length;i++)result+=String.fromCharCode(decoded.charCodeAt(i)^key.charCodeAt(i%key.length));
+  return result;
+}
+
+async function loadTelegramConfig(){
+  try{
+    const data=await sbSelect('common_code',{code_group:'eq.telegram',select:'code_value,sort_order,note'});
+    if(data&&data.length){
+      data.forEach(r=>{
+        const v=String(r.code_value||'').trim();
+        if(r.sort_order===0){
+          // sort_order 0 = 봇 토큰 (난독화)
+          _tgBotToken=decodeTgToken(v);
+        }else if(v){
+          // sort_order 1+ = 채팅 ID
+          _tgChatIds.push(v);
+        }
+      });
+    }
+  }catch(e){console.log('텔레그램 설정 로드 실패:',e)}
+}
+
+async function sendTelegram(msg){
+  if(!_tgBotToken||!_tgChatIds.length)return;
+  for(const chatId of _tgChatIds){
+    try{
+      await fetch('https://api.telegram.org/bot'+_tgBotToken+'/sendMessage',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({chat_id:chatId,text:msg,parse_mode:'HTML'})
+      });
+    }catch(e){console.log('텔레그램 전송 실패('+chatId+'):',e)}
+  }
+}
+
+// 페이지 로드 시 텔레그램 설정 로드
+loadTelegramConfig();
+
 // 컬럼 매핑
 const COL_MAP={
   '재질':'_material_type','material_type':'_material_type',
@@ -416,6 +471,17 @@ async function doRegister(){
     document.getElementById('doneSummary').innerHTML=
       '업체: <b>'+(_batchCompany||'-')+'</b> · 입고일: <b>'+(_batchDate||todayStr)+'</b><br>'+
       '출발지: '+cfg.from+' → 도착지: '+cfg.to+(cfg.worker?' · 담당자: '+cfg.worker:'');
+    // 텔레그램 알림
+    const matSummary=rows.slice(0,5).map(r=>r.material_info||'-').join('\n  ');
+    const tgMsg='📤 <b>소재입고 등록 완료</b>\n\n'
+      +'🏢 업체: '+(_batchCompany||'-')+'\n'
+      +'📅 입고일: '+(_batchDate||todayStr)+'\n'
+      +'📦 등록: <b>'+ok+'건</b>\n'
+      +'🔄 출발지→도착지: '+cfg.from+' → '+cfg.to+'\n'
+      +(cfg.worker?'👤 작업자: '+cfg.worker+'\n':'')
+      +'\n📋 소재정보 (상위 '+Math.min(5,rows.length)+'건):\n  '+matSummary
+      +(rows.length>5?'\n  ... 외 '+(rows.length-5)+'건':'');
+    sendTelegram(tgMsg);
     goStep(4);
   }else{
     st.style.background='#fff3e0';st.style.color='#e65100';
