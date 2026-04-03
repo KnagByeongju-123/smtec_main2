@@ -1210,38 +1210,84 @@ async function saveMaterialMasterEdit(id){
   }catch(e){showToast('⚠ 수정 실패: '+e.message)}
 }
 
-// ===== 기종 가져오기 팝업 =====
+// ===== 기종 가져오기 팝업 (레이스웨이 기준기종 + 일반기종, 고객사별) =====
 let _modelPickerTarget='';
 async function openModelPicker(targetInputId){
   _modelPickerTarget=targetInputId;
-  // 일반기종 데이터 로드
-  if(!_generalModels.length)await loadGeneralModels(true);
-  if(!_generalModels.length){showToast('등록된 일반기종이 없습니다');return}
+  showToast('기종 데이터 로드 중...');
 
-  // 기존 입력값 파싱 (이미 선택된 기종)
+  // 양쪽 데이터 로드
+  if(!_generalModels.length)await loadGeneralModels(true);
+  const partData=await loadPartTreeData();
+
+  // 기존 입력값 파싱
   const targetEl=document.getElementById(targetInputId);
   const existing=targetEl?targetEl.value.split(',').map(s=>s.trim()).filter(Boolean):[];
 
-  // 고객사별 그룹
+  // 고객사별 통합 목록 구축 {고객사: [{name, type:'raceway'|'general'}]}
   const byCust={};
-  _generalModels.forEach(m=>{const k=m.customer||'공용';if(!byCust[k])byCust[k]=[];byCust[k].push(m)});
 
+  // 1) 레이스웨이 기준기종 (parent_part, 중복 제거)
+  if(partData&&partData.length){
+    const seen={};
+    partData.forEach(r=>{
+      const cust=r.customer||'공용';
+      const key=cust+'||'+r.parent_part;
+      if(seen[key])return;seen[key]=true;
+      if(!byCust[cust])byCust[cust]=[];
+      byCust[cust].push({name:r.parent_part,type:'raceway'});
+    });
+  }
+
+  // 2) 일반기종
+  _generalModels.forEach(m=>{
+    const cust=m.customer||'공용';
+    if(!byCust[cust])byCust[cust]=[];
+    // 중복 체크
+    if(!byCust[cust].find(x=>x.name===m.model_name)){
+      byCust[cust].push({name:m.model_name,type:'general'});
+    }
+  });
+
+  if(!Object.keys(byCust).length){showToast('등록된 기종이 없습니다');return}
+
+  // HTML 생성
   let listHtml='';
   Object.entries(byCust).sort(([a],[b])=>a.localeCompare(b)).forEach(([cust,models])=>{
-    listHtml+=`<div style="margin-bottom:8px">
-      <div style="display:flex;align-items:center;gap:6px;padding:6px 8px;background:#fff3e0;border-radius:6px;margin-bottom:4px">
-        <label style="font-size:12px;font-weight:700;color:#e65100;flex:1;cursor:pointer" onclick="togglePickerCust(this,'${cust}')">🏢 ${cust} (${models.length}종)</label>
-        <button class="btn btn-sm" style="padding:2px 8px;font-size:10px;background:#e65100;color:#fff" onclick="selectAllPickerCust('${cust}')">전체선택</button>
-      </div>
-      <div style="display:flex;flex-wrap:wrap;gap:4px;padding:0 4px">`;
-    models.forEach(m=>{
-      const checked=existing.includes(m.model_name)?'checked':'';
-      listHtml+=`<label style="display:flex;align-items:center;gap:4px;padding:4px 8px;background:#f5f5f5;border-radius:6px;font-size:12px;cursor:pointer;border:1px solid #e0e0e0">
-        <input type="checkbox" class="mp-chk" data-model="${m.model_name}" data-cust="${cust}" ${checked} style="width:16px;height:16px">
-        <span style="font-weight:600">${m.model_name}</span>
-      </label>`;
-    });
-    listHtml+=`</div></div>`;
+    const rcwModels=models.filter(m=>m.type==='raceway');
+    const genModels=models.filter(m=>m.type==='general');
+    listHtml+=`<div style="margin-bottom:10px;border:1px solid #e0e0e0;border-radius:8px;overflow:hidden">
+      <div style="display:flex;align-items:center;gap:6px;padding:8px 10px;background:#e8eaf6">
+        <span style="font-size:13px;font-weight:700;color:#1a237e;flex:1">🏢 ${cust} (${models.length}종)</span>
+        <button class="btn btn-sm" style="padding:2px 8px;font-size:10px;background:#1a237e;color:#fff" onclick="selectAllPickerCust('${cust}')">전체선택</button>
+      </div>`;
+
+    if(rcwModels.length){
+      listHtml+=`<div style="padding:6px 10px 2px"><span style="font-size:10px;font-weight:700;color:#1565c0;background:#e3f2fd;padding:2px 6px;border-radius:4px">🔵 레이스웨이 기준기종 (${rcwModels.length})</span></div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px;padding:4px 10px 6px">`;
+      rcwModels.forEach(m=>{
+        const checked=existing.includes(m.name)?'checked':'';
+        listHtml+=`<label style="display:flex;align-items:center;gap:4px;padding:4px 8px;background:#e3f2fd;border-radius:6px;font-size:12px;cursor:pointer;border:1px solid #bbdefb">
+          <input type="checkbox" class="mp-chk" data-model="${m.name}" data-cust="${cust}" ${checked} style="width:16px;height:16px">
+          <span style="font-weight:600;color:#1565c0">${m.name}</span>
+        </label>`;
+      });
+      listHtml+=`</div>`;
+    }
+
+    if(genModels.length){
+      listHtml+=`<div style="padding:6px 10px 2px"><span style="font-size:10px;font-weight:700;color:#e65100;background:#fff3e0;padding:2px 6px;border-radius:4px">🟠 일반기종 (${genModels.length})</span></div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px;padding:4px 10px 8px">`;
+      genModels.forEach(m=>{
+        const checked=existing.includes(m.name)?'checked':'';
+        listHtml+=`<label style="display:flex;align-items:center;gap:4px;padding:4px 8px;background:#fff3e0;border-radius:6px;font-size:12px;cursor:pointer;border:1px solid #ffcc80">
+          <input type="checkbox" class="mp-chk" data-model="${m.name}" data-cust="${cust}" ${checked} style="width:16px;height:16px">
+          <span style="font-weight:600;color:#e65100">${m.name}</span>
+        </label>`;
+      });
+      listHtml+=`</div>`;
+    }
+    listHtml+=`</div>`;
   });
 
   let overlay=document.getElementById('modelPickerOverlay');
@@ -1256,12 +1302,14 @@ async function openModelPicker(targetInputId){
       <button class="modal-close" onclick="closeModelPicker()">✕</button>
     </div>
     <div class="modal-body">
+      <p style="font-size:11px;color:#888;margin-bottom:8px">🔵 레이스웨이 기준기종 + 🟠 일반기종을 고객사별로 선택합니다.</p>
       <div style="display:flex;gap:6px;margin-bottom:10px">
         <button class="btn btn-sm btn-gray" onclick="document.querySelectorAll('.mp-chk').forEach(c=>c.checked=true)" style="flex:1;font-size:11px">✅ 전체선택</button>
         <button class="btn btn-sm btn-gray" onclick="document.querySelectorAll('.mp-chk').forEach(c=>c.checked=false)" style="flex:1;font-size:11px">🔲 전체해제</button>
       </div>
-      <div style="max-height:55vh;overflow-y:auto">${listHtml}</div>
-      <div style="display:flex;gap:8px;margin-top:14px">
+      <div style="max-height:55vh;overflow-y:auto;-webkit-overflow-scrolling:touch">${listHtml}</div>
+      <div id="mpSelectedPreview" style="padding:6px 8px;background:#e8eaf6;border-radius:6px;font-size:11px;color:#1a237e;margin-top:8px;display:none"></div>
+      <div style="display:flex;gap:8px;margin-top:12px">
         <button class="btn btn-gray" onclick="closeModelPicker()" style="flex:1">취소</button>
         <button class="btn btn-green" onclick="applyModelPicker()" style="flex:2">✅ 적용</button>
       </div>
@@ -1269,6 +1317,21 @@ async function openModelPicker(targetInputId){
   </div>`;
   document.body.appendChild(overlay);
   overlay.addEventListener('click',function(e){if(e.target===overlay)closeModelPicker()});
+
+  // 체크 변경 시 미리보기 업데이트
+  overlay.querySelectorAll('.mp-chk').forEach(chk=>{
+    chk.addEventListener('change',updatePickerPreview);
+  });
+  updatePickerPreview();
+}
+
+function updatePickerPreview(){
+  const selected=[];
+  document.querySelectorAll('.mp-chk:checked').forEach(c=>selected.push(c.dataset.model));
+  const el=document.getElementById('mpSelectedPreview');
+  if(!el)return;
+  if(selected.length){el.style.display='block';el.textContent='선택: '+selected.join(', ')+' ('+selected.length+'개)'}
+  else{el.style.display='none'}
 }
 
 function selectAllPickerCust(cust){
