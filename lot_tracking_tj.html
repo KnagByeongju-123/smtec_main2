@@ -2801,7 +2801,12 @@ const BATCH_COL_MAP={
   '비고':'note','note':'note','메모':'note',
   '기종유형':'model_type','model_type':'model_type',
   '일반기종':'general_model','general_model':'general_model',
-  '고객사':'_customer','customer':'_customer'
+  '고객사':'_customer','customer':'_customer',
+  '재질':'_material_type','material_type':'_material_type',
+  '두께':'_thickness','thickness':'_thickness',
+  '폭':'_width','width_mm':'_width',
+  '피치':'_pitch','pitch':'_pitch',
+  '소재명':'_material_name','material_name':'_material_name'
 };
 
 function switchMoveRegTab(mode){
@@ -2823,12 +2828,10 @@ function switchMoveRegTab(mode){
 function downloadBatchTemplate(){
   const wb=XLSX.utils.book_new();
   const procName=selectedProcess?selectedProcess.name:'소재입고';
-  const hd=['일자','시간','공정','출발지','도착지','바코드','기준기종','로트','수량','작업자','설비','소재중량','입고일자','비고','고객사','기종유형','일반기종','부모품번','Inner/Outer'];
-  const sample=['2025-06-15','09:30:00',procName,'태경스틸','본사 창고','TK-SPCC060-A','1106','LOT-240615','500','홍길동','프레스1호기','120','2025-06-14','','SBC','raceway','','',''];
-  // 빈 행 19개 추가 (총 20행)
+  const hd=['일자','시간','공정','출발지','도착지','바코드','기준기종','재질','두께','폭','피치','로트','수량','작업자','소재중량','입고일자','비고','고객사','기종유형','일반기종','부모품번','Inner/Outer'];
+  const sample=['2025-06-15','09:30:00',procName,'태경스틸','보관장','TK-SPCC060-A','1106','SPCC','0.6','32','12.5','LOT-240615','500','홍길동','120','2025-06-14','','SBC','raceway','','',''];
   const rows=[hd,sample];
   for(let i=0;i<19;i++)rows.push(['',...Array(hd.length-1).fill('')]);
-  // 공정 컬럼에 기본값 세팅
   for(let i=2;i<rows.length;i++)rows[i][2]=procName;
   const ws=XLSX.utils.aoa_to_sheet(rows);
   ws['!cols']=hd.map(()=>({wch:14}));
@@ -2931,18 +2934,31 @@ async function doBatchRegister(){
       move_date:todayStr,move_time:timeStr,process:defProcess,departure:defFrom,destination:defTo,
       barcode_raw:'',base_part:'',lot:'',qty:null,note:'',format:'엑셀일괄',
       worker:'',equipment:'',weight:null,incoming_date:null,
-      parent_part:null,child_type:null,model_type:'raceway',general_model:null
+      parent_part:null,child_type:null,model_type:'raceway',general_model:null,
+      material_info:null
     };
+    // 소재정보 임시 저장용
+    let _mType='',_mThick='',_mWidth='',_mPitch='',_mName='';
     srcCols.forEach(sc=>{
-      const target=colMap[sc];if(!target||target.startsWith('_'))return;
+      const target=colMap[sc];if(!target)return;
       let v=raw[sc];
       if(v instanceof Date)v=v.toISOString().split('T')[0];
       v=String(v||'').trim();
       if(!v)return;
-      if(target==='qty'){row.qty=parseInt(v)||null}
+      if(target==='_material_type'){_mType=v}
+      else if(target==='_thickness'){_mThick=v}
+      else if(target==='_width'){_mWidth=v}
+      else if(target==='_pitch'){_mPitch=v}
+      else if(target==='_material_name'){_mName=v}
+      else if(target.startsWith('_'))return;
+      else if(target==='qty'){row.qty=parseInt(v)||null}
       else if(target==='weight'){row.weight=parseFloat(v)||null}
       else{row[target]=v}
     });
+    // 소재정보 합치기
+    const matParts=[_mType,_mThick,_mWidth,_mPitch].filter(Boolean);
+    if(_mName)row.material_info=_mName+(matParts.length?' '+matParts.join('/'):'');
+    else if(matParts.length)row.material_info=matParts.join('/');
     rows.push(row);
   });
 
