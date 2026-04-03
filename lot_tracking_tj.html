@@ -3758,7 +3758,7 @@ const BATCH_COL_MAP={
   '비고':'note','note':'note','메모':'note',
   '기종유형':'model_type','model_type':'model_type',
   '일반기종':'general_model','general_model':'general_model',
-  '고객사':'_customer','customer':'_customer',
+  '고객사':'_customer','customer':'_customer','업체명':'_customer',
   '재질':'_material_type','material_type':'_material_type',
   '두께':'_thickness','thickness':'_thickness',
   '폭':'_width','width_mm':'_width',
@@ -3775,11 +3775,23 @@ function switchMoveRegTab(mode){
     tabBatch.style.background='#e65100';tabBatch.style.color='#fff';
     tabSingle.style.background='#f5f5f5';tabSingle.style.color='#888';
     areaBatch.style.display='block';areaSingle.style.display='none';
+    // 일괄: 소재마스터 포함 전체 표시
+    if(selectedProcess&&selectedProcess.id==='incoming')fillMaterialSelect(selectedCustomer);
   }else{
     tabSingle.style.background='#1a237e';tabSingle.style.color='#fff';
     tabBatch.style.background='#f5f5f5';tabBatch.style.color='#888';
     areaSingle.style.display='block';areaBatch.style.display='none';
+    // 개별: 기본 재질만 표시
+    if(selectedProcess&&selectedProcess.id==='incoming')fillMaterialSelectBase();
   }
+}
+
+// 개별등록용: 기본 재질만 표시
+function fillMaterialSelectBase(){
+  const sel=document.getElementById('selMaterial');if(!sel)return;
+  const BASE_TYPES=['SPCC','SUS304','SUS430','S55C','S70C','C55E','C67S','기타일반'];
+  sel.innerHTML='<option value="">소재(재질) 선택</option>'+BASE_TYPES.map(t=>'<option value="_base_'+t+'">'+t+'</option>').join('');
+  document.getElementById('materialInfoDisplay').style.display='none';
 }
 
 function downloadBatchTemplate(){
@@ -3790,17 +3802,21 @@ function downloadBatchTemplate(){
   let hd,samples;
   if(procId==='incoming'){
     // 소재입고 템플릿 — 소재업체 작성용
-    hd=['재질','두께','폭','피치','로트','소재중량','입고일자','비고'];
-    samples=[
-      ['SPCC','0.6','33','12.5','LOT-250615','120','2025-06-15',''],
-      ['SUS304','0.5','64','','LOT-250615','85','2025-06-15',''],
-      ['SUS430','0.6','90','','LOT-250616','60','2025-06-16',''],
-      ['S55C','0.8','70','15','LOT-250616','95','2025-06-16',''],
+    const today=kstDateStr();
+    const templateRows=[
+      ['업체명','','','입고일자',today,'',''],
+      [], // 빈 행
+      ['재질','두께','폭','로트','소재중량','피치','비고'],
+      ['SPCC','0.6','33','LOT-250615','120','12.5',''],
+      ['SUS304','0.5','64','LOT-250615','85','',''],
+      ['SUS430','0.6','90','LOT-250616','60','',''],
+      ['S55C','0.8','70','LOT-250616','95','15',''],
     ];
-    const rows=[hd,...samples];
-    for(let i=0;i<46;i++)rows.push(new Array(hd.length).fill(''));
-    const ws=XLSX.utils.aoa_to_sheet(rows);
-    ws['!cols']=[{wch:12},{wch:8},{wch:8},{wch:8},{wch:16},{wch:12},{wch:14},{wch:20}];
+    for(let i=0;i<43;i++)templateRows.push(new Array(7).fill(''));
+    const ws=XLSX.utils.aoa_to_sheet(templateRows);
+    ws['!cols']=[{wch:12},{wch:8},{wch:8},{wch:16},{wch:12},{wch:8},{wch:20}];
+    // 병합: 업체명 셀 (A1:C1)
+    ws['!merges']=[{s:{r:0,c:1},e:{r:0,c:2}},{s:{r:0,c:4},e:{r:0,c:6}}];
     XLSX.utils.book_append_sheet(wb,ws,'입고등록');
 
     // 안내 시트
@@ -3808,18 +3824,20 @@ function downloadBatchTemplate(){
       ['[ 소재입고 템플릿 작성 안내 ]'],
       [''],
       ['■ 작성 방법'],
-      ['  - "입고등록" 시트에 값만 입력하세요'],
-      ['  - 헤더(1행)는 수정하지 마세요'],
-      ['  - 샘플 데이터(2~5행)는 삭제 후 작성하세요'],
+      ['  1. 상단에 업체명과 입고일자를 기입하세요'],
+      ['  2. 3행부터 소재 정보를 입력하세요'],
+      ['  3. 헤더(3행)는 수정하지 마세요'],
+      ['  4. 샘플 데이터(4~7행)는 삭제 후 작성하세요'],
       [''],
-      ['■ 컬럼 설명'],
+      ['■ 컬럼 설명 (소재업체 기입)'],
       ['  재질','SPCC, SUS304, SUS430, S55C, S70C, C55E, C67S 등'],
       ['  두께','mm 단위 (예: 0.6, 0.8, 1.2)'],
       ['  폭','mm 단위 (예: 33, 64, 90)'],
-      ['  피치','mm 단위, 없으면 비워두세요 (예: 12.5, 15)'],
       ['  로트','로트번호 (예: LOT-250615, 250615-A)'],
       ['  소재중량','kg 단위 (예: 120, 85.5)'],
-      ['  입고일자','YYYY-MM-DD 형식 (예: 2025-06-15)'],
+      [''],
+      ['■ 사내 기입 항목'],
+      ['  피치','mm 단위, 입고 후 사내에서 기입 (예: 12.5, 15)'],
       ['  비고','참고사항 자유 입력'],
       [''],
       ['■ 소재정보 자동 합산'],
@@ -3831,9 +3849,9 @@ function downloadBatchTemplate(){
       ['  동일 로트로 여러 행을 나누어 작성하세요.'],
       ['  (예: 1코일 300kg → 120kg + 180kg 분할)'],
       [''],
-      ['  재질   두께  폭   피치   로트          소재중량'],
-      ['  SPCC   0.6   33   12.5   LOT-250615    120'],
-      ['  SPCC   0.6   33   12.5   LOT-250615    180'],
+      ['  재질   두께  폭   로트          소재중량'],
+      ['  SPCC   0.6   33   LOT-250615    120'],
+      ['  SPCC   0.6   33   LOT-250615    180'],
       [''],
       ['  ※ 분할 입고가 아닌 코일 절단/가공은'],
       ['    개별등록(스캔)으로 진행하세요.'],
@@ -3903,9 +3921,36 @@ function handleBatchFile(input){
   reader.onload=function(e){
     try{
       const wb=XLSX.read(e.target.result,{type:'array',cellDates:true});
-      const ws=wb.Sheets[wb.SheetNames[0]];
-      const raw=XLSX.utils.sheet_to_json(ws,{defval:''});
-      if(!raw.length){showToast('데이터가 없습니다');return}
+      const sheetName=wb.SheetNames.find(n=>n==='입고등록')||wb.SheetNames[0];
+      const ws=wb.Sheets[sheetName];
+      // 소재입고 템플릿: 1행=업체명/입고일자, 2행=빈, 3행=헤더
+      const procId=selectedProcess?selectedProcess.id:'incoming';
+      let raw;
+      if(procId==='incoming'){
+        // 1행에서 업체명, 입고일자 추출
+        const allRows=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
+        let batchCompany='',batchDate='';
+        if(allRows.length>=1){
+          const r1=allRows[0];
+          if(r1[1])batchCompany=String(r1[1]).trim();
+          if(r1[4])batchDate=String(r1[4]).trim();
+          // Date 객체면 변환
+          if(batchDate instanceof Date||r1[4] instanceof Date)batchDate=kstDateStr(new Date(r1[4]));
+        }
+        // 3행부터 데이터 (range:2 = 0-indexed 2행 = 3행부터)
+        raw=XLSX.utils.sheet_to_json(ws,{range:2,defval:''});
+        // 업체명/입고일자를 각 행에 주입
+        if(raw.length){
+          raw=raw.filter(r=>Object.values(r).some(v=>v!==''));
+          raw.forEach(r=>{
+            if(batchCompany&&!r['업체명'])r['업체명']=batchCompany;
+            if(batchDate&&!r['입고일자'])r['입고일자']=batchDate;
+          });
+        }
+      }else{
+        raw=XLSX.utils.sheet_to_json(ws,{defval:''});
+      }
+      if(!raw||!raw.length){showToast('데이터가 없습니다');return}
       _batchData=raw;
       renderBatchPreview();
     }catch(err){showToast('파일 읽기 오류: '+err.message)}
