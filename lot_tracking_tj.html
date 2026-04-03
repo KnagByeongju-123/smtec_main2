@@ -1469,20 +1469,53 @@ function clearMmBatch(){_mmBatchData=[];document.getElementById('mmBatchPreview'
 
 async function doMmBatchRegister(){
   if(!_mmBatchData.length)return;
-  if(!confirm(_mmBatchData.length+'건 일괄 등록?'))return;
-  const st=document.getElementById('mmBatchStatus');st.style.display='block';st.style.background='#e3f2fd';st.style.color='#1565c0';st.textContent='등록 중...';
-  const rows=_mmBatchData.map(r=>({...r,sort_order:0}));
-  let ok=0,fail=0;
-  for(let i=0;i<rows.length;i+=200){
-    const chunk=rows.slice(i,i+200);
-    try{const sb=getSb();const{error}=await sb.from('material_master_tj').insert(chunk);if(error)throw error;ok+=chunk.length}
-    catch(e){for(const r of chunk){try{await sbInsert('material_master_tj',r);ok++}catch(e2){fail++}}}
-    st.textContent='등록 중... '+ok+'/'+rows.length;
+  if(!confirm(_mmBatchData.length+'건 일괄 등록/갱신?\n\n재질+두께+폭+피치+고객사 기준 중복 시 갱신됩니다.'))return;
+  const st=document.getElementById('mmBatchStatus');st.style.display='block';st.style.background='#e3f2fd';st.style.color='#1565c0';st.textContent='기존 데이터 조회 중...';
+
+  // 기존 소재 마스터 전체 로드
+  await loadMaterialMaster(true);
+  // 키 맵 생성: 재질+두께+폭+피치+고객사 → id
+  const existMap={};
+  _materialMaster.forEach(m=>{
+    const key=[m.material_type||'',m.thickness||'',m.width||'',m.pitch||'',m.customer||''].join('||').toLowerCase();
+    existMap[key]=m.id;
+  });
+
+  let inserted=0,updated=0,fail=0;
+  for(let i=0;i<_mmBatchData.length;i++){
+    const r={..._mmBatchData[i],sort_order:0};
+    const key=[r.material_type||'',r.thickness||'',r.width||'',r.pitch||'',r.customer||''].join('||').toLowerCase();
+    const existId=existMap[key];
+    st.textContent='처리 중... '+(i+1)+'/'+_mmBatchData.length+(updated?' (갱신:'+updated+')':'');
+    try{
+      if(existId){
+        // 기존 데이터 갱신
+        const{sort_order,...updateData}=r;
+        await sbUpdate('material_master_tj',{id:'eq.'+existId},updateData);
+        updated++;
+      }else{
+        // 신규 추가
+        await sbInsert('material_master_tj',r);
+        inserted++;
+        // 새로 추가된 건도 existMap에 등록 (같은 배치 내 중복 방지)
+        existMap[key]='new_'+i;
+      }
+    }catch(e){
+      fail++;
+      console.log('소재 등록/갱신 실패:',r,e);
+    }
   }
+
   _materialMaster=[];await loadMaterialMaster(true);
-  st.style.background=fail?'#fff3e0':'#e8f5e9';st.style.color=fail?'#e65100':'#2e7d32';
-  st.textContent=fail?'⚠ 성공:'+ok+' 실패:'+fail:'✅ '+ok+'건 등록 완료';
-  showToast(fail?'⚠ 성공:'+ok:'✅ '+ok+'건 등록');
+  const total=inserted+updated;
+  if(fail===0){
+    st.style.background='#e8f5e9';st.style.color='#2e7d32';
+    st.textContent='✅ 완료: 신규 '+inserted+'건 + 갱신 '+updated+'건 (총 '+total+'건)';
+    showToast('✅ 신규:'+inserted+' 갱신:'+updated);
+  }else{
+    st.style.background='#fff3e0';st.style.color='#e65100';
+    st.textContent='⚠ 신규:'+inserted+' 갱신:'+updated+' 실패:'+fail;
+  }
   _mmBatchData=[];document.getElementById('mmBatchPreview').style.display='none';document.getElementById('mmBatchFile').value='';
 }
 
