@@ -648,7 +648,7 @@
         <div style="display:flex;flex-direction:column;gap:1px"><button class="s-move" onclick="moveSettingsCard('category',-1)" style="width:20px;height:14px;font-size:9px">▲</button><button class="s-move" onclick="moveSettingsCard('category',1)" style="width:20px;height:14px;font-size:9px">▼</button></div>
         <span>⚙ 분류 항목 관리</span>
       </div>
-      <div style="display:flex;gap:4px"><button class="btn btn-sm btn-blue" onclick="syncCatsFromDB()" style="font-size:10px">🔄 기종 동기화</button><button class="btn btn-sm btn-gray" onclick="resetCats()">기본값</button></div>
+      <div style="display:flex;gap:4px"><button class="btn btn-sm btn-gray" onclick="resetCats()">기본값</button></div>
     </div>
     <div id="catEditor"></div>
     <button class="add-btn" onclick="addCat()" style="margin-top:8px;padding:10px;font-size:13px">+ 분류 추가</button>
@@ -1908,18 +1908,8 @@ async function insertDefaultTree(){
 }
 
 async function refreshPartCatSubs(){
-  const data=await loadPartTreeData();
-  const allParents=[...new Set(data.map(r=>r.parent_part))].sort();
-  // 기준기종 (구 기준품번 포함 호환)
-  let catIdx=cats.findIndex(c=>c.name==='기준기종'||c.name==='기준품번');
-  if(catIdx>=0){cats[catIdx].name='기준기종';cats[catIdx].subs=allParents.length?allParents:['항목없음']}
-  else cats.push({name:'기준기종',subs:allParents.length?allParents:['항목없음']});
-  const allFinals=[...new Set(data.map(r=>getFinalPart(r)))].sort();
-  // 출하기종 (구 출하품번 포함 호환)
-  let shipIdx=cats.findIndex(c=>c.name==='출하기종'||c.name==='출하품번');
-  if(shipIdx>=0){cats[shipIdx].name='출하기종';cats[shipIdx].subs=allFinals.length?allFinals:['항목없음']}
-  else cats.push({name:'출하기종',subs:allFinals.length?allFinals:['항목없음']});
-  localStorage.setItem('LOT_TJ_CATS',JSON.stringify(cats));
+  // 기종마스터에서 직접 관리하므로 cats 조작 불필요
+  await loadPartTreeData();
 }
 
 function getFinalPart(row){if(row.process_route==='heat_surface'&&row.surface_part)return row.surface_part;return row.heat_part||(row.parent_part+row.child_type)}
@@ -1936,13 +1926,14 @@ const DEFAULT_CATS=[
   {name:'출발지',subs:['외부업체','보관장','생산라인','세척실','거명정밀','동진금속','한성특수']},
   {name:'도착지',subs:['보관장','생산라인','세척실','거명정밀','동진금속','한성특수','SBC','SKF씰','일진글로벌','부강스프링','진양오일씰']},
   {name:'고객사',subs:['SBC','SKF씰','일진글로벌','부강스프링','진양오일씰']},
-  {name:'외주업체',subs:['거명정밀','동진금속','한성특수']},
-  {name:'기준기종',subs:['1106','1113','1124','1156','1159','1165','1179']},
-  {name:'출하기종',subs:['1106CBInner','1106CBOuter','1106CAInner','1106CAOuter','1113AAInner','1113AAOuter']}
+  {name:'외주업체',subs:['거명정밀','동진금속','한성특수']}
 ];
 
 let cats=JSON.parse(localStorage.getItem('LOT_TJ_CATS')||'null')||JSON.parse(JSON.stringify(DEFAULT_CATS));
+// 기준기종/출하기종은 기종마스터에서 관리하므로 cats에서 제거
+cats=cats.filter(c=>c.name!=='기준기종'&&c.name!=='기준품번'&&c.name!=='출하기종'&&c.name!=='출하품번');
 DEFAULT_CATS.forEach(dc=>{if(!cats.find(c=>c.name===dc.name))cats.unshift(JSON.parse(JSON.stringify(dc)))});
+localStorage.setItem('LOT_TJ_CATS',JSON.stringify(cats));
 let hist=JSON.parse(localStorage.getItem('LOT_TJ_HIST')||'[]');
 let pendingScan=null,dbMappingFound=false,modalScanData=null;
 
@@ -2997,35 +2988,6 @@ function restoreCardOrder(){
     const card=container.querySelector('[data-card-id="'+id+'"]');
     if(card)container.appendChild(card);
   });
-}
-
-async function syncCatsFromDB(){
-  showToast('DB에서 기종 동기화 중...');
-  try{
-    // 1) 레이스웨이 기준기종 + 출하기종
-    const partData=await loadPartTreeData();
-    const allParents=[...new Set(partData.map(r=>r.parent_part))].sort();
-    const allFinals=[...new Set(partData.map(r=>getFinalPart(r)))].sort();
-
-    // 2) 일반기종도 기준기종에 합치기 (고객사 구분 없이 이름만)
-    await loadGeneralModels(true);
-    const gmNames=_generalModels.map(m=>m.model_name);
-
-    // 기준기종 카테고리 동기화
-    let catIdx=cats.findIndex(c=>c.name==='기준기종'||c.name==='기준품번');
-    const mergedBase=[...new Set([...allParents,...gmNames])].sort();
-    if(catIdx>=0){cats[catIdx].name='기준기종';cats[catIdx].subs=mergedBase.length?mergedBase:['항목없음']}
-    else cats.push({name:'기준기종',subs:mergedBase.length?mergedBase:['항목없음']});
-
-    // 출하기종 카테고리 동기화
-    let shipIdx=cats.findIndex(c=>c.name==='출하기종'||c.name==='출하품번');
-    if(shipIdx>=0){cats[shipIdx].name='출하기종';cats[shipIdx].subs=allFinals.length?allFinals:['항목없음']}
-    else cats.push({name:'출하기종',subs:allFinals.length?allFinals:['항목없음']});
-
-    localStorage.setItem('LOT_TJ_CATS',JSON.stringify(cats));
-    renderCatEditor();renderRegFields();
-    showToast('✅ 기준기종 '+mergedBase.length+'개, 출하기종 '+allFinals.length+'개 동기화 완료');
-  }catch(e){showToast('⚠ 동기화 실패: '+e.message)}
 }
 
 // ===== 레이스웨이 기종 마스터 카드 (설정탭) =====
