@@ -321,7 +321,7 @@ async function loadWorkerTab(){
     const unit=g.code==='p_machine'?'대':'명';
     card.innerHTML='<div class="card-title" style="justify-content:space-between"><span>'+g.label+' ('+(_workerData[g.code]||[]).length+unit+')</span></div>';
     const list=document.createElement('div');
-    (_workerData[g.code]||[]).forEach((w,i)=>{list.innerHTML+='<div class="list-item"><span style="color:var(--text3);font-size:11px;min-width:18px">'+(i+1)+'</span><span class="li-name">'+esc(w.name)+'</span><button class="li-btn li-del" onclick="delWorker(\''+g.code+'\','+w.id+')">✕</button></div>'});
+    (_workerData[g.code]||[]).forEach((w,i)=>{list.innerHTML+='<div class="list-item"><span style="color:var(--text3);font-size:11px;min-width:18px">'+(i+1)+'</span><span class="li-name">'+esc(w.name)+'</span><button class="li-btn li-move" onclick="moveWorker(\''+g.code+'\','+i+',-1)">▲</button><button class="li-btn li-move" onclick="moveWorker(\''+g.code+'\','+i+',1)">▼</button><button class="li-btn" onclick="editWorker(\''+g.code+'\','+i+')" style="background:rgba(56,189,248,.15);color:#38bdf8">✎</button><button class="li-btn li-del" onclick="delWorker(\''+g.code+'\','+w.id+')">✕</button></div>'});
     card.appendChild(list);
     const addRow=document.createElement('div');addRow.style.cssText='display:flex;gap:6px;margin-top:8px';
     const ph=g.code==='p_machine'?'설비명':'이름';
@@ -331,6 +331,28 @@ async function loadWorkerTab(){
 }
 async function addWorkerTo(code){const inp=document.getElementById('wkNew_'+code);const n=inp.value.trim();if(!n)return;const list=_workerData[code]||[];if(list.find(w=>w.name===n)){toast('이미 존재');return}const ns=list.length?Math.max(...list.map(w=>w.sort))+1:1;try{await sbInsert('common_code',{code_group:code,code_value:n,sort_order:ns});inp.value='';toast('✅ '+n);loadWorkerTab()}catch(e){toast('❌ '+e.message)}}
 async function delWorker(code,id){if(!confirm('삭제?'))return;try{await sbDel('common_code',id);toast('삭제됨');loadWorkerTab()}catch(e){toast('❌ '+e.message)}}
+async function moveWorker(code,idx,dir){
+  const list=_workerData[code]||[];const n=idx+dir;
+  if(n<0||n>=list.length)return;
+  const a=list[idx],b=list[n];
+  try{
+    const SB_URL=getSbUrl(),SB_KEY=getSbKey();
+    await fetch(SB_URL+'/rest/v1/common_code?id=eq.'+a.id,{method:'PATCH',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY},body:JSON.stringify({sort_order:b.sort})});
+    await fetch(SB_URL+'/rest/v1/common_code?id=eq.'+b.id,{method:'PATCH',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY},body:JSON.stringify({sort_order:a.sort})});
+    loadWorkerTab();
+  }catch(e){toast('❌ '+e.message)}
+}
+async function editWorker(code,idx){
+  const list=_workerData[code]||[];const item=list[idx];if(!item)return;
+  const newName=prompt('이름 수정:',item.name);
+  if(newName===null||!newName.trim())return;
+  if(list.find((w,i)=>i!==idx&&w.name===newName.trim())){toast('이미 존재');return}
+  try{
+    const SB_URL=getSbUrl(),SB_KEY=getSbKey();
+    await fetch(SB_URL+'/rest/v1/common_code?id=eq.'+item.id,{method:'PATCH',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY},body:JSON.stringify({code_value:newName.trim()})});
+    toast('✅ 수정됨');loadWorkerTab();
+  }catch(e){toast('❌ '+e.message)}
+}
 
 // ===== 고객사 (common_code: customer) =====
 let _custs=[];
