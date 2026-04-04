@@ -38,6 +38,10 @@
     .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.85);color:#fff;padding:8px 18px;border-radius:18px;font-size:12px;font-weight:600;z-index:9999;opacity:0;transition:opacity .3s;pointer-events:none}.toast.show{opacity:1}
     .back-link{display:inline-block;padding:10px 0;font-size:12px;color:#888;text-decoration:none}
     .back-link:hover{color:#1a237e}
+    .tabs{display:flex;background:#fff;border-bottom:2px solid #e0e0e0;position:sticky;top:0;z-index:50}
+    .tab{flex:1;padding:10px;text-align:center;font-size:13px;font-weight:600;cursor:pointer;border-bottom:3px solid transparent;color:#888}
+    .tab.on{color:#1a237e;border-bottom-color:#1a237e}
+    .main-pnl{display:none}.main-pnl.on{display:block}
     .file-drop{border:2.5px dashed #c5cae9;border-radius:12px;padding:30px 16px;text-align:center;cursor:pointer;transition:all .2s;background:#fafafa}
     .file-drop:hover,.file-drop.dragover{border-color:#1a237e;background:#e8eaf6}
     .file-drop .fd-icon{font-size:36px;margin-bottom:6px}
@@ -53,6 +57,13 @@
   <h1>📤 소재입고 등록</h1>
   <p>소재업체 템플릿 업로드 → DB 저장</p>
 </div>
+<div class="tabs">
+  <div class="tab on" onclick="swMainTab(0)">📤 등록</div>
+  <div class="tab" onclick="swMainTab(1)">⚙ 설정</div>
+</div>
+
+<!-- 등록 패널 -->
+<div class="main-pnl on" id="mainPnl0">
 <div class="wrap">
   <a href="index.html" class="back-link">← 메인으로 돌아가기</a>
 
@@ -150,6 +161,50 @@
     </div>
   </div>
 </div>
+</div><!-- /mainPnl0 -->
+
+<!-- 설정 패널 -->
+<div class="main-pnl" id="mainPnl1">
+<div class="wrap">
+  <div class="card">
+    <div class="card-tit">📧 메일 알림 설정</div>
+    <div class="info-box blue" style="font-size:11px">GAS 웹앱 URL은 Supabase <code>common_code</code> 테이블에 저장됩니다.<br>(code_group: mail_gas) 다른 기기에서도 자동 적용됩니다.</div>
+    <div class="fg">
+      <label>GAS 메일 웹앱 URL</label>
+      <input type="password" id="cfgMailGas" placeholder="https://script.google.com/macros/s/.../exec">
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-sm btn-green" onclick="saveMailGas()">💾 저장</button>
+      <button class="btn btn-sm btn-gray" onclick="testMailGas()">🔌 테스트</button>
+    </div>
+    <div id="mailGasStatus" style="font-size:11px;color:#888;margin-top:4px"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-tit">🔌 Supabase 연결</div>
+    <div class="info-box orange" style="font-size:11px">접속에 필요하므로 이 기기의 localStorage에 저장됩니다.<br>새 기기에서는 다시 입력해야 합니다.</div>
+    <div class="fg">
+      <label>Project URL</label>
+      <input type="password" id="cfgSbUrl" value="" placeholder="https://xxxxx.supabase.co">
+    </div>
+    <div class="fg">
+      <label>Anon Key</label>
+      <input type="password" id="cfgSbKey" value="" placeholder="eyJhbGciOi...">
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-sm btn-green" onclick="saveSupabaseCfg()">💾 저장</button>
+      <button class="btn btn-sm btn-gray" onclick="testSupabaseCfg()">🔌 연결 테스트</button>
+    </div>
+    <div id="sbCfgStatus" style="font-size:11px;color:#888;margin-top:4px"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-tit">ℹ️ 연결 상태</div>
+    <div id="connStatusInfo" style="font-size:12px;color:#555;line-height:1.8"></div>
+  </div>
+</div>
+</div><!-- /mainPnl1 -->
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -158,11 +213,24 @@ function getKST(d){const utc=d.getTime()+d.getTimezoneOffset()*60000;return new 
 function kstDateStr(d){const k=getKST(d||new Date());return k.getFullYear()+'-'+String(k.getMonth()+1).padStart(2,'0')+'-'+String(k.getDate()).padStart(2,'0')}
 function kstTimeStr(d){const k=getKST(d||new Date());return String(k.getHours()).padStart(2,'0')+':'+String(k.getMinutes()).padStart(2,'0')+':'+String(k.getSeconds()).padStart(2,'0')}
 
-// Supabase REST
-const SB_URL='https://omngtyewdaqpphnzeate.supabase.co';
-const SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tbmd0eWV3ZGFxcHBobnplYXRlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4ODk4ODksImV4cCI6MjA5MDQ2NTg4OX0.Zxur3t02JHtOcXforCMSwO3i2mMaf5sViE0tXXUC0-s';
+// Supabase REST (localStorage 기반)
+const SB_LS_KEY='MATERIAL_SB_CFG';
+const SB_DEFAULT_URL='https://omngtyewdaqpphnzeate.supabase.co';
+const SB_DEFAULT_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tbmd0eWV3ZGFxcHBobnplYXRlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4ODk4ODksImV4cCI6MjA5MDQ2NTg4OX0.Zxur3t02JHtOcXforCMSwO3i2mMaf5sViE0tXXUC0-s';
+
+function getSbCfg(){try{return JSON.parse(localStorage.getItem(SB_LS_KEY)||'{}')}catch(e){return{}}}
+function getSbUrl(){return(getSbCfg().url||SB_DEFAULT_URL).replace(/\/$/,'')}
+function getSbKey(){return getSbCfg().key||SB_DEFAULT_KEY}
+
+// 탭 전환
+function swMainTab(n){
+  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('on',i===n));
+  document.querySelectorAll('.main-pnl').forEach((p,i)=>p.classList.toggle('on',i===n));
+  if(n===1)loadSettingsUI();
+}
 
 async function sbInsert(table,rows){
+  const SB_URL=getSbUrl(),SB_KEY=getSbKey();
   const res=await fetch(SB_URL+'/rest/v1/'+table,{
     method:'POST',
     headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Prefer':'return=minimal'},
@@ -172,6 +240,7 @@ async function sbInsert(table,rows){
 }
 
 async function sbSelect(table,filters,selectCols){
+  const SB_URL=getSbUrl(),SB_KEY=getSbKey();
   let url=SB_URL+'/rest/v1/'+table+'?select='+(selectCols||'*')+'&';
   Object.entries(filters).forEach(([k,v])=>{url+=k+'='+encodeURIComponent(v)+'&'});
   const res=await fetch(url,{
@@ -223,6 +292,55 @@ async function sendTelegram(msg){
 
 // 페이지 로드 시 텔레그램 설정 로드
 loadTelegramConfig();
+
+// 메일 알림 (GAS 경유)
+
+async function sendEmail(info){
+  const gasUrl=_mailGasUrl||localStorage.getItem('MATERIAL_MAIL_GAS_URL')||'';
+  if(!gasUrl)return;
+
+  const matRows=info.rows.slice(0,10).map(r=>{
+    const m=r.material_info||'-';
+    const w=r.weight?r.weight+'kg':'';
+    const l=r.lot||'';
+    return '<tr><td style="padding:6px 10px;border:1px solid #e0e0e0">'+m+'</td>'
+      +'<td style="padding:6px 10px;border:1px solid #e0e0e0">'+l+'</td>'
+      +'<td style="padding:6px 10px;border:1px solid #e0e0e0;text-align:right">'+w+'</td></tr>';
+  }).join('');
+
+  const html='<div style="font-family:sans-serif;max-width:600px">'
+    +'<div style="background:#1a237e;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">'
+    +'<h2 style="margin:0;font-size:18px">📤 소재입고 등록 완료</h2></div>'
+    +'<div style="padding:20px;background:#f8f9fa;border:1px solid #e0e0e0;border-top:none;border-radius:0 0 8px 8px">'
+    +'<table style="width:100%;border-collapse:collapse;margin-bottom:16px;font-size:14px">'
+    +'<tr><td style="padding:6px 0;color:#888;width:90px">업체</td><td style="font-weight:700">'+info.company+'</td></tr>'
+    +'<tr><td style="padding:6px 0;color:#888">입고일</td><td style="font-weight:700">'+info.date+'</td></tr>'
+    +'<tr><td style="padding:6px 0;color:#888">등록건수</td><td style="font-weight:700;color:#1a237e">'+info.count+'건</td></tr>'
+    +'<tr><td style="padding:6px 0;color:#888">출발지</td><td>'+info.from+'</td></tr>'
+    +'<tr><td style="padding:6px 0;color:#888">도착지</td><td>'+info.to+'</td></tr>'
+    +(info.worker?'<tr><td style="padding:6px 0;color:#888">담당자</td><td>'+info.worker+'</td></tr>':'')
+    +'</table>'
+    +'<div style="font-size:13px;font-weight:700;color:#555;margin-bottom:6px">📋 소재정보'+(info.rows.length>10?' (상위 10건)':'')+'</div>'
+    +'<table style="width:100%;border-collapse:collapse;font-size:12px;background:#fff">'
+    +'<tr style="background:#e8eaf6"><th style="padding:6px 10px;border:1px solid #c5cae9;text-align:left">소재</th>'
+    +'<th style="padding:6px 10px;border:1px solid #c5cae9;text-align:left">로트</th>'
+    +'<th style="padding:6px 10px;border:1px solid #c5cae9;text-align:right">중량</th></tr>'
+    +matRows
+    +(info.rows.length>10?'<tr><td colspan="3" style="padding:6px 10px;color:#888;text-align:center;border:1px solid #e0e0e0">... 외 '+(info.rows.length-10)+'건</td></tr>':'')
+    +'</table>'
+    +'<div style="margin-top:16px;font-size:11px;color:#aaa;text-align:center">Smart Factory Platform · 소재입고 자동알림</div>'
+    +'</div></div>';
+
+  const subject='📤 소재입고 '+info.count+'건 — '+info.company+' ('+info.date+')';
+
+  try{
+    await fetch(gasUrl,{
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body:JSON.stringify({action:'sendMail',subject:subject,html:html,text:subject})
+    });
+  }catch(e){console.log('메일 발송 실패:',e)}
+}
 
 // 컬럼 매핑
 const COL_MAP={
@@ -487,6 +605,7 @@ async function doRegister(){
       +'\n📋 소재정보 (상위 '+Math.min(5,rows.length)+'건):\n  '+matSummary
       +(rows.length>5?'\n  ... 외 '+(rows.length-5)+'건':'');
     sendTelegram(tgMsg);
+    sendEmail({company:_batchCompany||'-',date:_batchDate||todayStr,count:ok,from:cfg.from,to:cfg.to,worker:cfg.worker,rows:rows});
     goStep(4);
   }else{
     st.style.background='#fff3e0';st.style.color='#e65100';
@@ -511,6 +630,117 @@ function showToast(m){
   el.textContent=m;el.classList.add('show');
   clearTimeout(_tt);_tt=setTimeout(()=>el.classList.remove('show'),2000);
 }
+
+// 메일 GAS 설정 (서버 저장: common_code → code_group='mail_gas')
+let _mailGasUrl='';
+
+async function loadMailGasCfg(){
+  const el=document.getElementById('cfgMailGas');
+  // 서버에서 로드
+  try{
+    const data=await sbSelect('common_code',{code_group:'eq.mail_gas',order:'sort_order.asc'},'code_value,sort_order');
+    if(data&&data.length){
+      const r=data.find(x=>x.sort_order===0);
+      if(r&&r.code_value){_mailGasUrl=String(r.code_value).trim();if(el)el.value=_mailGasUrl}
+    }
+  }catch(e){console.log('메일 설정 로드 실패:',e)}
+  // 서버에 없으면 localStorage fallback
+  if(!_mailGasUrl){
+    const lv=localStorage.getItem('MATERIAL_MAIL_GAS_URL')||'';
+    if(lv){_mailGasUrl=lv;if(el)el.value=lv}
+  }
+}
+
+async function saveMailGas(){
+  const v=document.getElementById('cfgMailGas').value.trim();
+  const st=document.getElementById('mailGasStatus');
+  if(!v){st.textContent='⚠ URL 비어있음 (메일 비활성)';st.style.color='#e65100';return}
+  st.textContent='서버 저장 중...';st.style.color='#1565c0';
+  try{
+    // 기존 삭제 후 새로 INSERT (upsert 대용)
+    const SB_URL=getSbUrl(),SB_KEY=getSbKey();
+    await fetch(SB_URL+'/rest/v1/common_code?code_group=eq.mail_gas&sort_order=eq.0',{
+      method:'DELETE',headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY}
+    });
+    await sbInsert('common_code',[{code_group:'mail_gas',code_value:v,sort_order:0}]);
+    _mailGasUrl=v;
+    localStorage.setItem('MATERIAL_MAIL_GAS_URL',v); // fallback 유지
+    st.textContent='✅ 서버 저장 완료';st.style.color='#2e7d32';
+    showToast('💾 메일 설정 서버 저장');
+    updateConnStatus();
+  }catch(e){
+    st.textContent='❌ 서버 저장 실패: '+e.message;st.style.color='#c62828';
+    // fallback: localStorage
+    localStorage.setItem('MATERIAL_MAIL_GAS_URL',v);_mailGasUrl=v;
+  }
+}
+
+async function testMailGas(){
+  const st=document.getElementById('mailGasStatus');
+  const url=document.getElementById('cfgMailGas').value.trim();
+  if(!url){st.textContent='❌ URL을 입력하세요';st.style.color='#c62828';return}
+  st.textContent='테스트 중...';st.style.color='#1565c0';
+  try{
+    const res=await fetch(url+'?action=ping');
+    const data=await res.json();
+    if(data.success){
+      st.textContent='✅ 연결 성공 (잔여 발송: '+data.quota+'통/일)';st.style.color='#2e7d32';
+    }else{
+      st.textContent='❌ '+data.message;st.style.color='#c62828';
+    }
+  }catch(e){st.textContent='❌ 연결 실패: '+e.message;st.style.color='#c62828'}
+}
+
+// Supabase 설정 (localStorage — 서버 접속 전에 필요하므로)
+function saveSupabaseCfg(){
+  const url=document.getElementById('cfgSbUrl').value.trim();
+  const key=document.getElementById('cfgSbKey').value.trim();
+  localStorage.setItem(SB_LS_KEY,JSON.stringify({url:url,key:key}));
+  const st=document.getElementById('sbCfgStatus');
+  st.textContent='✅ 저장됨 (로컬)';st.style.color='#2e7d32';
+  showToast('💾 Supabase 설정 저장');
+  updateConnStatus();
+}
+async function testSupabaseCfg(){
+  const st=document.getElementById('sbCfgStatus');
+  const url=document.getElementById('cfgSbUrl').value.trim().replace(/\/$/,'');
+  const key=document.getElementById('cfgSbKey').value.trim();
+  if(!url||!key){st.textContent='❌ URL과 Key를 입력하세요';st.style.color='#c62828';return}
+  st.textContent='연결 중...';st.style.color='#1565c0';
+  try{
+    const res=await fetch(url+'/rest/v1/move_history_tj?select=id&limit=1',{
+      headers:{'apikey':key,'Authorization':'Bearer '+key}
+    });
+    if(res.ok){st.textContent='✅ 연결 성공';st.style.color='#2e7d32'}
+    else{st.textContent='⚠ 응답 '+res.status;st.style.color='#e65100'}
+  }catch(e){st.textContent='❌ '+e.message;st.style.color='#c62828'}
+}
+
+function loadSettingsUI(){
+  loadMailGasCfg();
+  const cfg=getSbCfg();
+  document.getElementById('cfgSbUrl').value=cfg.url||SB_DEFAULT_URL;
+  document.getElementById('cfgSbKey').value=cfg.key||SB_DEFAULT_KEY;
+  updateConnStatus();
+}
+function updateConnStatus(){
+  const c=document.getElementById('connStatusInfo');
+  const sbOk=!!(getSbUrl()&&getSbKey());
+  const mailOk=!!_mailGasUrl;
+  const tgOk=!!(_tgBotToken&&_tgChatIds.length);
+  c.innerHTML=(sbOk?'🟢':'🔴')+' Supabase: '+(sbOk?'설정됨':'미설정')
+    +'<br>'+(mailOk?'🟢':'🔴')+' 메일 알림: '+(mailOk?'서버 설정됨':'미설정')
+    +'<br>'+(tgOk?'🟢':'🔴')+' 텔레그램: '+(tgOk?_tgChatIds.length+'명 수신':'미설정 (common_code 확인)');
+}
+
+document.addEventListener('DOMContentLoaded',()=>{
+  // 최초 접속 시 Supabase 기본값 저장
+  if(!localStorage.getItem(SB_LS_KEY)){
+    localStorage.setItem(SB_LS_KEY,JSON.stringify({url:SB_DEFAULT_URL,key:SB_DEFAULT_KEY}));
+  }
+  // 서버에서 메일 설정 로드
+  loadMailGasCfg();
+});
 </script>
 </body>
 </html>
