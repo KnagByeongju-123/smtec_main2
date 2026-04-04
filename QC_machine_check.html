@@ -532,13 +532,11 @@
   <!-- 검사자 관리 -->
   <div class="card">
     <div class="card-title">검사자 관리</div>
+    <div style="font-size:10px;color:var(--text3);margin-bottom:8px;padding:6px 8px;background:rgba(56,189,248,.08);border-radius:6px">💡 검사자 목록은 Supabase <code>common_code</code> 테이블에 저장됩니다 (code_group: inspector)</div>
     <div id="inspectorList"></div>
     <div style="display:flex;gap:6px;margin-top:8px">
       <input type="text" id="newInspectorName" placeholder="이름 입력" style="flex:1;padding:9px 12px;font-size:13px;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit">
       <button type="button" onclick="addInspector()" style="padding:9px 14px;background:var(--accent2);border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;flex-shrink:0">+ 추가</button>
-    </div>
-    <div style="display:flex;gap:6px;margin-top:8px">
-      <button type="button" onclick="saveInspectors()" class="submit-btn" style="font-size:13px;padding:10px;background:linear-gradient(135deg,#059669,#34d399)">💾 검사자 저장</button>
     </div>
     <div id="inspectorSaveStatus" style="font-size:11px;margin-top:6px;color:var(--text3)"></div>
   </div>
@@ -601,20 +599,53 @@
 <script>
 // === Supabase 설정 (localStorage) ===
 const LS_KEY = 'QC_MACHINE_SETTINGS';
-const LS_INSPECTORS = 'QC_INSPECTORS';
 const DEFAULT_INSPECTORS = ['권혜영','강란희','이유선','송경옥','강병주','오윤정','김상기','허미정','오현민','문수진','김미선','하정화','차찬이','서성자','전귀옥'];
 
-function getInspectors(){
-  const saved=localStorage.getItem(LS_INSPECTORS);
-  if(saved){try{return JSON.parse(saved)}catch(e){}}
-  return [...DEFAULT_INSPECTORS];
+// 검사자 캐시 (서버에서 로드)
+let _inspectorCache=[];
+
+function getInspectors(){ return _inspectorCache.length?_inspectorCache:[...DEFAULT_INSPECTORS]; }
+
+async function loadInspectorsFromServer(){
+  if(!isConfigured())return;
+  try{
+    const data=await sbSelect('common_code',{code_group:'eq.inspector'},'sort_order.asc',100);
+    if(data&&data.length){
+      _inspectorCache=data.map(r=>({id:r.id, name:String(r.code_value||'').trim(), sort:r.sort_order||0}));
+      _inspectorCache.sort((a,b)=>a.sort-b.sort);
+    }else{
+      // 서버에 데이터 없으면 기본값 일괄 등록
+      await initInspectorsOnServer();
+    }
+  }catch(e){console.log('검사자 로드 실패:',e)}
+  renderInspectorSelect();
+}
+
+async function initInspectorsOnServer(){
+  if(!isConfigured())return;
+  const rows=DEFAULT_INSPECTORS.map((name,i)=>({code_group:'inspector',code_value:name,sort_order:i+1,note:''}));
+  try{
+    const SB_URL=getSbUrl(),SB_KEY=getSbKey();
+    const res=await fetch(`${SB_URL}/rest/v1/common_code`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Prefer':'return=representation'},
+      body:JSON.stringify(rows)
+    });
+    if(res.ok){
+      const saved=await res.json();
+      _inspectorCache=saved.map(r=>({id:r.id,name:String(r.code_value||'').trim(),sort:r.sort_order||0}));
+      _inspectorCache.sort((a,b)=>a.sort-b.sort);
+    }
+  }catch(e){console.log('검사자 초기등록 실패:',e)}
 }
 
 function renderInspectorSelect(){
   const sel=document.getElementById('inspector');
   const prev=sel.value;
   sel.innerHTML='<option value="" disabled selected>선택</option>';
-  getInspectors().forEach(name=>{
+  const list=getInspectors();
+  (Array.isArray(list)&&list.length?list:[]).forEach(item=>{
+    const name=typeof item==='string'?item:item.name;
     const o=document.createElement('option');o.value=name;o.textContent=name;sel.appendChild(o);
   });
   if(prev){sel.value=prev}
@@ -624,48 +655,96 @@ function renderInspectorListUI(){
   const list=getInspectors();
   const c=document.getElementById('inspectorList');
   if(!list.length){c.innerHTML='<div style="font-size:11px;color:var(--text3);padding:6px 0">검사자 없음</div>';return}
-  c.innerHTML=list.map((name,i)=>`<div class="tg-user-item"><span style="color:var(--text3);font-size:11px;min-width:20px">${i+1}</span><span class="tg-name" style="flex:1">${name}</span><button class="tg-del" onclick="moveInspector(${i},-1)" style="background:transparent;color:var(--text2);font-size:11px" title="위로">▲</button><button class="tg-del" onclick="moveInspector(${i},1)" style="background:transparent;color:var(--text2);font-size:11px" title="아래로">▼</button><button class="tg-del" onclick="removeInspector(${i})">✕</button></div>`).join('');
+  const items=list.map(item=>typeof item==='string'?{name:item,id:null,sort:0}:item);
+  c.innerHTML=items.map((item,i)=>`<div class="tg-user-item"><span style="color:var(--text3);font-size:11px;min-width:20px">${i+1}</span><span class="tg-name" style="flex:1">${item.name}</span><button class="tg-del" onclick="moveInspector(${i},-1)" style="background:transparent;color:var(--text2);font-size:11px" title="위로">▲</button><button class="tg-del" onclick="moveInspector(${i},1)" style="background:transparent;color:var(--text2);font-size:11px" title="아래로">▼</button><button class="tg-del" onclick="removeInspector(${i})">✕</button></div>`).join('');
 }
 
-function addInspector(){
+async function addInspector(){
   const inp=document.getElementById('newInspectorName');
   const name=inp.value.trim();
   if(!name)return;
+  const st=document.getElementById('inspectorSaveStatus');
   const list=getInspectors();
-  if(list.includes(name)){document.getElementById('inspectorSaveStatus').textContent='⚠️ 이미 존재하는 이름';document.getElementById('inspectorSaveStatus').style.color='#f59e0b';return}
-  list.push(name);
-  localStorage.setItem(LS_INSPECTORS,JSON.stringify(list));
-  inp.value='';
-  renderInspectorListUI();
-  renderInspectorSelect();
-  document.getElementById('inspectorSaveStatus').textContent='✅ 추가됨: '+name;
-  document.getElementById('inspectorSaveStatus').style.color='#22c55e';
+  const names=list.map(item=>typeof item==='string'?item:item.name);
+  if(names.includes(name)){st.textContent='⚠️ 이미 존재하는 이름';st.style.color='#f59e0b';return}
+
+  if(!isConfigured()){st.textContent='❌ Supabase 연결 필요';st.style.color='#ef4444';return}
+  st.textContent='추가 중...';st.style.color='var(--accent)';
+  const newSort=_inspectorCache.length?Math.max(..._inspectorCache.map(c=>c.sort))+1:1;
+  try{
+    const saved=await sbInsert('common_code',{code_group:'inspector',code_value:name,sort_order:newSort,note:''});
+    if(saved&&saved.length){
+      _inspectorCache.push({id:saved[0].id,name:name,sort:newSort});
+      _inspectorCache.sort((a,b)=>a.sort-b.sort);
+    }
+    inp.value='';
+    renderInspectorListUI();
+    renderInspectorSelect();
+    st.textContent='✅ 추가됨: '+name;st.style.color='#22c55e';
+  }catch(e){st.textContent='❌ 추가 실패: '+e.message;st.style.color='#ef4444'}
 }
 
-function removeInspector(idx){
+async function removeInspector(idx){
   const list=getInspectors();
-  const removed=list.splice(idx,1)[0];
-  localStorage.setItem(LS_INSPECTORS,JSON.stringify(list));
-  renderInspectorListUI();
-  renderInspectorSelect();
-  document.getElementById('inspectorSaveStatus').textContent='삭제됨: '+removed;
-  document.getElementById('inspectorSaveStatus').style.color='#f59e0b';
+  const item=typeof list[idx]==='string'?{name:list[idx],id:null}:list[idx];
+  if(!confirm(item.name+' 삭제?'))return;
+  const st=document.getElementById('inspectorSaveStatus');
+
+  if(item.id&&isConfigured()){
+    st.textContent='삭제 중...';st.style.color='var(--accent)';
+    try{
+      const SB_URL=getSbUrl(),SB_KEY=getSbKey();
+      await fetch(`${SB_URL}/rest/v1/common_code?id=eq.${item.id}`,{
+        method:'DELETE',
+        headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY}
+      });
+      _inspectorCache=_inspectorCache.filter(c=>c.id!==item.id);
+      renderInspectorListUI();
+      renderInspectorSelect();
+      st.textContent='삭제됨: '+item.name;st.style.color='#f59e0b';
+    }catch(e){st.textContent='❌ 삭제 실패: '+e.message;st.style.color='#ef4444'}
+  }else{
+    st.textContent='❌ 서버 연결 필요';st.style.color='#ef4444';
+  }
 }
 
-function moveInspector(idx,dir){
+async function moveInspector(idx,dir){
   const list=getInspectors();
   const n=idx+dir;
   if(n<0||n>=list.length)return;
-  [list[idx],list[n]]=[list[n],list[idx]];
-  localStorage.setItem(LS_INSPECTORS,JSON.stringify(list));
+  const items=list.map(item=>typeof item==='string'?{name:item,id:null,sort:0}:item);
+  // sort_order 교환
+  const tmpSort=items[idx].sort;
+  items[idx].sort=items[n].sort;
+  items[n].sort=tmpSort;
+  [items[idx],items[n]]=[items[n],items[idx]];
+
+  if(isConfigured()&&items[idx].id&&items[n].id){
+    try{
+      const SB_URL=getSbUrl(),SB_KEY=getSbKey();
+      // 두 레코드 sort_order 업데이트
+      await fetch(`${SB_URL}/rest/v1/common_code?id=eq.${items[idx].id}`,{
+        method:'PATCH',
+        headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY},
+        body:JSON.stringify({sort_order:items[idx].sort})
+      });
+      await fetch(`${SB_URL}/rest/v1/common_code?id=eq.${items[n].id}`,{
+        method:'PATCH',
+        headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY},
+        body:JSON.stringify({sort_order:items[n].sort})
+      });
+    }catch(e){console.log('순서변경 실패:',e)}
+  }
+  _inspectorCache=items;
+  _inspectorCache.sort((a,b)=>a.sort-b.sort);
   renderInspectorListUI();
   renderInspectorSelect();
 }
 
-function saveInspectors(){
-  // 이미 실시간 저장되지만 명시적 저장 피드백
-  document.getElementById('inspectorSaveStatus').textContent='✅ 저장 완료 ('+new Date().toLocaleTimeString()+')';
-  document.getElementById('inspectorSaveStatus').style.color='#22c55e';
+async function saveInspectors(){
+  const st=document.getElementById('inspectorSaveStatus');
+  st.textContent='✅ 서버에 저장되어 있습니다 ('+new Date().toLocaleTimeString()+')';
+  st.style.color='#22c55e';
 }
 function getSettings() {
   return JSON.parse(localStorage.getItem(LS_KEY) || '{}');
@@ -1027,6 +1106,7 @@ function loadSettingsUI(){
   document.getElementById('stgTgBot').value=s.tg_bot||'';
   renderTgUsers();
   renderInspectorListUI();
+  if(isConfigured())loadInspectorsFromServer().then(()=>renderInspectorListUI());
   updateConnInfo();
 }
 
@@ -1139,9 +1219,11 @@ window.addEventListener("DOMContentLoaded", () => {
     localStorage.setItem(LS_KEY,JSON.stringify(defaults));
   }
   setDateTimeNow();
-  renderInspectorSelect();
+  renderInspectorSelect(); // 기본값으로 먼저 표시
   updateProgress();
   ensureTable();
+  // 서버에서 검사자 로드
+  if(isConfigured()){loadInspectorsFromServer()}
   // 미설정 시 안내
   if(!isConfigured()){
     document.getElementById('pnl0').insertAdjacentHTML('afterbegin',
