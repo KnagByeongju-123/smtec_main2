@@ -223,10 +223,25 @@ async function testAndLoadTables(){
   const st=document.getElementById('connStatus');st.style.display='block';st.className='status info';st.textContent='연결 중...';
   const sb=getSb();if(!sb){st.className='status err';st.textContent='❌ URL/Key 미설정';return}
   try{
-    const known=['move_history','defect_history','part_mapping','feeder_setting','setting_check_history','exchange_check_history','bom','defect_model','board_image','defect_zone','defect_type','common_code','meeting','meeting_setting'];
-    const found=[];for(const t of known){try{const{count,error}=await sb.from(t).select('id',{count:'exact',head:true});if(!error)found.push({name:t,count:count||0})}catch(e){}}
+    // 1차: RPC로 public 스키마의 모든 테이블 조회 시도
+    let found=[];
+    try{
+      const{data:rpcData,error:rpcErr}=await sb.rpc('get_table_list');
+      if(!rpcErr&&rpcData&&rpcData.length){
+        for(const t of rpcData){
+          try{const{count,error}=await sb.from(t.table_name).select('id',{count:'exact',head:true});if(!error)found.push({name:t.table_name,count:count||0})}catch(e){}
+        }
+      }
+    }catch(e){}
+
+    // 2차: RPC 실패 시 알려진 테이블 + REST 탐색
+    if(!found.length){
+      const known=['move_history','move_history_tj','defect_history','part_mapping','feeder_setting','setting_check_history','exchange_check_history','bom','defect_model','board_image','defect_zone','defect_type','common_code','meeting','meeting_setting','box_unit','shipment_work','shipment_history','material_master_tj','mask_register','mask_move_history','mask_disposal','scan_relay','qc_machine_check'];
+      for(const t of known){try{const{count,error}=await sb.from(t).select('id',{count:'exact',head:true});if(!error)found.push({name:t,count:count||0})}catch(e){}}
+    }
+
     if(!found.length){st.className='status err';st.textContent='❌ 테이블 없음';return}
-    allTables=found;st.className='status ok';st.textContent='✅ '+found.length+'개 테이블 발견';setStep(2);renderTableList()
+    allTables=found.sort((a,b)=>a.name.localeCompare(b.name));st.className='status ok';st.textContent='✅ '+found.length+'개 테이블 발견';setStep(2);renderTableList()
   }catch(e){st.className='status err';st.textContent='❌ '+e.message}
 }
 function renderTableList(){
