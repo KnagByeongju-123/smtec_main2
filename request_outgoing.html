@@ -143,6 +143,16 @@
 
 <!-- ===== 탭0: 출하작업 ===== -->
 <div class="pnl on" id="pnl0">
+  <!-- 고객사 선택 -->
+  <div class="card" style="padding:12px 14px">
+    <div style="display:flex;align-items:center;gap:8px">
+      <span style="font-size:13px;font-weight:700;color:#0d47a1;white-space:nowrap">🏢 고객사</span>
+      <select id="selCustomer" onchange="onCustomerChange()" style="flex:1;padding:10px;border:1.5px solid #ddd;border-radius:8px;font-size:14px;font-family:inherit;background:#fff;font-weight:600">
+        <option value="">전체 (선택안함)</option>
+      </select>
+    </div>
+  </div>
+
   <!-- 품목 추가 -->
   <div class="card">
     <div class="card-tit">➕ 출고등록</div>
@@ -177,6 +187,11 @@
       </div>
     </div>
     <div id="workList"><div class="loading"><span class="spin"></span>로딩 중...</div></div>
+    <!-- 생산일자 조회 (클릭하여 LOT 자동등록) -->
+    <div id="prodDateSection" style="display:none;margin-top:10px;padding:10px 12px;background:#e8eaf6;border:1.5px solid #c5cae9;border-radius:10px">
+      <div style="font-size:11px;font-weight:700;color:#1a237e;margin-bottom:8px">📅 생산일자 (터치 → LOT 자동등록) <span id="prodDateCustLabel" style="font-size:10px;color:#e65100;font-weight:600"></span></div>
+      <div id="prodDateList"></div>
+    </div>
   </div>
 
   <!-- 최근 출하이력 -->
@@ -245,6 +260,20 @@
 
 <!-- ===== 탭3: 설정 ===== -->
 <div class="pnl" id="pnl3">
+  <!-- 고객사 관리 -->
+  <div class="card">
+    <div class="card-tit" style="justify-content:space-between">
+      <span>🏢 고객사 관리 (<span id="custCnt">0</span>건)</span>
+    </div>
+    <div style="font-size:10px;color:#888;margin-bottom:8px;padding:6px 8px;background:#e3f2fd;border-radius:6px">💡 공용 마스터 — common_code 테이블 (code_group: customer)<br>로트추적 · 출하의뢰서 등에서 공용으로 사용됩니다</div>
+    <div id="custList"></div>
+    <div style="display:flex;gap:6px;margin-top:8px">
+      <input type="text" id="newCustName" placeholder="고객사명 입력" style="flex:1;padding:9px 12px;font-size:13px;border:1.5px solid #ddd;border-radius:8px;font-family:inherit">
+      <button class="btn btn-sm btn-primary" onclick="addCustomer()">+ 추가</button>
+    </div>
+    <div id="custStatus" style="font-size:11px;margin-top:6px;color:#888"></div>
+  </div>
+
   <div class="card">
     <div class="card-tit">⚙ 시스템 설정</div>
     <div class="fg">
@@ -434,6 +463,7 @@ function swTab(n) {
   if (n === 0) loadWork();
   if (n === 1) loadHistory();
   if (n === 2) loadBoxUnits();
+  if (n === 3) renderCustListUI();
 }
 
 // ========================================
@@ -446,7 +476,99 @@ async function loadAll() {
     boxUnitCache = await sbSelect('box_unit', 'is_active=eq.true&order=part_no.asc');
     buildPartDatalist();
     loadWork();
+    loadCustomers();
   } catch (e) { toast('데이터 로드 실패: ' + e.message); }
+}
+
+// ========================================
+// 고객사 관리 (common_code: code_group='customer')
+// ========================================
+let _customers = [];
+let selectedCustomer = '';
+
+async function loadCustomers() {
+  try {
+    const data = await sbSelect('common_code', 'code_group=eq.customer&order=sort_order.asc,code_value.asc');
+    _customers = (data || []).map(d => ({ id: d.id, name: String(d.code_value || '').trim(), sort: d.sort_order || 0 }));
+    _customers.sort((a, b) => a.sort - b.sort);
+  } catch (e) { /* 실패해도 무시 */ }
+  renderCustomerSelect();
+}
+
+function renderCustomerSelect() {
+  const sel = document.getElementById('selCustomer');
+  sel.innerHTML = '<option value="">전체 (선택안함)</option>';
+  _customers.forEach(c => { sel.innerHTML += '<option value="' + esc(c.name) + '">' + esc(c.name) + '</option>'; });
+  const saved = localStorage.getItem('SHIP_CUSTOMER');
+  if (saved && _customers.find(c => c.name === saved)) { sel.value = saved; selectedCustomer = saved; }
+}
+
+function onCustomerChange() {
+  selectedCustomer = document.getElementById('selCustomer').value;
+  localStorage.setItem('SHIP_CUSTOMER', selectedCustomer);
+  if (workItems.length) loadProdDates();
+}
+
+function renderCustListUI() {
+  const c = document.getElementById('custList');
+  document.getElementById('custCnt').textContent = _customers.length;
+  if (!_customers.length) { c.innerHTML = '<div style="font-size:11px;color:#aaa;padding:6px 0">고객사 없음 — 아래에서 추가하세요</div>'; return; }
+  c.innerHTML = _customers.map((item, i) =>
+    '<div style="display:flex;align-items:center;gap:6px;padding:7px 10px;background:#f5f5f5;border:1px solid #eee;border-radius:8px;margin-bottom:3px;font-size:12px">' +
+    '<span style="color:#888;font-size:11px;min-width:18px">' + (i+1) + '</span>' +
+    '<span style="font-weight:600;color:#333;flex:1">' + esc(item.name) + '</span>' +
+    '<button onclick="moveCust(' + i + ',-1)" style="width:22px;height:22px;border:none;border-radius:4px;background:transparent;color:#888;font-size:11px;cursor:pointer">▲</button>' +
+    '<button onclick="moveCust(' + i + ',1)" style="width:22px;height:22px;border:none;border-radius:4px;background:transparent;color:#888;font-size:11px;cursor:pointer">▼</button>' +
+    '<button onclick="removeCust(' + i + ')" style="width:22px;height:22px;border:none;border-radius:4px;background:#ffebee;color:#c62828;font-size:11px;font-weight:700;cursor:pointer">✕</button>' +
+    '</div>'
+  ).join('');
+}
+
+async function addCustomer() {
+  const inp = document.getElementById('newCustName');
+  const name = inp.value.trim();
+  if (!name) return;
+  const st = document.getElementById('custStatus');
+  if (_customers.find(c => c.name === name)) { st.textContent = '⚠ 이미 존재'; st.style.color = '#e65100'; return; }
+  if (!SB_URL || !SB_KEY) { st.textContent = '❌ Supabase 연결 필요'; st.style.color = '#c62828'; return; }
+  st.textContent = '추가 중...'; st.style.color = '#1565c0';
+  const newSort = _customers.length ? Math.max(..._customers.map(c => c.sort)) + 1 : 1;
+  try {
+    const saved = await sbInsert('common_code', { code_group: 'customer', code_value: name, sort_order: newSort });
+    if (saved && saved.length) { _customers.push({ id: saved[0].id, name, sort: newSort }); _customers.sort((a,b) => a.sort - b.sort); }
+    inp.value = '';
+    renderCustListUI(); renderCustomerSelect();
+    st.textContent = '✅ 추가: ' + name; st.style.color = '#2e7d32';
+  } catch (e) { st.textContent = '❌ ' + e.message; st.style.color = '#c62828'; }
+}
+
+async function removeCust(idx) {
+  const item = _customers[idx];
+  if (!confirm(item.name + ' 삭제?')) return;
+  const st = document.getElementById('custStatus');
+  if (item.id && SB_URL && SB_KEY) {
+    try {
+      await sbDelete('common_code', 'id=eq.' + item.id);
+      _customers = _customers.filter(c => c.id !== item.id);
+      renderCustListUI(); renderCustomerSelect();
+      st.textContent = '삭제: ' + item.name; st.style.color = '#e65100';
+    } catch (e) { st.textContent = '❌ ' + e.message; st.style.color = '#c62828'; }
+  }
+}
+
+async function moveCust(idx, dir) {
+  const n = idx + dir;
+  if (n < 0 || n >= _customers.length) return;
+  const tmp = _customers[idx].sort; _customers[idx].sort = _customers[n].sort; _customers[n].sort = tmp;
+  [_customers[idx], _customers[n]] = [_customers[n], _customers[idx]];
+  if (SB_URL && SB_KEY && _customers[idx].id && _customers[n].id) {
+    try {
+      await sbUpdate('common_code', _customers[idx].id, { sort_order: _customers[idx].sort });
+      await sbUpdate('common_code', _customers[n].id, { sort_order: _customers[n].sort });
+    } catch (e) {}
+  }
+  _customers.sort((a,b) => a.sort - b.sort);
+  renderCustListUI(); renderCustomerSelect();
 }
 
 function buildPartDatalist() {
@@ -549,6 +671,162 @@ function renderWork() {
   html += '<tr style="background:#f5f5f5;border-top:2px solid #90caf9"><td style="padding:8px 6px;font-weight:700;color:#555">합계</td><td></td><td style="padding:8px 4px;text-align:center;font-weight:700;color:#7b1fa2">' + totalBox.toLocaleString() + '</td><td style="padding:8px 4px;text-align:center;font-weight:800;color:#2e7d32;font-size:13px">' + totalQty.toLocaleString() + '</td><td colspan="2"></td></tr>';
   html += '</tbody></table>';
   c.innerHTML = html;
+  loadProdDates();
+}
+
+// 로트추적(move_history_tj)에서 출하품목의 생산일자 조회 → 클릭하면 LOT 자동등록
+let _prodDateMap = {}; // {part_no: [{lot, date, qty, id}]}
+
+async function loadProdDates() {
+  const sec = document.getElementById('prodDateSection');
+  const list = document.getElementById('prodDateList');
+  if (!workItems.length) { sec.style.display = 'none'; return; }
+  if (!SB_URL || !SB_KEY) { sec.style.display = 'none'; return; }
+
+  sec.style.display = 'block';
+  list.innerHTML = '<span style="color:#888;font-size:11px">조회 중...</span>';
+  document.getElementById('prodDateCustLabel').textContent = selectedCustomer ? '🏢 ' + selectedCustomer : '';
+  _prodDateMap = {};
+
+  try {
+    const parts = [...new Set(workItems.map(w => w.part_no))];
+    for (const part of parts) {
+      let query = 'process=eq.출하&base_part=eq.' + encodeURIComponent(part) + '&order=move_date.desc&limit=10';
+      if (selectedCustomer) query += '&destination=eq.' + encodeURIComponent(selectedCustomer);
+      const data = await sbSelect('move_history_tj', query);
+      if (data && data.length) {
+        _prodDateMap[part] = data.map(d => {
+          let prodDate = d.lot || '';
+          const m = (d.note || '').match(/\[생산일:([^\]]+)\]/);
+          if (m) prodDate = m[1];
+          return { lot: prodDate, date: d.move_date, qty: d.qty };
+        }).filter(d => d.lot);
+      }
+    }
+
+    renderProdDateChips();
+  } catch (e) {
+    list.innerHTML = '<span style="color:#c62828;font-size:11px">조회 실패: ' + e.message + '</span>';
+  }
+}
+
+function renderProdDateChips() {
+  const list = document.getElementById('prodDateList');
+  const sec = document.getElementById('prodDateSection');
+  const parts = [...new Set(workItems.map(w => w.part_no))];
+  let hasAny = false;
+  let html = '';
+
+  parts.forEach(part => {
+    const items = _prodDateMap[part];
+    const workItem = workItems.find(w => w.part_no === part);
+    const hasLot = workItem && workItem.lot_no && workItem.lot_no.trim();
+
+    html += '<div style="margin-bottom:8px">';
+    html += '<div style="font-size:11px;font-weight:700;color:#0d47a1;margin-bottom:4px">' + esc(part);
+    if (hasLot) html += ' <span style="font-size:10px;color:#2e7d32;font-weight:600">✅ LOT: ' + esc(workItem.lot_no) + '</span>';
+    html += '</div>';
+
+    if (items && items.length) {
+      hasAny = true;
+      // 중복 제거
+      const seen = new Set();
+      // 현재 LOT에 포함된 날짜들 파싱
+      const currentLotDates = [];
+      if (hasLot) {
+        const parts2 = workItem.lot_no.split('/');
+        let yearPrefix = '';
+        parts2.forEach(p => {
+          const d = p.trim();
+          if (d.length >= 8) { yearPrefix = d.substring(0, 4); currentLotDates.push(d); }
+          else if (d.length === 4 && yearPrefix) { currentLotDates.push(yearPrefix + d); }
+          else { currentLotDates.push(d); }
+        });
+      }
+      items.forEach(d => {
+        if (seen.has(d.lot)) return;
+        seen.add(d.lot);
+        const wid = workItem ? workItem.id : 0;
+        // 이 날짜가 현재 LOT에 이미 포함되어 있는지 확인
+        const lotNorm = d.lot.replace(/-/g, '').split(/[,\/]/).map(s => s.trim());
+        const isApplied = lotNorm.some(ln => currentLotDates.includes(ln.length >= 8 ? ln : ''));
+        html += '<button onclick="applyProdDateLot(' + wid + ',\'' + esc(d.lot) + '\',\'' + esc(part) + '\')" style="';
+        html += 'display:inline-block;margin:2px 4px 2px 0;padding:6px 12px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;border:1.5px solid;font-family:inherit;transition:all .1s;';
+        if (isApplied) {
+          html += 'background:#e8f5e9;border-color:#43a047;color:#2e7d32">';
+          html += '✅ ' + esc(d.lot);
+        } else {
+          html += 'background:#fff;border-color:#1565c0;color:#0d47a1">';
+          html += '📅 ' + esc(d.lot);
+        }
+        if (d.qty) html += ' <span style="font-size:10px;color:#888;font-weight:400">(' + d.qty + ')</span>';
+        html += '</button>';
+      });
+    } else {
+      html += '<span style="font-size:11px;color:#999">생산일자 없음 — LOT 버튼으로 직접 입력</span>';
+    }
+    html += '</div>';
+  });
+
+  if (!hasAny && !parts.length) { sec.style.display = 'none'; return; }
+  list.innerHTML = html;
+}
+
+async function applyProdDateLot(workId, lot, partNo) {
+  if (!workId) { toast('품목을 찾을 수 없습니다'); return; }
+
+  // 날짜를 YYYYMMDD 형식으로 변환 (2025-04-01 → 20250401, 2025-04-01,2025-04-03 → 각각)
+  function toShortDates(rawLot) {
+    return rawLot.split(/[,\/]/).map(s => s.trim().replace(/-/g, '')).filter(s => s);
+  }
+
+  // 기존 LOT에 누적 (중복 제거)
+  const workItem = workItems.find(w => w.id === workId);
+  const existingLot = (workItem && workItem.lot_no) ? workItem.lot_no : '';
+  const existingDates = existingLot ? existingLot.split('/').map(s => s.trim()).filter(s => s) : [];
+
+  // 새 날짜 추가
+  const newDates = toShortDates(lot);
+  newDates.forEach(nd => {
+    // 8자리로 통일하여 비교
+    const full8 = nd.length === 4 && existingDates.length ? existingDates[0].substring(0, 4) + nd : nd;
+    if (!existingDates.some(ed => {
+      const edFull = ed.length === 4 && existingDates[0] ? existingDates[0].substring(0, 4) + ed : ed;
+      return edFull === full8;
+    })) {
+      existingDates.push(full8.length >= 8 ? full8 : nd);
+    }
+  });
+
+  // 정렬
+  existingDates.sort();
+
+  // 포맷: 첫 번째 8자리, 이후 4자리(MMDD)
+  let formatted = '';
+  if (existingDates.length) {
+    // 모든 날짜를 8자리로 정규화
+    const normalized = existingDates.map(d => d.replace(/-/g, '')).filter(d => d.length >= 4);
+    // 첫 번째 8자리 확보
+    const first = normalized[0].length >= 8 ? normalized[0] : normalized[0];
+    const result = [first];
+    for (let i = 1; i < normalized.length; i++) {
+      const d = normalized[i];
+      // 같은 연도면 MMDD만, 다른 연도면 8자리
+      if (d.length >= 8 && d.substring(0, 4) === first.substring(0, 4)) {
+        result.push(d.substring(4));
+      } else {
+        result.push(d);
+      }
+    }
+    formatted = result.join('/');
+  }
+
+  try {
+    await sbUpdate('shipment_work', workId, { lot_no: formatted, updated_at: new Date().toISOString() });
+    toast('✅ ' + partNo + ' LOT → ' + formatted);
+    if (navigator.vibrate) navigator.vibrate([50, 30, 50]);
+    loadWork();
+  } catch (e) { toast('LOT 저장 실패: ' + e.message); }
 }
 
 async function addWorkItem() {
