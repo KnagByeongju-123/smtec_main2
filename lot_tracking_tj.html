@@ -960,13 +960,20 @@ async function addGeneralModel(){
   const cust=document.getElementById('gmNewCustomer').value.trim();
   const model=document.getElementById('gmNewModel').value.trim();
   if(!cust||!model){showToast('고객사와 기종명을 입력하세요');return}
+  // common_code에 미등록 고객사면 자동 등록
+  if(!_commonCustomers.includes(cust)){
+    try{
+      const newSort=_commonCustomers.length+1;
+      await sbInsert('common_code',[{code_group:'customer',code_value:cust,sort_order:newSort}]);
+      _commonCustomers.push(cust);
+    }catch(e){/* 무시 */}
+  }
   const row={customer:cust,model_name:model,note:'',sort_order:0};
   try{
     await sbInsert('general_model_tj',row);
     document.getElementById('gmNewCustomer').value='';document.getElementById('gmNewModel').value='';
     showToast('✅ 일반기종 추가 완료');
   }catch(e){
-    // 로컬 저장 폴백
     const local=JSON.parse(localStorage.getItem('LOT_TJ_GEN_MODELS')||'[]');
     local.push({...row,id:'L'+Date.now()});
     localStorage.setItem('LOT_TJ_GEN_MODELS',JSON.stringify(local));
@@ -1657,19 +1664,30 @@ function renderProcessGrid(){
   });
 }
 
+let _commonCustomers=[]; // common_code에서 로드된 공용 고객사 마스터
+
+async function loadCommonCustomers(){
+  try{
+    const data=await sbSelect('common_code',{code_group:'eq.customer'},'sort_order.asc,code_value.asc',200);
+    _commonCustomers=(data||[]).map(r=>String(r.code_value||'').trim()).filter(v=>v);
+  }catch(e){_commonCustomers=[]}
+}
+
 async function renderCustomerSelect(){
   const sel=document.getElementById('selCustomer');if(!sel)return;
-  // 기종마스터 데이터 확보
+  // common_code 마스터 로드
+  if(!_commonCustomers.length)await loadCommonCustomers();
+  // 기존 데이터 소스에서도 추출 (마스터에 없는 고객사 보완)
   if(!_partTree||!_partTree.length)await loadPartTreeData();
   if(!_generalModels||!_generalModels.length)await loadGeneralModels();
-  // 고객사 자동 추출
-  const custSet=new Set();
+  const custSet=new Set(_commonCustomers);
   if(_partTree&&_partTree.length)_partTree.forEach(r=>{if(r.customer)custSet.add(r.customer)});
   if(_generalModels&&_generalModels.length)_generalModels.forEach(m=>{if(m.customer)custSet.add(m.customer)});
-  // 소재마스터 고객사도 포함
   if(_materialMaster&&_materialMaster.length)_materialMaster.forEach(m=>{if(m.customer)custSet.add(m.customer)});
-  const customers=[...custSet].sort();
-  sel.innerHTML='<option value="">고객사 선택</option>'+customers.map(c=>'<option value="'+c+'">'+c+'</option>').join('');
+  // common_code 순서 우선, 나머지 알파벳순
+  const ordered=[..._commonCustomers];
+  [...custSet].sort().forEach(c=>{if(!ordered.includes(c))ordered.push(c)});
+  sel.innerHTML='<option value="">고객사 선택</option>'+ordered.map(c=>'<option value="'+c+'">'+c+'</option>').join('');
   selectedCustomer='';sel.value='';
 }
 
@@ -2114,7 +2132,21 @@ async function loadPartTree(){
 }
 
 function showAddCustomerModal(){document.getElementById('newCustomerName').value='';document.getElementById('addCustomerModal').classList.add('show','center')}
-async function doAddCustomer(){const name=document.getElementById('newCustomerName').value.trim();if(!name){showToast('고객사명을 입력하세요');return}document.getElementById('addCustomerModal').classList.remove('show','center');showAddPartModal(name)}
+async function doAddCustomer(){
+  const name=document.getElementById('newCustomerName').value.trim();
+  if(!name){showToast('고객사명을 입력하세요');return}
+  document.getElementById('addCustomerModal').classList.remove('show','center');
+  // common_code에 미등록 고객사면 자동 등록
+  if(!_commonCustomers.includes(name)){
+    try{
+      const newSort=_commonCustomers.length+1;
+      await sbInsert('common_code',[{code_group:'customer',code_value:name,sort_order:newSort}]);
+      _commonCustomers.push(name);
+      showToast('🏢 고객사 마스터 등록: '+name);
+    }catch(e){/* 실패해도 기종 추가는 진행 */}
+  }
+  showAddPartModal(name);
+}
 
 let _addPartCustomer='';
 function showAddPartModal(customer){
@@ -3280,7 +3312,16 @@ function initHistTab(){
   const procSel=document.getElementById('histFiltProc');
   if(procSel&&procSel.options.length<=1)PROCESSES.forEach(p=>{const o=document.createElement('option');o.value=p.name;o.textContent=p.icon+' '+p.name;procSel.appendChild(o)});
   const custSel=document.getElementById('histFiltCust');
-  if(custSel&&custSel.options.length<=1){const custCat=cats.find(c=>c.name==='고객사');if(custCat)custCat.subs.forEach(c=>{const o=document.createElement('option');o.value=c;o.textContent=c;custSel.appendChild(o)})}
+  if(custSel&&custSel.options.length<=1){
+    // common_code 고객사 우선, cats 보완
+    const custList=[..._commonCustomers];
+    const custCat=cats.find(c=>c.name==='고객사');
+    if(custCat)custCat.subs.forEach(c=>{if(!custList.includes(c))custList.push(c)});
+    // 기존 데이터 소스 보완
+    if(_partTree)_partTree.forEach(r=>{if(r.customer&&!custList.includes(r.customer))custList.push(r.customer)});
+    if(_generalModels)_generalModels.forEach(m=>{if(m.customer&&!custList.includes(m.customer))custList.push(m.customer)});
+    custList.forEach(c=>{const o=document.createElement('option');o.value=c;o.textContent=c;custSel.appendChild(o)});
+  }
   // 날짜 범위 기본값: 오늘 기준 7일
   const today=kstDateStr();
   const weekAgo=kstDateStr(new Date(Date.now()-7*86400000));
