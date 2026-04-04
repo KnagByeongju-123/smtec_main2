@@ -773,6 +773,7 @@ function setCheck(name, val, itemId) {
 
   if (navigator.vibrate) navigator.vibrate(val === 'OK' ? [30] : [50, 30, 50]);
   updateProgress();
+  tempSave();
 }
 
 const CHECK_NAMES = ['chk_overload','chk_balance','chk_clutchbrake','chk_motor','chk_clutch','chk_safety','chk_oil','chk_pitch','chk_helmet'];
@@ -783,6 +784,82 @@ function updateProgress() {
   const pct = Math.round(done / CHECK_NAMES.length * 100);
   document.getElementById('progressFill').style.width = pct + '%';
   document.getElementById('progressText').textContent = done + ' / ' + CHECK_NAMES.length + ' 항목 체크';
+}
+
+// ===== 임시저장 =====
+const TEMP_KEY = 'P_MACHINE_TEMP';
+
+function tempSave() {
+  const data = {
+    date: document.getElementById('checkDate').value,
+    time: document.getElementById('checkTime').value,
+    inspector: document.getElementById('inspector').value,
+    machine: document.getElementById('machine').value,
+    memo: document.getElementById('memo').value,
+    checks: {},
+    qrEnabled: [],
+    savedAt: new Date().toISOString()
+  };
+  CHECK_NAMES.forEach(n => {
+    const r = document.querySelector(`input[name="${n}"]:checked`);
+    if (r) data.checks[n] = r.value;
+  });
+  // QR 활성화된 항목 기록
+  const qrKeys = ['overload','balance','clutchbrake','motor','clutch','safety','oil','pitch'];
+  qrKeys.forEach(key => {
+    const item = document.getElementById('item_' + key);
+    if (item && !item.classList.contains('disabled-item')) data.qrEnabled.push(key);
+  });
+  localStorage.setItem(TEMP_KEY, JSON.stringify(data));
+}
+
+function tempRestore() {
+  const raw = localStorage.getItem(TEMP_KEY);
+  if (!raw) return;
+  try {
+    const data = JSON.parse(raw);
+    if (!data || !data.savedAt) return;
+
+    // 기본정보 복원
+    if (data.date) document.getElementById('checkDate').value = data.date;
+    if (data.time) document.getElementById('checkTime').value = data.time;
+    // inspector/machine는 select 로드 후 복원 필요 → 지연 처리
+    if (data.inspector) setTimeout(() => { document.getElementById('inspector').value = data.inspector; }, 500);
+    if (data.machine) setTimeout(() => { document.getElementById('machine').value = data.machine; }, 500);
+    if (data.memo) document.getElementById('memo').value = data.memo;
+
+    // QR 활성화 복원
+    if (data.qrEnabled && data.qrEnabled.length) {
+      data.qrEnabled.forEach(key => {
+        const itemId = 'item_' + key;
+        const item = document.getElementById(itemId);
+        if (item) {
+          item.classList.remove('disabled-item');
+          item.querySelectorAll('input[type="radio"]').forEach(r => { r.disabled = false; });
+        }
+        const badge = document.getElementById('qrStatus_' + key);
+        if (badge) { badge.textContent = '✅ 복원됨'; badge.className = 'qr-badge qr-success'; }
+      });
+    }
+
+    // 체크값 복원
+    if (data.checks) {
+      Object.entries(data.checks).forEach(([name, val]) => {
+        const radio = document.getElementById(name + '_' + val.toLowerCase());
+        if (radio) {
+          radio.checked = true;
+          const itemId = 'item_' + name.replace('chk_', '');
+          setCheck(name, val, itemId);
+        }
+      });
+    }
+
+    updateProgress();
+  } catch(e) { console.log('임시저장 복원 실패:', e); }
+}
+
+function tempClear() {
+  localStorage.removeItem(TEMP_KEY);
 }
 
 // ===== 날짜/시간 자동 설정 =====
@@ -867,6 +944,7 @@ function enableQrItem(targetKey) {
   }
 
   updateProgress();
+  tempSave();
 }
 
 function stopQrScanner() {
@@ -941,6 +1019,7 @@ async function submitForm() {
 }
 
 function resetForm() {
+  tempClear();
   const prevInspector = document.getElementById('inspector').value;
   setDateTimeNow();
   document.getElementById('inspector').value = prevInspector;
@@ -1392,6 +1471,17 @@ window.addEventListener('DOMContentLoaded', () => {
   renderInspectorSelect();
   renderMachineSelect();
   updateProgress();
+
+  // 임시저장 복원
+  tempRestore();
+
+  // 기본정보 변경 시 임시저장
+  ['checkDate','checkTime','inspector','machine','memo'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('change', tempSave);
+    if (el && el.tagName === 'TEXTAREA') el.addEventListener('input', tempSave);
+  });
+
   if (isConfigured()) {
     loadListFromServer('p_inspector');
     loadListFromServer('p_machine');
