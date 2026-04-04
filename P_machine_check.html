@@ -242,7 +242,7 @@
     }
     .qr-scan-btn:active { transform: scale(.95); }
 
-    /* Photo button */
+    /* Photo button - 기준사진 보기 */
     .photo-btn {
       display: inline-flex; align-items: center; gap: 4px;
       padding: 5px 8px; background: linear-gradient(135deg,#0284c7,#38bdf8);
@@ -251,7 +251,13 @@
     }
     .photo-btn:active { transform: scale(.95); }
     .photo-btn.has-photo { background: linear-gradient(135deg,#059669,#34d399); }
+    .photo-btn.no-photo { background: rgba(255,255,255,.1); color: var(--text3); }
     .photo-preview { max-width: 100%; max-height: 80px; border-radius: 6px; margin-top: 4px; border: 1px solid var(--border); cursor: pointer; display: none; }
+    /* 기준사진 등록 (설정) */
+    .ref-photo-item { background: var(--bg); border: 1px solid rgba(255,255,255,.06); border-radius: 10px; padding: 10px 12px; margin-bottom: 6px; }
+    .ref-photo-item .ref-label { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
+    .ref-photo-item img { max-width: 100%; max-height: 100px; border-radius: 6px; border: 1px solid var(--border); cursor: pointer; }
+    .ref-photo-item .ref-actions { display: flex; gap: 6px; margin-top: 6px; align-items: center; }
 
     /* Submit */
     .submit-btn {
@@ -639,6 +645,13 @@
     <div id="machineStatus" style="font-size:11px;margin-top:6px;color:var(--text3)"></div>
   </div>
 
+  <!-- 점검항목 기준사진 등록 -->
+  <div class="card">
+    <div class="card-title">📸 점검항목 기준사진 등록</div>
+    <div style="font-size:10px;color:var(--text3);margin-bottom:10px;padding:6px 8px;background:rgba(56,189,248,.08);border-radius:6px">💡 정상상태 기준사진을 등록하면, 점검 시 작업자가 기준사진을 보며 비교 점검할 수 있습니다</div>
+    <div id="refPhotoList"></div>
+  </div>
+
   <!-- Supabase 연결 -->
   <div class="card">
     <div class="card-title">Supabase 연결</div>
@@ -696,8 +709,7 @@
 </div>
 
 <input type="file" id="itemPhotoInput" accept="image/*" capture="environment" style="display:none">
-
-<input type="file" id="itemPhotoInput" accept="image/*" capture="environment" style="display:none">
+<input type="file" id="refPhotoInput" accept="image/*" capture="environment" style="display:none">
 
 <script src="https://unpkg.com/html5-qrcode"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -783,7 +795,7 @@ async function loadTgFromCommonCode(){
 function swTab(n){
   document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('on',i===n));
   document.querySelectorAll('.pnl').forEach((p,i)=>p.classList.toggle('on',i===n));
-  if(n===1) loadSettingsUI();
+  if(n===1) { loadSettingsUI(); renderRefPhotoList(); }
 }
 
 // ===== OK/NG 토글 =====
@@ -1532,81 +1544,121 @@ window.addEventListener('DOMContentLoaded', () => {
     );
   }
   setTimeout(() => { if (isConfigured()) loadTgFromCommonCode(); }, 1000);
+  renderRefPhotoList();
 });
 
-// ===== 점검위치 사진 등록/확인 =====
-let itemPhotos = {}; // { itemKey: { file, dataUrl, uploadedUrl } }
-let currentPhotoItem = '';
+// ===== 기준사진 시스템 =====
+const REF_PHOTO_KEY = 'P_MACHINE_REF_PHOTOS';
+const REF_ITEMS = [
+  {key:'overload', label:'1. 오버로드 프로텍트'},
+  {key:'motor', label:'4. 모터'},
+  {key:'clutch', label:'5. 클러치'},
+  {key:'safety', label:'6. 안전장치'},
+  {key:'oil', label:'7. 오일러 급유'},
+  {key:'pitch', label:'8. 피치세팅'}
+];
 
-document.getElementById('itemPhotoInput').addEventListener('change', async function(e) {
-  const file = e.target.files[0];
-  if (!file || !currentPhotoItem) return;
-  e.target.value = '';
-  const key = currentPhotoItem;
+function getRefPhotos() { return JSON.parse(localStorage.getItem(REF_PHOTO_KEY) || '{}'); }
+function saveRefPhotos(data) { localStorage.setItem(REF_PHOTO_KEY, JSON.stringify(data)); }
 
-  // 미리보기
-  const reader = new FileReader();
-  reader.onload = ev => {
-    itemPhotos[key] = { file: file, dataUrl: ev.target.result, uploadedUrl: '' };
-    const prev = document.getElementById('photoPreview_' + key);
-    if (prev) { prev.src = ev.target.result; prev.style.display = 'block'; }
-    const btn = document.getElementById('photoBtn_' + key);
-    if (btn) { btn.classList.add('has-photo'); btn.textContent = '✅📸'; }
-    alert('📸 사진 등록됨 — 제출 시 서버에 업로드됩니다');
-  };
-  reader.readAsDataURL(file);
+// 설정 탭: 기준사진 목록 렌더링
+function renderRefPhotoList() {
+  const c = document.getElementById('refPhotoList'); if (!c) return;
+  const photos = getRefPhotos();
+  c.innerHTML = '';
+  REF_ITEMS.forEach(item => {
+    const url = photos[item.key] || '';
+    const div = document.createElement('div'); div.className = 'ref-photo-item';
+    div.innerHTML = '<div class="ref-label">' + item.label + '</div>' +
+      (url ? '<img src="' + url + '" onclick="window.open(this.src)">' : '<div style="font-size:11px;color:var(--text3);padding:8px 0">기준사진 미등록</div>') +
+      '<div class="ref-actions">' +
+        '<button class="btn-sm" onclick="uploadRefPhoto(\'' + item.key + '\')" style="background:linear-gradient(135deg,#0284c7,#38bdf8);color:#fff;padding:6px 10px;border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">📷 ' + (url ? '재등록' : '등록') + '</button>' +
+        (url ? '<button class="btn-sm" onclick="deleteRefPhoto(\'' + item.key + '\')" style="background:rgba(239,68,68,.15);color:#fca5a5;padding:6px 10px;border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">✕ 삭제</button>' : '') +
+      '</div>';
+    c.appendChild(div);
+  });
+  // 점검 탭 📸 버튼 상태 갱신
+  REF_ITEMS.forEach(item => {
+    const btn = document.getElementById('photoBtn_' + item.key);
+    if (!btn) return;
+    if (photos[item.key]) { btn.classList.add('has-photo'); btn.classList.remove('no-photo'); btn.textContent = '📸'; }
+    else { btn.classList.remove('has-photo'); btn.classList.add('no-photo'); btn.textContent = '📸'; }
+  });
+}
+
+let currentRefKey = '';
+function uploadRefPhoto(key) {
+  currentRefKey = key;
+  document.getElementById('refPhotoInput').click();
+}
+
+document.getElementById('refPhotoInput').addEventListener('change', async function(e) {
+  const file = e.target.files[0]; if (!file || !currentRefKey) return; e.target.value = '';
+  const key = currentRefKey;
+  try {
+    const SB_URL = getSbUrl(), SB_KEY = getSbKey();
+    if (!SB_URL || !SB_KEY) { alert('Supabase 설정 필요'); return; }
+    const ext = file.name.split('.').pop() || 'jpg';
+    const fname = 'ref_photos/' + key + '_' + Date.now() + '.' + ext;
+    const res = await fetch(SB_URL + '/storage/v1/object/p-machine-images/' + fname, {
+      method: 'POST',
+      headers: { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY, 'Content-Type': file.type, 'x-upsert': 'true' },
+      body: file
+    });
+    if (res.ok) {
+      const pubUrl = SB_URL + '/storage/v1/object/public/p-machine-images/' + fname;
+      const photos = getRefPhotos();
+      photos[key] = pubUrl;
+      saveRefPhotos(photos);
+      renderRefPhotoList();
+      alert('✅ 기준사진 등록 완료');
+    } else {
+      const err = await res.text();
+      alert('⚠ 업로드 실패: ' + err);
+    }
+  } catch (ex) { alert('⚠ 오류: ' + ex.message); }
 });
 
+function deleteRefPhoto(key) {
+  if (!confirm('기준사진을 삭제하시겠습니까?')) return;
+  const photos = getRefPhotos();
+  delete photos[key];
+  saveRefPhotos(photos);
+  renderRefPhotoList();
+}
+
+// 점검 탭: 📸 클릭 → 기준사진 보기
 function takeItemPhoto(itemKey) {
-  currentPhotoItem = itemKey;
-  // 이미 사진이 있으면 재촬영/확인 선택
-  if (itemPhotos[itemKey] && itemPhotos[itemKey].dataUrl) {
-    const action = confirm('📸 사진이 있습니다.\n\n[확인] 재촬영\n[취소] 현재 사진 보기');
-    if (!action) { viewItemPhoto(itemKey); return; }
-  }
-  document.getElementById('itemPhotoInput').click();
+  const photos = getRefPhotos();
+  const url = photos[itemKey];
+  if (!url) { alert('기준사진이 등록되지 않았습니다.\n⚙ 설정 탭에서 기준사진을 먼저 등록하세요.'); return; }
+  viewRefPhoto(itemKey, url);
 }
 
 function viewItemPhoto(itemKey) {
-  const photo = itemPhotos[itemKey];
-  if (!photo || !photo.dataUrl) { alert('등록된 사진이 없습니다'); return; }
+  const photos = getRefPhotos();
+  const url = photos[itemKey];
+  if (!url) { alert('기준사진 없음'); return; }
+  viewRefPhoto(itemKey, url);
+}
+
+function viewRefPhoto(itemKey, url) {
+  const names = { overload:'1. 오버로드 프로텍트', motor:'4. 모터', clutch:'5. 클러치', safety:'6. 안전장치', oil:'7. 오일러 급유', pitch:'8. 피치세팅' };
   const w = window.open('', '_blank');
   if (w) {
-    w.document.write('<html><head><title>점검사진 - ' + itemKey + '</title><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=5"></head><body style="margin:0;padding:0;background:#000;display:flex;align-items:center;justify-content:center;min-height:100vh;width:100vw"><img src="' + photo.dataUrl + '" style="width:100vw;height:auto;object-fit:contain"></body></html>');
+    w.document.write('<html><head><title>기준사진 - ' + (names[itemKey]||itemKey) + '</title><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=5"></head><body style="margin:0;padding:0;background:#000;display:flex;flex-direction:column;align-items:center;min-height:100vh"><div style="background:#1e293b;width:100%;padding:12px 16px;text-align:center;color:#86efac;font-size:14px;font-weight:700;font-family:sans-serif">📸 기준사진: ' + (names[itemKey]||itemKey) + '</div><img src="' + url + '" style="width:100vw;height:auto;object-fit:contain"></body></html>');
     w.document.close();
   }
 }
 
-async function uploadItemPhotos(checkDate, machine) {
-  const SB_URL = getSbUrl(), SB_KEY = getSbKey();
-  if (!SB_URL || !SB_KEY) return {};
-  const urls = {};
-  for (const [key, photo] of Object.entries(itemPhotos)) {
-    if (!photo.file) continue;
-    try {
-      const ext = photo.file.name.split('.').pop() || 'jpg';
-      const fname = 'p_check/' + (checkDate || 'nodate') + '/' + (machine || 'nomachine').replace(/[^a-zA-Z0-9가-힣_-]/g, '_') + '_' + key + '_' + Date.now() + '.' + ext;
-      const res = await fetch(SB_URL + '/storage/v1/object/p-machine-images/' + fname, {
-        method: 'POST',
-        headers: { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY, 'Content-Type': photo.file.type, 'x-upsert': 'true' },
-        body: photo.file
-      });
-      if (res.ok) {
-        urls[key] = SB_URL + '/storage/v1/object/public/p-machine-images/' + fname;
-        photo.uploadedUrl = urls[key];
-      }
-    } catch (e) { console.log('사진 업로드 실패:', key, e); }
-  }
-  return urls;
-}
-
+// 제출 시 사용 (기준사진 시스템에서는 사진 업로드 불필요)
+let itemPhotos = {};
+async function uploadItemPhotos() { return {}; }
 function clearItemPhotos() {
   itemPhotos = {};
-  ['overload','motor','clutch','safety','oil','pitch'].forEach(key => {
-    const prev = document.getElementById('photoPreview_' + key);
+  REF_ITEMS.forEach(item => {
+    const prev = document.getElementById('photoPreview_' + item.key);
     if (prev) { prev.style.display = 'none'; prev.src = ''; }
-    const btn = document.getElementById('photoBtn_' + key);
-    if (btn) { btn.classList.remove('has-photo'); btn.textContent = '📸'; }
   });
 }
 
