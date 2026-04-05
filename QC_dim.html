@@ -67,8 +67,8 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
     <div class="card">
       <div class="card-title">🏢 고객사 관리</div>
       <div style="font-size:10px;color:var(--text3);margin-bottom:12px;padding:6px 8px;background:rgba(245,158,11,.06);border-radius:6px;line-height:1.6">
-        💡 고객사별 치수관리 페이지 URL을 등록합니다.<br>
-        치수점검 탭에서 고객사를 터치하면 해당 페이지로 이동합니다.
+        💡 고객사별 치수관리 페이지 URL과 GAS 배포URL을 등록합니다.<br>
+        치수점검 탭에서 고객사를 터치하면 GAS URL이 자동 전달됩니다.
       </div>
       <div id="settingsList"></div>
     </div>
@@ -76,6 +76,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
       <div class="card-title">➕ 고객사 추가</div>
       <div class="fg"><label>고객사명</label><input id="newName" placeholder="예: SKF씰"></div>
       <div class="fg"><label>페이지 URL</label><input id="newUrl" placeholder="예: QC_dim_SKF.html"></div>
+      <div class="fg"><label>GAS 배포 URL</label><input id="newGasUrl" placeholder="https://script.google.com/macros/s/.../exec"></div>
       <button class="submit-btn" onclick="addCustomer()" style="margin-top:4px">✅ 추가</button>
     </div>
   </div>
@@ -85,7 +86,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
 
 <script>
 const LS_KEY='DIM_CUSTOMERS';
-const DEFAULTS=[{name:'SKF씰',url:'QC_dim_SKF.html'}];
+const DEFAULTS=[{name:'SKF씰',url:'QC_dim_SKF.html',gasUrl:''}];
 
 function getList(){
   const s=localStorage.getItem(LS_KEY);
@@ -110,11 +111,15 @@ function renderCards(){
     c.innerHTML='<div class="empty">📐 등록된 고객사가 없습니다.<br><br>⚙ 설정 탭에서 고객사와 URL을 추가하세요.</div>';
     return;
   }
-  c.innerHTML=list.map(item=>`<a class="cust-card" href="${item.url}">
-    <span class="cust-icon">🏢</span>
-    <span class="cust-name">${item.name}</span>
-    <span class="cust-arrow">›</span>
-  </a>`).join('');
+  c.innerHTML=list.map(item=>{
+    // gasUrl이 있으면 쿼리파라미터로 전달
+    const href=item.gasUrl?item.url+'?gasUrl='+encodeURIComponent(item.gasUrl):item.url;
+    return `<a class="cust-card" href="${href}">
+      <span class="cust-icon">🏢</span>
+      <span class="cust-name">${item.name}</span>
+      <span class="cust-arrow">›</span>
+    </a>`;
+  }).join('');
 }
 
 // ===== 설정 탭 =====
@@ -130,7 +135,9 @@ function renderSettings(){
     <div class="si-info">
       <div class="si-name">${item.name}</div>
       <div class="si-url">${item.url}</div>
+      <div class="si-url" style="color:${item.gasUrl?'#22c55e':'#ef4444'}">${item.gasUrl?'✅ GAS 연결됨':'⚠ GAS URL 미설정'}</div>
     </div>
+    <button class="si-del" onclick="editCustomer(${i})" style="background:rgba(59,130,246,.12);color:#60a5fa;margin-right:4px">✎</button>
     <button class="si-del" onclick="delCustomer(${i})">✕</button>
   </div>`).join('');
 }
@@ -138,16 +145,29 @@ function renderSettings(){
 function addCustomer(){
   const name=document.getElementById('newName').value.trim();
   const url=document.getElementById('newUrl').value.trim();
+  const gasUrl=document.getElementById('newGasUrl').value.trim();
   if(!name){toast('고객사명을 입력하세요');return}
-  if(!url){toast('URL을 입력하세요');return}
+  if(!url){toast('페이지 URL을 입력하세요');return}
   const list=getList();
   if(list.find(c=>c.name===name)){toast('이미 등록된 고객사');return}
-  list.push({name,url});
+  list.push({name,url,gasUrl});
   saveList(list);
   document.getElementById('newName').value='';
   document.getElementById('newUrl').value='';
+  document.getElementById('newGasUrl').value='';
   renderSettings();
   toast('✅ '+name+' 추가됨');
+}
+
+function editCustomer(idx){
+  const list=getList();
+  const item=list[idx];
+  const newGas=prompt('GAS 배포 URL 입력\n(현재: '+(item.gasUrl||'미설정')+')',item.gasUrl||'');
+  if(newGas===null)return;
+  item.gasUrl=newGas.trim();
+  saveList(list);
+  renderSettings();
+  toast('✅ '+item.name+' GAS URL 저장');
 }
 
 function delCustomer(idx){
