@@ -404,16 +404,6 @@
           <label class="field-label">검사기</label>
           <select id="machine" name="machine" required>
             <option value="" disabled selected>선택</option>
-            <option value="3호기">3호기</option>
-            <option value="4호기">4호기</option>
-            <option value="5호기">5호기</option>
-            <option value="6호기">6호기</option>
-            <option value="7호기">7호기</option>
-            <option value="8호기">8호기</option>
-            <option value="9호기">9호기</option>
-            <option value="10호기">10호기</option>
-            <option value="11호기">11호기</option>
-            <option value="12호기">12호기</option>
           </select>
         </div>
       </div>
@@ -567,16 +557,6 @@
       <label class="field-label">검사기</label>
       <select id="histMachine">
         <option value="">전체</option>
-        <option value="3호기">3호기</option>
-        <option value="4호기">4호기</option>
-        <option value="5호기">5호기</option>
-        <option value="6호기">6호기</option>
-        <option value="7호기">7호기</option>
-        <option value="8호기">8호기</option>
-        <option value="9호기">9호기</option>
-        <option value="10호기">10호기</option>
-        <option value="11호기">11호기</option>
-        <option value="12호기">12호기</option>
       </select>
     </div>
     <div style="display:flex;gap:6px;margin-top:4px">
@@ -607,6 +587,18 @@
       <button type="button" onclick="addInspector()" style="padding:9px 14px;background:var(--accent2);border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;flex-shrink:0">+ 추가</button>
     </div>
     <div id="inspectorSaveStatus" style="font-size:11px;margin-top:6px;color:var(--text3)"></div>
+  </div>
+
+  <!-- 검사기(호기) 관리 -->
+  <div class="card">
+    <div class="card-title">🔬 검사기(호기) 관리</div>
+    <div style="font-size:10px;color:var(--text3);margin-bottom:8px;padding:6px 8px;background:rgba(56,189,248,.08);border-radius:6px">💡 마스터 관리(qc_machine)에서 통합관리 · 여기서 추가 시 마스터에도 자동 반영</div>
+    <div id="machineList"></div>
+    <div style="display:flex;gap:6px;margin-top:8px">
+      <input type="text" id="newMachineName" placeholder="호기명 (예: 13호기)" style="flex:1;padding:9px 12px;font-size:13px;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit">
+      <button type="button" onclick="addMachine()" style="padding:9px 14px;background:var(--accent2);border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;flex-shrink:0">+ 추가</button>
+    </div>
+    <div id="machineSaveStatus" style="font-size:11px;margin-top:6px;color:var(--text3)"></div>
   </div>
 
   <div class="card">
@@ -672,11 +664,15 @@
 // === Supabase 설정 (localStorage) ===
 const LS_KEY = 'QC_MACHINE_SETTINGS';
 const DEFAULT_INSPECTORS = ['권혜영','강란희','이유선','송경옥','강병주','오윤정','김상기','허미정','오현민','문수진','김미선','하정화','차찬이','서성자','전귀옥'];
+const DEFAULT_MACHINES = ['3호기','4호기','5호기','6호기','7호기','8호기','9호기','10호기','11호기','12호기'];
 
 // 검사자 캐시 (서버에서 로드)
 let _inspectorCache=[];
+// 검사기 호기 캐시 (서버에서 로드)
+let _machineCache=[];
 
 function getInspectors(){ return _inspectorCache.length?_inspectorCache:[...DEFAULT_INSPECTORS]; }
+function getMachines(){ return _machineCache.length?_machineCache:DEFAULT_MACHINES.map((n,i)=>({id:null,name:n,sort:i+1})); }
 
 async function loadInspectorsFromServer(){
   if(!isConfigured())return;
@@ -721,6 +717,44 @@ function renderInspectorSelect(){
     const o=document.createElement('option');o.value=name;o.textContent=name;sel.appendChild(o);
   });
   if(prev){sel.value=prev}
+}
+
+// 검사기 호기 서버 로드
+async function loadMachinesFromServer(){
+  if(!isConfigured())return;
+  try{
+    const data=await sbSelect('common_code',{code_group:'eq.qc_machine'},'sort_order.asc',100);
+    if(data&&data.length){
+      _machineCache=data.map(r=>({id:r.id,name:String(r.code_value||'').trim(),sort:r.sort_order||0}));
+      _machineCache.sort((a,b)=>a.sort-b.sort);
+    }else{
+      // 서버에 데이터 없으면 기본값 등록
+      const rows=DEFAULT_MACHINES.map((name,i)=>({code_group:'qc_machine',code_value:name,sort_order:i+1}));
+      try{
+        const SB_URL=getSbUrl(),SB_KEY=getSbKey();
+        const res=await fetch(`${SB_URL}/rest/v1/common_code`,{
+          method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Prefer':'return=representation'},
+          body:JSON.stringify(rows)
+        });
+        if(res.ok){const saved=await res.json();_machineCache=saved.map(r=>({id:r.id,name:String(r.code_value||'').trim(),sort:r.sort_order||0}));_machineCache.sort((a,b)=>a.sort-b.sort)}
+      }catch(e){}
+    }
+  }catch(e){console.log('검사기 로드 실패:',e)}
+  renderMachineSelect();
+}
+
+function renderMachineSelect(){
+  const sel=document.getElementById('machine');
+  const prev=sel.value;
+  sel.innerHTML='<option value="" disabled selected>선택</option>';
+  getMachines().forEach(item=>{
+    const name=typeof item==='string'?item:item.name;
+    const o=document.createElement('option');o.value=name;o.textContent=name;sel.appendChild(o);
+  });
+  if(prev)sel.value=prev;
+  // 이력관리 호기 필터도 갱신
+  const histSel=document.getElementById('histMachine');
+  if(histSel){const cv=histSel.value;histSel.innerHTML='<option value="">전체</option>';getMachines().forEach(item=>{const name=typeof item==='string'?item:item.name;histSel.innerHTML+='<option value="'+name+'">'+name+'</option>'});if(cv)histSel.value=cv}
 }
 
 function renderInspectorListUI(){
@@ -817,6 +851,59 @@ async function saveInspectors(){
   const st=document.getElementById('inspectorSaveStatus');
   st.textContent='✅ 서버에 저장되어 있습니다 ('+new Date().toLocaleTimeString()+')';
   st.style.color='#22c55e';
+}
+
+// ===== 검사기(호기) 관리 =====
+function renderMachineListUI(){
+  const list=getMachines();
+  const c=document.getElementById('machineList');
+  if(!c)return;
+  if(!list.length){c.innerHTML='<div style="font-size:11px;color:var(--text3);padding:6px 0">검사기 없음</div>';return}
+  const items=list.map(item=>typeof item==='string'?{name:item,id:null,sort:0}:item);
+  c.innerHTML=items.map((item,i)=>`<div class="tg-user-item"><span style="color:var(--text3);font-size:11px;min-width:20px">${i+1}</span><span class="tg-name" style="flex:1">${item.name}</span><button class="tg-del" onclick="moveMachine(${i},-1)" style="background:transparent;color:var(--text2);font-size:11px" title="위로">▲</button><button class="tg-del" onclick="moveMachine(${i},1)" style="background:transparent;color:var(--text2);font-size:11px" title="아래로">▼</button><button class="tg-del" onclick="removeMachine(${i})">✕</button></div>`).join('');
+}
+
+async function addMachine(){
+  const inp=document.getElementById('newMachineName');
+  const name=inp.value.trim();if(!name)return;
+  const st=document.getElementById('machineSaveStatus');
+  const names=getMachines().map(item=>typeof item==='string'?item:item.name);
+  if(names.includes(name)){st.textContent='⚠️ 이미 존재';st.style.color='#f59e0b';return}
+  if(!isConfigured()){st.textContent='❌ Supabase 연결 필요';st.style.color='#ef4444';return}
+  st.textContent='추가 중...';st.style.color='var(--accent)';
+  const newSort=_machineCache.length?Math.max(..._machineCache.map(c=>c.sort))+1:1;
+  try{
+    const saved=await sbInsert('common_code',{code_group:'qc_machine',code_value:name,sort_order:newSort});
+    if(saved&&saved.length){_machineCache.push({id:saved[0].id,name:name,sort:newSort});_machineCache.sort((a,b)=>a.sort-b.sort)}
+    inp.value='';renderMachineListUI();renderMachineSelect();
+    st.textContent='✅ 추가됨: '+name;st.style.color='#22c55e';
+  }catch(e){st.textContent='❌ 실패: '+e.message;st.style.color='#ef4444'}
+}
+
+async function removeMachine(idx){
+  const list=getMachines();const item=typeof list[idx]==='string'?{name:list[idx],id:null}:list[idx];
+  if(!confirm(item.name+' 삭제?'))return;
+  const st=document.getElementById('machineSaveStatus');
+  if(item.id&&isConfigured()){
+    try{await fetch(`${getSbUrl()}/rest/v1/common_code?id=eq.${item.id}`,{method:'DELETE',headers:{'apikey':getSbKey(),'Authorization':'Bearer '+getSbKey()}});
+      _machineCache=_machineCache.filter(c=>c.id!==item.id);renderMachineListUI();renderMachineSelect();st.textContent='삭제됨';st.style.color='#f59e0b'}
+    catch(e){st.textContent='❌ '+e.message;st.style.color='#ef4444'}
+  }else{st.textContent='❌ 서버 연결 필요';st.style.color='#ef4444'}
+}
+
+async function moveMachine(idx,dir){
+  const list=getMachines();const items=list.map(item=>typeof item==='string'?{name:item,id:null,sort:0}:item);
+  const n=idx+dir;if(n<0||n>=items.length)return;
+  const tmpSort=items[idx].sort;items[idx].sort=items[n].sort;items[n].sort=tmpSort;
+  [items[idx],items[n]]=[items[n],items[idx]];
+  if(isConfigured()&&items[idx].id&&items[n].id){
+    try{const u=getSbUrl(),k=getSbKey();
+      await fetch(`${u}/rest/v1/common_code?id=eq.${items[idx].id}`,{method:'PATCH',headers:{'Content-Type':'application/json','apikey':k,'Authorization':'Bearer '+k},body:JSON.stringify({sort_order:items[idx].sort})});
+      await fetch(`${u}/rest/v1/common_code?id=eq.${items[n].id}`,{method:'PATCH',headers:{'Content-Type':'application/json','apikey':k,'Authorization':'Bearer '+k},body:JSON.stringify({sort_order:items[n].sort})});
+    }catch(e){}
+  }
+  _machineCache=items;_machineCache.sort((a,b)=>a.sort-b.sort);
+  renderMachineListUI();renderMachineSelect();
 }
 function getSettings() {
   return JSON.parse(localStorage.getItem(LS_KEY) || '{}');
@@ -1178,7 +1265,11 @@ function loadSettingsUI(){
   document.getElementById('stgTgBot').value=s.tg_bot||'';
   renderTgUsers();
   renderInspectorListUI();
-  if(isConfigured())loadInspectorsFromServer().then(()=>renderInspectorListUI());
+  renderMachineListUI();
+  if(isConfigured()){
+    loadInspectorsFromServer().then(()=>renderInspectorListUI());
+    loadMachinesFromServer().then(()=>renderMachineListUI());
+  }
   updateConnInfo();
   // 이력관리 날짜 기본값 (오늘 기준 최근 1개월)
   const today=new Date();
@@ -1430,10 +1521,11 @@ window.addEventListener("DOMContentLoaded", () => {
   }
   setDateTimeNow();
   renderInspectorSelect(); // 기본값으로 먼저 표시
+  renderMachineSelect();   // 기본값으로 먼저 표시
   updateProgress();
   ensureTable();
-  // 서버에서 검사자 로드
-  if(isConfigured()){loadInspectorsFromServer()}
+  // 서버에서 검사자/검사기 로드
+  if(isConfigured()){loadInspectorsFromServer();loadMachinesFromServer()}
   // 미설정 시 안내
   if(!isConfigured()){
     document.getElementById('pnl0').insertAdjacentHTML('afterbegin',
