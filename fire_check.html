@@ -251,19 +251,14 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
 
   <!-- 텔레그램 -->
   <div class="card">
-    <div class="card-title">텔레그램 알림</div>
-    <div class="fg"><label class="fl">Bot Token</label><input type="password" id="stgTgBot" placeholder="123456789:AAxxxxxxx"></div>
-    <div class="fg">
-      <label class="fl">수신자 목록</label>
-      <div id="tgUserList"></div>
-      <div style="display:flex;gap:6px;margin-top:8px">
-        <input type="text" id="tgNewName" placeholder="이름" style="flex:1;padding:9px 12px;font-size:13px;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit">
-        <input type="text" id="tgNewId" placeholder="Chat ID" style="flex:1;padding:9px 12px;font-size:13px;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit">
-        <button type="button" onclick="addTgUser()" style="padding:9px 14px;background:var(--accent2);border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;flex-shrink:0">+</button>
-      </div>
+    <div class="card-title">📨 알림 설정 (마스터 연동)</div>
+    <div style="font-size:10px;color:var(--text3);margin-bottom:8px;padding:6px 8px;background:rgba(88,101,242,.08);border-radius:6px">💡 텔레그램/디스코드 수신자는 <b>마스터 관리</b>의 🧯소방점검 카테고리에서 등록합니다<br>· fire_telegram: Bot Token(sort=0) + 이름:ChatID<br>· fire_discord: Webhook URL</div>
+    <div id="notifyStatus" style="font-size:12px;color:var(--text2);padding:8px;background:var(--bg);border-radius:8px;margin-bottom:8px"></div>
+    <div style="display:flex;gap:6px">
+      <button type="button" onclick="testNotify()" style="flex:1;padding:10px;background:linear-gradient(135deg,#7c3aed,#a78bfa);border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">📨 텔레그램 테스트</button>
+      <button type="button" onclick="testDiscord()" style="flex:1;padding:10px;background:linear-gradient(135deg,#5865f2,#7289da);border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">💬 디스코드 테스트</button>
     </div>
-    <button type="button" onclick="testTelegram()" style="width:100%;padding:10px;background:linear-gradient(135deg,#7c3aed,#a78bfa);border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;margin-top:4px">📨 테스트 발송</button>
-    <div id="stgTgStatus" style="font-size:11px;margin-top:6px;color:var(--text3)"></div>
+    <div id="notifyTestResult" style="font-size:11px;margin-top:6px;color:var(--text3)"></div>
   </div>
 
   <button type="button" onclick="saveSettings()" style="width:100%;padding:14px;background:linear-gradient(135deg,var(--accent),#fb923c);color:#fff;border:none;border-radius:var(--radius);font-size:15px;font-weight:900;cursor:pointer;font-family:inherit">💾 설정 저장</button>
@@ -707,7 +702,7 @@ async function submitCheck(){
     if(navigator.vibrate)navigator.vibrate([100]);
 
     // 텔레그램 알림
-    await sendTelegram(row,details,items);
+    await sendNotify(row,details,items);
 
     // 초기화 (점검자/장소 유지)
     const prevInsp=inspector;
@@ -720,36 +715,74 @@ async function submitCheck(){
   }catch(e){showToast('❌ 저장 실패: '+e.message)}
 }
 
-// ===== 텔레그램 =====
-let _ccTgBot='',_ccTgUsers=[];
+// ===== 알림 발송 (텔레그램 + 디스코드 — 마스터 common_code 기반) =====
+let _fireTgBot='',_fireTgUsers=[],_fireDiscordUrls=[];
+
 function decodeTgToken(enc){const key='smtec';const d=atob(enc);let r='';for(let i=0;i<d.length;i++)r+=String.fromCharCode(d.charCodeAt(i)^key.charCodeAt(i%key.length));return r}
 
-async function loadTgFromCC(){
-  try{const data=await sbSelect('common_code',{code_group:'eq.telegram'},'sort_order.asc',20);
-    if(data&&data.length)data.forEach(r=>{const v=String(r.code_value||'').trim();if(r.sort_order===0)_ccTgBot=decodeTgToken(v);else if(v)_ccTgUsers.push({name:r.note||'수신자'+r.sort_order,chat_id:v})});
+async function loadNotifyConfig(){
+  if(!isConfigured())return;
+  // 1) fire_telegram (sort_order=0: Bot Token(XOR), 나머지: 이름:ChatID)
+  try{
+    const data=await sbSelect('common_code',{code_group:'eq.fire_telegram'},'sort_order.asc',50);
+    if(data&&data.length){
+      data.forEach(r=>{
+        const v=String(r.code_value||'').trim();
+        if(r.sort_order===0){try{_fireTgBot=decodeTgToken(v)}catch(e){_fireTgBot=v}}
+        else if(v){
+          const parts=v.split(':');
+          if(parts.length>=2)_fireTgUsers.push({name:parts[0],chat_id:parts.slice(1).join(':')});
+          else _fireTgUsers.push({name:'수신자'+r.sort_order,chat_id:v});
+        }
+      });
+    }
+  }catch(e){}
+  // fallback: 기존 telegram code_group
+  if(!_fireTgBot||!_fireTgUsers.length){
+    try{
+      const data=await sbSelect('common_code',{code_group:'eq.telegram'},'sort_order.asc',20);
+      if(data&&data.length)data.forEach(r=>{const v=String(r.code_value||'').trim();if(r.sort_order===0&&!_fireTgBot){try{_fireTgBot=decodeTgToken(v)}catch(e){_fireTgBot=v}}else if(v&&!_fireTgUsers.find(u=>u.chat_id===v))_fireTgUsers.push({name:r.note||'수신자'+r.sort_order,chat_id:v})});
+    }catch(e){}
+  }
+  // 2) fire_discord
+  try{
+    const data=await sbSelect('common_code',{code_group:'eq.fire_discord'},'sort_order.asc',10);
+    if(data&&data.length)_fireDiscordUrls=data.map(r=>String(r.code_value||'').trim()).filter(v=>v.startsWith('http'));
   }catch(e){}
 }
 
-function getTgBot(){return getSettings().tg_bot||''}
-function getTgUsers(){try{return JSON.parse(getSettings().tg_users||'[]')}catch(e){return[]}}
+async function sendNotify(row,details,items){
+  // 로드 안됐으면 로드
+  if(!_fireTgBot&&!_fireTgUsers.length&&!_fireDiscordUrls.length)await loadNotifyConfig();
 
-async function sendTelegram(row,details,items){
-  let bot=getTgBot(),users=getTgUsers();
-  if(!bot||!users.length){if(!_ccTgBot)await loadTgFromCC();if(!bot&&_ccTgBot)bot=_ccTgBot;if(!users.length&&_ccTgUsers.length)users=_ccTgUsers}
-  if(!bot||!users.length)return;
   const checks=items.map(item=>{const d=details[item.name];return(d.status==='NG'?'❌':'✅')+' '+item.name+': '+d.status+(d.note?' ('+d.note+')':'')}).join('\n');
   const status=row.ng_count?'⚠️ 이상발생 '+row.ng_count+'건':'✅ 전체 이상없음';
   const msg=`🧯 소방점검 결과\n━━━━━━━━━━━━━━\n📅 ${row.check_date} ${row.check_time}\n👤 점검자: ${row.inspector}\n📍 장소: ${row.zone}\n\n📋 점검결과: ${status}\n${checks}${row.memo?'\n\n📝 비고: '+row.memo:''}`;
-  // 1) 텍스트 메시지 전송
-  for(const u of users){try{await fetch(`https://api.telegram.org/bot${bot}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:u.chat_id,text:msg})})}catch(e){}}
-  // 2) NG 항목 사진 전송
+
+  // NG 사진 URL 추출
   const ngPhotos=[];
   items.forEach(item=>{const d=details[item.name];if(d.status==='NG'&&d.photos&&d.photos.length){d.photos.forEach(url=>{if(url.startsWith('http'))ngPhotos.push({item:item.name,url})})}});
-  if(ngPhotos.length){
-    for(const u of users){
-      for(const p of ngPhotos){
-        try{await fetch(`https://api.telegram.org/bot${bot}/sendPhoto`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:u.chat_id,photo:p.url,caption:`🧯 지적사항 사진\n📍 ${row.zone}\n❌ ${p.item}`})})}catch(e){}
-      }
+
+  // 1) 텔레그램 발송
+  if(_fireTgBot&&_fireTgUsers.length){
+    for(const u of _fireTgUsers){try{await fetch(`https://api.telegram.org/bot${_fireTgBot}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:u.chat_id,text:msg})})}catch(e){}}
+    if(ngPhotos.length){for(const u of _fireTgUsers){for(const p of ngPhotos){try{await fetch(`https://api.telegram.org/bot${_fireTgBot}/sendPhoto`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:u.chat_id,photo:p.url,caption:`🧯 지적사항\n📍 ${row.zone}\n❌ ${p.item}`})})}catch(e){}}}}
+  }
+
+  // 2) 디스코드 발송
+  if(_fireDiscordUrls.length){
+    // 디스코드 embed 형태
+    const embed={title:'🧯 소방점검 결과',color:row.ng_count?0xef4444:0x22c55e,fields:[
+      {name:'📅 일자/시간',value:row.check_date+' '+row.check_time,inline:true},
+      {name:'👤 점검자',value:row.inspector,inline:true},
+      {name:'📍 장소',value:row.zone,inline:true},
+      {name:'📋 판정',value:status,inline:false},
+      {name:'상세',value:checks.substring(0,1000),inline:false}
+    ]};
+    if(row.memo)embed.fields.push({name:'📝 비고',value:row.memo,inline:false});
+    if(ngPhotos.length)embed.image={url:ngPhotos[0].url};
+    for(const url of _fireDiscordUrls){
+      try{await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({embeds:[embed]})})}catch(e){}
     }
   }
 }
@@ -759,12 +792,12 @@ function loadSettingsUI(){
   const s=getSettings();
   document.getElementById('stgSbUrl').value=s.sb_url||'';
   document.getElementById('stgSbKey').value=s.sb_key||'';
-  document.getElementById('stgTgBot').value=s.tg_bot||'';
-  renderTgUsers();renderFireItemListUI();renderInspectorListUI();renderZoneListUI();
+  renderFireItemListUI();renderInspectorListUI();renderZoneListUI();
   if(isConfigured()){
     loadCodeList('fire_item',DEFAULT_ITEMS).then(d=>{_itemCache=d;renderFireItemListUI();renderCheckList()});
     loadCodeList('fire_inspector',DEFAULT_INSPECTORS).then(d=>{_inspCache=d;renderInspectorListUI();renderInspectorSelect()});
     loadCodeList('fire_zone',DEFAULT_ZONES).then(d=>{_zoneCache=d;renderZoneListUI();renderHistZoneFilter();renderZoneSelect()});
+    loadNotifyConfig().then(()=>renderNotifyStatus());
   }
   updateConnInfo();
   const today=new Date();const monthAgo=new Date(today);monthAgo.setMonth(monthAgo.getMonth()-1);
@@ -772,24 +805,40 @@ function loadSettingsUI(){
   if(!document.getElementById('histStart').value)document.getElementById('histStart').value=monthAgo.toISOString().split('T')[0];
 }
 
-function renderTgUsers(){
-  const users=getTgUsers();const c=document.getElementById('tgUserList');
-  if(!users.length){c.innerHTML='<div style="font-size:11px;color:var(--text3);padding:6px 0">수신자 없음</div>';return}
-  c.innerHTML=users.map((u,i)=>`<div class="stg-item"><span>${u.name}</span><span style="color:var(--text3);font-size:11px">${u.chat_id}</span><button class="stg-del" onclick="removeTgUser(${i})">✕</button></div>`).join('');
+function renderNotifyStatus(){
+  const c=document.getElementById('notifyStatus');if(!c)return;
+  let html='';
+  html+=_fireTgBot?'🟢 텔레그램: Bot 설정됨, '+_fireTgUsers.length+'명 수신자':'🔴 텔레그램: 미설정 (마스터 → 소방점검 → fire_telegram)';
+  html+='<br>'+(_fireDiscordUrls.length?'🟢 디스코드: '+_fireDiscordUrls.length+'개 Webhook':'🔴 디스코드: 미설정 (마스터 → 소방점검 → fire_discord)');
+  c.innerHTML=html;
 }
-function addTgUser(){
-  const name=document.getElementById('tgNewName').value.trim(),id=document.getElementById('tgNewId').value.trim();
-  if(!name||!id)return;const users=getTgUsers();if(users.find(u=>u.chat_id===id))return;
-  users.push({name,chat_id:id});const s=getSettings();s.tg_users=JSON.stringify(users);localStorage.setItem(LS_KEY,JSON.stringify(s));
-  document.getElementById('tgNewName').value='';document.getElementById('tgNewId').value='';renderTgUsers();
-}
-function removeTgUser(idx){const users=getTgUsers();users.splice(idx,1);const s=getSettings();s.tg_users=JSON.stringify(users);localStorage.setItem(LS_KEY,JSON.stringify(s));renderTgUsers()}
 
 function saveSettings(){
-  const s={sb_url:document.getElementById('stgSbUrl').value.trim().replace(/\/$/,''),sb_key:document.getElementById('stgSbKey').value.trim(),tg_bot:document.getElementById('stgTgBot').value.trim(),tg_users:JSON.stringify(getTgUsers())};
+  const s={sb_url:document.getElementById('stgSbUrl').value.trim().replace(/\/$/,''),sb_key:document.getElementById('stgSbKey').value.trim()};
   localStorage.setItem(LS_KEY,JSON.stringify(s));
   document.getElementById('stgSaveStatus').textContent='✅ 저장 완료 ('+new Date().toLocaleTimeString()+')';
   document.getElementById('stgSaveStatus').style.color='#22c55e';updateConnInfo();
+}
+
+async function testNotify(){
+  const st=document.getElementById('notifyTestResult');
+  if(!_fireTgBot||!_fireTgUsers.length){await loadNotifyConfig()}
+  if(!_fireTgBot){st.textContent='❌ Bot Token 없음 (마스터에서 fire_telegram 등록 필요)';st.style.color='#ef4444';return}
+  if(!_fireTgUsers.length){st.textContent='❌ 수신자 없음';st.style.color='#ef4444';return}
+  st.textContent='전송 중...';st.style.color='var(--accent)';let ok=0;
+  for(const u of _fireTgUsers){try{const r=await fetch(`https://api.telegram.org/bot${_fireTgBot}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:u.chat_id,text:`🧯 소방점검 텔레그램 테스트\n수신자: ${u.name}\n시간: ${new Date().toLocaleString()}`})});const d=await r.json();if(d.ok)ok++}catch(e){}}
+  st.textContent='텔레그램: '+ok+'/'+_fireTgUsers.length+'명 성공';st.style.color=ok?'#22c55e':'#ef4444';
+}
+
+async function testDiscord(){
+  const st=document.getElementById('notifyTestResult');
+  if(!_fireDiscordUrls.length){await loadNotifyConfig()}
+  if(!_fireDiscordUrls.length){st.textContent='❌ Webhook 없음 (마스터에서 fire_discord 등록 필요)';st.style.color='#ef4444';return}
+  st.textContent='디스코드 전송 중...';st.style.color='var(--accent)';let ok=0;
+  for(const url of _fireDiscordUrls){
+    try{const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:`🧯 소방점검 디스코드 테스트\n시간: ${new Date().toLocaleString()}`})});if(r.ok||r.status===204)ok++}catch(e){}
+  }
+  st.textContent+=' / 디스코드: '+ok+'/'+_fireDiscordUrls.length+'개 성공';st.style.color=ok?'#22c55e':'#ef4444';
 }
 
 async function testSbConn(){
@@ -799,25 +848,15 @@ async function testSbConn(){
   st.textContent='연결 중...';st.style.color='var(--accent)';
   try{const r=await fetch(`${url}/rest/v1/fire_check?select=id&limit=1`,{headers:{'apikey':key,'Authorization':'Bearer '+key}});
     if(r.ok){st.textContent='✅ 연결 성공';st.style.color='#22c55e'}
-    else if(r.status===404){st.textContent='⚠️ 연결 OK, 테이블 미생성 (SQL 실행 필요)';st.style.color='#f59e0b'}
+    else if(r.status===404){st.textContent='⚠️ 연결 OK, 테이블 미생성';st.style.color='#f59e0b'}
     else{st.textContent='❌ 오류: '+r.status;st.style.color='#ef4444'}
   }catch(e){st.textContent='❌ 실패: '+e.message;st.style.color='#ef4444'}
 }
 
-async function testTelegram(){
-  const st=document.getElementById('stgTgStatus');
-  let bot=document.getElementById('stgTgBot').value.trim(),users=getTgUsers();
-  if(!bot||!users.length){if(!_ccTgBot)await loadTgFromCC();if(!bot&&_ccTgBot)bot=_ccTgBot;if(!users.length&&_ccTgUsers.length)users=_ccTgUsers}
-  if(!bot){st.textContent='❌ Bot Token 없음';st.style.color='#ef4444';return}
-  if(!users.length){st.textContent='❌ 수신자 없음';st.style.color='#ef4444';return}
-  st.textContent='전송 중...';st.style.color='var(--accent)';let ok=0;
-  for(const u of users){try{const r=await fetch(`https://api.telegram.org/bot${bot}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:u.chat_id,text:`🧯 소방점검 알림 테스트\n수신자: ${u.name}\n시간: ${new Date().toLocaleString()}`})});const d=await r.json();if(d.ok)ok++}catch(e){}}
-  st.textContent=ok===users.length?'✅ '+ok+'명 성공':'⚠️ '+ok+'/'+users.length+'명';st.style.color=ok===users.length?'#22c55e':'#f59e0b';
-}
-
 function updateConnInfo(){
-  const s=getSettings();const sbOk=!!(s.sb_url&&s.sb_key);const tgOk=!!(s.tg_bot&&getTgUsers().length);
-  document.getElementById('stgConnInfo').innerHTML=`${sbOk?'🟢':'🔴'} Supabase: ${sbOk?'설정됨':'미설정'}<br>${tgOk?'🟢':'🔴'} 텔레그램: ${tgOk?getTgUsers().length+'명':'미설정'}`;
+  const s=getSettings();const sbOk=!!(s.sb_url&&s.sb_key);
+  const tgOk=!!(_fireTgBot&&_fireTgUsers.length);const dcOk=!!_fireDiscordUrls.length;
+  document.getElementById('stgConnInfo').innerHTML=`${sbOk?'🟢':'🔴'} Supabase: ${sbOk?'설정됨':'미설정'}<br>${tgOk?'🟢':'🔴'} 텔레그램: ${tgOk?_fireTgUsers.length+'명':'미설정'}<br>${dcOk?'🟢':'🔴'} 디스코드: ${dcOk?_fireDiscordUrls.length+'개':'미설정'}`;
 }
 
 // ===== 이력 관리 =====
@@ -1075,8 +1114,7 @@ window.addEventListener('DOMContentLoaded',async()=>{
   if(!localStorage.getItem(LS_KEY)){
     localStorage.setItem(LS_KEY,JSON.stringify({
       sb_url:'https://omngtyewdaqpphnzeate.supabase.co',
-      sb_key:'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tbmd0eWV3ZGFxcHBobnplYXRlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4ODk4ODksImV4cCI6MjA5MDQ2NTg4OX0.Zxur3t02JHtOcXforCMSwO3i2mMaf5sViE0tXXUC0-s',
-      tg_bot:'',tg_users:'[]'
+      sb_key:'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tbmd0eWV3ZGFxcHBobnplYXRlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4ODk4ODksImV4cCI6MjA5MDQ2NTg4OX0.Zxur3t02JHtOcXforCMSwO3i2mMaf5sViE0tXXUC0-s'
     }));
   }
   setDateTimeNow();
@@ -1085,7 +1123,7 @@ window.addEventListener('DOMContentLoaded',async()=>{
     _itemCache=await loadCodeList('fire_item',DEFAULT_ITEMS);
     _inspCache=await loadCodeList('fire_inspector',DEFAULT_INSPECTORS);
     _zoneCache=await loadCodeList('fire_zone',DEFAULT_ZONES);
-    loadTgFromCC();
+    loadNotifyConfig();
   }
   renderInspectorSelect();renderZoneSelect();renderCheckList();
 });
