@@ -89,10 +89,10 @@ input[type="file"]{display:none}
 <div class="pnl" id="pnl1">
 <div class="form-wrap">
   <div class="card">
-    <div class="card-title">👤 작업자,설비 관리</div>
-    <div style="font-size:10px;color:var(--text3);margin-bottom:8px;padding:6px 8px;background:rgba(16,185,129,.08);border-radius:6px">💡 code_group별 관리: p_inspector(설비점검자), p_machine(설비호기), inspector(검사기점검), qc_worker(잔량), rw_worker(레이스웨이출하), gn_worker(일반출하), d_worker(불량관리작업자), d_inspect_line(불량관리검사라인), d_prod_line(불량관리생산라인)</div>
+    <div class="card-title">👤 작업자 · 설비 · 점검항목 관리</div>
+    <div style="font-size:10px;color:var(--text3);margin-bottom:8px;padding:6px 8px;background:rgba(16,185,129,.08);border-radius:6px">💡 각 시스템별 카테고리를 터치하면 펼쳐집니다. 여기서 등록한 데이터는 각 점검시트에서 자동 연동됩니다.</div>
   </div>
-  <div class="card" id="workerCards"></div>
+  <div id="workerCards"></div>
 </div>
 </div>
 
@@ -301,35 +301,75 @@ document.getElementById('mmFile').addEventListener('change',async function(e){
 });
 
 // ===== 작업자 (common_code 멀티 code_group) =====
-const WORKER_GROUPS=[
-  {code:'p_inspector',label:'🏭 설비점검자 (p_inspector)'},
-  {code:'p_machine',label:'🏭 설비/호기 (p_machine)'},
-  {code:'w_inspector',label:'🧹 세척기점검자 (w_inspector)'},
-  {code:'w_machine',label:'🧹 세척기/호기 (w_machine)'},
-  {code:'inspector',label:'🔬 검사기점검 (inspector)'},
-  {code:'qc_worker',label:'📦 잔량관리 (qc_worker)'},
-  {code:'rw_worker',label:'🔩 레이스웨이출하 (rw_worker)'},
-  {code:'gn_worker',label:'🏭 일반출하 (gn_worker)'},
-  {code:'d_worker',label:'🔍 불량관리 작업자 (d_worker)'},
-  {code:'d_inspect_line',label:'🔍 불량관리 검사라인 (d_inspect_line)'},
-  {code:'d_prod_line',label:'🔍 불량관리 생산라인 (d_prod_line)'}
+const WORKER_CATEGORIES=[
+  {cat:'🏭 생산설비 점검',groups:[
+    {code:'p_inspector',label:'점검자'},
+    {code:'p_machine',label:'설비/호기'}
+  ]},
+  {cat:'🧹 세척기 점검',groups:[
+    {code:'w_inspector',label:'점검자'},
+    {code:'w_machine',label:'설비/호기'}
+  ]},
+  {cat:'🔬 검사기 점검',groups:[
+    {code:'inspector',label:'점검자'},
+    {code:'qc_machine',label:'검사기/호기'}
+  ]},
+  {cat:'🧯 소방점검',groups:[
+    {code:'fire_inspector',label:'점검자'},
+    {code:'fire_zone',label:'점검장소'},
+    {code:'fire_item',label:'점검항목'}
+  ]},
+  {cat:'📦 잔량관리',groups:[
+    {code:'qc_worker',label:'작업자'}
+  ]},
+  {cat:'🚚 출하관리',groups:[
+    {code:'rw_worker',label:'레이스웨이출하 작업자'},
+    {code:'gn_worker',label:'일반출하 작업자'}
+  ]},
+  {cat:'🔍 불량관리',groups:[
+    {code:'d_worker',label:'작업자'},
+    {code:'d_inspect_line',label:'검사라인'},
+    {code:'d_prod_line',label:'생산라인'}
+  ]}
 ];
+// 하위호환: flat 배열
+const WORKER_GROUPS=WORKER_CATEGORIES.flatMap(c=>c.groups);
 let _workerData={};
 async function loadWorkerTab(){
   const c=document.getElementById('workerCards');c.innerHTML='';
-  for(const g of WORKER_GROUPS){
-    try{const d=await sbSelect('common_code','code_group=eq.'+g.code+'&order=sort_order.asc');_workerData[g.code]=(d||[]).map(r=>({id:r.id,name:String(r.code_value||'').trim(),sort:r.sort_order||0}))}catch(e){_workerData[g.code]=[]}
-    const card=document.createElement('div');card.className='card';card.style.marginBottom='12px';
-    const unit=(g.code==='p_machine'||g.code==='w_machine')?'대':'명';
-    card.innerHTML='<div class="card-title" style="justify-content:space-between"><span>'+g.label+' ('+(_workerData[g.code]||[]).length+unit+')</span></div>';
-    const list=document.createElement('div');
-    (_workerData[g.code]||[]).forEach((w,i)=>{list.innerHTML+='<div class="list-item"><span style="color:var(--text3);font-size:11px;min-width:18px">'+(i+1)+'</span><span class="li-name">'+esc(w.name)+'</span><button class="li-btn li-move" onclick="moveWorker(\''+g.code+'\','+i+',-1)">▲</button><button class="li-btn li-move" onclick="moveWorker(\''+g.code+'\','+i+',1)">▼</button><button class="li-btn" onclick="editWorker(\''+g.code+'\','+i+')" style="background:rgba(56,189,248,.15);color:#38bdf8">✎</button><button class="li-btn li-del" onclick="delWorker(\''+g.code+'\','+w.id+')">✕</button></div>'});
-    card.appendChild(list);
-    const addRow=document.createElement('div');addRow.style.cssText='display:flex;gap:6px;margin-top:8px';
-    const ph=(g.code==='p_machine'||g.code==='w_machine')?'설비명':'이름';
-    addRow.innerHTML='<input type="text" id="wkNew_'+g.code+'" placeholder="'+ph+'" style="flex:1;padding:8px;font-size:13px;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit"><button class="btn-sm" onclick="addWorkerTo(\''+g.code+'\')" style="background:var(--accent);color:#fff">+</button>';
-    card.appendChild(addRow);c.appendChild(card);
+  // 전체 code_group 한번에 로드
+  for(const cat of WORKER_CATEGORIES){
+    for(const g of cat.groups){
+      try{const d=await sbSelect('common_code','code_group=eq.'+g.code+'&order=sort_order.asc');_workerData[g.code]=(d||[]).map(r=>({id:r.id,name:String(r.code_value||'').trim(),sort:r.sort_order||0}))}catch(e){_workerData[g.code]=[]}
+    }
   }
+  // 카테고리별 아코디언 렌더링
+  WORKER_CATEGORIES.forEach((cat,ci)=>{
+    const sec=document.createElement('div');sec.style.cssText='margin-bottom:12px;border:1px solid rgba(255,255,255,.1);border-radius:12px;overflow:hidden';
+    // 카테고리 헤더
+    const hdr=document.createElement('div');
+    hdr.style.cssText='display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:rgba(255,255,255,.04);cursor:pointer;user-select:none;-webkit-tap-highlight-color:transparent';
+    const totalCnt=cat.groups.reduce((s,g)=>s+(_workerData[g.code]||[]).length,0);
+    hdr.innerHTML='<span style="font-size:14px;font-weight:700;color:var(--text)">'+cat.cat+'</span><span style="display:flex;align-items:center;gap:6px"><span style="font-size:11px;color:var(--text3)">'+totalCnt+'건</span><span class="wk-arrow" style="font-size:14px;color:var(--text3);transition:transform .2s">›</span></span>';
+    const body=document.createElement('div');body.style.cssText='display:none;padding:8px 10px 10px';
+    hdr.onclick=()=>{const open=body.style.display!=='none';body.style.display=open?'none':'block';hdr.querySelector('.wk-arrow').style.transform=open?'':'rotate(90deg)'};
+    sec.appendChild(hdr);
+    // 각 그룹 카드
+    cat.groups.forEach(g=>{
+      const card=document.createElement('div');card.style.cssText='background:var(--bg);border:1px solid rgba(255,255,255,.06);border-radius:10px;padding:12px;margin-bottom:8px';
+      const machCodes=['p_machine','w_machine','qc_machine'];
+      const unit=machCodes.includes(g.code)?'대':(g.code==='fire_zone'?'곳':(g.code==='fire_item'?'개':'명'));
+      const ph=machCodes.includes(g.code)?'설비명':(g.code==='fire_zone'?'장소명':(g.code==='fire_item'?'항목명':'이름'));
+      card.innerHTML='<div style="font-size:12px;font-weight:700;color:var(--accent);margin-bottom:8px">'+g.label+' <span style="color:var(--text3);font-weight:400">('+(_workerData[g.code]||[]).length+unit+' · '+g.code+')</span></div>';
+      const list=document.createElement('div');
+      (_workerData[g.code]||[]).forEach((w,i)=>{list.innerHTML+='<div class="list-item"><span style="color:var(--text3);font-size:11px;min-width:18px">'+(i+1)+'</span><span class="li-name">'+esc(w.name)+'</span><button class="li-btn li-move" onclick="moveWorker(\''+g.code+'\','+i+',-1)">▲</button><button class="li-btn li-move" onclick="moveWorker(\''+g.code+'\','+i+',1)">▼</button><button class="li-btn" onclick="editWorker(\''+g.code+'\','+i+')" style="background:rgba(56,189,248,.15);color:#38bdf8">✎</button><button class="li-btn li-del" onclick="delWorker(\''+g.code+'\','+w.id+')">✕</button></div>'});
+      card.appendChild(list);
+      const addRow=document.createElement('div');addRow.style.cssText='display:flex;gap:6px;margin-top:8px';
+      addRow.innerHTML='<input type="text" id="wkNew_'+g.code+'" placeholder="'+ph+'" style="flex:1;padding:8px;font-size:13px;background:var(--surface);border:1.5px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit"><button class="btn-sm" onclick="addWorkerTo(\''+g.code+'\')" style="background:var(--accent);color:#fff">+</button>';
+      card.appendChild(addRow);body.appendChild(card);
+    });
+    sec.appendChild(body);c.appendChild(sec);
+  });
 }
 async function addWorkerTo(code){const inp=document.getElementById('wkNew_'+code);const n=inp.value.trim();if(!n)return;const list=_workerData[code]||[];if(list.find(w=>w.name===n)){toast('이미 존재');return}const ns=list.length?Math.max(...list.map(w=>w.sort))+1:1;try{await sbInsert('common_code',{code_group:code,code_value:n,sort_order:ns});inp.value='';toast('✅ '+n);loadWorkerTab()}catch(e){toast('❌ '+e.message)}}
 async function delWorker(code,id){if(!confirm('삭제?'))return;try{await sbDel('common_code',id);toast('삭제됨');loadWorkerTab()}catch(e){toast('❌ '+e.message)}}
