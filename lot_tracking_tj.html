@@ -1651,30 +1651,45 @@ async function onUnusedLotSelect(){
   if(inDate)html+=' · 입고일: '+inDate;
   else if(dt)html+=' · 등록일: '+dt;
 
-  // material_master_tj에서 매핑기종 조회
+  // ★ material_master_tj에서 소재 매칭 → customer + mapped_models 조회
+  await loadMaterialMaster();
+  let matMatch=null;
   let mappedModels=[];
+  let matCustomer='';
+
+  // 1차: material_info 문자열로 소재명 매칭
   if(mi){
-    await loadMaterialMaster();
-    // material_info 문자열에서 소재명 매칭
-    const matMatch=_materialMaster.find(m=>mi.includes(m.material_name));
-    if(matMatch&&matMatch.mapped_models){
-      mappedModels=matMatch.mapped_models.split(',').map(s=>s.trim()).filter(Boolean);
-      html+='<br>📦 매핑기종: <b style="color:#1565c0">'+matMatch.mapped_models+'</b>';
-    }
+    // material_name이 material_info에 포함된 소재 찾기
+    matMatch=_materialMaster.find(m=>m.material_name&&mi.includes(m.material_name));
+    // material_name 완전일치 시도
+    if(!matMatch) matMatch=_materialMaster.find(m=>{
+      if(!m.material_type)return false;
+      // 재질+두께+폭 조합 체크
+      const parts=mi.split(/[\/\s]+/).map(s=>s.trim()).filter(Boolean);
+      return parts.includes(m.material_type)&&(!m.thickness||parts.includes(m.thickness))&&(!m.width||parts.includes(m.width));
+    });
   }
-  // bp(base_part)로도 매핑기종 조회
-  if(!mappedModels.length&&bp){
-    await loadMaterialMaster();
-    const matMatch=_materialMaster.find(m=>{
+
+  // 2차: base_part(기종)로 mapped_models에서 역매칭
+  if(!matMatch&&bp){
+    matMatch=_materialMaster.find(m=>{
       if(!m.mapped_models)return false;
       return m.mapped_models.split(',').map(s=>s.trim()).includes(bp);
     });
-    if(matMatch){
-      mappedModels=[bp]; // base_part 자체가 기종
-      html+='<br>📦 기종: <b style="color:#1565c0">'+bp+'</b>';
-    }else{
-      mappedModels=[bp]; // 매핑 못 찾아도 base_part 사용
+  }
+
+  if(matMatch){
+    matCustomer=matMatch.customer||'';
+    if(matMatch.mapped_models){
+      mappedModels=matMatch.mapped_models.split(',').map(s=>s.trim()).filter(Boolean);
     }
+    const custLabel=matCustomer||'공용';
+    const typeLabel=(matCustomer.toUpperCase().includes('SBC'))?'🔩 레이스웨이':'🏭 일반기종';
+    html+='<br>고객사: <b>'+custLabel+'</b> · '+typeLabel;
+    if(mappedModels.length)html+='<br>📦 매핑기종: <b style="color:#1565c0">'+mappedModels.join(', ')+'</b>';
+  }else if(bp){
+    // 소재마스터 매칭 실패 시 base_part 자체를 기종으로 사용
+    mappedModels=[bp];
   }
 
   if(infoDiv){infoDiv.innerHTML=html;infoDiv.style.display='block'}
@@ -1682,9 +1697,10 @@ async function onUnusedLotSelect(){
   // 소재중량 자동입력
   if(h.weight){document.getElementById('inpWeight').value=h.weight}
 
-  // _selectedUnusedLot에 매핑기종 저장
+  // _selectedUnusedLot에 매핑기종 + 고객사 저장
   _selectedUnusedLot._mappedModels=mappedModels;
   _selectedUnusedLot._lot=lot;
+  _selectedUnusedLot._matCustomer=matCustomer;
 
   showToast('✅ 소재 선택: '+lot);
   if(navigator.vibrate)navigator.vibrate([50,30,50]);
@@ -2116,7 +2132,8 @@ async function goToProdDirectReg(){
   const bp=_selectedUnusedLot.base_part||'';
   const mappedModels=(_selectedUnusedLot._mappedModels||[]).slice();
   const mi=_selectedUnusedLot.material_info||'';
-
+  const matCustomer=_selectedUnusedLot._matCustomer||'';
+  const isSBC=matCustomer.toUpperCase().includes('SBC');
   // 이동등록 팝업 닫기 (regModal은 별도이므로 OK)
   document.getElementById('moveSetupModal').classList.remove('show','center');
   _selectedUnusedLot=null;
@@ -2158,51 +2175,77 @@ async function goToProdDirectReg(){
   const consumedArea=document.getElementById('lotConsumedArea');
   if(consumedArea){consumedArea.style.display='block';document.getElementById('chkLotConsumed').checked=false}
 
-  // 기종 자동 선택
-  if(mappedModels.length===1||bp){
-    const targetModel=mappedModels.length===1?mappedModels[0]:bp;
-    document.getElementById('mInpBasePart').value=targetModel;
-    document.getElementById('modelTypeSwitcher').style.display='none';
-    // 레이스웨이인지 일반기종인지 확인
-    await fillRacewaySelect('');
-    await loadGeneralModels();
-    const raceSel=document.getElementById('selRacewayPart');
-    let isRaceway=false;
-    for(let o of raceSel.options){if(o.value===targetModel){isRaceway=true;break}}
-    if(isRaceway){
-      _currentModelType='raceway';raceSel.value=targetModel;onRacewayPartSelect();
+  // 기종 자동 선택: SBC → 레이스웨이, 그 외 → 일반기종
+  if(mappedModels.length>0){
+    if(isSBC){
+      // ===== SBC: 레이스웨이 기종 =====
+      document.getElementById('modelTypeSwitcher').style.display='none';
+      _currentModelType='raceway';
+      await fillRacewaySelect('');
+      const raceSel=document.getElementById('selRacewayPart');
+      if(mappedModels.length===1){
+        // 단일 기종 자동 선택
+        const target=mappedModels[0];
+        document.getElementById('mInpBasePart').value=target;
+        let found=false;
+        for(let o of raceSel.options){if(o.value===target){raceSel.value=target;found=true;break}}
+        if(!found){const opt=document.createElement('option');opt.value=target;opt.textContent=target;raceSel.appendChild(opt);raceSel.value=target}
+        onRacewayPartSelect();
+      }else{
+        // 복수 기종: 콤보에서 선택
+        document.getElementById('modelTypeSwitcher').style.display='block';
+        document.getElementById('tabRaceway').classList.add('on');
+        document.getElementById('tabGeneral').classList.remove('on');
+        document.getElementById('racewayModelArea').style.display='block';
+        document.getElementById('generalModelArea').style.display='none';
+        // 매핑기종만 필터하여 표시
+        raceSel.innerHTML='<option value="">기종 선택 ('+mappedModels.length+'종)</option>'+mappedModels.map(m=>'<option value="'+m+'">'+m+'</option>').join('');
+      }
     }else{
+      // ===== 비-SBC: 일반기종 =====
+      document.getElementById('modelTypeSwitcher').style.display='none';
       _currentModelType='general';
+      await loadGeneralModels();
       refreshGeneralModelSelect('');
       const gSel=document.getElementById('selGeneralModel');
-      let found=false;
-      if(gSel){for(let o of gSel.options){if(o.value===targetModel){gSel.value=targetModel;found=true;break}}}
-      if(!found&&gSel){const opt=document.createElement('option');opt.value=targetModel;opt.textContent=targetModel+' (미등록)';gSel.appendChild(opt);gSel.value=targetModel}
-      onGeneralModelSelect();
+      if(mappedModels.length===1){
+        // 단일 기종 자동 선택
+        const target=mappedModels[0];
+        document.getElementById('mInpBasePart').value=target;
+        let found=false;
+        if(gSel){for(let o of gSel.options){if(o.value===target){gSel.value=target;found=true;break}}}
+        if(!found&&gSel){const opt=document.createElement('option');opt.value=target;opt.textContent=target;gSel.appendChild(opt);gSel.value=target}
+        onGeneralModelSelect();
+      }else{
+        // 복수 기종: 콤보에서 선택
+        document.getElementById('modelTypeSwitcher').style.display='block';
+        document.getElementById('tabRaceway').classList.remove('on');
+        document.getElementById('tabGeneral').classList.add('on');
+        document.getElementById('racewayModelArea').style.display='none';
+        document.getElementById('generalModelArea').style.display='block';
+        // 매핑기종만 필터하여 표시
+        if(gSel) gSel.innerHTML='<option value="">기종 선택 ('+mappedModels.length+'종)</option>'+mappedModels.map(m=>'<option value="'+m+'">'+m+'</option>').join('');
+      }
     }
-  }else if(mappedModels.length>1){
-    // 복수 기종: 매핑기종 선택 콤보 표시
-    document.getElementById('modelTypeSwitcher').style.display='none';
-    document.getElementById('modalMatchArea').innerHTML=`<div class="fg" style="margin-bottom:10px">
-      <label style="font-size:12px;font-weight:700;color:#1565c0">📦 매핑기종 선택 (${mappedModels.length}종)</label>
-      <select id="selMappedModel" onchange="onMappedModelSelect()" style="font-size:15px;font-weight:700;border:2px solid #1565c0;background:#e3f2fd;color:#1565c0;padding:11px;border-radius:8px;width:100%">
-        <option value="">기종 선택</option>
-        ${mappedModels.map(m=>'<option value="'+m+'">'+m+'</option>').join('')}
-      </select>
-    </div>`;
-    await fillRacewaySelect('');
-    await loadGeneralModels();
   }else{
-    // 매핑기종 없음: 기존 방식
+    // 매핑기종 없음: 기존 방식 (레이스웨이/일반 탭)
     document.getElementById('modelTypeSwitcher').style.display='block';
-    await fillRacewaySelect('');
-    await loadGeneralModels();
-    refreshGeneralModelSelect('');
-    _currentModelType='raceway';
-    document.getElementById('tabRaceway').classList.add('on');
-    document.getElementById('tabGeneral').classList.remove('on');
-    document.getElementById('racewayModelArea').style.display='block';
-    document.getElementById('generalModelArea').style.display='none';
+    if(isSBC){
+      await fillRacewaySelect('');
+      _currentModelType='raceway';
+      document.getElementById('tabRaceway').classList.add('on');
+      document.getElementById('tabGeneral').classList.remove('on');
+      document.getElementById('racewayModelArea').style.display='block';
+      document.getElementById('generalModelArea').style.display='none';
+    }else{
+      await loadGeneralModels();
+      refreshGeneralModelSelect('');
+      _currentModelType='general';
+      document.getElementById('tabRaceway').classList.remove('on');
+      document.getElementById('tabGeneral').classList.add('on');
+      document.getElementById('racewayModelArea').style.display='none';
+      document.getElementById('generalModelArea').style.display='block';
+    }
   }
 
   modal.classList.add('show','center');
