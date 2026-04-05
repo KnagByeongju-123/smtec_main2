@@ -1685,11 +1685,16 @@ async function onUnusedLotSelect(){
     // 매칭된 모든 소재에서 매핑기종 수집 (중복 제거)
     const allModels=[];
     const customerSet=new Set();
+    const weightKg=h.weight?parseFloat(h.weight):0;
     matMatches.forEach(m=>{
       if(m.customer)customerSet.add(m.customer);
       if(m.mapped_models){
         m.mapped_models.split(',').map(s=>s.trim()).filter(Boolean).forEach(model=>{
-          if(!allModels.find(a=>a.model===model))allModels.push({model,customer:m.customer||'공용',pitch:m.pitch||''});
+          if(!allModels.find(a=>a.model===model)){
+            const uw=m.unit_weight?parseFloat(m.unit_weight):0;
+            const estQty=(uw>0&&weightKg>0)?Math.floor(weightKg*1000/uw):0;
+            allModels.push({model,customer:m.customer||'공용',pitch:m.pitch||'',unitWeight:uw,estQty});
+          }
         });
       }
     });
@@ -1711,12 +1716,17 @@ async function onUnusedLotSelect(){
 
     if(matMatches.length===1){
       // 정확히 1건 매칭
+      const a=allModels[0];
       html+='<br>📦 매핑기종: <b style="color:#1565c0">'+mappedModels.join(', ')+'</b>';
+      if(a&&a.estQty>0)html+=' <span style="color:#e65100;font-weight:700">(≈'+a.estQty.toLocaleString()+'개 생산가능)</span>';
+      else if(a&&!a.unitWeight)html+=' <span style="color:#888;font-size:10px">(소요량 미등록)</span>';
     }else{
       // 여러 건 매칭 (피치 다름 등) → 기종별 상세 표시
       html+='<br>📦 매칭 '+matMatches.length+'건 (피치별):';
       allModels.forEach(a=>{
-        html+='<br>&nbsp;&nbsp;→ <b style="color:#1565c0">'+a.model+'</b> <span style="color:#888">('+a.customer+(a.pitch?', P'+a.pitch:'')+')</span>';
+        const qtyStr=a.estQty>0?' · <b style="color:#e65100">≈'+a.estQty.toLocaleString()+'개</b>':'';
+        const uwStr=a.unitWeight>0?' · '+a.unitWeight+'g/개':'';
+        html+='<br>&nbsp;&nbsp;→ <b style="color:#1565c0">'+a.model+'</b> <span style="color:#888">('+a.customer+(a.pitch?', P'+a.pitch:'')+uwStr+')</span>'+qtyStr;
       });
     }
   }else if(bp){
