@@ -1651,59 +1651,75 @@ async function onUnusedLotSelect(){
   if(inDate)html+=' · 입고일: '+inDate;
   else if(dt)html+=' · 등록일: '+dt;
 
-  // ★ material_master_tj에서 소재 매칭 → customer + mapped_models 조회
+  // ★ material_master_tj에서 재질+두께+폭으로 전체 고객사 검색
   await loadMaterialMaster();
-  let matMatch=null;
+  let matMatches=[]; // 매칭된 소재마스터 전체 (여러 고객사/피치)
   let mappedModels=[];
   let matCustomer='';
 
-  // 1차: material_info를 ' // ' 구분자로 파싱 → 재질/두께/폭으로 소재마스터 매칭
   if(mi){
-    // material_info 형식: "SPCC // 0.6 // 112" 또는 "SPCC-0.6T-112W SPCC/0.6/112"
     const miParts=mi.includes('//')?mi.split('//').map(s=>s.trim()).filter(Boolean):mi.split(/[\/\s]+/).map(s=>s.trim()).filter(Boolean);
-    const miType=miParts[0]||''; // 재질 (SPCC)
-    const miThick=miParts[1]||''; // 두께 (0.6)
-    const miWidth=miParts[2]||''; // 폭 (112)
-    const miPitch=miParts[3]||''; // 피치 (있으면)
+    const miType=miParts[0]||'';
+    const miThick=miParts[1]||'';
+    const miWidth=miParts[2]||'';
 
-    // 정확 매칭: 재질+두께+폭(+피치) 일치
-    matMatch=_materialMaster.find(m=>{
-      if(!m.material_type)return false;
-      if(m.material_type!==miType)return false;
+    // 재질+두께+폭 일치하는 모든 소재마스터 검색 (전 고객사, 피치 무관)
+    matMatches=_materialMaster.filter(m=>{
+      if(!m.material_type||m.material_type!==miType)return false;
       if(miThick&&m.thickness&&m.thickness!==miThick)return false;
       if(miWidth&&m.width&&m.width!==miWidth)return false;
-      if(miPitch&&m.pitch&&m.pitch!==miPitch)return false;
-      // 두께/폭이 비어있으면 재질만으로도 매칭 (느슨)
-      if(!miThick&&!miWidth)return true;
-      // 두께+폭 둘 다 있어야 정확 매칭
-      return (!miThick||m.thickness===miThick)&&(!miWidth||m.width===miWidth);
+      return true;
     });
-
-    // 2차: material_name 포함 매칭 (fallback)
-    if(!matMatch){
-      matMatch=_materialMaster.find(m=>m.material_name&&mi.includes(m.material_name));
-    }
   }
 
-  // 2차: base_part(기종)로 mapped_models에서 역매칭
-  if(!matMatch&&bp){
-    matMatch=_materialMaster.find(m=>{
+  // base_part 역매칭 (fallback)
+  if(!matMatches.length&&bp){
+    const found=_materialMaster.filter(m=>{
       if(!m.mapped_models)return false;
       return m.mapped_models.split(',').map(s=>s.trim()).includes(bp);
     });
+    if(found.length)matMatches=found;
   }
 
-  if(matMatch){
-    matCustomer=matMatch.customer||'';
-    if(matMatch.mapped_models){
-      mappedModels=matMatch.mapped_models.split(',').map(s=>s.trim()).filter(Boolean);
+  if(matMatches.length>0){
+    // 매칭된 모든 소재에서 매핑기종 수집 (중복 제거)
+    const allModels=[];
+    const customerSet=new Set();
+    matMatches.forEach(m=>{
+      if(m.customer)customerSet.add(m.customer);
+      if(m.mapped_models){
+        m.mapped_models.split(',').map(s=>s.trim()).filter(Boolean).forEach(model=>{
+          if(!allModels.find(a=>a.model===model))allModels.push({model,customer:m.customer||'공용',pitch:m.pitch||''});
+        });
+      }
+    });
+
+    mappedModels=allModels.map(a=>a.model);
+
+    // 고객사 결정: 1개면 확정, 여러개면 표시
+    const customers=[...customerSet];
+    if(customers.length===1){
+      matCustomer=customers[0];
+    }else if(customers.length>1){
+      matCustomer=customers.join('/');
     }
+
     const custLabel=matCustomer||'공용';
-    const typeLabel=(matCustomer.toUpperCase().includes('SBC'))?'🔩 레이스웨이':'🏭 일반기종';
+    const isSBCany=customers.some(c=>c.toUpperCase().includes('SBC'));
+    const typeLabel=isSBCany?'🔩 레이스웨이':'🏭 일반기종';
     html+='<br>고객사: <b>'+custLabel+'</b> · '+typeLabel;
-    if(mappedModels.length)html+='<br>📦 매핑기종: <b style="color:#1565c0">'+mappedModels.join(', ')+'</b>';
+
+    if(matMatches.length===1){
+      // 정확히 1건 매칭
+      html+='<br>📦 매핑기종: <b style="color:#1565c0">'+mappedModels.join(', ')+'</b>';
+    }else{
+      // 여러 건 매칭 (피치 다름 등) → 기종별 상세 표시
+      html+='<br>📦 매칭 '+matMatches.length+'건 (피치별):';
+      allModels.forEach(a=>{
+        html+='<br>&nbsp;&nbsp;→ <b style="color:#1565c0">'+a.model+'</b> <span style="color:#888">('+a.customer+(a.pitch?', P'+a.pitch:'')+')</span>';
+      });
+    }
   }else if(bp){
-    // 소재마스터 매칭 실패 시 base_part 자체를 기종으로 사용
     mappedModels=[bp];
   }
 
@@ -1716,6 +1732,7 @@ async function onUnusedLotSelect(){
   _selectedUnusedLot._mappedModels=mappedModels;
   _selectedUnusedLot._lot=lot;
   _selectedUnusedLot._matCustomer=matCustomer;
+  _selectedUnusedLot._matMatches=matMatches;
 
   showToast('✅ 소재 선택: '+lot);
   if(navigator.vibrate)navigator.vibrate([50,30,50]);
