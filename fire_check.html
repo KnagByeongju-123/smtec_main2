@@ -1,0 +1,807 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>소방점검 체크시트</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;900&display=swap">
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root{
+  --bg:#0f172a;--surface:#1e293b;--surface2:#334155;--border:#475569;
+  --accent:#f97316;--accent2:#ea580c;--accent-bg:rgba(249,115,22,.12);
+  --ok:#22c55e;--ok-bg:rgba(34,197,94,.12);
+  --ng:#ef4444;--ng-bg:rgba(239,68,68,.12);
+  --text:#e2e8f0;--text2:#94a3b8;--text3:#64748b;
+  --radius:12px;--fire:#dc2626;--fire2:#b91c1c;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding-bottom:40px}
+
+.hdr{background:linear-gradient(135deg,#7f1d1d,#991b1b,#b91c1c);padding:20px 16px 16px;text-align:center;position:relative;overflow:hidden}
+.hdr::before{content:'';position:absolute;top:-50%;left:-50%;width:200%;height:200%;background:repeating-linear-gradient(45deg,transparent,transparent 10px,rgba(255,255,255,.02) 10px,rgba(255,255,255,.02) 20px);pointer-events:none}
+.hdr h1{font-size:18px;font-weight:900;letter-spacing:-.3px;position:relative}
+.hdr p{font-size:11px;color:#fca5a5;margin-top:3px;position:relative}
+
+.tabs{display:flex;background:var(--surface);border-bottom:2px solid rgba(255,255,255,.06);position:sticky;top:0;z-index:100}
+.tab{flex:1;padding:12px;text-align:center;font-size:13px;font-weight:700;cursor:pointer;color:var(--text3);border-bottom:3px solid transparent;transition:all .2s}
+.tab.on{color:var(--accent);border-bottom-color:var(--accent)}
+
+.pnl{display:none}.pnl.on{display:block}
+.form-wrap{max-width:520px;margin:0 auto;padding:12px}
+
+.card{background:var(--surface);border:1px solid rgba(255,255,255,.06);border-radius:var(--radius);padding:16px;margin-bottom:12px}
+.card-title{font-size:12px;font-weight:700;color:var(--accent);letter-spacing:.5px;margin-bottom:12px;display:flex;align-items:center;gap:6px}
+.card-title::before{content:'';width:3px;height:14px;background:var(--accent);border-radius:2px;flex-shrink:0}
+
+.fg{margin-bottom:12px}.fg:last-child{margin-bottom:0}
+.fg label.fl{display:block;font-size:11px;font-weight:600;color:var(--text2);margin-bottom:5px}
+.fg select,.fg input[type="date"],.fg input[type="time"],.fg input[type="text"],.fg input[type="password"],.fg textarea{
+  width:100%;padding:11px 12px;font-size:15px;font-family:'Noto Sans KR',sans-serif;
+  background:var(--bg);border:1.5px solid var(--border);border-radius:8px;color:var(--text);transition:border-color .2s}
+.fg select:focus,.fg input:focus,.fg textarea:focus{outline:none;border-color:var(--accent)}
+.fg textarea{resize:vertical;min-height:60px}
+.fg-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+
+/* 점검 항목 */
+.check-list{display:flex;flex-direction:column;gap:6px}
+.check-item{display:flex;align-items:center;padding:12px 14px;background:var(--bg);border:1.5px solid rgba(255,255,255,.06);border-radius:10px;transition:all .2s;gap:8px;flex-wrap:wrap}
+.check-item.checked-ok{border-color:rgba(34,197,94,.3);background:var(--ok-bg)}
+.check-item.checked-ng{border-color:rgba(239,68,68,.3);background:var(--ng-bg)}
+.check-label{font-size:14px;font-weight:500;flex:1;min-width:0}
+.check-label .sub-info{display:block;font-size:10px;color:var(--text3);margin-top:2px}
+
+.okng-group{display:flex;gap:4px;flex-shrink:0}
+.okng-group input[type="radio"]{display:none}
+.okng-btn{display:flex;align-items:center;justify-content:center;width:48px;height:34px;border-radius:7px;font-size:13px;font-weight:700;cursor:pointer;background:var(--surface2);color:var(--text3);border:1.5px solid transparent;transition:all .15s}
+.okng-btn:active{transform:scale(.93)}
+.okng-btn.ok-selected{background:var(--ok);color:#fff;border-color:var(--ok);box-shadow:0 2px 8px rgba(34,197,94,.3)}
+.okng-btn.ng-selected{background:var(--ng);color:#fff;border-color:var(--ng);box-shadow:0 2px 8px rgba(239,68,68,.3)}
+
+/* NG 상세 영역 */
+.ng-detail{width:100%;margin-top:8px;display:none;padding:8px;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:8px}
+.ng-detail.show{display:block}
+.ng-detail textarea{width:100%;padding:8px;font-size:12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:inherit;resize:vertical;min-height:40px;margin-bottom:6px}
+.ng-photo-row{display:flex;gap:6px;flex-wrap:wrap}
+.ng-photo-btn{padding:6px 10px;border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;color:#fff}
+.ng-photo-btn.cam{background:linear-gradient(135deg,#dc2626,#ef4444)}
+.ng-photo-btn.file{background:linear-gradient(135deg,#7c3aed,#a78bfa)}
+.ng-thumb{width:48px;height:48px;border-radius:6px;object-fit:cover;border:1px solid var(--border);cursor:pointer}
+
+/* QR 스캔 버튼 */
+.qr-btn{display:inline-flex;align-items:center;gap:4px;padding:6px 10px;background:linear-gradient(135deg,#0284c7,#38bdf8);border:none;border-radius:6px;color:#fff;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit}
+.qr-btn:active{transform:scale(.95)}
+
+/* 진행률 */
+.progress-wrap{display:flex;align-items:center;gap:10px}
+.progress-bar-bg{flex:1;height:8px;background:var(--surface2);border-radius:4px;overflow:hidden}
+.progress-bar-fill{height:100%;background:linear-gradient(90deg,var(--ok),#4ade80);border-radius:4px;transition:width .3s;width:0}
+.progress-text{font-size:11px;color:var(--text2);white-space:nowrap;min-width:70px;text-align:right}
+
+/* 제출 */
+.submit-btn{width:100%;padding:14px;background:linear-gradient(135deg,var(--fire),#ef4444);color:#fff;border:none;border-radius:var(--radius);font-size:15px;font-weight:900;cursor:pointer;font-family:inherit;letter-spacing:.3px;transition:transform .1s}
+.submit-btn:active{transform:scale(.97)}
+
+/* 설정 항목 */
+.stg-item{display:flex;align-items:center;gap:6px;padding:8px 10px;background:var(--bg);border:1px solid rgba(255,255,255,.06);border-radius:8px;margin-bottom:4px}
+.stg-item span{flex:1;font-size:13px}
+.stg-item .stg-no{color:var(--text3);font-size:11px;min-width:20px}
+.stg-item button{padding:4px 8px;border:none;border-radius:4px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;color:var(--text2);background:transparent}
+.stg-item .stg-del{color:#fca5a5;background:rgba(239,68,68,.1)}
+
+/* QR 스캐너 오버레이 */
+#qrOverlay{position:fixed;inset:0;background:rgba(0,0,0,.92);display:none;align-items:center;justify-content:center;z-index:9999;flex-direction:column}
+#qrOverlay .qr-title{color:#fff;font-size:14px;font-weight:700;margin-bottom:12px}
+#qrOverlay #qrReader{width:300px;height:300px;background:#000;border-radius:12px;overflow:hidden}
+#qrOverlay .qr-close{margin-top:16px;padding:10px 28px;background:var(--fire);color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit}
+
+.toast{position:fixed;bottom:70px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.88);color:#fff;padding:8px 18px;border-radius:18px;font-size:12px;font-weight:600;z-index:10001;opacity:0;transition:opacity .3s;pointer-events:none}
+.toast.show{opacity:1}
+
+/* 사진 뷰어 */
+#photoViewer{position:fixed;inset:0;background:rgba(0,0,0,.95);display:none;align-items:center;justify-content:center;z-index:10000;flex-direction:column}
+#photoViewer img{max-width:95vw;max-height:80vh;border-radius:8px}
+#photoViewer .pv-close{margin-top:16px;padding:10px 28px;background:var(--fire);color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit}
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <h1>🧯 소방점검 체크시트</h1>
+  <p>소화전 · 소화기 · 대피로 · 유도등 일상점검</p>
+</div>
+
+<div class="tabs">
+  <div class="tab on" onclick="swTab(0)">🧯 점검</div>
+  <div class="tab" onclick="swTab(1)">⚙ 설정</div>
+</div>
+
+<!-- ===== 점검 탭 ===== -->
+<div class="pnl on" id="pnl0">
+<div class="form-wrap">
+
+  <div class="card">
+    <div class="card-title">기본 정보</div>
+    <div class="fg-row">
+      <div class="fg">
+        <label class="fl">점검일자</label>
+        <input type="date" id="checkDate">
+      </div>
+      <div class="fg">
+        <label class="fl">점검시간</label>
+        <input type="time" id="checkTime">
+      </div>
+    </div>
+    <div class="fg">
+      <label class="fl">점검자</label>
+      <select id="inspector"><option value="" disabled selected>선택</option></select>
+    </div>
+    <div class="fg">
+      <label class="fl">점검장소 <span style="font-size:10px;color:var(--text3)">QR스캔 또는 직접입력</span></label>
+      <div style="display:flex;gap:6px">
+        <input type="text" id="zoneInput" placeholder="점검장소" style="flex:1">
+        <button type="button" class="qr-btn" onclick="scanZoneQR()" style="flex-shrink:0">📷 QR</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 진행률 -->
+  <div class="card" style="padding:12px 16px">
+    <div class="progress-wrap">
+      <div class="progress-bar-bg"><div class="progress-bar-fill" id="progressFill"></div></div>
+      <div class="progress-text" id="progressText">0 / 0 항목</div>
+    </div>
+  </div>
+
+  <!-- 점검 항목 (동적 생성) -->
+  <div class="card">
+    <div class="card-title">점검 항목</div>
+    <div class="check-list" id="checkList"></div>
+  </div>
+
+  <!-- 비고 -->
+  <div class="card">
+    <div class="card-title">비고</div>
+    <div class="fg">
+      <textarea id="memo" placeholder="특이사항 또는 메모를 입력하세요"></textarea>
+    </div>
+  </div>
+
+  <button type="button" class="submit-btn" onclick="submitCheck()">✅ 점검 제출</button>
+</div>
+</div>
+
+<!-- ===== 설정 탭 ===== -->
+<div class="pnl" id="pnl1">
+<div class="form-wrap">
+
+  <!-- 이력 관리 -->
+  <div class="card">
+    <div class="card-title">📊 이력 관리</div>
+    <div class="fg-row">
+      <div class="fg"><label class="fl">시작일</label><input type="date" id="histStart"></div>
+      <div class="fg"><label class="fl">종료일</label><input type="date" id="histEnd"></div>
+    </div>
+    <div class="fg">
+      <label class="fl">점검장소</label>
+      <select id="histZone"><option value="">전체</option></select>
+    </div>
+    <div style="display:flex;gap:6px;margin-top:4px">
+      <button type="button" onclick="histPreview()" style="flex:1;padding:10px;background:linear-gradient(135deg,#0284c7,#38bdf8);border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">🔍 조회</button>
+      <button type="button" onclick="histDownload()" style="flex:1;padding:10px;background:linear-gradient(135deg,#059669,#34d399);border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">📥 엑셀</button>
+    </div>
+    <div style="display:flex;gap:6px;margin-top:6px">
+      <button type="button" onclick="histDelete()" style="flex:1;padding:10px;background:rgba(239,68,68,.15);border:1.5px solid rgba(239,68,68,.3);border-radius:8px;color:#ef4444;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">🗑 선택범위 삭제</button>
+    </div>
+    <div id="histStatus" style="font-size:11px;margin-top:8px;color:var(--text3)"></div>
+    <div id="histPreviewArea" style="margin-top:10px;max-height:300px;overflow-y:auto"></div>
+  </div>
+
+  <!-- 점검항목 관리 -->
+  <div class="card">
+    <div class="card-title">🧯 점검항목 관리</div>
+    <div style="font-size:10px;color:var(--text3);margin-bottom:8px;padding:6px 8px;background:rgba(249,115,22,.08);border-radius:6px">💡 점검항목은 Supabase <code>common_code</code> 테이블에 저장됩니다 (code_group: fire_item)</div>
+    <div id="fireItemList"></div>
+    <div style="display:flex;gap:6px;margin-top:8px">
+      <input type="text" id="newFireItem" placeholder="항목명 입력" style="flex:1;padding:9px 12px;font-size:13px;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit">
+      <button type="button" onclick="addFireItem()" style="padding:9px 14px;background:var(--accent2);border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;flex-shrink:0">+ 추가</button>
+    </div>
+    <div id="fireItemStatus" style="font-size:11px;margin-top:6px;color:var(--text3)"></div>
+  </div>
+
+  <!-- 점검자 관리 -->
+  <div class="card">
+    <div class="card-title">👤 점검자 관리</div>
+    <div style="font-size:10px;color:var(--text3);margin-bottom:8px;padding:6px 8px;background:rgba(249,115,22,.08);border-radius:6px">💡 점검자는 <code>common_code</code> 테이블에 저장됩니다 (code_group: fire_inspector)</div>
+    <div id="inspectorList"></div>
+    <div style="display:flex;gap:6px;margin-top:8px">
+      <input type="text" id="newInspector" placeholder="이름 입력" style="flex:1;padding:9px 12px;font-size:13px;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit">
+      <button type="button" onclick="addInspector()" style="padding:9px 14px;background:var(--accent2);border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;flex-shrink:0">+ 추가</button>
+    </div>
+    <div id="inspectorStatus" style="font-size:11px;margin-top:6px;color:var(--text3)"></div>
+  </div>
+
+  <!-- 점검장소 관리 -->
+  <div class="card">
+    <div class="card-title">📍 점검장소 관리</div>
+    <div style="font-size:10px;color:var(--text3);margin-bottom:8px;padding:6px 8px;background:rgba(249,115,22,.08);border-radius:6px">💡 QR에 등록할 장소명을 관리합니다 (code_group: fire_zone)</div>
+    <div id="zoneList"></div>
+    <div style="display:flex;gap:6px;margin-top:8px">
+      <input type="text" id="newZone" placeholder="장소명 입력" style="flex:1;padding:9px 12px;font-size:13px;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit">
+      <button type="button" onclick="addZone()" style="padding:9px 14px;background:var(--accent2);border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;flex-shrink:0">+ 추가</button>
+    </div>
+    <div id="zoneStatus" style="font-size:11px;margin-top:6px;color:var(--text3)"></div>
+  </div>
+
+  <!-- Supabase 연결 -->
+  <div class="card">
+    <div class="card-title">Supabase 연결</div>
+    <div class="fg"><label class="fl">Supabase URL</label><input type="password" id="stgSbUrl" placeholder="https://xxxxx.supabase.co"></div>
+    <div class="fg"><label class="fl">Supabase Anon Key</label><input type="password" id="stgSbKey" placeholder="eyJhbGciOi..."></div>
+    <button type="button" onclick="testSbConn()" style="width:100%;padding:10px;background:linear-gradient(135deg,#059669,#34d399);border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;margin-top:4px">🔗 연결 테스트</button>
+    <div id="stgSbStatus" style="font-size:11px;margin-top:6px;color:var(--text3)"></div>
+  </div>
+
+  <!-- 텔레그램 -->
+  <div class="card">
+    <div class="card-title">텔레그램 알림</div>
+    <div class="fg"><label class="fl">Bot Token</label><input type="password" id="stgTgBot" placeholder="123456789:AAxxxxxxx"></div>
+    <div class="fg">
+      <label class="fl">수신자 목록</label>
+      <div id="tgUserList"></div>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <input type="text" id="tgNewName" placeholder="이름" style="flex:1;padding:9px 12px;font-size:13px;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit">
+        <input type="text" id="tgNewId" placeholder="Chat ID" style="flex:1;padding:9px 12px;font-size:13px;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit">
+        <button type="button" onclick="addTgUser()" style="padding:9px 14px;background:var(--accent2);border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;flex-shrink:0">+</button>
+      </div>
+    </div>
+    <button type="button" onclick="testTelegram()" style="width:100%;padding:10px;background:linear-gradient(135deg,#7c3aed,#a78bfa);border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;margin-top:4px">📨 테스트 발송</button>
+    <div id="stgTgStatus" style="font-size:11px;margin-top:6px;color:var(--text3)"></div>
+  </div>
+
+  <button type="button" onclick="saveSettings()" style="width:100%;padding:14px;background:linear-gradient(135deg,var(--accent),#fb923c);color:#fff;border:none;border-radius:var(--radius);font-size:15px;font-weight:900;cursor:pointer;font-family:inherit">💾 설정 저장</button>
+  <div style="text-align:center;margin-top:10px"><span id="stgSaveStatus" style="font-size:11px;color:var(--text3)"></span></div>
+
+  <div class="card" style="margin-top:12px">
+    <div class="card-title">연결 상태</div>
+    <div id="stgConnInfo" style="font-size:12px;color:var(--text2);line-height:1.8"></div>
+  </div>
+</div>
+</div>
+
+<!-- QR 스캐너 오버레이 -->
+<div id="qrOverlay">
+  <div class="qr-title" id="qrTitle">📷 QR코드 스캔</div>
+  <div id="qrReader"></div>
+  <button class="qr-close" onclick="stopQR()">닫기</button>
+</div>
+
+<!-- 사진 뷰어 -->
+<div id="photoViewer" onclick="this.style.display='none'">
+  <img id="pvImg" src="">
+  <button class="pv-close">닫기</button>
+</div>
+
+<!-- 파일 입력 -->
+<input type="file" id="ngCamInput" accept="image/*" capture="environment" style="display:none">
+<input type="file" id="ngFileInput" accept="image/*" style="display:none">
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ===== 설정 =====
+const LS_KEY='FIRE_CHECK_SETTINGS';
+const DEFAULT_ITEMS=['소화전','주변 소화기','비상대피로','유도등 점검','방화문','감지기','소화기 압력게이지'];
+const DEFAULT_INSPECTORS=['박창세','강원철','강병주','강창구','김오연','박기근','이재규'];
+const DEFAULT_ZONES=['A동 1층','A동 2층','B동 1층','B동 2층','C동 1층','위험물저장소'];
+
+let _itemCache=[], _inspCache=[], _zoneCache=[];
+let checkData={}; // {항목명: {status:'',note:'',photos:[]}}
+let currentNgKey='';
+let html5QrInst=null;
+let qrCallback=null;
+
+// ===== Supabase 헬퍼 =====
+function getSettings(){return JSON.parse(localStorage.getItem(LS_KEY)||'{}')}
+function getSbUrl(){return getSettings().sb_url||''}
+function getSbKey(){return getSettings().sb_key||''}
+function isConfigured(){return !!(getSbUrl()&&getSbKey())}
+
+async function sbInsert(table,data){
+  const u=getSbUrl(),k=getSbKey();if(!u||!k)throw new Error('Supabase 미설정');
+  const r=await fetch(`${u}/rest/v1/${table}`,{method:'POST',headers:{'Content-Type':'application/json','apikey':k,'Authorization':'Bearer '+k,'Prefer':'return=representation'},body:JSON.stringify(data)});
+  if(!r.ok){const e=await r.json();throw new Error(e.message||JSON.stringify(e))}return r.json();
+}
+async function sbSelect(table,filter,order,limit){
+  const u=getSbUrl(),k=getSbKey();if(!u||!k)throw new Error('Supabase 미설정');
+  let url=`${u}/rest/v1/${table}?select=*`;
+  if(filter)Object.entries(filter).forEach(([a,b])=>url+=`&${a}=${b}`);
+  if(order)url+=`&order=${order}`;if(limit)url+=`&limit=${limit}`;
+  const r=await fetch(url,{headers:{'apikey':k,'Authorization':'Bearer '+k}});if(!r.ok)throw new Error('조회 실패');return r.json();
+}
+async function sbDelete(table,filter){
+  const u=getSbUrl(),k=getSbKey();if(!u||!k)throw new Error('Supabase 미설정');
+  let url=`${u}/rest/v1/${table}?${filter}`;
+  return fetch(url,{method:'DELETE',headers:{'apikey':k,'Authorization':'Bearer '+k}});
+}
+
+// ===== 탭 =====
+function swTab(n){
+  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('on',i===n));
+  document.querySelectorAll('.pnl').forEach((p,i)=>p.classList.toggle('on',i===n));
+  if(n===1)loadSettingsUI();
+}
+
+// ===== 날짜/시간 =====
+function setDateTimeNow(){
+  const now=new Date();
+  document.getElementById('checkDate').value=now.toISOString().split('T')[0];
+  document.getElementById('checkTime').value=String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
+}
+
+// ===== common_code CRUD (범용) =====
+async function loadCodeList(codeGroup,defaults){
+  if(!isConfigured())return defaults.map((n,i)=>({id:null,name:n,sort:i+1}));
+  try{
+    const data=await sbSelect('common_code',{code_group:'eq.'+codeGroup},'sort_order.asc',200);
+    if(data&&data.length)return data.map(r=>({id:r.id,name:String(r.code_value||'').trim(),sort:r.sort_order||0}));
+    // 서버 비어있으면 기본값 등록
+    const rows=defaults.map((n,i)=>({code_group:codeGroup,code_value:n,sort_order:i+1}));
+    const saved=await sbInsert('common_code',rows);
+    return saved.map(r=>({id:r.id,name:String(r.code_value||'').trim(),sort:r.sort_order||0}));
+  }catch(e){console.log(codeGroup+' 로드 실패:',e);return defaults.map((n,i)=>({id:null,name:n,sort:i+1}))}
+}
+
+async function addCodeItem(codeGroup,name,cache,listElId,statusElId,renderFn){
+  const st=document.getElementById(statusElId);
+  if(!name){st.textContent='이름을 입력하세요';st.style.color='#f59e0b';return}
+  if(cache.find(c=>c.name===name)){st.textContent='이미 존재';st.style.color='#f59e0b';return}
+  if(!isConfigured()){st.textContent='Supabase 미설정';st.style.color='#ef4444';return}
+  st.textContent='추가 중...';st.style.color='var(--accent)';
+  const newSort=cache.length?Math.max(...cache.map(c=>c.sort))+1:1;
+  try{
+    const saved=await sbInsert('common_code',{code_group:codeGroup,code_value:name,sort_order:newSort});
+    if(saved&&saved.length)cache.push({id:saved[0].id,name,sort:newSort});
+    cache.sort((a,b)=>a.sort-b.sort);
+    renderFn();st.textContent='✅ 추가됨: '+name;st.style.color='#22c55e';
+  }catch(e){st.textContent='❌ 실패: '+e.message;st.style.color='#ef4444'}
+}
+
+async function removeCodeItem(idx,cache,codeGroup,statusElId,renderFn){
+  const item=cache[idx];if(!confirm(item.name+' 삭제?'))return;
+  if(item.id&&isConfigured()){
+    try{await sbDelete('common_code','id=eq.'+item.id);cache.splice(idx,1);renderFn()}catch(e){document.getElementById(statusElId).textContent='삭제 실패';return}
+  }
+}
+
+async function moveCodeItem(idx,dir,cache,codeGroup,renderFn){
+  const n=idx+dir;if(n<0||n>=cache.length)return;
+  const tmp=cache[idx].sort;cache[idx].sort=cache[n].sort;cache[n].sort=tmp;
+  [cache[idx],cache[n]]=[cache[n],cache[idx]];
+  if(isConfigured()&&cache[idx].id&&cache[n].id){
+    const u=getSbUrl(),k=getSbKey();
+    try{
+      await fetch(`${u}/rest/v1/common_code?id=eq.${cache[idx].id}`,{method:'PATCH',headers:{'Content-Type':'application/json','apikey':k,'Authorization':'Bearer '+k},body:JSON.stringify({sort_order:cache[idx].sort})});
+      await fetch(`${u}/rest/v1/common_code?id=eq.${cache[n].id}`,{method:'PATCH',headers:{'Content-Type':'application/json','apikey':k,'Authorization':'Bearer '+k},body:JSON.stringify({sort_order:cache[n].sort})});
+    }catch(e){}
+  }
+  renderFn();
+}
+
+// ===== 점검항목 =====
+function getItems(){return _itemCache.length?_itemCache:DEFAULT_ITEMS.map((n,i)=>({id:null,name:n,sort:i+1}))}
+function renderFireItemListUI(){
+  const c=document.getElementById('fireItemList');const list=getItems();
+  c.innerHTML=list.map((item,i)=>`<div class="stg-item"><span class="stg-no">${i+1}</span><span>${item.name}</span><button onclick="moveCodeItem(${i},-1,_itemCache,'fire_item',renderFireItemListUI)" title="위로">▲</button><button onclick="moveCodeItem(${i},1,_itemCache,'fire_item',renderFireItemListUI)" title="아래로">▼</button><button class="stg-del" onclick="removeCodeItem(${i},_itemCache,'fire_item','fireItemStatus',renderFireItemListUI);renderCheckList()">✕</button></div>`).join('');
+}
+function addFireItem(){
+  const inp=document.getElementById('newFireItem');
+  addCodeItem('fire_item',inp.value.trim(),_itemCache,'fireItemList','fireItemStatus',()=>{renderFireItemListUI();renderCheckList()});
+  inp.value='';
+}
+
+// ===== 점검자 =====
+function getInspectors(){return _inspCache.length?_inspCache:DEFAULT_INSPECTORS.map((n,i)=>({id:null,name:n,sort:i+1}))}
+function renderInspectorListUI(){
+  const c=document.getElementById('inspectorList');const list=getInspectors();
+  c.innerHTML=list.map((item,i)=>`<div class="stg-item"><span class="stg-no">${i+1}</span><span>${item.name}</span><button onclick="moveCodeItem(${i},-1,_inspCache,'fire_inspector',renderInspectorListUI)" title="위로">▲</button><button onclick="moveCodeItem(${i},1,_inspCache,'fire_inspector',renderInspectorListUI)" title="아래로">▼</button><button class="stg-del" onclick="removeCodeItem(${i},_inspCache,'fire_inspector','inspectorStatus',renderInspectorListUI);renderInspectorSelect()">✕</button></div>`).join('');
+}
+function renderInspectorSelect(){
+  const sel=document.getElementById('inspector');const prev=sel.value;
+  sel.innerHTML='<option value="" disabled selected>선택</option>';
+  getInspectors().forEach(item=>{const o=document.createElement('option');o.value=item.name;o.textContent=item.name;sel.appendChild(o)});
+  if(prev)sel.value=prev;
+}
+function addInspector(){
+  const inp=document.getElementById('newInspector');
+  addCodeItem('fire_inspector',inp.value.trim(),_inspCache,'inspectorList','inspectorStatus',()=>{renderInspectorListUI();renderInspectorSelect()});
+  inp.value='';
+}
+
+// ===== 점검장소 =====
+function getZones(){return _zoneCache.length?_zoneCache:DEFAULT_ZONES.map((n,i)=>({id:null,name:n,sort:i+1}))}
+function renderZoneListUI(){
+  const c=document.getElementById('zoneList');const list=getZones();
+  c.innerHTML=list.map((item,i)=>`<div class="stg-item"><span class="stg-no">${i+1}</span><span>${item.name}</span><button onclick="moveCodeItem(${i},-1,_zoneCache,'fire_zone',renderZoneListUI)">▲</button><button onclick="moveCodeItem(${i},1,_zoneCache,'fire_zone',renderZoneListUI)">▼</button><button class="stg-del" onclick="removeCodeItem(${i},_zoneCache,'fire_zone','zoneStatus',renderZoneListUI)">✕</button></div>`).join('');
+}
+function addZone(){
+  const inp=document.getElementById('newZone');
+  addCodeItem('fire_zone',inp.value.trim(),_zoneCache,'zoneList','zoneStatus',renderZoneListUI);
+  inp.value='';
+}
+
+// ===== 점검 항목 체크리스트 (동적) =====
+function renderCheckList(){
+  const c=document.getElementById('checkList');c.innerHTML='';
+  const items=getItems();checkData={};
+  items.forEach((item,i)=>{
+    const key=item.name;
+    checkData[key]={status:'',note:'',photos:[]};
+    const div=document.createElement('div');div.className='check-item';div.id='ci_'+i;
+    div.innerHTML=`
+      <span class="check-label">${key}<span class="sub-info"><button type="button" class="qr-btn" onclick="scanItemQR(${i})" style="font-size:10px;padding:4px 7px">📷 QR</button></span></span>
+      <div class="okng-group">
+        <label class="okng-btn" onclick="setChk(${i},'OK')">OK</label>
+        <label class="okng-btn" onclick="setChk(${i},'NG')">NG</label>
+      </div>
+      <div class="ng-detail" id="ngd_${i}">
+        <textarea placeholder="지적사항 입력" oninput="checkData['${key}'].note=this.value"></textarea>
+        <div class="ng-photo-row">
+          <button type="button" class="ng-photo-btn cam" onclick="takeNgPhoto('${key}',${i})">📷 촬영</button>
+          <button type="button" class="ng-photo-btn file" onclick="pickNgFile('${key}',${i})">🖼 파일</button>
+          <div id="ngThumbs_${i}" style="display:flex;gap:4px;flex-wrap:wrap"></div>
+        </div>
+      </div>`;
+    c.appendChild(div);
+  });
+  updateProgress();
+}
+
+function setChk(idx,val){
+  const items=getItems();const key=items[idx].name;
+  const el=document.getElementById('ci_'+idx);
+  const ngd=document.getElementById('ngd_'+idx);
+  el.classList.remove('checked-ok','checked-ng');
+  el.querySelectorAll('.okng-btn').forEach(b=>b.classList.remove('ok-selected','ng-selected'));
+  checkData[key].status=val;
+  if(val==='OK'){
+    el.classList.add('checked-ok');el.querySelectorAll('.okng-btn')[0].classList.add('ok-selected');
+    ngd.classList.remove('show');
+  }else{
+    el.classList.add('checked-ng');el.querySelectorAll('.okng-btn')[1].classList.add('ng-selected');
+    ngd.classList.add('show');
+  }
+  if(navigator.vibrate)navigator.vibrate(val==='OK'?[30]:[50,30,50]);
+  updateProgress();
+}
+
+function updateProgress(){
+  const items=getItems();let done=0;
+  items.forEach(item=>{if(checkData[item.name]&&checkData[item.name].status)done++});
+  const pct=items.length?Math.round(done/items.length*100):0;
+  document.getElementById('progressFill').style.width=pct+'%';
+  document.getElementById('progressText').textContent=done+' / '+items.length+' 항목';
+}
+
+// ===== NG 사진 =====
+function takeNgPhoto(key,idx){currentNgKey=key;currentNgIdx=idx;document.getElementById('ngCamInput').click()}
+function pickNgFile(key,idx){currentNgKey=key;currentNgIdx=idx;document.getElementById('ngFileInput').click()}
+let currentNgIdx=0;
+
+document.getElementById('ngCamInput').addEventListener('change',function(e){handleNgFile(e.target.files[0]);e.target.value=''});
+document.getElementById('ngFileInput').addEventListener('change',function(e){handleNgFile(e.target.files[0]);e.target.value=''});
+
+async function handleNgFile(file){
+  if(!file||!currentNgKey)return;
+  // Supabase Storage에 업로드
+  try{
+    const u=getSbUrl(),k=getSbKey();
+    if(!u||!k){
+      // Storage 없으면 로컬 base64
+      const reader=new FileReader();
+      reader.onload=function(e){
+        checkData[currentNgKey].photos.push(e.target.result);
+        renderNgThumbs(currentNgIdx);showToast('📷 사진 추가됨');
+      };reader.readAsDataURL(file);return;
+    }
+    const ext=file.name.split('.').pop()||'jpg';
+    const fname='fire_ng/'+Date.now()+'_'+Math.random().toString(36).substr(2,4)+'.'+ext;
+    const r=await fetch(u+'/storage/v1/object/p-machine-images/'+fname,{
+      method:'POST',headers:{'apikey':k,'Authorization':'Bearer '+k,'Content-Type':file.type,'x-upsert':'true'},body:file
+    });
+    if(r.ok){
+      const pubUrl=u+'/storage/v1/object/public/p-machine-images/'+fname;
+      checkData[currentNgKey].photos.push(pubUrl);
+      renderNgThumbs(currentNgIdx);showToast('📷 사진 업로드 완료');
+    }else{showToast('⚠ 업로드 실패 - 로컬 저장');
+      const reader=new FileReader();reader.onload=e=>{checkData[currentNgKey].photos.push(e.target.result);renderNgThumbs(currentNgIdx)};reader.readAsDataURL(file);
+    }
+  }catch(e){showToast('오류: '+e.message)}
+}
+
+function renderNgThumbs(idx){
+  const items=getItems();const key=items[idx].name;
+  const c=document.getElementById('ngThumbs_'+idx);c.innerHTML='';
+  (checkData[key].photos||[]).forEach((url,pi)=>{
+    const img=document.createElement('img');img.className='ng-thumb';img.src=url;
+    img.onclick=()=>{document.getElementById('pvImg').src=url;document.getElementById('photoViewer').style.display='flex'};
+    c.appendChild(img);
+  });
+}
+
+// ===== QR 스캔 =====
+function startQR(title,cb){
+  qrCallback=cb;
+  document.getElementById('qrTitle').textContent=title;
+  document.getElementById('qrOverlay').style.display='flex';
+  html5QrInst=new Html5Qrcode('qrReader');
+  html5QrInst.start({facingMode:'environment'},{fps:10,qrbox:{width:250,height:250}},
+    text=>{stopQR();if(qrCallback)qrCallback(text)},
+    err=>{}
+  ).catch(err=>{showToast('카메라 오류');stopQR()});
+}
+
+function stopQR(){
+  document.getElementById('qrOverlay').style.display='none';
+  if(html5QrInst){html5QrInst.stop().then(()=>html5QrInst.clear()).catch(()=>{});html5QrInst=null}
+}
+
+function scanZoneQR(){
+  startQR('📍 점검장소 QR 스캔',text=>{
+    document.getElementById('zoneInput').value=text;
+    // 시간 자동 입력
+    const now=new Date();
+    document.getElementById('checkTime').value=String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
+    showToast('📍 장소: '+text);
+    if(navigator.vibrate)navigator.vibrate([50,30,50]);
+  });
+}
+
+function scanItemQR(idx){
+  const items=getItems();const key=items[idx].name;
+  startQR('🧯 '+key+' QR 스캔',text=>{
+    // QR 값이 있으면 해당 항목을 OK로 자동 체크
+    setChk(idx,'OK');
+    showToast('✅ '+key+' QR 확인: '+text);
+    if(navigator.vibrate)navigator.vibrate([50,30,50]);
+  });
+}
+
+// ===== 제출 =====
+async function submitCheck(){
+  const date=document.getElementById('checkDate').value;
+  const time=document.getElementById('checkTime').value;
+  const inspector=document.getElementById('inspector').value;
+  const zone=document.getElementById('zoneInput').value;
+  const memo=document.getElementById('memo').value;
+
+  if(!date||!time){showToast('일자/시간을 입력하세요');return}
+  if(!inspector){showToast('점검자를 선택하세요');return}
+  if(!zone){showToast('점검장소를 입력하세요');return}
+
+  const items=getItems();
+  const unchecked=items.filter(item=>!checkData[item.name]||!checkData[item.name].status);
+  if(unchecked.length){showToast('미체크 항목: '+unchecked.map(i=>i.name).join(', '));return}
+
+  const ngItems=items.filter(item=>checkData[item.name].status==='NG');
+  const result=ngItems.length?'이상발생':'이상없음';
+  const ngCount=ngItems.length;
+
+  // 각 항목 결과를 JSON으로 저장
+  const details={};
+  items.forEach(item=>{
+    details[item.name]={
+      status:checkData[item.name].status,
+      note:checkData[item.name].note||'',
+      photos:(checkData[item.name].photos||[]).filter(p=>p.startsWith('http')) // Supabase URL만
+    };
+  });
+
+  const row={
+    check_date:date,
+    check_time:time,
+    inspector,
+    zone,
+    result,
+    ng_count:ngCount,
+    details:JSON.stringify(details),
+    memo:memo||''
+  };
+
+  try{
+    await sbInsert('fire_check',row);
+    showToast('✅ 제출 완료');
+    if(navigator.vibrate)navigator.vibrate([100]);
+
+    // 텔레그램 알림
+    await sendTelegram(row,details,items);
+
+    // 초기화 (점검자/장소 유지)
+    const prevInsp=inspector;
+    renderCheckList();
+    document.getElementById('memo').value='';
+    setDateTimeNow();
+    document.getElementById('inspector').value=prevInsp;
+    document.getElementById('zoneInput').value='';
+  }catch(e){showToast('❌ 저장 실패: '+e.message)}
+}
+
+// ===== 텔레그램 =====
+let _ccTgBot='',_ccTgUsers=[];
+function decodeTgToken(enc){const key='smtec';const d=atob(enc);let r='';for(let i=0;i<d.length;i++)r+=String.fromCharCode(d.charCodeAt(i)^key.charCodeAt(i%key.length));return r}
+
+async function loadTgFromCC(){
+  try{const data=await sbSelect('common_code',{code_group:'eq.telegram'},'sort_order.asc',20);
+    if(data&&data.length)data.forEach(r=>{const v=String(r.code_value||'').trim();if(r.sort_order===0)_ccTgBot=decodeTgToken(v);else if(v)_ccTgUsers.push({name:r.note||'수신자'+r.sort_order,chat_id:v})});
+  }catch(e){}
+}
+
+function getTgBot(){return getSettings().tg_bot||''}
+function getTgUsers(){try{return JSON.parse(getSettings().tg_users||'[]')}catch(e){return[]}}
+
+async function sendTelegram(row,details,items){
+  let bot=getTgBot(),users=getTgUsers();
+  if(!bot||!users.length){if(!_ccTgBot)await loadTgFromCC();if(!bot&&_ccTgBot)bot=_ccTgBot;if(!users.length&&_ccTgUsers.length)users=_ccTgUsers}
+  if(!bot||!users.length)return;
+  const checks=items.map(item=>{const d=details[item.name];return(d.status==='NG'?'❌':'✅')+' '+item.name+': '+d.status+(d.note?' ('+d.note+')':'')}).join('\n');
+  const status=row.ng_count?'⚠️ 이상발생 '+row.ng_count+'건':'✅ 전체 이상없음';
+  const msg=`🧯 소방점검 결과\n━━━━━━━━━━━━━━\n📅 ${row.check_date} ${row.check_time}\n👤 점검자: ${row.inspector}\n📍 장소: ${row.zone}\n\n📋 점검결과: ${status}\n${checks}${row.memo?'\n\n📝 비고: '+row.memo:''}`;
+  for(const u of users){try{await fetch(`https://api.telegram.org/bot${bot}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:u.chat_id,text:msg})})}catch(e){}}
+}
+
+// ===== 설정 UI =====
+function loadSettingsUI(){
+  const s=getSettings();
+  document.getElementById('stgSbUrl').value=s.sb_url||'';
+  document.getElementById('stgSbKey').value=s.sb_key||'';
+  document.getElementById('stgTgBot').value=s.tg_bot||'';
+  renderTgUsers();renderFireItemListUI();renderInspectorListUI();renderZoneListUI();
+  if(isConfigured()){
+    loadCodeList('fire_item',DEFAULT_ITEMS).then(d=>{_itemCache=d;renderFireItemListUI();renderCheckList()});
+    loadCodeList('fire_inspector',DEFAULT_INSPECTORS).then(d=>{_inspCache=d;renderInspectorListUI();renderInspectorSelect()});
+    loadCodeList('fire_zone',DEFAULT_ZONES).then(d=>{_zoneCache=d;renderZoneListUI();renderHistZoneFilter()});
+  }
+  updateConnInfo();
+  const today=new Date();const monthAgo=new Date(today);monthAgo.setMonth(monthAgo.getMonth()-1);
+  if(!document.getElementById('histEnd').value)document.getElementById('histEnd').value=today.toISOString().split('T')[0];
+  if(!document.getElementById('histStart').value)document.getElementById('histStart').value=monthAgo.toISOString().split('T')[0];
+}
+
+function renderTgUsers(){
+  const users=getTgUsers();const c=document.getElementById('tgUserList');
+  if(!users.length){c.innerHTML='<div style="font-size:11px;color:var(--text3);padding:6px 0">수신자 없음</div>';return}
+  c.innerHTML=users.map((u,i)=>`<div class="stg-item"><span>${u.name}</span><span style="color:var(--text3);font-size:11px">${u.chat_id}</span><button class="stg-del" onclick="removeTgUser(${i})">✕</button></div>`).join('');
+}
+function addTgUser(){
+  const name=document.getElementById('tgNewName').value.trim(),id=document.getElementById('tgNewId').value.trim();
+  if(!name||!id)return;const users=getTgUsers();if(users.find(u=>u.chat_id===id))return;
+  users.push({name,chat_id:id});const s=getSettings();s.tg_users=JSON.stringify(users);localStorage.setItem(LS_KEY,JSON.stringify(s));
+  document.getElementById('tgNewName').value='';document.getElementById('tgNewId').value='';renderTgUsers();
+}
+function removeTgUser(idx){const users=getTgUsers();users.splice(idx,1);const s=getSettings();s.tg_users=JSON.stringify(users);localStorage.setItem(LS_KEY,JSON.stringify(s));renderTgUsers()}
+
+function saveSettings(){
+  const s={sb_url:document.getElementById('stgSbUrl').value.trim().replace(/\/$/,''),sb_key:document.getElementById('stgSbKey').value.trim(),tg_bot:document.getElementById('stgTgBot').value.trim(),tg_users:JSON.stringify(getTgUsers())};
+  localStorage.setItem(LS_KEY,JSON.stringify(s));
+  document.getElementById('stgSaveStatus').textContent='✅ 저장 완료 ('+new Date().toLocaleTimeString()+')';
+  document.getElementById('stgSaveStatus').style.color='#22c55e';updateConnInfo();
+}
+
+async function testSbConn(){
+  const st=document.getElementById('stgSbStatus');
+  const url=document.getElementById('stgSbUrl').value.trim().replace(/\/$/,''),key=document.getElementById('stgSbKey').value.trim();
+  if(!url||!key){st.textContent='❌ URL/Key 입력 필요';st.style.color='#ef4444';return}
+  st.textContent='연결 중...';st.style.color='var(--accent)';
+  try{const r=await fetch(`${url}/rest/v1/fire_check?select=id&limit=1`,{headers:{'apikey':key,'Authorization':'Bearer '+key}});
+    if(r.ok){st.textContent='✅ 연결 성공';st.style.color='#22c55e'}
+    else if(r.status===404){st.textContent='⚠️ 연결 OK, 테이블 미생성 (SQL 실행 필요)';st.style.color='#f59e0b'}
+    else{st.textContent='❌ 오류: '+r.status;st.style.color='#ef4444'}
+  }catch(e){st.textContent='❌ 실패: '+e.message;st.style.color='#ef4444'}
+}
+
+async function testTelegram(){
+  const st=document.getElementById('stgTgStatus');
+  let bot=document.getElementById('stgTgBot').value.trim(),users=getTgUsers();
+  if(!bot||!users.length){if(!_ccTgBot)await loadTgFromCC();if(!bot&&_ccTgBot)bot=_ccTgBot;if(!users.length&&_ccTgUsers.length)users=_ccTgUsers}
+  if(!bot){st.textContent='❌ Bot Token 없음';st.style.color='#ef4444';return}
+  if(!users.length){st.textContent='❌ 수신자 없음';st.style.color='#ef4444';return}
+  st.textContent='전송 중...';st.style.color='var(--accent)';let ok=0;
+  for(const u of users){try{const r=await fetch(`https://api.telegram.org/bot${bot}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:u.chat_id,text:`🧯 소방점검 알림 테스트\n수신자: ${u.name}\n시간: ${new Date().toLocaleString()}`})});const d=await r.json();if(d.ok)ok++}catch(e){}}
+  st.textContent=ok===users.length?'✅ '+ok+'명 성공':'⚠️ '+ok+'/'+users.length+'명';st.style.color=ok===users.length?'#22c55e':'#f59e0b';
+}
+
+function updateConnInfo(){
+  const s=getSettings();const sbOk=!!(s.sb_url&&s.sb_key);const tgOk=!!(s.tg_bot&&getTgUsers().length);
+  document.getElementById('stgConnInfo').innerHTML=`${sbOk?'🟢':'🔴'} Supabase: ${sbOk?'설정됨':'미설정'}<br>${tgOk?'🟢':'🔴'} 텔레그램: ${tgOk?getTgUsers().length+'명':'미설정'}`;
+}
+
+// ===== 이력 관리 =====
+function renderHistZoneFilter(){
+  const sel=document.getElementById('histZone');const cur=sel.value;
+  sel.innerHTML='<option value="">전체</option>';
+  getZones().forEach(z=>{sel.innerHTML+='<option value="'+z.name+'">'+z.name+'</option>'});
+  if(cur)sel.value=cur;
+}
+
+async function histFetch(){
+  if(!isConfigured())return{ok:false,msg:'Supabase 미설정'};
+  const start=document.getElementById('histStart').value,end=document.getElementById('histEnd').value,zone=document.getElementById('histZone').value;
+  if(!start||!end)return{ok:false,msg:'날짜 선택 필요'};
+  let url=getSbUrl()+'/rest/v1/fire_check?select=*&order=check_date.desc,check_time.desc&limit=5000';
+  url+='&check_date=gte.'+start+'&check_date=lte.'+end;
+  if(zone)url+='&zone=eq.'+encodeURIComponent(zone);
+  try{const r=await fetch(url,{headers:{'apikey':getSbKey(),'Authorization':'Bearer '+getSbKey()}});if(!r.ok)throw new Error(r.status);return{ok:true,data:await r.json()}}catch(e){return{ok:false,msg:e.message}}
+}
+
+async function histPreview(){
+  const st=document.getElementById('histStatus'),area=document.getElementById('histPreviewArea');
+  st.textContent='조회 중...';st.style.color='var(--accent)';area.innerHTML='';
+  const res=await histFetch();if(!res.ok){st.textContent='❌ '+res.msg;st.style.color='#ef4444';return}
+  if(!res.data.length){st.textContent='⚠️ 이력 없음';st.style.color='#f59e0b';return}
+  const okCnt=res.data.filter(r=>r.result==='이상없음').length,ngCnt=res.data.filter(r=>r.result==='이상발생').length;
+  st.textContent='✅ '+res.data.length+'건 (정상: '+okCnt+' / 이상: '+ngCnt+')';st.style.color='#22c55e';
+  let h='<table style="width:100%;border-collapse:collapse;font-size:11px;margin-top:6px"><tr style="background:var(--surface2)"><th style="padding:6px 4px;border-bottom:1px solid var(--border);text-align:left">일자</th><th style="padding:6px 4px;border-bottom:1px solid var(--border);text-align:left">시간</th><th style="padding:6px 4px;border-bottom:1px solid var(--border);text-align:left">점검자</th><th style="padding:6px 4px;border-bottom:1px solid var(--border);text-align:left">장소</th><th style="padding:6px 4px;border-bottom:1px solid var(--border);text-align:center">결과</th></tr>';
+  res.data.slice(0,100).forEach(r=>{const isNG=r.result==='이상발생';
+    h+='<tr style="border-bottom:1px solid rgba(255,255,255,.04)"><td style="padding:5px 4px">'+r.check_date+'</td><td style="padding:5px 4px">'+(r.check_time||'').substring(0,5)+'</td><td style="padding:5px 4px">'+(r.inspector||'')+'</td><td style="padding:5px 4px">'+(r.zone||'')+'</td><td style="padding:5px 4px;text-align:center;color:'+(isNG?'#ef4444':'#22c55e')+';font-weight:700">'+(r.result||'')+'</td></tr>'});
+  h+='</table>';area.innerHTML=h;
+}
+
+async function histDownload(){
+  const st=document.getElementById('histStatus');st.textContent='준비 중...';st.style.color='var(--accent)';
+  const res=await histFetch();if(!res.ok){st.textContent='❌ '+res.msg;st.style.color='#ef4444';return}
+  if(!res.data.length){st.textContent='⚠️ 없음';st.style.color='#f59e0b';return}
+  // 동적 항목 컬럼 추출
+  const allItems=new Set();
+  res.data.forEach(r=>{try{const d=JSON.parse(r.details||'{}');Object.keys(d).forEach(k=>allItems.add(k))}catch(e){}});
+  const itemArr=[...allItems];
+  const headers=['점검일자','점검시간','점검자','장소','판정','NG건수',...itemArr.flatMap(k=>[k+'_결과',k+'_지적사항']),'비고'];
+  const rows=res.data.map(r=>{
+    let d={};try{d=JSON.parse(r.details||'{}')}catch(e){}
+    const row=[r.check_date,(r.check_time||'').substring(0,5),r.inspector||'',r.zone||'',r.result||'',r.ng_count||0];
+    itemArr.forEach(k=>{row.push(d[k]?d[k].status:'');row.push(d[k]?d[k].note:'')});
+    row.push(r.memo||'');return row;
+  });
+  const wb=XLSX.utils.book_new();const ws=XLSX.utils.aoa_to_sheet([headers,...rows]);
+  XLSX.utils.book_append_sheet(wb,ws,'소방점검');
+  const s=document.getElementById('histStart').value.replace(/-/g,''),e=document.getElementById('histEnd').value.replace(/-/g,'');
+  XLSX.writeFile(wb,'소방점검_'+s+'_'+e+'.xlsx');st.textContent='✅ 다운로드 완료';st.style.color='#22c55e';
+}
+
+async function histDelete(){
+  const st=document.getElementById('histStatus');const res=await histFetch();
+  if(!res.ok){st.textContent='❌ '+res.msg;st.style.color='#ef4444';return}
+  if(!res.data.length){st.textContent='⚠️ 없음';st.style.color='#f59e0b';return}
+  if(!confirm(res.data.length+'건 삭제?'))return;if(!confirm('정말 삭제?'))return;
+  st.textContent='삭제 중...';st.style.color='var(--accent)';
+  const ids=res.data.map(r=>r.id);let del=0;
+  for(let i=0;i<ids.length;i+=50){const batch=ids.slice(i,i+50);
+    try{await sbDelete('fire_check','id=in.('+batch.join(',')+')');del+=batch.length;st.textContent='삭제 중... '+del+'/'+ids.length}catch(e){st.textContent='❌ 오류';st.style.color='#ef4444';return}}
+  st.textContent='✅ '+del+'건 삭제';st.style.color='#22c55e';document.getElementById('histPreviewArea').innerHTML='';
+}
+
+// ===== 토스트 =====
+let tt;function showToast(m){const el=document.getElementById('toast');el.textContent=m;el.classList.add('show');clearTimeout(tt);tt=setTimeout(()=>el.classList.remove('show'),2000)}
+
+// ===== 초기화 =====
+window.addEventListener('DOMContentLoaded',async()=>{
+  if(!localStorage.getItem(LS_KEY)){
+    localStorage.setItem(LS_KEY,JSON.stringify({
+      sb_url:'https://omngtyewdaqpphnzeate.supabase.co',
+      sb_key:'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tbmd0eWV3ZGFxcHBobnplYXRlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4ODk4ODksImV4cCI6MjA5MDQ2NTg4OX0.Zxur3t02JHtOcXforCMSwO3i2mMaf5sViE0tXXUC0-s',
+      tg_bot:'',tg_users:'[]'
+    }));
+  }
+  setDateTimeNow();
+  // 서버에서 데이터 로드
+  if(isConfigured()){
+    _itemCache=await loadCodeList('fire_item',DEFAULT_ITEMS);
+    _inspCache=await loadCodeList('fire_inspector',DEFAULT_INSPECTORS);
+    _zoneCache=await loadCodeList('fire_zone',DEFAULT_ZONES);
+    loadTgFromCC();
+  }
+  renderInspectorSelect();renderCheckList();
+});
+</script>
+</body>
+</html>
