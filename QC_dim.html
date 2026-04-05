@@ -35,12 +35,20 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
 .setting-item .si-info{flex:1;min-width:0}
 .setting-item .si-name{font-size:14px;font-weight:700;color:var(--text)}
 .setting-item .si-url{font-size:10px;color:var(--text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px}
-.si-del{width:30px;height:30px;border:none;border-radius:8px;background:rgba(239,68,68,.12);color:var(--ng);font-size:13px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0}
-.si-del:active{transform:scale(.9)}
+.si-btn{width:30px;height:30px;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.si-btn:active{transform:scale(.9)}
+.si-edit{background:rgba(59,130,246,.12);color:#60a5fa}
+.si-del{background:rgba(239,68,68,.12);color:var(--ng)}
 .submit-btn{width:100%;padding:14px;font-size:15px;font-weight:800;background:linear-gradient(135deg,#92400e,#f59e0b);border:none;border-radius:var(--radius);color:#fff;cursor:pointer;font-family:inherit;box-shadow:0 4px 16px rgba(245,158,11,.2)}
 .submit-btn:active{transform:scale(.97)}
+.submit-btn:disabled{opacity:.5;cursor:not-allowed}
 .empty{text-align:center;padding:40px 20px;color:var(--text3);font-size:13px;line-height:1.8}
 .toast{position:fixed;bottom:70px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.85);color:#fff;padding:8px 18px;border-radius:18px;font-size:12px;font-weight:600;z-index:9999;opacity:0;transition:opacity .3s;pointer-events:none}.toast.show{opacity:1}
+.sync-badge{display:inline-flex;align-items:center;gap:4px;font-size:9px;font-weight:600;padding:2px 7px;border-radius:6px;margin-left:6px}
+.sync-ok{background:rgba(34,197,94,.12);color:var(--ok)}
+.sync-ng{background:rgba(239,68,68,.12);color:var(--ng)}
+.ld-sm{display:inline-block;width:12px;height:12px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:4px}
+@keyframes spin{to{transform:rotate(360deg)}}
 </style>
 </head>
 <body>
@@ -57,7 +65,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
 <!-- ===== 치수점검 탭 ===== -->
 <div class="pnl on" id="pnl0">
   <div class="form-wrap">
-    <div id="custCards"></div>
+    <div id="custCards"><div class="empty"><span class="ld-sm"></span> 로딩 중...</div></div>
   </div>
 </div>
 
@@ -65,19 +73,25 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
 <div class="pnl" id="pnl1">
   <div class="form-wrap">
     <div class="card">
-      <div class="card-title">🏢 고객사 관리</div>
+      <div class="card-title">🏢 고객사 관리 <span id="syncBadge"></span></div>
       <div style="font-size:10px;color:var(--text3);margin-bottom:12px;padding:6px 8px;background:rgba(245,158,11,.06);border-radius:6px;line-height:1.6">
         💡 고객사별 치수관리 페이지 URL과 GAS 배포URL을 등록합니다.<br>
-        치수점검 탭에서 고객사를 터치하면 GAS URL이 자동 전달됩니다.
+        설정은 Supabase에 저장되어 모든 기기에서 공유됩니다.
       </div>
-      <div id="settingsList"></div>
+      <div id="settingsList"><div style="text-align:center;padding:12px;color:var(--text3);font-size:12px"><span class="ld-sm"></span> 로딩 중...</div></div>
     </div>
     <div class="card">
       <div class="card-title">➕ 고객사 추가</div>
       <div class="fg"><label>고객사명</label><input id="newName" placeholder="예: SKF씰"></div>
       <div class="fg"><label>페이지 URL</label><input id="newUrl" placeholder="예: QC_dim_SKF.html"></div>
       <div class="fg"><label>GAS 배포 URL</label><input id="newGasUrl" placeholder="https://script.google.com/macros/s/.../exec"></div>
-      <button class="submit-btn" onclick="addCustomer()" style="margin-top:4px">✅ 추가</button>
+      <button class="submit-btn" onclick="addCustomer()" style="margin-top:4px" id="btnAdd">✅ 추가</button>
+    </div>
+    <div class="card" style="border:1.5px dashed rgba(245,158,11,.3)">
+      <div class="card-title">🗄 테이블 생성 SQL</div>
+      <p style="font-size:10px;color:var(--text3);margin-bottom:8px">처음 사용 시 Supabase SQL Editor에서 실행하세요.</p>
+      <button class="submit-btn" onclick="copySql()" style="background:linear-gradient(135deg,#00695c,#00897b);font-size:13px;padding:10px">📋 SQL 복사</button>
+      <div id="sqlStatus" style="font-size:10px;margin-top:6px;color:var(--text3)"></div>
     </div>
   </div>
 </div>
@@ -85,15 +99,54 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
 <div class="toast" id="toast"></div>
 
 <script>
-const LS_KEY='DIM_CUSTOMERS';
-const DEFAULTS=[{name:'SKF씰',url:'QC_dim_SKF.html',gasUrl:''}];
+// ===== Supabase 설정 =====
+const SB_URL='https://omngtyewdaqpphnzeate.supabase.co';
+const SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tbmd0eWV3ZGFxcHBobnplYXRlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4ODk4ODksImV4cCI6MjA5MDQ2NTg4OX0.Zxur3t02JHtOcXforCMSwO3i2mMaf5sViE0tXXUC0-s';
+const TABLE='dim_customer';
 
-function getList(){
-  const s=localStorage.getItem(LS_KEY);
-  if(!s)return JSON.parse(JSON.stringify(DEFAULTS));
-  try{const a=JSON.parse(s);return a.length?a:JSON.parse(JSON.stringify(DEFAULTS))}catch(e){return JSON.parse(JSON.stringify(DEFAULTS))}
+function sbH(){return{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Content-Type':'application/json','Prefer':'return=representation'}}
+function sbU(q){return SB_URL+'/rest/v1/'+TABLE+(q?'?'+q:'')}
+
+async function sbSelect(){
+  const r=await fetch(sbU('select=*&order=sort_order.asc,id.asc'),{headers:sbH()});
+  if(!r.ok)throw new Error('SELECT '+r.status);
+  return await r.json();
 }
-function saveList(list){localStorage.setItem(LS_KEY,JSON.stringify(list))}
+async function sbInsert(data){
+  const r=await fetch(sbU(''),{method:'POST',headers:sbH(),body:JSON.stringify(data)});
+  if(!r.ok){const e=await r.text();throw new Error('INSERT '+r.status+' '+e)}
+  return await r.json();
+}
+async function sbUpdate(id,data){
+  const r=await fetch(sbU('id=eq.'+id),{method:'PATCH',headers:sbH(),body:JSON.stringify(data)});
+  if(!r.ok){const e=await r.text();throw new Error('UPDATE '+r.status+' '+e)}
+  return await r.json();
+}
+async function sbDel(id){
+  const r=await fetch(sbU('id=eq.'+id),{method:'DELETE',headers:sbH()});
+  if(!r.ok)throw new Error('DELETE '+r.status);
+}
+
+// ===== 데이터 =====
+let _custs=[];
+
+async function loadData(){
+  try{
+    _custs=await sbSelect();
+    updateSync(true);
+  }catch(e){
+    console.log('Supabase 로드 실패:',e);
+    updateSync(false);
+    try{_custs=JSON.parse(localStorage.getItem('DIM_CUSTOMERS')||'[]')}catch(ee){_custs=[]}
+  }
+  localStorage.setItem('DIM_CUSTOMERS',JSON.stringify(_custs));
+}
+
+function updateSync(ok){
+  const el=document.getElementById('syncBadge');
+  el.innerHTML=ok?'<span class="sync-badge sync-ok">☁️ Supabase 동기화</span>':'<span class="sync-badge sync-ng">⚠ 오프라인</span>';
+}
+
 function toast(m){const el=document.getElementById('toast');el.textContent=m;el.classList.add('show');clearTimeout(window._tt);window._tt=setTimeout(()=>el.classList.remove('show'),2000)}
 
 function swTab(n){
@@ -105,18 +158,18 @@ function swTab(n){
 
 // ===== 치수점검 탭 =====
 function renderCards(){
-  const list=getList();
   const c=document.getElementById('custCards');
-  if(!list.length){
+  if(!_custs.length){
     c.innerHTML='<div class="empty">📐 등록된 고객사가 없습니다.<br><br>⚙ 설정 탭에서 고객사와 URL을 추가하세요.</div>';
     return;
   }
-  c.innerHTML=list.map(item=>{
-    // gasUrl이 있으면 쿼리파라미터로 전달
-    const href=item.gasUrl?item.url+'?gasUrl='+encodeURIComponent(item.gasUrl):item.url;
+  c.innerHTML=_custs.map(item=>{
+    const pu=item.page_url||'';
+    const gu=item.gas_url||'';
+    const href=gu?pu+'?gasUrl='+encodeURIComponent(gu):pu;
     return `<a class="cust-card" href="${href}">
       <span class="cust-icon">🏢</span>
-      <span class="cust-name">${item.name}</span>
+      <span class="cust-name">${item.customer_name||''}</span>
       <span class="cust-arrow">›</span>
     </a>`;
   }).join('');
@@ -124,63 +177,106 @@ function renderCards(){
 
 // ===== 설정 탭 =====
 function renderSettings(){
-  const list=getList();
   const c=document.getElementById('settingsList');
-  if(!list.length){
+  if(!_custs.length){
     c.innerHTML='<div style="text-align:center;padding:16px;color:var(--text3);font-size:12px">등록된 고객사 없음</div>';
     return;
   }
-  c.innerHTML=list.map((item,i)=>`<div class="setting-item">
-    <span style="font-size:18px">🏢</span>
-    <div class="si-info">
-      <div class="si-name">${item.name}</div>
-      <div class="si-url">${item.url}</div>
-      <div class="si-url" style="color:${item.gasUrl?'#22c55e':'#ef4444'}">${item.gasUrl?'✅ GAS 연결됨':'⚠ GAS URL 미설정'}</div>
-    </div>
-    <button class="si-del" onclick="editCustomer(${i})" style="background:rgba(59,130,246,.12);color:#60a5fa;margin-right:4px">✎</button>
-    <button class="si-del" onclick="delCustomer(${i})">✕</button>
-  </div>`).join('');
+  c.innerHTML=_custs.map(item=>{
+    const gasOk=!!(item.gas_url);
+    const nm=(item.customer_name||'').replace(/'/g,"\\'");
+    return `<div class="setting-item">
+      <span style="font-size:18px">🏢</span>
+      <div class="si-info">
+        <div class="si-name">${item.customer_name||''}</div>
+        <div class="si-url">${item.page_url||''}</div>
+        <div class="si-url" style="color:${gasOk?'#22c55e':'#ef4444'}">${gasOk?'✅ GAS 연결됨':'⚠ GAS URL 미설정'}</div>
+      </div>
+      <button class="si-btn si-edit" onclick="editCust(${item.id})">✎</button>
+      <button class="si-btn si-del" onclick="delCust(${item.id},'${nm}')">✕</button>
+    </div>`;
+  }).join('');
 }
 
-function addCustomer(){
+async function addCustomer(){
   const name=document.getElementById('newName').value.trim();
   const url=document.getElementById('newUrl').value.trim();
   const gasUrl=document.getElementById('newGasUrl').value.trim();
   if(!name){toast('고객사명을 입력하세요');return}
   if(!url){toast('페이지 URL을 입력하세요');return}
-  const list=getList();
-  if(list.find(c=>c.name===name)){toast('이미 등록된 고객사');return}
-  list.push({name,url,gasUrl});
-  saveList(list);
-  document.getElementById('newName').value='';
-  document.getElementById('newUrl').value='';
-  document.getElementById('newGasUrl').value='';
-  renderSettings();
-  toast('✅ '+name+' 추가됨');
+  if(_custs.find(c=>c.customer_name===name)){toast('이미 등록된 고객사');return}
+
+  const btn=document.getElementById('btnAdd');
+  btn.disabled=true;btn.textContent='저장 중...';
+  try{
+    const mx=_custs.reduce((m,c)=>Math.max(m,c.sort_order||0),0);
+    await sbInsert({customer_name:name,page_url:url,gas_url:gasUrl,sort_order:mx+1});
+    await loadData();
+    document.getElementById('newName').value='';
+    document.getElementById('newUrl').value='';
+    document.getElementById('newGasUrl').value='';
+    renderSettings();
+    toast('✅ '+name+' 추가됨');
+  }catch(e){toast('❌ 추가 실패: '+e.message)}
+  btn.disabled=false;btn.textContent='✅ 추가';
 }
 
-function editCustomer(idx){
-  const list=getList();
-  const item=list[idx];
-  const newGas=prompt('GAS 배포 URL 입력\n(현재: '+(item.gasUrl||'미설정')+')',item.gasUrl||'');
+async function editCust(id){
+  const item=_custs.find(c=>c.id===id);
+  if(!item)return;
+  const newName=prompt('고객사명',item.customer_name||'');
+  if(newName===null)return;
+  const newUrl=prompt('페이지 URL',item.page_url||'');
+  if(newUrl===null)return;
+  const newGas=prompt('GAS 배포 URL\n(빈칸이면 미설정)',item.gas_url||'');
   if(newGas===null)return;
-  item.gasUrl=newGas.trim();
-  saveList(list);
-  renderSettings();
-  toast('✅ '+item.name+' GAS URL 저장');
+  try{
+    await sbUpdate(id,{customer_name:newName.trim()||item.customer_name,page_url:newUrl.trim()||item.page_url,gas_url:newGas.trim()});
+    await loadData();
+    renderSettings();
+    toast('✅ 수정 완료');
+  }catch(e){toast('❌ 수정 실패: '+e.message)}
 }
 
-function delCustomer(idx){
-  const list=getList();
-  if(!confirm(list[idx].name+' 삭제?'))return;
-  list.splice(idx,1);
-  saveList(list);
-  renderSettings();
-  toast('삭제됨');
+async function delCust(id,name){
+  if(!confirm(name+' 삭제?'))return;
+  try{
+    await sbDel(id);
+    await loadData();
+    renderSettings();
+    toast('🗑 삭제됨');
+  }catch(e){toast('❌ 삭제 실패: '+e.message)}
 }
 
-// 초기 렌더
-renderCards();
+// ===== SQL 복사 =====
+function copySql(){
+  const sql=`-- dim_customer 테이블 생성
+CREATE TABLE IF NOT EXISTS dim_customer (
+  id BIGSERIAL PRIMARY KEY,
+  customer_name TEXT NOT NULL,
+  page_url TEXT DEFAULT '',
+  gas_url TEXT DEFAULT '',
+  sort_order INT DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE dim_customer ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "allow_all" ON dim_customer;
+CREATE POLICY "allow_all" ON dim_customer FOR ALL USING (true) WITH CHECK (true);`;
+  navigator.clipboard.writeText(sql).then(()=>{
+    document.getElementById('sqlStatus').innerHTML='<span style="color:var(--ok)">✅ SQL 복사됨 → Supabase SQL Editor에서 실행하세요</span>';
+    toast('📋 SQL 복사 완료');
+  }).catch(()=>{
+    document.getElementById('sqlStatus').innerHTML='<textarea style="width:100%;height:120px;font-size:9px;font-family:monospace;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px;margin-top:4px" readonly>'+sql+'</textarea>';
+  });
+}
+
+// ===== 초기화 =====
+async function init(){
+  await loadData();
+  renderCards();
+}
+init();
 </script>
 </body>
 </html>
