@@ -236,7 +236,7 @@ async function testAndLoadTables(){
 
     // 2차: RPC 실패 시 알려진 테이블 + REST 탐색
     if(!found.length){
-      const known=['move_history','move_history_tj','defect_history','part_mapping','feeder_setting','setting_check_history','exchange_check_history','bom','defect_model','board_image','defect_zone','defect_type','common_code','meeting','meeting_setting','box_unit','shipment_work','shipment_history','material_master_tj','mask_register','mask_move_history','mask_disposal','scan_relay','qc_machine_check'];
+      const known=['move_history','move_history_tj','defect_history','part_mapping','feeder_setting','setting_check_history','exchange_check_history','bom','defect_model','board_image','defect_zone','defect_type','common_code','meeting','meeting_setting','box_unit','shipment_work','shipment_history','material_master_tj','mask_register','mask_move_history','mask_disposal','scan_relay','qc_machine_check','p_machine_check','wash_machine_check','fire_check'];
       for(const t of known){try{const{count,error}=await sb.from(t).select('id',{count:'exact',head:true});if(!error)found.push({name:t,count:count||0})}catch(e){}}
     }
 
@@ -319,12 +319,65 @@ async function archDeleteFromDB(){
   if(!confirm('⚠ ['+selTable+'] '+archData.length+'건 영구 삭제?'))return;if(!confirm('최종 확인'))return;
   const st=document.getElementById('archStatus');st.textContent='삭제 중...';document.getElementById('archDelBtn').disabled=true;
   try{
+    // Storage 사진 삭제 (details/photos 컬럼에 Supabase URL이 있는 경우)
+    const storageFiles=extractStorageFiles(archData);
+    if(storageFiles.length){
+      st.textContent='사진 삭제 중 ('+storageFiles.length+'건)...';
+      await deleteStorageFiles(storageFiles);
+    }
+    // DB 레코드 삭제
     const ids=archData.map(r=>r.id).filter(Boolean);if(!ids.length){st.textContent='❌ id 없음';return}
-    let done=0;for(let i=0;i<ids.length;i+=500){const b=ids.slice(i,i+500);const{error}=await getSb().from(selTable).delete().in('id',b);if(error)throw error;done+=b.length;st.textContent='삭제 ('+done+'/'+ids.length+')'}
-    st.textContent='✅ '+done+'건 삭제';document.getElementById('archSummary').className='status ok';document.getElementById('archSummary').textContent='✅ '+done+'건 삭제됨';
+    let done=0;for(let i=0;i<ids.length;i+=500){const b=ids.slice(i,i+500);const{error}=await getSb().from(selTable).delete().in('id',b);if(error)throw error;done+=b.length;st.textContent='DB 삭제 ('+done+'/'+ids.length+')'}
+    st.textContent='✅ '+done+'건 삭제'+(storageFiles.length?' + 사진 '+storageFiles.length+'건':'');document.getElementById('archSummary').className='status ok';document.getElementById('archSummary').textContent='✅ '+done+'건 삭제됨';
     document.getElementById('archPreviewList').innerHTML='';archData=[];archDownloaded=false;toast('✅ 완료');
     const t=allTables.find(x=>x.name===selTable);if(t)t.count=Math.max(0,t.count-done);renderTableList();showArchCard()
   }catch(e){st.textContent='❌ '+e.message;document.getElementById('archDelBtn').disabled=false}
+}
+
+// Storage 파일 경로 추출 (details JSON 내 photos URL + 기타 이미지 컬럼)
+function extractStorageFiles(rows){
+  const cfg=getCfg();const sbUrl=cfg.url||'';if(!sbUrl)return[];
+  const prefix=sbUrl+'/storage/v1/object/public/';
+  const files=[];
+  rows.forEach(r=>{
+    // 모든 컬럼에서 Supabase Storage URL 추출
+    Object.values(r).forEach(val=>{
+      if(!val)return;
+      const str=typeof val==='string'?val:JSON.stringify(val);
+      // URL 패턴 매칭
+      const regex=new RegExp(prefix.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'([^"\\s,\\]]+)','g');
+      let m;while((m=regex.exec(str))!==null){
+        const path=m[1];if(!files.includes(path))files.push(path);
+      }
+    });
+  });
+  return files;
+}
+
+// Storage 파일 일괄 삭제
+async function deleteStorageFiles(filePaths){
+  if(!filePaths.length)return;
+  const cfg=getCfg();const sbUrl=cfg.url,sbKey=cfg.key;if(!sbUrl||!sbKey)return;
+  // 버킷별로 그룹핑
+  const buckets={};
+  filePaths.forEach(p=>{
+    const parts=p.split('/');const bucket=parts[0];const path=parts.slice(1).join('/');
+    if(!buckets[bucket])buckets[bucket]=[];
+    buckets[bucket].push(path);
+  });
+  for(const [bucket,paths] of Object.entries(buckets)){
+    // 50건씩 배치 삭제
+    for(let i=0;i<paths.length;i+=50){
+      const batch=paths.slice(i,i+50);
+      try{
+        await fetch(sbUrl+'/storage/v1/object/'+bucket,{
+          method:'DELETE',
+          headers:{'Content-Type':'application/json','apikey':sbKey,'Authorization':'Bearer '+sbKey},
+          body:JSON.stringify({prefixes:batch})
+        });
+      }catch(e){console.log('Storage 삭제 오류:',e)}
+    }
+  }
 }
 
 async function fullBackup(target){
