@@ -286,6 +286,35 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
   <button class="pv-close">닫기</button>
 </div>
 
+<!-- NG 조치 팝업 -->
+<div id="actionPopup" style="position:fixed;inset:0;background:rgba(0,0,0,.88);display:none;align-items:center;justify-content:center;z-index:10000;padding:16px">
+  <div style="background:var(--surface);border:1px solid rgba(255,255,255,.1);border-radius:16px;padding:20px;max-width:480px;width:100%;max-height:85vh;overflow-y:auto">
+    <div style="font-size:16px;font-weight:900;color:var(--ng);margin-bottom:12px">❌ NG 조치 관리</div>
+    <div id="actionInfo" style="font-size:12px;color:var(--text2);margin-bottom:12px;padding:10px;background:var(--bg);border-radius:8px"></div>
+    <div id="actionNgList" style="margin-bottom:12px"></div>
+    <div id="actionPhotos" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px"></div>
+    <div style="margin-bottom:8px">
+      <label style="font-size:11px;font-weight:600;color:var(--text2);display:block;margin-bottom:4px">현재 상태</label>
+      <div id="actionCurrentStatus" style="font-size:13px;font-weight:700;padding:6px 0"></div>
+    </div>
+    <div style="margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--text2);display:block;margin-bottom:4px">조치자</label>
+      <select id="actionBy" style="width:100%;padding:10px;font-size:14px;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit">
+        <option value="">선택</option>
+      </select>
+    </div>
+    <div style="margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--text2);display:block;margin-bottom:4px">개선/조치 내용</label>
+      <textarea id="actionContent" placeholder="조치 내용을 입력하세요" style="width:100%;padding:10px;font-size:14px;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit;resize:vertical;min-height:80px"></textarea>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button type="button" onclick="saveAction('조치완료')" style="flex:1;padding:12px;background:linear-gradient(135deg,#059669,#34d399);border:none;border-radius:10px;color:#fff;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit">✅ 조치완료</button>
+      <button type="button" onclick="saveAction('조치중')" style="flex:1;padding:12px;background:linear-gradient(135deg,#d97706,#fbbf24);border:none;border-radius:10px;color:#000;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit">🔄 조치중</button>
+      <button type="button" onclick="closeActionPopup()" style="padding:12px 16px;background:var(--surface2);border:none;border-radius:10px;color:var(--text2);font-size:14px;font-weight:700;cursor:pointer;font-family:inherit">닫기</button>
+    </div>
+  </div>
+</div>
+
 <!-- 파일 입력 -->
 <input type="file" id="ngCamInput" accept="image/*" capture="environment" style="display:none">
 <input type="file" id="ngFileInput" accept="image/*" style="display:none">
@@ -502,30 +531,52 @@ let currentNgIdx=0;
 document.getElementById('ngCamInput').addEventListener('change',function(e){handleNgFile(e.target.files[0]);e.target.value=''});
 document.getElementById('ngFileInput').addEventListener('change',function(e){handleNgFile(e.target.files[0]);e.target.value=''});
 
+// 이미지 리사이즈+압축 (최대 1280px, JPEG 70%)
+function compressImage(file,maxW=1280,quality=0.7){
+  return new Promise((resolve)=>{
+    const img=new Image();const url=URL.createObjectURL(file);
+    img.onload=()=>{
+      URL.revokeObjectURL(url);
+      let w=img.width,h=img.height;
+      if(w>maxW){h=Math.round(h*(maxW/w));w=maxW}
+      if(h>maxW){w=Math.round(w*(maxW/h));h=maxW}
+      const cv=document.createElement('canvas');cv.width=w;cv.height=h;
+      cv.getContext('2d').drawImage(img,0,0,w,h);
+      cv.toBlob(blob=>{
+        resolve(blob||file);
+      },'image/jpeg',quality);
+    };
+    img.onerror=()=>{URL.revokeObjectURL(url);resolve(file)};
+    img.src=url;
+  });
+}
+
 async function handleNgFile(file){
   if(!file||!currentNgKey)return;
-  // Supabase Storage에 업로드
+  showToast('📷 압축 중...');
+  // 이미지 리사이즈+압축
+  const compressed=await compressImage(file);
+  const origKB=Math.round(file.size/1024);
+  const compKB=Math.round(compressed.size/1024);
   try{
     const u=getSbUrl(),k=getSbKey();
     if(!u||!k){
-      // Storage 없으면 로컬 base64
       const reader=new FileReader();
       reader.onload=function(e){
         checkData[currentNgKey].photos.push(e.target.result);
-        renderNgThumbs(currentNgIdx);showToast('📷 사진 추가됨');
-      };reader.readAsDataURL(file);return;
+        renderNgThumbs(currentNgIdx);showToast('📷 추가됨 ('+origKB+'KB→'+compKB+'KB)');
+      };reader.readAsDataURL(compressed);return;
     }
-    const ext=file.name.split('.').pop()||'jpg';
-    const fname='fire_ng/'+Date.now()+'_'+Math.random().toString(36).substr(2,4)+'.'+ext;
+    const fname='fire_ng/'+Date.now()+'_'+Math.random().toString(36).substr(2,4)+'.jpg';
     const r=await fetch(u+'/storage/v1/object/p-machine-images/'+fname,{
-      method:'POST',headers:{'apikey':k,'Authorization':'Bearer '+k,'Content-Type':file.type,'x-upsert':'true'},body:file
+      method:'POST',headers:{'apikey':k,'Authorization':'Bearer '+k,'Content-Type':'image/jpeg','x-upsert':'true'},body:compressed
     });
     if(r.ok){
       const pubUrl=u+'/storage/v1/object/public/p-machine-images/'+fname;
       checkData[currentNgKey].photos.push(pubUrl);
-      renderNgThumbs(currentNgIdx);showToast('📷 사진 업로드 완료');
+      renderNgThumbs(currentNgIdx);showToast('📷 업로드 완료 ('+origKB+'KB→'+compKB+'KB)');
     }else{showToast('⚠ 업로드 실패 - 로컬 저장');
-      const reader=new FileReader();reader.onload=e=>{checkData[currentNgKey].photos.push(e.target.result);renderNgThumbs(currentNgIdx)};reader.readAsDataURL(file);
+      const reader=new FileReader();reader.onload=e=>{checkData[currentNgKey].photos.push(e.target.result);renderNgThumbs(currentNgIdx)};reader.readAsDataURL(compressed);
     }
   }catch(e){showToast('오류: '+e.message)}
 }
@@ -663,7 +714,18 @@ async function sendTelegram(row,details,items){
   const checks=items.map(item=>{const d=details[item.name];return(d.status==='NG'?'❌':'✅')+' '+item.name+': '+d.status+(d.note?' ('+d.note+')':'')}).join('\n');
   const status=row.ng_count?'⚠️ 이상발생 '+row.ng_count+'건':'✅ 전체 이상없음';
   const msg=`🧯 소방점검 결과\n━━━━━━━━━━━━━━\n📅 ${row.check_date} ${row.check_time}\n👤 점검자: ${row.inspector}\n📍 장소: ${row.zone}\n\n📋 점검결과: ${status}\n${checks}${row.memo?'\n\n📝 비고: '+row.memo:''}`;
+  // 1) 텍스트 메시지 전송
   for(const u of users){try{await fetch(`https://api.telegram.org/bot${bot}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:u.chat_id,text:msg})})}catch(e){}}
+  // 2) NG 항목 사진 전송
+  const ngPhotos=[];
+  items.forEach(item=>{const d=details[item.name];if(d.status==='NG'&&d.photos&&d.photos.length){d.photos.forEach(url=>{if(url.startsWith('http'))ngPhotos.push({item:item.name,url})})}});
+  if(ngPhotos.length){
+    for(const u of users){
+      for(const p of ngPhotos){
+        try{await fetch(`https://api.telegram.org/bot${bot}/sendPhoto`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:u.chat_id,photo:p.url,caption:`🧯 지적사항 사진\n📍 ${row.zone}\n❌ ${p.item}`})})}catch(e){}
+      }
+    }
+  }
 }
 
 // ===== 설정 UI =====
@@ -755,11 +817,25 @@ async function histPreview(){
   st.textContent='조회 중...';st.style.color='var(--accent)';area.innerHTML='';
   const res=await histFetch();if(!res.ok){st.textContent='❌ '+res.msg;st.style.color='#ef4444';return}
   if(!res.data.length){st.textContent='⚠️ 이력 없음';st.style.color='#f59e0b';return}
+  _histData=res.data; // 캐시
   const okCnt=res.data.filter(r=>r.result==='이상없음').length,ngCnt=res.data.filter(r=>r.result==='이상발생').length;
-  st.textContent='✅ '+res.data.length+'건 (정상: '+okCnt+' / 이상: '+ngCnt+')';st.style.color='#22c55e';
-  let h='<table style="width:100%;border-collapse:collapse;font-size:11px;margin-top:6px"><tr style="background:var(--surface2)"><th style="padding:6px 4px;border-bottom:1px solid var(--border);text-align:left">일자</th><th style="padding:6px 4px;border-bottom:1px solid var(--border);text-align:left">시간</th><th style="padding:6px 4px;border-bottom:1px solid var(--border);text-align:left">점검자</th><th style="padding:6px 4px;border-bottom:1px solid var(--border);text-align:left">장소</th><th style="padding:6px 4px;border-bottom:1px solid var(--border);text-align:center">결과</th></tr>';
-  res.data.slice(0,100).forEach(r=>{const isNG=r.result==='이상발생';
-    h+='<tr style="border-bottom:1px solid rgba(255,255,255,.04)"><td style="padding:5px 4px">'+r.check_date+'</td><td style="padding:5px 4px">'+(r.check_time||'').substring(0,5)+'</td><td style="padding:5px 4px">'+(r.inspector||'')+'</td><td style="padding:5px 4px">'+(r.zone||'')+'</td><td style="padding:5px 4px;text-align:center;color:'+(isNG?'#ef4444':'#22c55e')+';font-weight:700">'+(r.result||'')+'</td></tr>'});
+  const actCnt=res.data.filter(r=>r.action_status==='조치완료').length;
+  st.textContent='✅ '+res.data.length+'건 (정상: '+okCnt+' / 이상: '+ngCnt+(ngCnt?' · 조치완료: '+actCnt:'')+')';st.style.color='#22c55e';
+  let h='<div style="font-size:10px;color:var(--text3);margin-bottom:6px">💡 이상발생 건을 터치하면 조치내용을 입력할 수 있습니다</div>';
+  h+='<table style="width:100%;border-collapse:collapse;font-size:11px"><tr style="background:var(--surface2)"><th style="padding:6px 4px;border-bottom:1px solid var(--border);text-align:left">일자</th><th style="padding:6px 4px;border-bottom:1px solid var(--border);text-align:left">장소</th><th style="padding:6px 4px;border-bottom:1px solid var(--border);text-align:left">점검자</th><th style="padding:6px 4px;border-bottom:1px solid var(--border);text-align:center">결과</th><th style="padding:6px 4px;border-bottom:1px solid var(--border);text-align:center">조치</th></tr>';
+  res.data.slice(0,100).forEach((r,i)=>{
+    const isNG=r.result==='이상발생';
+    const actColor=r.action_status==='조치완료'?'#22c55e':r.action_status==='조치중'?'#fbbf24':'#64748b';
+    const actText=r.action_status||'-';
+    const clickAttr=isNG?' onclick="openActionPopup('+i+')" style="cursor:pointer;border-bottom:1px solid rgba(255,255,255,.04)"':' style="border-bottom:1px solid rgba(255,255,255,.04)"';
+    h+='<tr'+clickAttr+'>';
+    h+='<td style="padding:5px 4px">'+r.check_date+'</td>';
+    h+='<td style="padding:5px 4px">'+(r.zone||'')+'</td>';
+    h+='<td style="padding:5px 4px">'+(r.inspector||'')+'</td>';
+    h+='<td style="padding:5px 4px;text-align:center;color:'+(isNG?'#ef4444':'#22c55e')+';font-weight:700">'+(r.result||'')+'</td>';
+    h+='<td style="padding:5px 4px;text-align:center;color:'+actColor+';font-weight:600;font-size:10px">'+actText+'</td>';
+    h+='</tr>';
+  });
   h+='</table>';area.innerHTML=h;
 }
 
@@ -771,12 +847,12 @@ async function histDownload(){
   const allItems=new Set();
   res.data.forEach(r=>{try{const d=JSON.parse(r.details||'{}');Object.keys(d).forEach(k=>allItems.add(k))}catch(e){}});
   const itemArr=[...allItems];
-  const headers=['점검일자','점검시간','점검자','장소','판정','NG건수',...itemArr.flatMap(k=>[k+'_결과',k+'_지적사항']),'비고'];
+  const headers=['점검일자','점검시간','점검자','장소','판정','NG건수',...itemArr.flatMap(k=>[k+'_결과',k+'_지적사항']),'비고','조치상태','조치내용','조치일자','조치자'];
   const rows=res.data.map(r=>{
     let d={};try{d=JSON.parse(r.details||'{}')}catch(e){}
     const row=[r.check_date,(r.check_time||'').substring(0,5),r.inspector||'',r.zone||'',r.result||'',r.ng_count||0];
     itemArr.forEach(k=>{row.push(d[k]?d[k].status:'');row.push(d[k]?d[k].note:'')});
-    row.push(r.memo||'');return row;
+    row.push(r.memo||'',r.action_status||'',r.action_content||'',r.action_date||'',r.action_by||'');return row;
   });
   const wb=XLSX.utils.book_new();const ws=XLSX.utils.aoa_to_sheet([headers,...rows]);
   XLSX.utils.book_append_sheet(wb,ws,'소방점검');
@@ -788,12 +864,129 @@ async function histDelete(){
   const st=document.getElementById('histStatus');const res=await histFetch();
   if(!res.ok){st.textContent='❌ '+res.msg;st.style.color='#ef4444';return}
   if(!res.data.length){st.textContent='⚠️ 없음';st.style.color='#f59e0b';return}
-  if(!confirm(res.data.length+'건 삭제?'))return;if(!confirm('정말 삭제?'))return;
-  st.textContent='삭제 중...';st.style.color='var(--accent)';
+  if(!confirm(res.data.length+'건 삭제? (관련 사진도 함께 삭제됩니다)'))return;if(!confirm('정말 삭제?'))return;
+  st.textContent='사진 정리 중...';st.style.color='var(--accent)';
+  // Storage 사진 삭제
+  const photoFiles=extractPhotoFiles(res.data);
+  if(photoFiles.length){
+    st.textContent='사진 삭제 중 ('+photoFiles.length+'건)...';
+    await deleteStorageFiles(photoFiles);
+  }
+  // DB 삭제
+  st.textContent='DB 삭제 중...';
   const ids=res.data.map(r=>r.id);let del=0;
   for(let i=0;i<ids.length;i+=50){const batch=ids.slice(i,i+50);
-    try{await sbDelete('fire_check','id=in.('+batch.join(',')+')');del+=batch.length;st.textContent='삭제 중... '+del+'/'+ids.length}catch(e){st.textContent='❌ 오류';st.style.color='#ef4444';return}}
-  st.textContent='✅ '+del+'건 삭제';st.style.color='#22c55e';document.getElementById('histPreviewArea').innerHTML='';
+    try{await sbDelete('fire_check','id=in.('+batch.join(',')+')');del+=batch.length;st.textContent='DB 삭제 중... '+del+'/'+ids.length}catch(e){st.textContent='❌ 오류';st.style.color='#ef4444';return}}
+  st.textContent='✅ '+del+'건 삭제'+(photoFiles.length?' + 사진 '+photoFiles.length+'건':'');st.style.color='#22c55e';document.getElementById('histPreviewArea').innerHTML='';
+}
+
+// details JSON에서 Supabase Storage 사진 경로 추출
+function extractPhotoFiles(rows){
+  const sbUrl=getSbUrl();if(!sbUrl)return[];
+  const prefix=sbUrl+'/storage/v1/object/public/';
+  const files=[];
+  rows.forEach(r=>{
+    try{
+      const d=JSON.parse(r.details||'{}');
+      Object.values(d).forEach(v=>{
+        if(v.photos&&v.photos.length){
+          v.photos.forEach(url=>{
+            if(url&&url.startsWith(prefix)){
+              const path=url.substring(prefix.length);// 예: p-machine-images/fire_ng/xxx.jpg
+              const parts=path.split('/');const bucket=parts[0];const filePath=parts.slice(1).join('/');
+              if(bucket&&filePath)files.push({bucket,path:filePath});
+            }
+          });
+        }
+      });
+    }catch(e){}
+  });
+  return files;
+}
+
+// Storage 파일 일괄 삭제
+async function deleteStorageFiles(fileList){
+  if(!fileList.length)return;
+  const u=getSbUrl(),k=getSbKey();if(!u||!k)return;
+  // 버킷별 그룹핑
+  const buckets={};
+  fileList.forEach(f=>{if(!buckets[f.bucket])buckets[f.bucket]=[];buckets[f.bucket].push(f.path)});
+  for(const [bucket,paths] of Object.entries(buckets)){
+    for(let i=0;i<paths.length;i+=50){
+      const batch=paths.slice(i,i+50);
+      try{
+        await fetch(u+'/storage/v1/object/'+bucket,{
+          method:'DELETE',
+          headers:{'Content-Type':'application/json','apikey':k,'Authorization':'Bearer '+k},
+          body:JSON.stringify({prefixes:batch})
+        });
+      }catch(e){console.log('Storage 삭제 오류:',e)}
+    }
+  }
+}
+
+// ===== NG 조치 관리 =====
+let _histData=[];
+let _actionIdx=-1;
+
+function openActionPopup(idx){
+  const r=_histData[idx];if(!r)return;
+  _actionIdx=idx;
+  // 기본 정보
+  document.getElementById('actionInfo').innerHTML=
+    '📅 <b>'+r.check_date+'</b> '+(r.check_time||'').substring(0,5)+
+    ' · 👤 '+(r.inspector||'')+' · 📍 '+(r.zone||'');
+  // NG 항목 목록
+  let details={};try{details=JSON.parse(r.details||'{}')}catch(e){}
+  const ngList=document.getElementById('actionNgList');ngList.innerHTML='';
+  const photoDiv=document.getElementById('actionPhotos');photoDiv.innerHTML='';
+  Object.entries(details).forEach(([k,v])=>{
+    if(v.status==='NG'){
+      ngList.innerHTML+='<div style="padding:6px 8px;background:var(--ng-bg);border:1px solid rgba(239,68,68,.2);border-radius:6px;margin-bottom:4px;font-size:12px"><span style="color:#ef4444;font-weight:700">❌ '+k+'</span>'+(v.note?' — '+v.note:'')+'</div>';
+      if(v.photos&&v.photos.length){v.photos.forEach(url=>{if(url.startsWith('http')){photoDiv.innerHTML+='<img src="'+url+'" style="width:60px;height:60px;border-radius:6px;object-fit:cover;border:1px solid var(--border);cursor:pointer" onclick="document.getElementById(\'pvImg\').src=\''+url+'\';document.getElementById(\'photoViewer\').style.display=\'flex\'">'}})}
+    }
+  });
+  // 현재 조치 상태
+  const curSt=document.getElementById('actionCurrentStatus');
+  if(r.action_status==='조치완료'){curSt.innerHTML='<span style="color:#22c55e">✅ 조치완료</span> ('+( r.action_date||'')+' · '+(r.action_by||'')+')';
+  }else if(r.action_status==='조치중'){curSt.innerHTML='<span style="color:#fbbf24">🔄 조치중</span>';
+  }else{curSt.innerHTML='<span style="color:#64748b">미조치</span>'}
+  // 조치자 select (점검자 목록 활용)
+  const sel=document.getElementById('actionBy');sel.innerHTML='<option value="">선택</option>';
+  getInspectors().forEach(item=>{const o=document.createElement('option');o.value=item.name;o.textContent=item.name;sel.appendChild(o)});
+  if(r.action_by)sel.value=r.action_by;
+  // 기존 조치 내용
+  document.getElementById('actionContent').value=r.action_content||'';
+  document.getElementById('actionPopup').style.display='flex';
+}
+
+function closeActionPopup(){document.getElementById('actionPopup').style.display='none';_actionIdx=-1}
+
+async function saveAction(status){
+  if(_actionIdx<0)return;
+  const r=_histData[_actionIdx];
+  const content=document.getElementById('actionContent').value.trim();
+  const by=document.getElementById('actionBy').value;
+  if(!content){showToast('조치 내용을 입력하세요');return}
+  if(!by){showToast('조치자를 선택하세요');return}
+  const actionDate=new Date().toISOString().split('T')[0];
+  try{
+    const u=getSbUrl(),k=getSbKey();
+    const res=await fetch(u+'/rest/v1/fire_check?id=eq.'+r.id,{
+      method:'PATCH',
+      headers:{'Content-Type':'application/json','apikey':k,'Authorization':'Bearer '+k,'Prefer':'return=representation'},
+      body:JSON.stringify({action_status:status,action_content:content,action_date:actionDate,action_by:by})
+    });
+    if(!res.ok)throw new Error('저장 실패');
+    // 캐시 업데이트
+    _histData[_actionIdx].action_status=status;
+    _histData[_actionIdx].action_content=content;
+    _histData[_actionIdx].action_date=actionDate;
+    _histData[_actionIdx].action_by=by;
+    closeActionPopup();
+    showToast('✅ '+status+' 처리 완료');
+    histPreview(); // 목록 새로고침
+  }catch(e){showToast('❌ '+e.message)}
 }
 
 // ===== 토스트 =====
