@@ -1657,17 +1657,32 @@ async function onUnusedLotSelect(){
   let mappedModels=[];
   let matCustomer='';
 
-  // 1차: material_info 문자열로 소재명 매칭
+  // 1차: material_info를 ' // ' 구분자로 파싱 → 재질/두께/폭으로 소재마스터 매칭
   if(mi){
-    // material_name이 material_info에 포함된 소재 찾기
-    matMatch=_materialMaster.find(m=>m.material_name&&mi.includes(m.material_name));
-    // material_name 완전일치 시도
-    if(!matMatch) matMatch=_materialMaster.find(m=>{
+    // material_info 형식: "SPCC // 0.6 // 112" 또는 "SPCC-0.6T-112W SPCC/0.6/112"
+    const miParts=mi.includes('//')?mi.split('//').map(s=>s.trim()).filter(Boolean):mi.split(/[\/\s]+/).map(s=>s.trim()).filter(Boolean);
+    const miType=miParts[0]||''; // 재질 (SPCC)
+    const miThick=miParts[1]||''; // 두께 (0.6)
+    const miWidth=miParts[2]||''; // 폭 (112)
+    const miPitch=miParts[3]||''; // 피치 (있으면)
+
+    // 정확 매칭: 재질+두께+폭(+피치) 일치
+    matMatch=_materialMaster.find(m=>{
       if(!m.material_type)return false;
-      // 재질+두께+폭 조합 체크
-      const parts=mi.split(/[\/\s]+/).map(s=>s.trim()).filter(Boolean);
-      return parts.includes(m.material_type)&&(!m.thickness||parts.includes(m.thickness))&&(!m.width||parts.includes(m.width));
+      if(m.material_type!==miType)return false;
+      if(miThick&&m.thickness&&m.thickness!==miThick)return false;
+      if(miWidth&&m.width&&m.width!==miWidth)return false;
+      if(miPitch&&m.pitch&&m.pitch!==miPitch)return false;
+      // 두께/폭이 비어있으면 재질만으로도 매칭 (느슨)
+      if(!miThick&&!miWidth)return true;
+      // 두께+폭 둘 다 있어야 정확 매칭
+      return (!miThick||m.thickness===miThick)&&(!miWidth||m.width===miWidth);
     });
+
+    // 2차: material_name 포함 매칭 (fallback)
+    if(!matMatch){
+      matMatch=_materialMaster.find(m=>m.material_name&&mi.includes(m.material_name));
+    }
   }
 
   // 2차: base_part(기종)로 mapped_models에서 역매칭
@@ -1827,6 +1842,11 @@ function renderProcessGrid(){
     const btn=document.createElement('button');
     btn.className='proc-btn'+(selectedProcess&&selectedProcess.id===p.id?' selected':'');
     btn.innerHTML=`<span class="proc-icon">${p.icon}</span><span class="proc-name">${p.name}</span><span class="proc-sub">${p.sub}</span>`;
+    // 생산 공정 색상 강조
+    if(p.id==='production'){
+      btn.style.background='#e8eaf6';btn.style.borderColor='#7986cb';
+      if(selectedProcess&&selectedProcess.id===p.id){btn.style.background='#1a237e';btn.querySelector&&setTimeout(()=>{const nm=btn.querySelector('.proc-name');if(nm)nm.style.color='#fff';const sb=btn.querySelector('.proc-sub');if(sb)sb.style.color='#c5cae9'},0)}
+    }
     btn.onclick=()=>selectProcess(p);
     grid.appendChild(btn);
   });
