@@ -82,7 +82,6 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
 <div class="tabs">
 <div class="tab on" onclick="swTab(0)">🚨 위험 분석</div>
 <div class="tab" onclick="swTab(1)">📋 전체 데이터</div>
-<div class="tab" onclick="swTab(2)">⚙ 설정</div>
 </div>
 
 <!-- ===== 0: 위험 분석 ===== -->
@@ -144,98 +143,11 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
 </div>
 </div>
 
-<!-- ===== 2: 설정 ===== -->
-<div class="pnl" id="pnl2">
-<div class="form-wrap">
-  <div class="card">
-    <div class="card-title">GAS 웹앱 설정</div>
-    <div style="font-size:10px;color:var(--text3);margin-bottom:10px;padding:6px 8px;background:rgba(245,158,11,.08);border-radius:6px;line-height:1.6">
-      💡 구글시트의 Apps Script에 데이터 조회 API를 추가하고 웹앱으로 배포하세요.<br>
-      배포된 URL을 아래에 입력하면 데이터를 가져올 수 있습니다.
-    </div>
-    <div class="fg"><label>GAS 웹앱 URL</label><input type="text" id="stgGasUrl" placeholder="https://script.google.com/macros/s/.../exec"></div>
-    <button class="submit-btn" onclick="testGasConn()" style="margin-bottom:8px;font-size:13px;padding:10px">🔗 연결 테스트</button>
-    <div id="stgConnStatus" style="font-size:11px;color:var(--text3);margin-top:4px"></div>
-  </div>
-  <div class="card">
-    <div class="card-title">분석 기준 설정</div>
-    <div class="fg-row">
-      <div class="fg"><label>위험 기준 (%)</label><input type="number" id="stgThreshold" value="80" min="50" max="99" step="1"></div>
-      <div class="fg"><label>최근 N일 필터</label><input type="number" id="stgDays" value="14" min="1" max="90" step="1"></div>
-    </div>
-  </div>
-  <button class="submit-btn" onclick="saveSettings()">💾 설정 저장</button>
-  <div id="stgSaveStatus" style="text-align:center;font-size:11px;margin-top:8px;color:var(--text3)"></div>
-
-  <div class="card" style="margin-top:12px">
-    <div class="card-title">GAS doGet 코드 (구글시트에 추가)</div>
-    <div style="font-size:10px;color:var(--text3);margin-bottom:8px;line-height:1.6">
-      기존 GAS의 <code>doGet</code> 함수를 아래로 교체하세요.<br>
-      교체 후 <b>새 배포</b>로 재배포해야 합니다.
-    </div>
-    <pre id="gasCode" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;font-size:10px;color:#a5f3fc;overflow-x:auto;white-space:pre-wrap;word-break:break-all;max-height:300px;overflow-y:auto;line-height:1.5;cursor:pointer" onclick="copyGasCode()"></pre>
-    <button class="btn-sm" onclick="copyGasCode()" style="margin-top:6px;width:100%;background:var(--surface2);color:var(--text2);border:1px solid var(--border)">📋 코드 복사</button>
-  </div>
-</div>
-</div>
-
 <div class="toast" id="toast"></div>
 
 <script>
 const LS_KEY='DIM_CHECK_STG';
 const ZERO_APPROACH_ITEMS=['진원도','평면도','동심도','원통도','직각도','내경 Burr','외경 Burr','흔들림'];
-
-// GAS doGet 교체 코드
-const GAS_CODE=`// 기존 doGet을 이 코드로 교체하세요
-function doGet(e) {
-  var action = (e && e.parameter && e.parameter.action) || '';
-
-  if (action === 'getData') {
-    var ss = SpreadsheetApp.openById(SHEET_ID);
-    var sheet = ss.getSheetByName(SHEET_NAME);
-    var lastRow = sheet.getLastRow();
-    var lastCol = sheet.getLastColumn();
-    if (lastRow < 2) return jsonResponse({success:true, data:[], count:0});
-    var cols = Math.min(lastCol, 36);
-    var headers = sheet.getRange(1,1,1,cols).getValues()[0];
-    var data = sheet.getRange(2,1,lastRow-1,cols).getValues();
-    var rows = [];
-    for (var i=0; i<data.length; i++) {
-      var obj = {};
-      for (var j=0; j<cols; j++) {
-        obj['c'+j] = data[i][j];
-      }
-      rows.push(obj);
-    }
-    return ContentService.createTextOutput(JSON.stringify({
-      success: true,
-      headers: headers,
-      data: rows,
-      count: rows.length
-    })).setMimeType(ContentService.MimeType.JSON);
-  }
-
-  if (action === 'findFile') {
-    var partNo = (e.parameter.partNo || '').trim();
-    if (!partNo) return ContentService.createTextOutput(JSON.stringify({success:false,message:'partNo 필요'})).setMimeType(ContentService.MimeType.JSON);
-    try {
-      var folder = DriveApp.getFolderById(DRAWING_FOLDER_ID);
-      var files = folder.searchFiles("title contains '" + partNo + "' and trashed = false");
-      var result = [];
-      while (files.hasNext()) {
-        var f = files.next();
-        result.push({name: f.getName(), url: f.getUrl(), size: f.getSize(), id: f.getId()});
-      }
-      return ContentService.createTextOutput(JSON.stringify({success:true, files:result, count:result.length})).setMimeType(ContentService.MimeType.JSON);
-    } catch(err) {
-      return ContentService.createTextOutput(JSON.stringify({success:false, message:err.toString()})).setMimeType(ContentService.MimeType.JSON);
-    }
-  }
-
-  return ContentService.createTextOutput(
-    "측정DB 웹앱 정상 작동 중"
-  ).setMimeType(ContentService.MimeType.TEXT);
-}`;
 
 function getStg(){
   const s=JSON.parse(localStorage.getItem(LS_KEY)||'{}');
@@ -246,45 +158,7 @@ function getStg(){
   return s;
 }
 function toast(m){const el=document.getElementById('toast');el.textContent=m;el.classList.add('show');clearTimeout(window._tt);window._tt=setTimeout(()=>el.classList.remove('show'),2000)}
-function swTab(n){document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('on',i===n));document.querySelectorAll('.pnl').forEach((p,i)=>p.classList.toggle('on',i===n));if(n===2)loadStgUI()}
-
-// 설정
-function loadStgUI(){
-  const s=getStg();
-  document.getElementById('stgGasUrl').value=s.gasUrl||'';
-  document.getElementById('stgThreshold').value=s.threshold||80;
-  document.getElementById('stgDays').value=s.days||14;
-  document.getElementById('gasCode').textContent=GAS_CODE;
-}
-function saveSettings(){
-  const s={
-    gasUrl:document.getElementById('stgGasUrl').value.trim(),
-    threshold:parseInt(document.getElementById('stgThreshold').value)||80,
-    days:parseInt(document.getElementById('stgDays').value)||14
-  };
-  localStorage.setItem(LS_KEY,JSON.stringify(s));
-  document.getElementById('stgSaveStatus').textContent='✅ 저장됨 ('+new Date().toLocaleTimeString()+')';
-  document.getElementById('stgSaveStatus').style.color='#22c55e';
-  toast('✅ 설정 저장');
-}
-function copyGasCode(){
-  navigator.clipboard.writeText(GAS_CODE).then(()=>toast('📋 GAS 코드 복사됨')).catch(()=>{
-    const t=document.createElement('textarea');t.value=GAS_CODE;document.body.appendChild(t);t.select();document.execCommand('copy');document.body.removeChild(t);toast('📋 GAS 코드 복사됨');
-  });
-}
-async function testGasConn(){
-  const st=document.getElementById('stgConnStatus');
-  const url=document.getElementById('stgGasUrl').value.trim();
-  if(!url){st.textContent='❌ URL을 입력하세요';st.style.color='#ef4444';return}
-  st.textContent='테스트 중...';st.style.color='var(--accent)';
-  try{
-    const r=await fetch(url+'?action=getData',{redirect:'follow'});
-    if(!r.ok)throw new Error('HTTP '+r.status);
-    const d=await r.json();
-    if(d.success){st.textContent='✅ 연결 성공 ('+d.count+'건)';st.style.color='#22c55e'}
-    else{st.textContent='⚠ 응답 오류: '+JSON.stringify(d);st.style.color='#f59e0b'}
-  }catch(e){st.textContent='❌ 실패: '+e.message;st.style.color='#ef4444'}
-}
+function swTab(n){document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('on',i===n));document.querySelectorAll('.pnl').forEach((p,i)=>p.classList.toggle('on',i===n))}
 
 // ========== 데이터 분석 ==========
 let _rawData=[];
@@ -627,8 +501,8 @@ function renderAllData(){
   if(filtered.length>100)c.innerHTML+='<div style="text-align:center;padding:8px;color:var(--text3);font-size:11px">... 외 '+(filtered.length-100)+'건</div>';
 }
 
-// 초기화
-window.addEventListener('DOMContentLoaded',()=>{loadStgUI()});
+// 초기화: URL 파라미터에서 gasUrl 자동 수신
+window.addEventListener('DOMContentLoaded',()=>{getStg()});
 </script>
 </body>
 </html>
