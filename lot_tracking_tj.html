@@ -225,6 +225,15 @@
               </select>
               <div id="materialInfoDisplay" style="display:none;margin-top:6px;padding:8px 10px;background:#e8f5e9;border:1.5px solid #a5d6a7;border-radius:8px;font-size:11px;line-height:1.8"></div>
             </div>
+            <!-- 생산: 미사용 소재 리스트 -->
+            <div class="fg" id="fgUnusedLotSel" style="display:none;margin-bottom:10px">
+              <label>📋 미사용 소재 선택 <span style="font-size:10px;color:#888;font-weight:400">lot_consumed=false 소재만 표시</span></label>
+              <select id="selUnusedLot" onchange="onUnusedLotSelect()" style="font-size:14px;padding:11px;border:2px solid #e65100;background:#fff3e0;font-weight:700;color:#e65100">
+                <option value="">소재를 선택하세요</option>
+              </select>
+              <div id="unusedLotInfo" style="display:none;margin-top:6px;padding:8px 10px;background:#e8f5e9;border:1.5px solid #a5d6a7;border-radius:8px;font-size:11px;line-height:1.8"></div>
+              <div id="unusedLotLoading" style="display:none;text-align:center;padding:8px;font-size:12px;color:#888">📥 미사용 소재 로드 중...</div>
+            </div>
             <div id="regFields"></div>
             <div id="workerEquipRow" class="modal-row2">
               <div class="fg" id="fgWorker"><label>작업자명</label><input type="text" id="inpWorker" placeholder="작업자명 입력"></div>
@@ -275,6 +284,14 @@
             <div id="confirmBtnNormal" style="display:flex;gap:8px">
               <button class="btn btn-gray" onclick="backToMoveInputs()" style="flex:0 0 auto;width:auto;padding:13px 20px;font-size:14px">← 수정</button>
               <button class="btn btn-green" onclick="goToScanStep()" style="flex:1;font-size:15px;padding:13px">📋 로트 리딩 →</button>
+            </div>
+            <!-- 생산 공정: 소재 선택 시 바로 등록 -->
+            <div id="confirmBtnProdDirect" style="display:none">
+              <div style="display:flex;gap:8px">
+                <button class="btn btn-gray" onclick="backToMoveInputs()" style="flex:0 0 auto;width:auto;padding:13px 20px;font-size:14px">← 수정</button>
+                <button class="btn btn-green" onclick="goToProdDirectReg()" style="flex:1;font-size:15px;padding:13px">📦 기종선택 + 수량 →</button>
+              </div>
+              <button class="btn" onclick="goToScanStep()" style="margin-top:8px;font-size:13px;padding:10px;background:#f5f5f5;color:#555;border:1px solid #ddd;width:100%">📋 바코드 리딩으로 진행 (선택사항)</button>
             </div>
             <!-- 출하 공정: 바로 기종선택+등록 -->
             <div id="confirmBtnShipment" style="display:none">
@@ -1539,6 +1556,142 @@ async function doMmBatchRegister(){
   _mmBatchData=[];document.getElementById('mmBatchPreview').style.display='none';document.getElementById('mmBatchFile').value='';
 }
 
+// ============================================================
+//  생산 공정: 미사용 소재 리스트 (lot_consumed=false)
+// ============================================================
+let _unusedLots=[];
+
+async function loadUnusedIncomingLots(){
+  const sel=document.getElementById('selUnusedLot');
+  const loading=document.getElementById('unusedLotLoading');
+  const infoDiv=document.getElementById('unusedLotInfo');
+  if(!sel)return;
+  sel.innerHTML='<option value="">로딩 중...</option>';
+  if(loading)loading.style.display='block';
+  if(infoDiv)infoDiv.style.display='none';
+  _unusedLots=[];
+
+  try{
+    const sb=getSb();if(!sb)throw new Error('Supabase 미설정');
+    // 소재입고 이력 전체 (최근 500건)
+    const{data:incoming,error:e1}=await sb.from('move_history_tj')
+      .select('*')
+      .eq('process','소재입고')
+      .order('created_at',{ascending:false})
+      .limit(500);
+    if(e1)throw e1;
+
+    // lot_consumed=true인 로트 목록
+    const{data:consumed,error:e2}=await sb.from('move_history_tj')
+      .select('lot,barcode_raw')
+      .eq('lot_consumed',true)
+      .limit(1000);
+    const consumedSet=new Set();
+    if(consumed)consumed.forEach(r=>{
+      if(r.lot)consumedSet.add(r.lot.trim());
+      if(r.barcode_raw)consumedSet.add(r.barcode_raw.trim());
+    });
+
+    // 미사용(lot_consumed=false) 소재만 필터
+    const active=(incoming||[]).filter(h=>{
+      const lotKey=(h.lot||h.barcode_raw||'').trim();
+      return lotKey&&!consumedSet.has(lotKey);
+    });
+
+    // 중복 제거 (같은 lot은 최신 1건만)
+    const seen=new Set();
+    _unusedLots=active.filter(h=>{
+      const key=(h.lot||h.barcode_raw||'').trim();
+      if(seen.has(key))return false;
+      seen.add(key);return true;
+    });
+
+    sel.innerHTML='<option value="">미사용 소재 선택 ('+_unusedLots.length+'건)</option>';
+    _unusedLots.forEach((h,idx)=>{
+      const mi=h.material_info||'';
+      const lot=(h.lot||h.barcode_raw||'-').trim();
+      const wt=h.weight?h.weight+'kg':'';
+      const dt=h.move_date||'';
+      const bp=h.base_part||'';
+      const label=lot+(bp?' ['+bp+']':'')+(mi?' · '+mi:'')+(wt?' · '+wt:'')+(dt?' ('+dt+')':'');
+      sel.innerHTML+='<option value="'+idx+'">'+label+'</option>';
+    });
+    if(!_unusedLots.length){
+      sel.innerHTML='<option value="">미사용 소재 없음 (소재입고 먼저 등록)</option>';
+    }
+  }catch(e){
+    sel.innerHTML='<option value="">⚠ 로드 실패: '+e.message+'</option>';
+  }
+  if(loading)loading.style.display='none';
+}
+
+async function onUnusedLotSelect(){
+  const sel=document.getElementById('selUnusedLot');
+  const infoDiv=document.getElementById('unusedLotInfo');
+  if(!sel||sel.value===''){if(infoDiv)infoDiv.style.display='none';_selectedUnusedLot=null;return}
+
+  const idx=parseInt(sel.value);
+  const h=_unusedLots[idx];
+  if(!h){if(infoDiv)infoDiv.style.display='none';return}
+
+  _selectedUnusedLot=h;
+  const lot=(h.lot||h.barcode_raw||'').trim();
+  const mi=h.material_info||'';
+  const bp=h.base_part||'';
+  const wt=h.weight?h.weight+'kg':'';
+  const dt=h.move_date||'';
+  const inDate=h.incoming_date||'';
+
+  // 정보 표시
+  let html='<b style="color:#2e7d32">✅ 소재 선택됨</b><br>';
+  html+='로트: <b>'+lot+'</b>';
+  if(bp)html+=' · 기종: <b style="color:#1a237e">'+bp+'</b>';
+  if(mi)html+='<br>소재: <b style="color:#1565c0">'+mi+'</b>';
+  if(wt)html+=' · 중량: <b>'+wt+'</b>';
+  if(inDate)html+=' · 입고일: '+inDate;
+  else if(dt)html+=' · 등록일: '+dt;
+
+  // material_master_tj에서 매핑기종 조회
+  let mappedModels=[];
+  if(mi){
+    await loadMaterialMaster();
+    // material_info 문자열에서 소재명 매칭
+    const matMatch=_materialMaster.find(m=>mi.includes(m.material_name));
+    if(matMatch&&matMatch.mapped_models){
+      mappedModels=matMatch.mapped_models.split(',').map(s=>s.trim()).filter(Boolean);
+      html+='<br>📦 매핑기종: <b style="color:#1565c0">'+matMatch.mapped_models+'</b>';
+    }
+  }
+  // bp(base_part)로도 매핑기종 조회
+  if(!mappedModels.length&&bp){
+    await loadMaterialMaster();
+    const matMatch=_materialMaster.find(m=>{
+      if(!m.mapped_models)return false;
+      return m.mapped_models.split(',').map(s=>s.trim()).includes(bp);
+    });
+    if(matMatch){
+      mappedModels=[bp]; // base_part 자체가 기종
+      html+='<br>📦 기종: <b style="color:#1565c0">'+bp+'</b>';
+    }else{
+      mappedModels=[bp]; // 매핑 못 찾아도 base_part 사용
+    }
+  }
+
+  if(infoDiv){infoDiv.innerHTML=html;infoDiv.style.display='block'}
+
+  // 소재중량 자동입력
+  if(h.weight){document.getElementById('inpWeight').value=h.weight}
+
+  // _selectedUnusedLot에 매핑기종 저장
+  _selectedUnusedLot._mappedModels=mappedModels;
+  _selectedUnusedLot._lot=lot;
+
+  showToast('✅ 소재 선택: '+lot);
+  if(navigator.vibrate)navigator.vibrate([50,30,50]);
+}
+
+let _selectedUnusedLot=null;
+
 // 소재입고: 소재 선택 시 정보 표시
 function onMaterialSelect(){
   const sel=document.getElementById('selMaterial');
@@ -1639,7 +1792,7 @@ function onMappedModelSelect(){
 // ============================================================
 const PROCESSES=[
   {id:'incoming', name:'소재입고', icon:'📥', sub:'소재업체명 → 태진다이텍', defaultFrom:'외부 공급업체', defaultTo:'태진다이텍'},
-  {id:'production',name:'생산',    icon:'🏭', sub:'소재업체명 → 생산라인', defaultFrom:'자재실', defaultTo:'생산라인'},
+  {id:'production',name:'생산',    icon:'🏭', sub:'소재 → 태진다이텍', defaultFrom:'자재실', defaultTo:'태진다이텍'},
   {id:'machining', name:'가공',    icon:'⚙️', sub:'거명정밀',      defaultFrom:'세척실',        defaultTo:'거명정밀'},
   {id:'heat',      name:'열처리',  icon:'🔥', sub:'한성특수 (품번변경)', defaultFrom:'거명정밀', defaultTo:'한성특수'},
   {id:'surface',   name:'표면처리',icon:'🎨', sub:'동진금속 (해당 품번만)', defaultFrom:'한성특수', defaultTo:'동진금속'}
@@ -1768,6 +1921,7 @@ async function selectProcess(proc){
     document.getElementById('inpProdDate').value=kstDateStr();
     if(savedInfo.worker){document.getElementById('inpWorker').style.borderColor='#2e7d32';document.getElementById('inpWorker').style.background='#e8f5e9'}
     document.getElementById('fgMaterialSel').style.display='none';
+    document.getElementById('fgUnusedLotSel').style.display='none';
     // 출하기종 셀렉트 표시
     document.getElementById('fgSimpleProcFields').style.display='block';
     document.getElementById('inpMoveDate').parentElement.style.display='none'; // 이동일자는 숨김 (생산일자로 대체)
@@ -1784,6 +1938,7 @@ async function selectProcess(proc){
     document.getElementById('inpWorker').style.borderColor='#ddd';document.getElementById('inpWorker').style.background='#fff';
     // 소재 선택 표시 + 채우기
     document.getElementById('fgMaterialSel').style.display='block';
+    document.getElementById('fgUnusedLotSel').style.display='none';
     document.getElementById('fgSimpleProcFields').style.display='none';
     fillMaterialSelect(selectedCustomer);
   }else if(['cleaning','machining','heat','surface'].includes(proc.id)){
@@ -1795,6 +1950,7 @@ async function selectProcess(proc){
     _prodDates=[];
     document.getElementById('inpWorker').style.borderColor='#ddd';document.getElementById('inpWorker').style.background='#fff';
     document.getElementById('fgMaterialSel').style.display='none';
+    document.getElementById('fgUnusedLotSel').style.display='none';
     // 일자+기종명 표시
     document.getElementById('fgSimpleProcFields').style.display='block';
     document.getElementById('inpMoveDate').parentElement.style.display=''; // 이동일자 표시
@@ -1802,6 +1958,7 @@ async function selectProcess(proc){
     document.getElementById('inpModelName').value='';
     await fillSimpleProcModelSelect(proc.id);
   }else{
+    // ★ 생산 공정: 미사용 소재 리스트 + 설비호기
     lblW.textContent='소재중량 (kg)';inpW.placeholder='소재중량 입력';inpW.step='0.1';inpW.inputMode='decimal';
     fgEquip.style.display='block';weRow.style.gridTemplateColumns='1fr 1fr';
     fgProdDates.style.display='none';
@@ -1809,6 +1966,10 @@ async function selectProcess(proc){
     document.getElementById('inpWorker').style.borderColor='#ddd';document.getElementById('inpWorker').style.background='#fff';
     document.getElementById('fgMaterialSel').style.display='none';
     document.getElementById('fgSimpleProcFields').style.display='none';
+    // 미사용 소재 리스트 표시 + 로드
+    document.getElementById('fgUnusedLotSel').style.display='block';
+    document.getElementById('unusedLotInfo').style.display='none';
+    loadUnusedIncomingLots();
   }
 
   const previewArea=document.getElementById('batchPreviewArea');
@@ -1833,6 +1994,7 @@ function closeMoveSetup(){
   document.body.style.overflow='';
   document.getElementById('moveSetupInputs').style.display='block';
   document.getElementById('moveSetupConfirm').style.display='none';
+  _selectedUnusedLot=null;
 }
 
 function showMoveConfirm(){
@@ -1893,7 +2055,17 @@ function showMoveConfirm(){
     }
   }
   if(MODEL_TYPE_PROC_IDS.includes(selectedProcess.id)){
-    html+=`<div style="margin-top:8px;padding:8px;background:#e8eaf6;border-radius:8px;font-size:12px;color:#1a237e;font-weight:600">📦 등록 팝업에서 레이스웨이/일반기종 선택</div>`;
+    if(selectedProcess.id==='production'&&_selectedUnusedLot){
+      const lot=_selectedUnusedLot._lot||'';
+      const mi=_selectedUnusedLot.material_info||'';
+      const bp=_selectedUnusedLot.base_part||'';
+      html+=`<div style="margin-top:8px;padding:10px;background:#fff3e0;border:2px solid #ffcc80;border-radius:8px;font-size:12px">
+        <div style="font-weight:800;color:#e65100;margin-bottom:4px">📋 선택된 소재</div>
+        <div style="color:#333">로트: <b>${lot}</b>${bp?' · 기종: <b>'+bp+'</b>':''}${mi?' · '+mi:''}</div>
+      </div>`;
+    }else{
+      html+=`<div style="margin-top:8px;padding:8px;background:#e8eaf6;border-radius:8px;font-size:12px;color:#1a237e;font-weight:600">📦 등록 팝업에서 레이스웨이/일반기종 선택</div>`;
+    }
   }
   summary.innerHTML=html;
   document.getElementById('moveSetupInputs').style.display='none';
@@ -1907,9 +2079,18 @@ function showMoveConfirm(){
     localStorage.setItem('LOT_TJ_PROC_shipment',JSON.stringify({from:savedSelections['출발지']||'',to:savedSelections['도착지']||'',worker:document.getElementById('inpWorker').value.trim(),equip:''}));
     document.getElementById('confirmBtnNormal').style.display='none';
     document.getElementById('confirmBtnShipment').style.display='block';
+    document.getElementById('confirmBtnProdDirect').style.display='none';
     document.getElementById('shipConfirmNote').value='';
   }else{
-    document.getElementById('confirmBtnNormal').style.display='flex';
+    // 생산 공정 + 미사용 소재 선택된 경우: 바로 등록 버튼
+    const isProd=selectedProcess&&selectedProcess.id==='production';
+    if(isProd&&_selectedUnusedLot){
+      document.getElementById('confirmBtnNormal').style.display='none';
+      document.getElementById('confirmBtnProdDirect').style.display='block';
+    }else{
+      document.getElementById('confirmBtnNormal').style.display='flex';
+      document.getElementById('confirmBtnProdDirect').style.display='none';
+    }
     document.getElementById('confirmBtnShipment').style.display='none';
   }
 }
@@ -1917,6 +2098,117 @@ function showMoveConfirm(){
 function backToMoveInputs(){
   document.getElementById('moveSetupInputs').style.display='block';
   document.getElementById('moveSetupConfirm').style.display='none';
+}
+
+// ★ 생산 공정: 미사용 소재 선택 → 바로 등록 팝업
+async function goToProdDirectReg(){
+  if(!_selectedUnusedLot){showToast('소재를 선택하세요');return}
+  // 설정값 저장
+  cats.forEach((cat,i)=>{const el=document.getElementById('sel_'+i);if(el&&el.value)savedSelections[cat.name]=el.value});
+  const worker=document.getElementById('inpWorker').value.trim();
+  const equip=document.getElementById('inpEquip').value.trim();
+  const weight=document.getElementById('inpWeight').value.trim();
+  const saveData={from:savedSelections['출발지']||'',to:savedSelections['도착지']||'',worker,equip};
+  localStorage.setItem('LOT_TJ_PROC_production',JSON.stringify(saveData));
+  closeMoveSetup();
+
+  // 소재 정보로 모달 열기
+  const lot=_selectedUnusedLot._lot||'';
+  const bp=_selectedUnusedLot.base_part||'';
+  const mappedModels=_selectedUnusedLot._mappedModels||[];
+  const mi=_selectedUnusedLot.material_info||'';
+
+  // 가짜 modalScanData 설정 (바코드 스캔 대신)
+  modalScanData={value:lot,format:'소재선택'};
+  _dualMode=false;_dualChildren=[];
+
+  const modal=document.getElementById('regModal');
+  document.getElementById('modalBarcode').innerHTML='<span>선택된 소재 로트</span>'+lot;
+  document.getElementById('mInpLot').value=lot;
+  document.getElementById('mInpQty').value='';
+  document.getElementById('mInpNote').value=JSON.parse(localStorage.getItem(REG_SAVE_KEY)||'{}').note||'';
+  document.getElementById('modalNewMapping').style.display='none';
+  document.getElementById('dualRegArea').style.display='none';document.getElementById('dualRegArea').innerHTML='';
+  document.getElementById('singleQtyArea').style.display='block';
+  document.getElementById('mInpBasePart').value=bp||'';
+  document.getElementById('modalMatchArea').innerHTML='';
+  document.getElementById('lotTraceArea').style.display='none';
+  document.getElementById('lotTraceArea').innerHTML='';
+  document.getElementById('shipmentModelArea').style.display='none';
+  document.getElementById('conversionResult').style.display='none';
+  document.getElementById('btnGoStep2').style.display='none';
+
+  document.getElementById('modalTitle').textContent='🏭 생산 등록';
+
+  // step1 스킵 → 바로 step2 (기종선택+수량)
+  document.getElementById('regStep1').style.display='none';
+  document.getElementById('regStep2').style.display='block';
+
+  // 소재 정보 요약
+  let sumHtml='📋 로트: <b>'+lot+'</b>';
+  if(mi)sumHtml+='<br>🧱 소재: <b>'+mi+'</b>';
+  if(bp)sumHtml+='<br>📦 기종: <b>'+bp+'</b>';
+  document.getElementById('regStep2Summary').innerHTML=sumHtml;
+  document.getElementById('regStep2Summary').style.display='block';
+
+  // 소재 사용완료 체크박스 표시
+  const consumedArea=document.getElementById('lotConsumedArea');
+  if(consumedArea){consumedArea.style.display='block';document.getElementById('chkLotConsumed').checked=false}
+
+  // 기종 자동 선택
+  if(mappedModels.length===1||bp){
+    const targetModel=mappedModels.length===1?mappedModels[0]:bp;
+    document.getElementById('mInpBasePart').value=targetModel;
+    document.getElementById('modelTypeSwitcher').style.display='none';
+    // 레이스웨이인지 일반기종인지 확인
+    await fillRacewaySelect('');
+    await loadGeneralModels();
+    const raceSel=document.getElementById('selRacewayPart');
+    let isRaceway=false;
+    for(let o of raceSel.options){if(o.value===targetModel){isRaceway=true;break}}
+    if(isRaceway){
+      _currentModelType='raceway';raceSel.value=targetModel;onRacewayPartSelect();
+    }else{
+      _currentModelType='general';
+      refreshGeneralModelSelect('');
+      const gSel=document.getElementById('selGeneralModel');
+      let found=false;
+      if(gSel){for(let o of gSel.options){if(o.value===targetModel){gSel.value=targetModel;found=true;break}}}
+      if(!found&&gSel){const opt=document.createElement('option');opt.value=targetModel;opt.textContent=targetModel+' (미등록)';gSel.appendChild(opt);gSel.value=targetModel}
+      onGeneralModelSelect();
+    }
+  }else if(mappedModels.length>1){
+    // 복수 기종: 매핑기종 선택 콤보 표시
+    document.getElementById('modelTypeSwitcher').style.display='none';
+    document.getElementById('modalMatchArea').innerHTML=`<div class="fg" style="margin-bottom:10px">
+      <label style="font-size:12px;font-weight:700;color:#1565c0">📦 매핑기종 선택 (${mappedModels.length}종)</label>
+      <select id="selMappedModel" onchange="onMappedModelSelect()" style="font-size:15px;font-weight:700;border:2px solid #1565c0;background:#e3f2fd;color:#1565c0;padding:11px;border-radius:8px;width:100%">
+        <option value="">기종 선택</option>
+        ${mappedModels.map(m=>'<option value="'+m+'">'+m+'</option>').join('')}
+      </select>
+    </div>`;
+    await fillRacewaySelect('');
+    await loadGeneralModels();
+  }else{
+    // 매핑기종 없음: 기존 방식
+    document.getElementById('modelTypeSwitcher').style.display='block';
+    await fillRacewaySelect('');
+    await loadGeneralModels();
+    refreshGeneralModelSelect('');
+    _currentModelType='raceway';
+    document.getElementById('tabRaceway').classList.add('on');
+    document.getElementById('tabGeneral').classList.remove('on');
+    document.getElementById('racewayModelArea').style.display='block';
+    document.getElementById('generalModelArea').style.display='none';
+  }
+
+  modal.classList.add('show','center');
+
+  // 수량 입력에 포커스
+  setTimeout(()=>{
+    const qtyEl=document.getElementById('mInpQty')||document.getElementById('dualQty_0');
+    if(qtyEl)qtyEl.focus();
+  },300);
 }
 
 // 출하기종 선택 시 (확인화면 내)
