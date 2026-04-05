@@ -207,6 +207,25 @@
 
 <!-- 설정 -->
 <div class="pnl" id="pnl3">
+  <!-- 이력 관리 -->
+  <div class="card" style="border-left:3px solid var(--accent)">
+    <div class="card-tit">📊 이력 관리</div>
+    <div style="display:flex;gap:6px;margin-bottom:8px">
+      <div style="flex:1"><label style="font-size:11px;color:#888;margin-bottom:2px;display:block">시작일</label><input type="date" id="cfgHistFrom" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:8px;font-size:12px;font-family:inherit"></div>
+      <div style="flex:1"><label style="font-size:11px;color:#888;margin-bottom:2px;display:block">종료일</label><input type="date" id="cfgHistTo" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:8px;font-size:12px;font-family:inherit"></div>
+    </div>
+    <div class="fg" style="margin-bottom:8px">
+      <label>기종</label>
+      <select id="cfgHistModel" style="font-size:13px"><option value="">전체</option></select>
+    </div>
+    <div style="display:flex;gap:6px">
+      <button class="btn btn-sm btn-blue" onclick="cfgHistSearch()" style="flex:1">🔍 조회</button>
+      <button class="btn btn-sm btn-green" onclick="cfgHistExcel()" style="flex:1">📥 엑셀</button>
+    </div>
+    <button class="btn btn-sm" onclick="cfgHistDelete()" style="width:100%;margin-top:6px;background:#ffebee;color:#c62828;border:1px solid #ef9a9a">🗑 선택범위 삭제</button>
+    <div id="cfgHistStatus" style="font-size:11px;margin-top:6px;color:#555"></div>
+  </div>
+
   <div class="card">
     <div class="card-tit">👤 작업자 관리 <span style="font-size:10px;color:#1565c0;font-weight:400;margin-left:4px">마스터(d_worker)에서 통합관리</span></div>
     <div id="workerList" class="empty">로드 필요</div>
@@ -468,7 +487,7 @@ function swTab(n){
   if(n===0){rms();loadTodayStats()}
   if(n===1)rmhs();
   if(n===2){rmss();initStatDates()}
-  if(n===3){loadCfgToUI();rmsS();loadCommonCodes();loadModels();loadDefectTypes()}
+  if(n===3){loadCfgToUI();rmsS();loadCommonCodes();loadModels().then(()=>initCfgHist());loadDefectTypes()}
 }
 
 // ===== 기종마스터 =====
@@ -1076,6 +1095,80 @@ CREATE POLICY IF NOT EXISTS "allow_all" ON common_code FOR ALL USING (true) WITH
   catch(e){st.innerHTML='<textarea style="width:100%;height:200px;font-size:10px;font-family:monospace;margin-top:8px" readonly>'+sql+'</textarea>'}
 }
 
+
+// ===== 설정탭 이력관리 =====
+function initCfgHist(){
+  const today=new Date(),d=new Date(today);d.setMonth(d.getMonth()-1);
+  const from=document.getElementById('cfgHistFrom'),to=document.getElementById('cfgHistTo');
+  if(!from.value)from.value=d.toISOString().split('T')[0];
+  if(!to.value)to.value=today.toISOString().split('T')[0];
+  const sel=document.getElementById('cfgHistModel');
+  sel.innerHTML='<option value="">전체</option>'+cachedModels.map(m=>`<option value="${m.name}">${m.customer?'['+m.customer+'] ':''}${m.name}</option>`).join('');
+}
+async function cfgHistFetch(){
+  const f=document.getElementById('cfgHistFrom').value;
+  const t=document.getElementById('cfgHistTo').value;
+  const m=document.getElementById('cfgHistModel').value;
+  const filters={};
+  if(f)filters.defect_date='gte.'+f;
+  if(m)filters.model_name='eq.'+m;
+  let rows=await sbSelect('defect_history',filters,'defect_date.desc,defect_time.desc',5000);
+  if(t)rows=rows.filter(r=>r.defect_date<=t);
+  return rows;
+}
+async function cfgHistSearch(){
+  const st=document.getElementById('cfgHistStatus');
+  st.textContent='조회 중...';st.style.color='#1565c0';
+  try{
+    const rows=await cfgHistFetch();
+    const defectRows=rows.filter(r=>r.defect_type&&r.defect_type!=='양품'&&!r.defect_type.startsWith('__'));
+    const totalDefect=defectRows.reduce((s,r)=>s+(r.qty||0),0);
+    const totalInspect=rows.reduce((s,r)=>s+(r.inspect_qty||0),0);
+    st.innerHTML=`✅ <b>${rows.length}</b>건 조회 (검사수: ${totalInspect.toLocaleString()}, 불량수: ${totalDefect.toLocaleString()})`;
+    st.style.color='var(--ok)';
+  }catch(e){st.textContent='❌ 오류: '+e.message;st.style.color='#c62828'}
+}
+async function cfgHistExcel(){
+  const st=document.getElementById('cfgHistStatus');
+  st.textContent='엑셀 생성 중...';st.style.color='#1565c0';
+  try{
+    const rows=await cfgHistFetch();
+    if(!rows.length){st.textContent='⚠ 다운로드할 데이터 없음';st.style.color='#e65100';return}
+    const hd=['일자','시간','기종','면','영역','불량유형','검사수','수량','작업자','검사라인','생산라인','비고'];
+    const data=rows.map(r=>[r.defect_date||'',r.defect_time||'',r.model_name||'',r.side||'',r.zone_name||'',r.defect_type||'',r.inspect_qty||0,r.qty||0,r.worker||'',r.inspect_line||'',r.prod_line||'',r.note||'']);
+    const wb=XLSX.utils.book_new();
+    const ws=XLSX.utils.aoa_to_sheet([hd,...data]);
+    ws['!cols']=[{wch:11},{wch:9},{wch:16},{wch:5},{wch:10},{wch:14},{wch:8},{wch:6},{wch:10},{wch:10},{wch:10},{wch:20}];
+    XLSX.utils.book_append_sheet(wb,ws,'불량이력');
+    const today=new Date().toISOString().split('T')[0].replace(/-/g,'');
+    XLSX.writeFile(wb,'불량이력_'+today+'.xlsx');
+    st.innerHTML='✅ '+rows.length+'건 엑셀 다운로드 완료';st.style.color='var(--ok)';
+  }catch(e){st.textContent='❌ 오류: '+e.message;st.style.color='#c62828'}
+}
+async function cfgHistDelete(){
+  const f=document.getElementById('cfgHistFrom').value;
+  const t=document.getElementById('cfgHistTo').value;
+  const m=document.getElementById('cfgHistModel').value;
+  const st=document.getElementById('cfgHistStatus');
+  st.textContent='건수 확인 중...';st.style.color='#1565c0';
+  try{
+    const rows=await cfgHistFetch();
+    if(!rows.length){st.textContent='⚠ 삭제할 데이터 없음';st.style.color='#e65100';return}
+    const rangeDesc=(f||'시작')+'~'+(t||'끝')+(m?' / 기종: '+m:'');
+    if(!confirm('⚠ 선택 범위의 이력 '+rows.length+'건을 삭제합니다.\n\n범위: '+rangeDesc+'\n\n이 작업은 되돌릴 수 없습니다. 진행하시겠습니까?'))return;
+    if(!confirm('정말로 '+rows.length+'건을 삭제하시겠습니까?\n(최종 확인)'))return;
+    showLoading('삭제 중... ('+rows.length+'건)');
+    const ids=rows.map(r=>r.id);
+    // 100건씩 배치 삭제
+    for(let i=0;i<ids.length;i+=100){
+      const batch=ids.slice(i,i+100);
+      await sbDelete('defect_history',{id:'in.('+batch.join(',')+')'});
+    }
+    st.innerHTML='✅ <b>'+rows.length+'</b>건 삭제 완료';st.style.color='var(--ok)';
+    showToast('🗑 '+rows.length+'건 삭제 완료');
+  }catch(e){st.textContent='❌ 삭제 오류: '+e.message;st.style.color='#c62828'}
+  hideLoading();
+}
 
 // ===== 통계 탭 초기 날짜 설정 =====
 function initStatDates(){
