@@ -2167,7 +2167,13 @@ async function goToProdDirectReg(){
   // 소재 정보 요약
   let sumHtml='📋 로트: <b>'+lot+'</b>';
   if(mi)sumHtml+='<br>🧱 소재: <b>'+mi+'</b>';
-  if(bp)sumHtml+='<br>📦 기종: <b>'+bp+'</b>';
+  if(mappedModels.length===1){
+    sumHtml+='<br>📦 매핑기종: <b style="color:#1565c0;font-size:15px">'+mappedModels[0]+'</b> <span style="font-size:10px;color:#2e7d32">✅ 자동적용</span>';
+  }else if(mappedModels.length>1){
+    sumHtml+='<br>📦 매핑기종: <b style="color:#1565c0">'+mappedModels.join(', ')+'</b> <span style="font-size:10px;color:#e65100">⬇ 아래에서 선택</span>';
+  }else if(bp){
+    sumHtml+='<br>📦 기종: <b>'+bp+'</b>';
+  }
   document.getElementById('regStep2Summary').innerHTML=sumHtml;
   document.getElementById('regStep2Summary').style.display='block';
 
@@ -2176,54 +2182,50 @@ async function goToProdDirectReg(){
   if(consumedArea){consumedArea.style.display='block';document.getElementById('chkLotConsumed').checked=false}
 
   // 기종 자동 선택: SBC → 레이스웨이, 그 외 → 일반기종
-  if(mappedModels.length>0){
+  if(mappedModels.length===1){
+    // ★ 단일 매핑기종: 탭/콤보 숨기고 자동 적용
+    const target=mappedModels[0];
+    document.getElementById('mInpBasePart').value=target;
+    document.getElementById('modelTypeSwitcher').style.display='none';
     if(isSBC){
-      // ===== SBC: 레이스웨이 기종 =====
       _currentModelType='raceway';
       await fillRacewaySelect('');
       const raceSel=document.getElementById('selRacewayPart');
-      // 탭 표시 (레이스웨이 고정)
-      document.getElementById('modelTypeSwitcher').style.display='block';
-      document.getElementById('tabRaceway').classList.add('on');
-      document.getElementById('tabGeneral').classList.remove('on');
-      document.getElementById('racewayModelArea').style.display='block';
-      document.getElementById('generalModelArea').style.display='none';
-      if(mappedModels.length===1){
-        // 단일 기종 자동 선택
-        const target=mappedModels[0];
-        document.getElementById('mInpBasePart').value=target;
-        let found=false;
-        for(let o of raceSel.options){if(o.value===target){raceSel.value=target;found=true;break}}
-        if(!found){const opt=document.createElement('option');opt.value=target;opt.textContent=target;raceSel.appendChild(opt);raceSel.value=target}
-        onRacewayPartSelect();
-      }else{
-        // 복수 기종: 매핑기종만 필터
-        raceSel.innerHTML='<option value="">기종 선택 ('+mappedModels.length+'종)</option>'+mappedModels.map(m=>'<option value="'+m+'">'+m+'</option>').join('');
-      }
+      let found=false;
+      for(let o of raceSel.options){if(o.value===target){raceSel.value=target;found=true;break}}
+      if(!found){const opt=document.createElement('option');opt.value=target;opt.textContent=target;raceSel.appendChild(opt);raceSel.value=target}
+      onRacewayPartSelect();
     }else{
-      // ===== 비-SBC: 일반기종 =====
       _currentModelType='general';
       await loadGeneralModels();
       refreshGeneralModelSelect('');
       const gSel=document.getElementById('selGeneralModel');
-      // 탭 표시 (일반기종 고정)
-      document.getElementById('modelTypeSwitcher').style.display='block';
+      let found=false;
+      if(gSel){for(let o of gSel.options){if(o.value===target){gSel.value=target;found=true;break}}}
+      if(!found&&gSel){const opt=document.createElement('option');opt.value=target;opt.textContent=target;gSel.appendChild(opt);gSel.value=target}
+      onGeneralModelSelect();
+    }
+  }else if(mappedModels.length>1){
+    // ★ 복수 매핑기종: 해당 탭 + 필터된 콤보 표시
+    document.getElementById('modelTypeSwitcher').style.display='block';
+    if(isSBC){
+      _currentModelType='raceway';
+      await fillRacewaySelect('');
+      const raceSel=document.getElementById('selRacewayPart');
+      document.getElementById('tabRaceway').classList.add('on');
+      document.getElementById('tabGeneral').classList.remove('on');
+      document.getElementById('racewayModelArea').style.display='block';
+      document.getElementById('generalModelArea').style.display='none';
+      raceSel.innerHTML='<option value="">기종 선택 ('+mappedModels.length+'종)</option>'+mappedModels.map(m=>'<option value="'+m+'">'+m+'</option>').join('');
+    }else{
+      _currentModelType='general';
+      await loadGeneralModels();
+      const gSel=document.getElementById('selGeneralModel');
       document.getElementById('tabRaceway').classList.remove('on');
       document.getElementById('tabGeneral').classList.add('on');
       document.getElementById('racewayModelArea').style.display='none';
       document.getElementById('generalModelArea').style.display='block';
-      if(mappedModels.length===1){
-        // 단일 기종 자동 선택
-        const target=mappedModels[0];
-        document.getElementById('mInpBasePart').value=target;
-        let found=false;
-        if(gSel){for(let o of gSel.options){if(o.value===target){gSel.value=target;found=true;break}}}
-        if(!found&&gSel){const opt=document.createElement('option');opt.value=target;opt.textContent=target;gSel.appendChild(opt);gSel.value=target}
-        onGeneralModelSelect();
-      }else{
-        // 복수 기종: 매핑기종만 필터
-        if(gSel) gSel.innerHTML='<option value="">기종 선택 ('+mappedModels.length+'종)</option>'+mappedModels.map(m=>'<option value="'+m+'">'+m+'</option>').join('');
-      }
+      if(gSel) gSel.innerHTML='<option value="">기종 선택 ('+mappedModels.length+'종)</option>'+mappedModels.map(m=>'<option value="'+m+'">'+m+'</option>').join('');
     }
   }else{
     // 매핑기종 없음: 기존 방식 (레이스웨이/일반 탭)
