@@ -225,12 +225,29 @@
               </select>
               <div id="materialInfoDisplay" style="display:none;margin-top:6px;padding:8px 10px;background:#e8f5e9;border:1.5px solid #a5d6a7;border-radius:8px;font-size:11px;line-height:1.8"></div>
             </div>
-            <!-- 생산: 미사용 소재 리스트 -->
-            <div class="fg" id="fgUnusedLotSel" style="display:none;margin-bottom:10px">
-              <label>📋 미사용 소재 선택 <span style="font-size:10px;color:#888;font-weight:400">lot_consumed=false 소재만 표시</span></label>
-              <select id="selUnusedLot" onchange="onUnusedLotSelect()" style="font-size:14px;padding:11px;border:2px solid #e65100;background:#fff3e0;font-weight:700;color:#e65100">
-                <option value="">소재를 선택하세요</option>
-              </select>
+            <!-- ★ 패치1: 생산 - 미사용 소재 리스트 (3단계 캐스케이딩) -->
+            <div id="fgUnusedLotSel" style="display:none;margin-bottom:10px">
+              <label style="display:block;font-size:12px;font-weight:600;color:#555;margin-bottom:4px">📋 미사용 소재 선택 <span style="font-size:10px;color:#888;font-weight:400">재질→폭→로트 순서로 선택</span></label>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px">
+                <div style="margin-bottom:0">
+                  <label style="display:block;font-size:10px;font-weight:600;color:#888;margin-bottom:3px">① 재질</label>
+                  <select id="selFilterMatType" onchange="onMaterialTypeFilter()" style="width:100%;font-size:14px;padding:10px;border:2px solid #1565c0;background:#e3f2fd;font-weight:700;color:#1565c0;border-radius:8px;font-family:inherit">
+                    <option value="">전체 재질</option>
+                  </select>
+                </div>
+                <div style="margin-bottom:0">
+                  <label style="display:block;font-size:10px;font-weight:600;color:#888;margin-bottom:3px">② 폭</label>
+                  <select id="selFilterWidth" onchange="onWidthFilter()" style="width:100%;font-size:14px;padding:10px;border:2px solid #7b1fa2;background:#f3e5f5;font-weight:700;color:#7b1fa2;border-radius:8px;font-family:inherit">
+                    <option value="">전체 폭</option>
+                  </select>
+                </div>
+              </div>
+              <div style="margin-bottom:0">
+                <label style="display:block;font-size:10px;font-weight:600;color:#888;margin-bottom:3px">③ 소재 로트 선택</label>
+                <select id="selUnusedLot" onchange="onUnusedLotSelect()" style="width:100%;font-size:14px;padding:11px;border:2px solid #e65100;background:#fff3e0;font-weight:700;color:#e65100;border-radius:8px;font-family:inherit">
+                  <option value="">소재를 선택하세요</option>
+                </select>
+              </div>
               <div id="unusedLotInfo" style="display:none;margin-top:6px;padding:8px 10px;background:#e8f5e9;border:1.5px solid #a5d6a7;border-radius:8px;font-size:11px;line-height:1.8"></div>
               <div id="unusedLotLoading" style="display:none;text-align:center;padding:8px;font-size:12px;color:#888">📥 미사용 소재 로드 중...</div>
             </div>
@@ -482,6 +499,7 @@
         <div style="display:flex;gap:8px;margin-top:4px">
           <button class="btn btn-gray" onclick="backToRegStep1()" style="flex:0 0 auto;width:auto;padding:13px 20px;font-size:14px">← 로트</button>
           <button class="btn btn-green" onclick="doRegisterFromModal()" style="flex:1;font-size:16px;padding:14px">✅ 등록</button>
+          <button class="btn" onclick="closeRegModal();closeScanOverlay()" style="flex:0 0 auto;width:auto;padding:13px 16px;font-size:14px;background:#f5f5f5;color:#888;border:1px solid #ddd;border-radius:10px">✕</button>
         </div>
         <div id="modalNewMapping" style="display:none;margin-top:8px">
           <button class="btn btn-sm btn-gray" onclick="doAddMappingFromModal()" style="width:100%;font-size:12px;padding:8px">➕ 미매핑 → 기종매핑 DB 등록</button>
@@ -1591,15 +1609,18 @@ async function loadUnusedIncomingLots(){
   const sel=document.getElementById('selUnusedLot');
   const loading=document.getElementById('unusedLotLoading');
   const infoDiv=document.getElementById('unusedLotInfo');
+  const selMatType=document.getElementById('selFilterMatType');
+  const selWidth=document.getElementById('selFilterWidth');
   if(!sel)return;
   sel.innerHTML='<option value="">로딩 중...</option>';
+  if(selMatType)selMatType.innerHTML='<option value="">전체 재질</option>';
+  if(selWidth)selWidth.innerHTML='<option value="">전체 폭</option>';
   if(loading)loading.style.display='block';
   if(infoDiv)infoDiv.style.display='none';
   _unusedLots=[];
 
   try{
     const sb=getSb();if(!sb)throw new Error('Supabase 미설정');
-    // 소재입고 이력 전체 (최근 500건)
     const{data:incoming,error:e1}=await sb.from('move_history_tj')
       .select('*')
       .eq('process','소재입고')
@@ -1607,7 +1628,6 @@ async function loadUnusedIncomingLots(){
       .limit(500);
     if(e1)throw e1;
 
-    // lot_consumed=true인 로트 목록
     const{data:consumed,error:e2}=await sb.from('move_history_tj')
       .select('lot,barcode_raw')
       .eq('lot_consumed',true)
@@ -1618,13 +1638,11 @@ async function loadUnusedIncomingLots(){
       if(r.barcode_raw)consumedSet.add(r.barcode_raw.trim());
     });
 
-    // 미사용(lot_consumed=false) 소재만 필터
     const active=(incoming||[]).filter(h=>{
       const lotKey=(h.lot||h.barcode_raw||'').trim();
       return lotKey&&!consumedSet.has(lotKey);
     });
 
-    // 중복 제거 (같은 lot은 최신 1건만)
     const seen=new Set();
     _unusedLots=active.filter(h=>{
       const key=(h.lot||h.barcode_raw||'').trim();
@@ -1632,25 +1650,92 @@ async function loadUnusedIncomingLots(){
       seen.add(key);return true;
     });
 
-    sel.innerHTML='<option value="">미사용 소재 선택 ('+_unusedLots.length+'건)</option>';
-    _unusedLots.forEach((h,idx)=>{
+    // ★ 패치2: 재질/폭 파싱 (material_info + material_master_tj 매칭)
+    await loadMaterialMaster();
+    _unusedLots.forEach(h=>{
+      h._parsedMatType='';h._parsedWidth='';
       const mi=h.material_info||'';
-      const lot=(h.lot||h.barcode_raw||'-').trim();
-      const wt=h.weight?h.weight+'kg':'';
-      const dt=h.move_date||'';
-      const bp=h.base_part||'';
-      const label=lot+(mi?' // '+mi:'')+(wt?' // '+wt:'')+(dt?' ('+dt+')':'');
-      sel.innerHTML+='<option value="'+idx+'">'+label+'</option>';
+      if(!mi)return;
+      // material_master_tj에서 정확한 매칭 우선
+      const mm=_materialMaster.find(m=>mi.includes(m.material_name));
+      if(mm){
+        h._parsedMatType=mm.material_type||'';
+        h._parsedWidth=mm.width||'';
+        return;
+      }
+      // 파싱 폴백
+      const parts=mi.includes('//')?mi.split('//').map(s=>s.trim()):
+                  mi.includes('/')?mi.split('/').map(s=>s.trim()):
+                  mi.split(/[\s]+/).map(s=>s.trim());
+      if(parts[0]){
+        const typeMatch=parts[0].match(/^([A-Za-z0-9]+)/);
+        h._parsedMatType=typeMatch?typeMatch[1]:parts[0];
+      }
+      for(let i=2;i<parts.length;i++){
+        const wMatch=parts[i].match(/^(\d+\.?\d*)W?$/i);
+        if(wMatch){h._parsedWidth=wMatch[1];break}
+      }
     });
-    if(!_unusedLots.length){
-      sel.innerHTML='<option value="">미사용 소재 없음 (소재입고 먼저 등록)</option>';
+
+    // ★ 재질 셀렉트 채우기
+    const matTypes=[...new Set(_unusedLots.map(h=>h._parsedMatType).filter(Boolean))].sort();
+    if(selMatType){
+      selMatType.innerHTML='<option value="">전체 재질 ('+_unusedLots.length+'건)</option>';
+      matTypes.forEach(t=>{
+        const cnt=_unusedLots.filter(h=>h._parsedMatType===t).length;
+        selMatType.innerHTML+='<option value="'+t+'">'+t+' ('+cnt+'건)</option>';
+      });
     }
+    _renderFilteredLotSelect();
   }catch(e){
     sel.innerHTML='<option value="">⚠ 로드 실패: '+e.message+'</option>';
   }
   if(loading)loading.style.display='none';
 }
 
+// ★ 패치2: 재질 선택 시 폭 목록 갱신
+function onMaterialTypeFilter(){
+  const matType=document.getElementById('selFilterMatType').value;
+  const selWidth=document.getElementById('selFilterWidth');
+  const filtered=matType?_unusedLots.filter(h=>h._parsedMatType===matType):_unusedLots;
+  const widths=[...new Set(filtered.map(h=>h._parsedWidth).filter(Boolean))].sort((a,b)=>parseFloat(a)-parseFloat(b));
+  if(selWidth){
+    selWidth.innerHTML='<option value="">전체 폭 ('+filtered.length+'건)</option>';
+    widths.forEach(w=>{
+      const cnt=filtered.filter(h=>h._parsedWidth===w).length;
+      selWidth.innerHTML+='<option value="'+w+'">'+w+'mm ('+cnt+'건)</option>';
+    });
+  }
+  _renderFilteredLotSelect();
+}
+
+// ★ 패치2: 폭 선택 시 로트 목록 갱신
+function onWidthFilter(){
+  _renderFilteredLotSelect();
+}
+
+// ★ 패치2: 필터 적용된 로트 목록 렌더링
+function _renderFilteredLotSelect(){
+  const sel=document.getElementById('selUnusedLot');if(!sel)return;
+  const matType=(document.getElementById('selFilterMatType')||{}).value||'';
+  const width=(document.getElementById('selFilterWidth')||{}).value||'';
+  let filtered=_unusedLots;
+  if(matType)filtered=filtered.filter(h=>h._parsedMatType===matType);
+  if(width)filtered=filtered.filter(h=>h._parsedWidth===width);
+  sel.innerHTML='<option value="">소재 선택 ('+filtered.length+'건)</option>';
+  filtered.forEach(h=>{
+    const idx=_unusedLots.indexOf(h);
+    const mi=h.material_info||'';
+    const lot=(h.lot||h.barcode_raw||'-').trim();
+    const wt=h.weight?h.weight+'kg':'';
+    const dt=h.move_date||'';
+    const label=lot+(mi?' // '+mi:'')+(wt?' // '+wt:'')+(dt?' ('+dt+')':'');
+    sel.innerHTML+='<option value="'+idx+'">'+label+'</option>';
+  });
+  if(!filtered.length)sel.innerHTML='<option value="">해당 조건의 소재 없음</option>';
+  document.getElementById('unusedLotInfo').style.display='none';
+  _selectedUnusedLot=null;
+}
 async function onUnusedLotSelect(){
   const sel=document.getElementById('selUnusedLot');
   const infoDiv=document.getElementById('unusedLotInfo');
@@ -2232,7 +2317,7 @@ async function goToProdDirectReg(){
   const isSBC=matCustomer.toUpperCase().includes('SBC');
   // 이동등록 팝업 닫기 (regModal은 별도이므로 OK)
   document.getElementById('moveSetupModal').classList.remove('show','center');
-  _selectedUnusedLot=null;
+  // ★ _selectedUnusedLot은 연속등록 위해 유지 (closeRegModal에서 null)
 
   // 가짜 modalScanData 설정 (바코드 스캔 대신)
   modalScanData={value:lot,format:'소재선택'};
@@ -3412,6 +3497,32 @@ async function _autoMatchShipment(barcodeValue,procId){
   document.getElementById('modalNewMapping').style.display='block';
 }
 
+// ★ 패치3: 생산 공정 연속등록 — 로트/수량만 초기화하고 모달 유지
+function _resetRegModalForNext(){
+  document.getElementById('mInpLot').value='';
+  document.getElementById('mInpQty').value='';
+  const chk=document.getElementById('chkLotConsumed');if(chk)chk.checked=false;
+  const dq0=document.getElementById('dualQty_0');if(dq0){dq0.value='';delete dq0.dataset.manual}
+  const dq1=document.getElementById('dualQty_1');if(dq1){dq1.value='';delete dq1.dataset.manual}
+  const dLot=document.getElementById('dualLot');if(dLot)dLot.value='';
+  scanAccum=[];renderScanAccum();
+  document.getElementById('modalBarcode').innerHTML='<span>다음 로트를 입력하세요</span>-';
+  const lotTrace=document.getElementById('lotTraceArea');
+  if(lotTrace){lotTrace.style.display='none';lotTrace.innerHTML=''}
+  const sumEl=document.getElementById('regStep2Summary');
+  if(sumEl){
+    const prevHtml=sumEl.innerHTML;const prevBg=sumEl.style.background;
+    sumEl.innerHTML='<span style="color:#2e7d32;font-weight:800;font-size:15px">✅ 등록 완료!</span> 다음 로트를 입력하세요';
+    sumEl.style.background='#e8f5e9';
+    setTimeout(()=>{sumEl.innerHTML=prevHtml;sumEl.style.background=prevBg||''},2500);
+  }
+  modalScanData=null;
+  setTimeout(()=>{
+    const qtyEl=document.getElementById('mInpQty')||document.getElementById('dualQty_0');
+    if(qtyEl)qtyEl.focus();
+  },150);
+}
+
 function closeRegModal(){
   document.getElementById('regModal').classList.remove('show','center');
   modalScanData=null;_dualMode=false;_dualChildren=[];
@@ -3463,6 +3574,10 @@ async function doRegisterFromModal(){
     localStorage.setItem(REG_SAVE_KEY,JSON.stringify({note}));
     showToast('✅ 동시등록 '+registered+'건 완료');
     if(navigator.vibrate)navigator.vibrate([100,50,100]);
+    // ★ 패치4: 생산 공정이면 모달 유지
+    if(selectedProcess&&selectedProcess.id==='production'){
+      _resetRegModalForNext();renderRecentList();renderRecentList2();return;
+    }
     closeRegModal();closeScanOverlay();scanAccum=[];renderScanAccum();renderRecentList();renderRecentList2();return;
   }
 
@@ -3513,6 +3628,10 @@ async function doRegisterFromModal(){
     localStorage.setItem(REG_SAVE_KEY,JSON.stringify({note}));
     showToast('✅ 등록 (일반기종): '+generalModel+' 수량:'+qty);
     if(navigator.vibrate)navigator.vibrate([100]);
+    // ★ 패치5: 생산 공정이면 모달 유지
+    if(selectedProcess&&selectedProcess.id==='production'){
+      _resetRegModalForNext();renderRecentList();renderRecentList2();return;
+    }
     closeRegModal();closeScanOverlay();scanAccum=[];renderScanAccum();renderRecentList();renderRecentList2();return;
   }
 
