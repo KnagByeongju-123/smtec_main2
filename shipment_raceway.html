@@ -47,6 +47,26 @@
     .stg-list-item .stg-name{font-weight:600;color:var(--text);flex:1}
     .stg-list-item .stg-del{width:24px;height:24px;border:none;border-radius:6px;background:rgba(239,68,68,.15);color:var(--ng);font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0}
     .stg-list-item .stg-move{width:24px;height:24px;border:none;border-radius:6px;background:transparent;color:var(--text2);font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+    /* ===== 인라인 캘린더 ===== */
+    .cal-wrap{background:var(--bg);border:1.5px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:8px}
+    .cal-header{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:rgba(59,130,246,.08)}
+    .cal-header button{width:32px;height:32px;border:none;border-radius:8px;background:rgba(255,255,255,.06);color:var(--text);font-size:16px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center}
+    .cal-header button:active{background:rgba(59,130,246,.2)}
+    .cal-title{font-size:14px;font-weight:700;color:var(--text);cursor:pointer}
+    .cal-title:hover{color:var(--accent)}
+    .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;padding:6px}
+    .cal-dow{text-align:center;font-size:10px;font-weight:700;color:var(--text3);padding:4px 0}
+    .cal-dow:first-child{color:#ef4444}
+    .cal-dow:last-child{color:#3b82f6}
+    .cal-day{text-align:center;padding:8px 0;font-size:13px;font-weight:600;border-radius:8px;cursor:pointer;color:var(--text2);transition:all .1s;position:relative}
+    .cal-day:hover{background:rgba(59,130,246,.12)}
+    .cal-day.today{color:var(--accent);font-weight:800}
+    .cal-day.today::after{content:'';position:absolute;bottom:3px;left:50%;transform:translateX(-50%);width:4px;height:4px;border-radius:50%;background:var(--accent)}
+    .cal-day.selected{background:var(--accent)!important;color:#fff!important;font-weight:800}
+    .cal-day.selected::after{background:#fff!important}
+    .cal-day.other{color:var(--text3);opacity:.4}
+    .cal-day.sun{color:#ef4444}.cal-day.sat{color:#3b82f6}
+    .cal-day.selected.sun,.cal-day.selected.sat{color:#fff!important}
   </style>
 </head>
 <body>
@@ -87,14 +107,18 @@
     </div>
   </div>
 
-  <!-- 생산일자 -->
+  <!-- 생산일자 (인라인 캘린더) -->
   <div class="card">
-    <div class="card-title">📅 생산일자 (LOT)</div>
-    <div class="fg-row">
-      <div class="fg"><input type="date" id="pdInput"></div>
-      <div class="fg"><button class="btn-sm" onclick="addProdDate()" style="width:100%;padding:11px;background:var(--accent);color:#fff;border-radius:8px">+ 날짜 추가</button></div>
+    <div class="card-title">📅 생산일자 (LOT) <span style="font-size:10px;color:var(--text3);font-weight:400;margin-left:4px">날짜를 터치하면 추가/제거</span></div>
+    <div class="cal-wrap">
+      <div class="cal-header">
+        <button onclick="calNav(-1)">‹</button>
+        <span class="cal-title" id="calTitle" onclick="calGoToday()"></span>
+        <button onclick="calNav(1)">›</button>
+      </div>
+      <div class="cal-grid" id="calGrid"></div>
     </div>
-    <div class="pd-chips" id="pdChips"><div class="pd-empty">날짜를 추가하세요</div></div>
+    <div class="pd-chips" id="pdChips"><div class="pd-empty">달력에서 날짜를 선택하세요</div></div>
     <div style="font-size:11px;color:var(--text3);margin-top:6px">LOT 미리보기: <strong id="lotPreview" style="color:var(--accent)">-</strong></div>
   </div>
 
@@ -245,7 +269,6 @@ function getFinalPart(row){
   else base=row.heat_part||row.parent_part;
   if(!base)return row.parent_part+' '+(row.child_type||'');
   if(row.child_type&&!base.includes('Inner')&&!base.includes('Outer'))return base+' '+row.child_type;
-  // Inner/Outer 앞에 공백이 없으면 삽입
   base=base.replace(/((?:^|[^\s]))(Inner|Outer)/g,'$1 $2').replace(/  +/g,' ').trim();
   return base;
 }
@@ -262,27 +285,103 @@ function onCustChange(){
   }else{
     sel.innerHTML='<option value="">등록된 기종 없음</option>';
   }
-  // 도착지 자동설정
   document.getElementById('shipFrom').value='출하대기장';
 }
 
-// ===== 생산일자 =====
+// ===== 인라인 캘린더 =====
+let calYear, calMonth; // 현재 표시 중인 년/월
 let prodDates=[];
 
-function addProdDate(){
-  const v=document.getElementById('pdInput').value;
-  if(!v){toast('날짜를 선택하세요');return}
-  if(prodDates.includes(v)){toast('이미 추가됨');return}
-  prodDates.push(v);prodDates.sort();
-  renderProdDates();
-  toast('📅 '+v+' 추가 ('+prodDates.length+'건)');
+function calInit(){
+  const now=new Date();
+  calYear=now.getFullYear();
+  calMonth=now.getMonth();
+  calRender();
 }
 
-function removeProdDate(idx){prodDates.splice(idx,1);renderProdDates()}
+function calNav(dir){
+  calMonth+=dir;
+  if(calMonth<0){calMonth=11;calYear--}
+  if(calMonth>11){calMonth=0;calYear++}
+  calRender();
+}
+
+function calGoToday(){
+  const now=new Date();
+  calYear=now.getFullYear();
+  calMonth=now.getMonth();
+  calRender();
+}
+
+function calRender(){
+  const title=document.getElementById('calTitle');
+  title.textContent=calYear+'년 '+(calMonth+1)+'월';
+
+  const grid=document.getElementById('calGrid');
+  const dows=['일','월','화','수','목','금','토'];
+  let html=dows.map((d,i)=>'<div class="cal-dow'+(i===0?' sun':'')+(i===6?' sat':'')+'">'+d+'</div>').join('');
+
+  const first=new Date(calYear,calMonth,1);
+  const lastDay=new Date(calYear,calMonth+1,0).getDate();
+  const startDow=first.getDay();
+  const today=kstDate();
+
+  // 이전 달 빈칸
+  const prevLast=new Date(calYear,calMonth,0).getDate();
+  for(let i=startDow-1;i>=0;i--){
+    const d=prevLast-i;
+    const m=calMonth===0?12:calMonth;
+    const y=calMonth===0?calYear-1:calYear;
+    const ds=y+'-'+String(m).padStart(2,'0')+'-'+String(d).padStart(2,'0');
+    const sel=prodDates.includes(ds)?' selected':'';
+    const dow=(startDow-i-1+7)%7;
+    html+='<div class="cal-day other'+(dow===0?' sun':'')+(dow===6?' sat':'')+sel+'" onclick="calToggle(\''+ds+'\')">'+d+'</div>';
+  }
+
+  // 이번 달
+  for(let d=1;d<=lastDay;d++){
+    const ds=calYear+'-'+String(calMonth+1).padStart(2,'0')+'-'+String(d).padStart(2,'0');
+    const isToday=ds===today?' today':'';
+    const sel=prodDates.includes(ds)?' selected':'';
+    const dow=(startDow+d-1)%7;
+    html+='<div class="cal-day'+isToday+(dow===0?' sun':'')+(dow===6?' sat':'')+sel+'" onclick="calToggle(\''+ds+'\')">'+d+'</div>';
+  }
+
+  // 다음 달 빈칸 (6줄 맞춤)
+  const totalCells=startDow+lastDay;
+  const remaining=(7-totalCells%7)%7;
+  for(let d=1;d<=remaining;d++){
+    const m=calMonth===11?1:calMonth+2;
+    const y=calMonth===11?calYear+1:calYear;
+    const ds=y+'-'+String(m).padStart(2,'0')+'-'+String(d).padStart(2,'0');
+    const sel=prodDates.includes(ds)?' selected':'';
+    const dow=(totalCells+d-1)%7;
+    html+='<div class="cal-day other'+(dow===0?' sun':'')+(dow===6?' sat':'')+sel+'" onclick="calToggle(\''+ds+'\')">'+d+'</div>';
+  }
+
+  grid.innerHTML=html;
+}
+
+function calToggle(dateStr){
+  const idx=prodDates.indexOf(dateStr);
+  if(idx>=0){
+    prodDates.splice(idx,1);
+    toast('📅 '+dateStr+' 제거');
+  }else{
+    prodDates.push(dateStr);
+    prodDates.sort();
+    toast('📅 '+dateStr+' 추가 ('+prodDates.length+'건)');
+    if(navigator.vibrate)navigator.vibrate(30);
+  }
+  calRender();
+  renderProdDates();
+}
+
+function removeProdDate(idx){prodDates.splice(idx,1);calRender();renderProdDates()}
 
 function renderProdDates(){
   const c=document.getElementById('pdChips');
-  if(!prodDates.length){c.innerHTML='<div class="pd-empty">날짜를 추가하세요</div>';document.getElementById('lotPreview').textContent='-';return}
+  if(!prodDates.length){c.innerHTML='<div class="pd-empty">달력에서 날짜를 선택하세요</div>';document.getElementById('lotPreview').textContent='-';return}
   c.innerHTML=prodDates.map((d,i)=>'<div class="pd-chip">'+d+'<button onclick="removeProdDate('+i+')">✕</button></div>').join('');
   document.getElementById('lotPreview').textContent=buildLot(prodDates);
 }
@@ -349,10 +448,9 @@ async function doShipment(){
     if(navigator.vibrate)navigator.vibrate([100,50,100]);
     await sendTelegram(row);
     // 초기화 (고객사/작업자/출발지 유지)
-    prodDates=[];renderProdDates();
+    prodDates=[];calRender();renderProdDates();
     document.getElementById('shipQty').value='';
     document.getElementById('shipMemo').value='';
-    document.getElementById('pdInput').value='';
     loadRecent();
   }catch(e){toast('❌ 저장 실패: '+e.message)}
 }
@@ -478,6 +576,7 @@ async function testTg(){const st=document.getElementById('stgTgStatus');let bot=
 window.addEventListener('DOMContentLoaded',()=>{
   if(!localStorage.getItem(LS)){localStorage.setItem(LS,JSON.stringify({sb_url:'https://omngtyewdaqpphnzeate.supabase.co',sb_key:'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tbmd0eWV3ZGFxcHBobnplYXRlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4ODk4ODksImV4cCI6MjA5MDQ2NTg4OX0.Zxur3t02JHtOcXforCMSwO3i2mMaf5sViE0tXXUC0-s',tg_bot:'',tg_users:'[]'}))}
   document.getElementById('shipDate').value=kstDate();
+  calInit();
   if(ok()){loadCustomers();loadWorkers();loadPartTree().then(()=>loadRecent())}
   else{document.getElementById('pnl0').insertAdjacentHTML('afterbegin','<div style="background:rgba(239,68,68,.15);border:1.5px solid rgba(239,68,68,.3);border-radius:10px;padding:12px;margin:0 12px 12px;font-size:12px;color:#fca5a5;text-align:center">⚠️ Supabase 미설정 — ⚙ 설정 탭</div>')}
   setTimeout(()=>{if(ok())loadTgFromCC()},1000);
