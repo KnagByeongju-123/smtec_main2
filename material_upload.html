@@ -263,7 +263,11 @@ function decodeTgToken(encoded){
 
 async function loadTelegramConfig(){
   try{
-    const data=await sbSelect('common_code',{code_group:'eq.telegram',order:'sort_order.asc'},'code_value,sort_order');
+    // ★ mat_telegram (소재입고 전용) 우선, 없으면 telegram (공용) fallback
+    let data=await sbSelect('common_code',{code_group:'eq.mat_telegram',order:'sort_order.asc'},'code_value,sort_order');
+    if(!data||!data.length){
+      data=await sbSelect('common_code',{code_group:'eq.telegram',order:'sort_order.asc'},'code_value,sort_order');
+    }
     if(data&&data.length){
       data.forEach(r=>{
         const v=String(r.code_value||'').trim();
@@ -290,14 +294,28 @@ async function sendTelegram(msg){
   }
 }
 
-// 페이지 로드 시 텔레그램 설정 로드
+// 페이지 로드 시 텔레그램/메일 설정 로드
 loadTelegramConfig();
+loadMailRecipients();
 
 // 메일 알림 (GAS 경유)
+let _mailRecipients=[]; // mat_mail에서 로드된 수신자 목록
+
+async function loadMailRecipients(){
+  try{
+    const data=await sbSelect('common_code',{code_group:'eq.mat_mail',order:'sort_order.asc'},'code_value,sort_order');
+    if(data&&data.length){
+      _mailRecipients=data.map(r=>String(r.code_value||'').trim()).filter(v=>v&&v.includes('@'));
+    }
+  }catch(e){console.log('메일 수신자 로드 실패:',e)}
+}
 
 async function sendEmail(info){
   const gasUrl=_mailGasUrl||localStorage.getItem('MATERIAL_MAIL_GAS_URL')||'';
   if(!gasUrl)return;
+  // mat_mail 수신자 목록이 있으면 전달
+  if(!_mailRecipients.length)await loadMailRecipients();
+  if(_mailRecipients.length)info.recipients=_mailRecipients;
 
   const matRows=info.rows.slice(0,10).map(r=>{
     const m=r.material_info||'-';
@@ -337,7 +355,7 @@ async function sendEmail(info){
     await fetch(gasUrl,{
       method:'POST',
       headers:{'Content-Type':'text/plain;charset=utf-8'},
-      body:JSON.stringify({action:'sendMail',subject:subject,html:html,text:subject})
+      body:JSON.stringify({action:'sendMail',subject:subject,html:html,text:subject,recipients:info.recipients||[]})
     });
   }catch(e){console.log('메일 발송 실패:',e)}
 }
@@ -730,7 +748,8 @@ function updateConnStatus(){
   const tgOk=!!(_tgBotToken&&_tgChatIds.length);
   c.innerHTML=(sbOk?'🟢':'🔴')+' Supabase: '+(sbOk?'설정됨':'미설정')
     +'<br>'+(mailOk?'🟢':'🔴')+' 메일 알림: '+(mailOk?'서버 설정됨':'미설정')
-    +'<br>'+(tgOk?'🟢':'🔴')+' 텔레그램: '+(tgOk?_tgChatIds.length+'명 수신':'미설정 (common_code 확인)');
+    +'<br>'+(tgOk?'🟢':'🔴')+' 텔레그램: '+(tgOk?_tgChatIds.length+'명 수신':'미설정 (common_code 확인)')
+    +'<br>'+(_mailRecipients.length?'🟢':'🔴')+' 메일 수신자: '+(_mailRecipients.length?_mailRecipients.length+'명 (mat_mail)':'미설정');
 }
 
 document.addEventListener('DOMContentLoaded',()=>{
