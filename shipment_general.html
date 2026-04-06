@@ -44,7 +44,6 @@
     .stg-list-item .stg-name{font-weight:600;color:var(--text);flex:1}
     .stg-list-item .stg-del{width:24px;height:24px;border:none;border-radius:6px;background:rgba(239,68,68,.15);color:var(--ng);font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0}
     .stg-list-item .stg-move{width:24px;height:24px;border:none;border-radius:6px;background:transparent;color:var(--text2);font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0}
-    /* ===== 인라인 캘린더 ===== */
     .cal-wrap{background:var(--bg);border:1.5px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:8px}
     .cal-header{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:rgba(139,92,246,.08)}
     .cal-header button{width:32px;height:32px;border:none;border-radius:8px;background:rgba(255,255,255,.06);color:var(--text);font-size:16px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center}
@@ -69,7 +68,7 @@
 <body>
 <div class="hdr">
   <h1>🏭 출하(일반)</h1>
-  <p>일반기종 출하등록 · 생산일자 LOT 추적 · move_history_tj 연동</p>
+  <p>일반기종 출하등록 · 생산일자 LOT 추적 · 소재마스터 기종연동</p>
 </div>
 <div class="tabs">
   <div class="tab on" onclick="swTab(0)">🚚 출하등록</div>
@@ -245,21 +244,36 @@ async function loadWorkers(){
   try{const d=await sbSelect('common_code','code_group=eq.gn_worker&order=sort_order.asc');_workers=(d||[]).map(r=>({id:r.id,name:String(r.code_value||'').trim(),sort:r.sort_order||0}))}catch(e){}
   fillSel('shipWorker',_workers.map(w=>w.name),'선택');
 }
+
+// ★ 소재마스터에서 고객사별 기종 목록 로드
 async function loadGeneralModels(){
-  try{_generalModels=await sbSelect('general_model_tj','order=customer.asc,model_name.asc')}catch(e){_generalModels=[]}
+  try{
+    const materials=await sbSelect('material_master_tj','order=customer.asc,material_name.asc');
+    _generalModels=[];
+    (materials||[]).forEach(m=>{
+      const cust=String(m.customer||'').trim();
+      const models=String(m.mapped_models||'').split(',').map(s=>s.trim()).filter(s=>s);
+      models.forEach(mn=>{
+        if(!_generalModels.find(g=>g.customer===cust&&g.model_name===mn)){
+          _generalModels.push({customer:cust,model_name:mn,material_name:m.material_name||''});
+        }
+      });
+    });
+  }catch(e){_generalModels=[]}
 }
 
 function fillSel(id,items,ph){const s=document.getElementById(id);if(!s)return;const p=s.value;s.innerHTML='<option value="">'+ph+'</option>';items.forEach(v=>{s.innerHTML+='<option value="'+esc(v)+'">'+esc(v)+'</option>'});if(p)s.value=p}
 
+// ★ 고객사 변경 → 해당 고객사 + 공용(customer 빈값) 기종 표시
 function onCustChange(){
   const cust=document.getElementById('shipCustomer').value;
   const sel=document.getElementById('shipModel');
   sel.innerHTML='<option value="">기종 선택</option>';
   if(!cust){sel.innerHTML='<option value="">고객사 먼저 선택</option>';return}
-  const filtered=_generalModels.filter(m=>m.customer===cust);
+  const filtered=_generalModels.filter(m=>m.customer===cust||m.customer==='');
   const names=[...new Set(filtered.map(m=>m.model_name))].sort();
   if(names.length){
-    sel.innerHTML='<option value="">기종 선택</option>'+names.map(n=>'<option value="'+esc(n)+'">'+esc(n)+'</option>').join('');
+    sel.innerHTML='<option value="">기종 선택 ('+names.length+'건)</option>'+names.map(n=>'<option value="'+esc(n)+'">'+esc(n)+'</option>').join('');
   }else{
     sel.innerHTML='<option value="">등록된 기종 없음</option>';
   }
@@ -301,7 +315,6 @@ function calRender(){
   const startDow=first.getDay();
   const today=kstDate();
 
-  // 이전 달
   const prevLast=new Date(calYear,calMonth,0).getDate();
   for(let i=startDow-1;i>=0;i--){
     const d=prevLast-i;
@@ -313,7 +326,6 @@ function calRender(){
     html+='<div class="cal-day other'+(dow===0?' sun':'')+(dow===6?' sat':'')+sel+'" onclick="calToggle(\''+ds+'\')">'+d+'</div>';
   }
 
-  // 이번 달
   for(let d=1;d<=lastDay;d++){
     const ds=calYear+'-'+String(calMonth+1).padStart(2,'0')+'-'+String(d).padStart(2,'0');
     const isToday=ds===today?' today':'';
@@ -322,7 +334,6 @@ function calRender(){
     html+='<div class="cal-day'+isToday+(dow===0?' sun':'')+(dow===6?' sat':'')+sel+'" onclick="calToggle(\''+ds+'\')">'+d+'</div>';
   }
 
-  // 다음 달
   const totalCells=startDow+lastDay;
   const remaining=(7-totalCells%7)%7;
   for(let d=1;d<=remaining;d++){
