@@ -870,6 +870,16 @@ CREATE POLICY "allow_all_part_hierarchy" ON part_hierarchy FOR ALL USING (true) 
 ALTER TABLE general_model_tj ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "allow_all_general_model_tj" ON general_model_tj;
 CREATE POLICY "allow_all_general_model_tj" ON general_model_tj FOR ALL USING (true) WITH CHECK (true);`,
+`CREATE TABLE IF NOT EXISTS machining_model_tj (
+  id BIGSERIAL PRIMARY KEY,
+  model_name TEXT NOT NULL,
+  note TEXT DEFAULT '',
+  sort_order INTEGER DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE machining_model_tj ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "allow_all_machining_model_tj" ON machining_model_tj;
+CREATE POLICY "allow_all_machining_model_tj" ON machining_model_tj FOR ALL USING (true) WITH CHECK (true);`,
 `CREATE TABLE IF NOT EXISTS lot_setting_tj (
   id BIGSERIAL PRIMARY KEY, setting_key TEXT UNIQUE NOT NULL,
   setting_value TEXT, created_at TIMESTAMPTZ DEFAULT NOW()
@@ -1237,6 +1247,22 @@ function refreshGeneralModelSelect(customer){
   const sel=document.getElementById('selGeneralModel');if(!sel)return;
   const filtered=customer?_generalModels.filter(m=>m.customer===customer):_generalModels;
   sel.innerHTML='<option value="">기종 선택</option>'+filtered.map(m=>`<option value="${m.model_name}">${m.model_name}</option>`).join('');
+}
+
+// ============================================================
+//  가공기종 마스터 (machining_model_tj)
+// ============================================================
+let _machiningModels=[];
+let _machiningModelsTime=0;
+
+async function loadMachiningModels(force=false){
+  const now=Date.now();
+  if(!force&&_machiningModels.length&&now-_machiningModelsTime<60000)return _machiningModels;
+  try{
+    const data=await sbSelect('machining_model_tj',{},'model_name.asc',500);
+    _machiningModels=data||[];_machiningModelsTime=now;
+  }catch(e){_machiningModels=[]}
+  return _machiningModels;
 }
 
 // ============================================================
@@ -2801,19 +2827,13 @@ async function fillSimpleProcModelSelect(procId){
       }
     }
   }else{
-    // 가공: 일반기종마스터
-    const models=await loadGeneralModels(true);
-    const allModels=models&&models.length?models:_generalModels;
-    const filtered=(selectedCustomer&&allModels.length>0)?allModels.filter(m=>m.customer===selectedCustomer):allModels;
-    if(filtered.length){
-      const byCust={};
-      filtered.forEach(m=>{if(!byCust[m.customer])byCust[m.customer]=[];byCust[m.customer].push(m)});
-      Object.entries(byCust).sort(([a],[b])=>a.localeCompare(b)).forEach(([cust,ms])=>{
-        const custNames=[...new Set(ms.map(m=>m.model_name))].sort();
-        sel.innerHTML+='<optgroup label="🏭 '+cust+'">'+custNames.map(n=>`<option value="${n}">${n}</option>`).join('')+'</optgroup>';
-      });
+    // 가공: machining_model_tj (가공기종 마스터)
+    const mcModels=await loadMachiningModels(true);
+    if(mcModels.length){
+      const names=[...new Set(mcModels.map(m=>m.model_name))].sort();
+      sel.innerHTML+='<optgroup label="⚙ 가공기종">'+names.map(n=>`<option value="${n}">${n}</option>`).join('')+'</optgroup>';
     }else{
-      sel.innerHTML+='<option value="" disabled>등록된 일반기종 없음</option>';
+      sel.innerHTML+='<option value="" disabled>등록된 가공기종 없음 (마스터관리에서 등록)</option>';
     }
   }
 }
