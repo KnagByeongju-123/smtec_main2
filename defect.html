@@ -683,21 +683,59 @@ async function deleteDefectType(id){if(!confirm('삭제?'))return;try{await sbDe
 
 // ===== 기종이미지 =====
 let uploadSide='TOP';
+// ===== 이미지 압축 (50KB 이하 목표) =====
+const IMG_MAX_BYTES=50*1024; // 50KB
+function compressImage(file){
+  return new Promise((resolve,reject)=>{
+    const img=new Image();
+    img.onload=async function(){
+      URL.revokeObjectURL(img.src);
+      const cvs=document.createElement('canvas');
+      const ctx=cvs.getContext('2d');
+      // 단계별 시도: 해상도 줄이면서 quality 낮춰가며 50KB 이하 달성
+      const steps=[
+        {maxW:800,q:0.5},
+        {maxW:640,q:0.4},
+        {maxW:480,q:0.35},
+        {maxW:360,q:0.3},
+        {maxW:280,q:0.25}
+      ];
+      for(const st of steps){
+        let w=img.width, h=img.height;
+        if(w>st.maxW){h=Math.round(h*(st.maxW/w));w=st.maxW}
+        cvs.width=w;cvs.height=h;
+        ctx.drawImage(img,0,0,w,h);
+        const blob=await new Promise(r=>cvs.toBlob(r,'image/jpeg',st.q));
+        if(blob&&blob.size<=IMG_MAX_BYTES){resolve(blob);return}
+        if(blob&&st===steps[steps.length-1]){resolve(blob);return} // 최소단계면 그냥 사용
+      }
+      // fallback
+      cvs.toBlob(b=>{resolve(b||file)},'image/jpeg',0.2);
+    };
+    img.onerror=()=>reject(new Error('이미지 로드 실패'));
+    img.src=URL.createObjectURL(file);
+  });
+}
+
 function uploadBoardImage(s){uploadSide=s;if(!document.getElementById('imgModel').value){showToast('기종 선택');return}document.getElementById('boardImgInput').click()}
 document.getElementById('boardImgInput').addEventListener('change',async function(e){
   const f=e.target.files[0];if(!f)return;
   const m=document.getElementById('imgModel').value;if(!m){showToast('기종 선택');this.value='';return}
-  showLoading('업로드 중...');
+  showLoading('이미지 압축 중...');
   try{
+    const compressed=await compressImage(f,1200,0.6);
+    const origKB=(f.size/1024).toFixed(0), compKB=(compressed.size/1024).toFixed(0);
+    console.log('이미지 압축: '+origKB+'KB → '+compKB+'KB ('+Math.round(compressed.size/f.size*100)+'%)');
+    showLoading('업로드 중... ('+compKB+'KB)');
     const cfg=getCfg();const base=(cfg.url||SB_DEFAULT_URL).replace(/\/$/,'');
-    const ts=Date.now();const ext=f.name.split('.').pop()||'jpg';
-    const path='board-images/'+m+'_'+uploadSide+'_'+ts+'.'+ext;
-    const upRes=await fetch(base+'/storage/v1/object/defect-images/'+path,{method:'POST',headers:{'apikey':cfg.key||SB_DEFAULT_KEY,'Authorization':'Bearer '+(cfg.key||SB_DEFAULT_KEY),'Content-Type':f.type,'x-upsert':'true'},body:f});
+    const ts=Date.now();
+    const path='board-images/'+m+'_'+uploadSide+'_'+ts+'.jpg';
+    const upRes=await fetch(base+'/storage/v1/object/defect-images/'+path,{method:'POST',headers:{'apikey':cfg.key||SB_DEFAULT_KEY,'Authorization':'Bearer '+(cfg.key||SB_DEFAULT_KEY),'Content-Type':'image/jpeg','x-upsert':'true'},body:compressed});
     if(!upRes.ok){const errText=await upRes.text();if(upRes.status===400||upRes.status===404){showToast('⚠ Storage 버킷 "defect-images" 생성 필요');hideLoading();this.value='';alert('Supabase Dashboard > Storage에서\n1. "New bucket" 클릭\n2. 이름: defect-images\n3. Public bucket: ON\n4. 생성 후 다시 업로드하세요');return}throw new Error(upRes.status+': '+errText)}
     const publicUrl=base+'/storage/v1/object/public/defect-images/'+path;
     try{const existing=await sbSelect('board_image',{model_name:'eq.'+m,side:'eq.'+uploadSide},'',10);for(const old of existing)await sbDelete('board_image',{id:'eq.'+old.id})}catch(ex){}
     await sbInsert('board_image',{model_name:m,side:uploadSide,image_url:publicUrl});
-    showToast('✅ '+uploadSide+' 이미지 업로드 완료');await loadBoardImages();
+    showToast('✅ '+uploadSide+' 업로드 ('+origKB+'→'+compKB+'KB)');await loadBoardImages();
   }catch(err){showToast('업로드 실패: '+err.message)}
   hideLoading();this.value='';
 });
