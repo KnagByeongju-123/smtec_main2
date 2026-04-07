@@ -1552,13 +1552,49 @@ function uploadRefFile(key) {
   document.getElementById('refFileInput').click();
 }
 
+// 이미지 압축 (최대 1280px, JPEG 품질 0.6)
+function compressImage(file, maxW, maxH, quality) {
+  maxW = maxW || 1280; maxH = maxH || 1280; quality = quality || 0.6;
+  return new Promise(function(resolve) {
+    if (!file.type.startsWith('image/')) { resolve(file); return; }
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      var img = new Image();
+      img.onload = function() {
+        var w = img.width, h = img.height;
+        if (w > maxW || h > maxH) {
+          var ratio = Math.min(maxW / w, maxH / h);
+          w = Math.round(w * ratio); h = Math.round(h * ratio);
+        }
+        var cv = document.createElement('canvas');
+        cv.width = w; cv.height = h;
+        var ctx = cv.getContext('2d');
+        ctx.drawImage(img, 0, 0, w, h);
+        cv.toBlob(function(blob) {
+          if (blob && blob.size < file.size) {
+            var compressed = new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' });
+            console.log('이미지 압축: ' + (file.size/1024).toFixed(0) + 'KB → ' + (compressed.size/1024).toFixed(0) + 'KB');
+            resolve(compressed);
+          } else { resolve(file); }
+        }, 'image/jpeg', quality);
+      };
+      img.onerror = function() { resolve(file); };
+      img.src = e.target.result;
+    };
+    reader.onerror = function() { resolve(file); };
+    reader.readAsDataURL(file);
+  });
+}
+
 async function handleRefUpload(file) {
   if (!file || !currentRefKey) return;
+  // 이미지 압축 적용
+  if (file.type.startsWith('image/')) { file = await compressImage(file, 800, 800, 0.4); }
   const key = currentRefKey;
   try {
     const SB_URL = getSbUrl(), SB_KEY = getSbKey();
     if (!SB_URL || !SB_KEY) { alert('Supabase 설정 필요'); return; }
-    const ext = file.name.split('.').pop() || 'jpg';
+    const ext = 'jpg';
     const fname = 'ref_photos/' + key + '_' + Date.now() + '.' + ext;
     // Storage 업로드
     const res = await fetch(SB_URL + '/storage/v1/object/p-machine-images/' + fname, {
