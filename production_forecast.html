@@ -147,6 +147,7 @@ async function doAnalysis(){
 
       const mi=h.material_info||'';
       const master=findMaster(mi,masters);
+      const parsed=parseMaterialInfo(mi);
       const weightKg=h.weight||0;
       const unitWt=master?parseFloat(master.unit_weight)||0:0;
       const estQty=unitWt>0?Math.floor(weightKg*1000/unitWt):0;
@@ -155,6 +156,7 @@ async function doAnalysis(){
       unusedList.push({
         lot:lotKey, material:mi, weightKg, unitWt, estQty,
         models, masterName:master?master.material_name:'',
+        matType:parsed.type, matWidth:parsed.width, matThick:parsed.thick,
         date:h.move_date||'', noMaster:!master, noUnitWt:master&&!unitWt
       });
     });
@@ -251,17 +253,81 @@ async function doAnalysis(){
 function findMaster(materialInfo,masters){
   if(!materialInfo)return null;
   const mi=materialInfo.trim();
-  // 1. material_name 정확 매칭
-  let found=masters.find(m=>m.material_name&&mi.includes(m.material_name.trim()));
-  if(found)return found;
-  // 2. material_type+thickness+width 조합 매칭
-  for(const m of masters){
-    if(m.material_type&&mi.includes(m.material_type)){
-      if(m.width&&mi.includes(m.width))return m;
-      if(m.thickness&&mi.includes(m.thickness))return m;
-    }
+
+  // material_info 예: "SPCC-0.8T-60W SPCC/0.8/60" 또는 "SUS430-1.2T-72W"
+  // 파싱: 재질, 두께, 폭 추출
+  const parsed=parseMaterialInfo(mi);
+
+  // 1단계: 재질+두께+폭 모두 일치 (가장 정확)
+  if(parsed.type&&parsed.width){
+    const exact=masters.find(m=>{
+      const mType=(m.material_type||'').trim();
+      const mThick=(m.thickness||'').trim();
+      const mWidth=(m.width||'').trim();
+      if(!mType)return false;
+      const typeMatch=mType===parsed.type;
+      const widthMatch=mWidth===parsed.width;
+      const thickMatch=!mThick||!parsed.thick||mThick===parsed.thick;
+      return typeMatch&&widthMatch&&thickMatch;
+    });
+    if(exact)return exact;
   }
+
+  // 2단계: material_name 정확 포함 매칭 (material_name이 긴 것 우선)
+  const sorted=[...masters].sort((a,b)=>(b.material_name||'').length-(a.material_name||'').length);
+  const nameMatch=sorted.find(m=>m.material_name&&mi.includes(m.material_name.trim()));
+  if(nameMatch)return nameMatch;
+
+  // 3단계: 재질+폭만 매칭 (두께 무시)
+  if(parsed.type&&parsed.width){
+    const partial=masters.find(m=>{
+      const mType=(m.material_type||'').trim();
+      const mWidth=(m.width||'').trim();
+      return mType===parsed.type&&mWidth===parsed.width;
+    });
+    if(partial)return partial;
+  }
+
   return null;
+}
+
+function parseMaterialInfo(mi){
+  // "SPCC-0.8T-60W SPCC/0.8/60" → {type:'SPCC', thick:'0.8', width:'60'}
+  // "SUS430/1.2/72" → {type:'SUS430', thick:'1.2', width:'72'}
+  let type='',thick='',width='';
+
+  // 패턴1: "재질-두께T-폭W" (예: SPCC-0.8T-60W)
+  const p1=mi.match(/^([A-Za-z0-9]+)[\-\s]+([\d.]+)T[\-\s]+([\d.]+)W/i);
+  if(p1){type=p1[1];thick=p1[2];width=p1[3];return{type,thick,width}}
+
+  // 패턴2: "/" 구분 (예: SPCC/0.8/60 또는 전체 문자열에서)
+  const slashParts=mi.split(/[\s]+/).pop(); // 마지막 토큰 시도
+  const p2=(slashParts||mi).split('/').map(s=>s.trim());
+  if(p2.length>=3){
+    type=p2[0].replace(/[^A-Za-z0-9]/g,'');
+    thick=p2[1].replace(/[^0-9.]/g,'');
+    width=p2[2].replace(/[^0-9.]/g,'');
+    if(type&&width)return{type,thick,width};
+  }
+
+  // 패턴3: "//" 구분
+  const p3=mi.split('//').map(s=>s.trim());
+  if(p3.length>=3){
+    type=p3[0].replace(/[^A-Za-z0-9]/g,'');
+    thick=p3[1].replace(/[^0-9.]/g,'');
+    width=p3[2].replace(/[^0-9.]/g,'');
+    if(type&&width)return{type,thick,width};
+  }
+
+  // 패턴4: 숫자+W 패턴으로 폭 추출
+  const wMatch=mi.match(/(\d+\.?\d*)W/i);
+  if(wMatch)width=wMatch[1];
+  const tMatch=mi.match(/(\d+\.?\d*)T/i);
+  if(tMatch)thick=tMatch[1];
+  const typeMatch=mi.match(/^([A-Za-z]+[0-9]*)/);
+  if(typeMatch)type=typeMatch[1];
+
+  return{type,thick,width};
 }
 
 // ===== 렌더링 =====
@@ -321,10 +387,12 @@ function toggleDetail(i){
 function renderUnused(){
   const c=document.getElementById('unusedArea');
   if(!unusedList.length){c.innerHTML='<div class="empty">미생산 소재 없음</div>';return}
-  let html='<table><tr><th>로트</th><th>소재</th><th>중량kg</th><th>소요량g</th><th>예상수량</th><th>매핑기종</th></tr>';
+  let html='<table><tr><th>로트</th><th>소재</th><th>재질</th><th>폭</th><th>중량kg</th><th>소요량g</th><th>예상수량</th><th>매핑기종</th></tr>';
   unusedList.forEach(u=>{
     html+=`<tr${u.noMaster||u.noUnitWt?' class="warn"':''}>
       <td style="font-size:10px">${u.lot}</td><td style="font-size:10px">${u.material}</td>
+      <td style="font-weight:600;color:#1565c0">${u.matType||'—'}</td>
+      <td style="font-weight:600;color:#e65100">${u.matWidth||'—'}</td>
       <td>${u.weightKg}</td><td>${u.unitWt||'<span class="warn">미등록</span>'}</td>
       <td style="font-weight:700">${u.estQty.toLocaleString()}</td>
       <td style="font-size:10px">${u.models.join(', ')||'<span class="warn">미지정</span>'}</td>
