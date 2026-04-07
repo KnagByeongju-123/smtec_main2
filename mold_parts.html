@@ -262,22 +262,43 @@
 
 <!-- ===== 설정 ===== -->
 <div class="pnl" id="pnl3">
+  <!-- 설비(호기)에서 기종 가져오기 -->
+  <div class="card" style="border:2px solid #f59e0b">
+    <div class="card-tit">🏭 설비(호기)에서 기종 가져오기</div>
+    <div style="font-size:11px;margin-bottom:8px;padding:6px 8px;background:#fff8e1;border-radius:6px;color:#e65100">
+      💡 <code>common_code → p_machine</code> (생산설비 호기목록)을 기종명으로 가져옵니다.<br>
+      P_machine_check.html 설정에서 등록한 설비명이 금형 기종으로 등록됩니다.
+    </div>
+    <div id="pmImportPreview" style="font-size:12px;color:#555;margin-bottom:8px"></div>
+    <div class="btn-row">
+      <button class="btn" onclick="previewPmImport()" style="flex:1;background:linear-gradient(135deg,#e65100,#ff9800);color:#fff;padding:10px;font-size:13px;border:none;border-radius:10px;font-weight:700;cursor:pointer;font-family:inherit">🔍 미리보기</button>
+      <button class="btn btn-green" onclick="executePmImport()" style="flex:1;padding:10px;font-size:13px">✅ 가져오기</button>
+    </div>
+    <div id="pmImportStatus" style="font-size:11px;margin-top:6px;color:#888"></div>
+  </div>
+
+  <!-- 소재마스터에서 금형 가져오기 -->
   <div class="card" style="border:2px solid #1565c0">
-    <div class="card-tit">📤 소재마스터에서 가져오기</div>
-    <div style="font-size:11px;color:#888;margin-bottom:8px;padding:6px 8px;background:#e3f2fd;border-radius:6px;color:#1565c0">
-      💡 <code>material_master_tj</code>의 <b>매핑기종(mapped_models)</b> · <b>기종코드(model_code)</b> → 기종명, <b>금형재번(mold_number)</b> → 금형번호로 자동 등록합니다.<br>
-      이미 등록된 기종/금형은 건너뜁니다. 쉼표 구분된 매핑기종은 각각 분리하여 등록합니다.
+    <div class="card-tit">📤 소재마스터에서 금형 가져오기</div>
+    <div style="font-size:11px;margin-bottom:8px;padding:6px 8px;background:#e3f2fd;border-radius:6px;color:#1565c0">
+      💡 <code>material_master_tj</code>의 <b>금형재번(mold_number)</b>을 선택한 기종 하위 금형으로 등록합니다.
     </div>
     <div class="fg">
-      <label>고객사 선택</label>
+      <label>대상 기종 (금형을 넣을 기종)</label>
+      <select id="importTargetModel" style="font-size:14px">
+        <option value="">기종을 먼저 등록하세요</option>
+      </select>
+    </div>
+    <div class="fg">
+      <label>고객사 필터 (소재마스터)</label>
       <select id="importCustFilter" style="font-size:14px">
         <option value="">전체 고객사</option>
       </select>
     </div>
     <div id="importPreview" style="font-size:12px;color:#555;margin-bottom:8px"></div>
     <div class="btn-row">
-      <button class="btn btn-blue" onclick="previewImport()" style="flex:1">🔍 미리보기</button>
-      <button class="btn btn-green" onclick="executeImport()" style="flex:1">✅ 가져오기 실행</button>
+      <button class="btn btn-blue" onclick="previewMoldImport()" style="flex:1">🔍 미리보기</button>
+      <button class="btn btn-green" onclick="executeMoldImport()" style="flex:1">✅ 가져오기</button>
     </div>
     <div id="importStatus" style="font-size:11px;margin-top:6px;color:#888"></div>
   </div>
@@ -1040,20 +1061,77 @@ async function loadLogs(){
   }catch(e){el.innerHTML='로드 실패'}
 }
 
-// ===== 소재마스터 가져오기 =====
-let _importData=null;
+// ===== 설비(호기) p_machine 가져오기 =====
+let _pmImportData=null;
 
-async function previewImport(){
+async function previewPmImport(){
+  const st=document.getElementById('pmImportStatus');
+  const prev=document.getElementById('pmImportPreview');
+  st.textContent='common_code 조회 중...';st.style.color='#e65100';
+  try{
+    const data=await sbSelect('common_code','code_group=eq.p_machine&order=sort_order.asc');
+    const machines=(data||[]).map(r=>String(r.code_value||'').trim()).filter(v=>v);
+    if(!machines.length){
+      st.textContent='⚠ p_machine 데이터 없음 — P_machine_check.html 설정에서 등록하세요';st.style.color='#c62828';
+      prev.innerHTML='';return;
+    }
+    const existModels=new Set(models.map(m=>m.name));
+    const newList=machines.filter(n=>!existModels.has(n));
+    const existList=machines.filter(n=>existModels.has(n));
+    _pmImportData={machines,newList};
+
+    let html=`<div style="padding:8px;background:#fff8e1;border-radius:8px">`;
+    html+=`<div style="font-weight:700;margin-bottom:4px">🏭 설비(호기) 분석</div>`;
+    html+=`<div>p_machine 총: <b>${machines.length}</b>대</div>`;
+    html+=`<div>이미 등록: <b>${existList.length}</b> | 신규: <span style="color:#2e7d32;font-weight:700">${newList.length}</span></div>`;
+    if(newList.length){
+      html+=`<div style="margin-top:6px;font-size:11px;color:#e65100;font-weight:600">신규 등록 대상:</div>`;
+      html+=newList.map(n=>`<span style="display:inline-block;padding:2px 6px;margin:2px;background:#fff3e0;border-radius:4px;font-size:11px">${n}</span>`).join('');
+    }
+    if(!newList.length)html+=`<div style="margin-top:6px;color:#888">✅ 모두 이미 등록됨</div>`;
+    html+=`</div>`;
+    prev.innerHTML=html;
+    st.textContent='미리보기 완료';st.style.color='#2e7d32';
+  }catch(e){st.textContent='❌ 조회 실패: '+e.message;st.style.color='#c62828';prev.innerHTML=''}
+}
+
+async function executePmImport(){
+  if(!_pmImportData||!_pmImportData.newList.length){showToast('신규 데이터 없음 — 미리보기 먼저');return}
+  const list=_pmImportData.newList;
+  if(!confirm(`설비(호기) ${list.length}개를 기종으로 등록합니다.\n계속?`))return;
+  const st=document.getElementById('pmImportStatus');
+  st.textContent='등록 중...';st.style.color='#e65100';
+  try{
+    for(const name of list){
+      await sbInsert('mold_model',{name,process_count:20});
+    }
+    models=await sbSelect('mold_model','order=name.asc');
+    populateModelSelects();renderSettings();
+    _pmImportData=null;
+    document.getElementById('pmImportPreview').innerHTML='';
+    st.textContent=`✅ ${list.length}개 기종 등록 완료`;st.style.color='#2e7d32';
+    showToast(`✅ 설비 ${list.length}개 → 기종 등록 완료`);
+  }catch(e){st.textContent='❌ 등록 실패: '+e.message;st.style.color='#c62828'}
+}
+
+// ===== 소재마스터에서 금형번호 가져오기 =====
+let _moldImportData=null;
+
+async function previewMoldImport(){
   const st=document.getElementById('importStatus');
   const prev=document.getElementById('importPreview');
+  const targetModelId=document.getElementById('importTargetModel').value;
   const custFilter=document.getElementById('importCustFilter').value;
+  
+  if(!targetModelId){showToast('대상 기종을 선택하세요');return}
   st.textContent='소재마스터 조회 중...';st.style.color='#1565c0';
+  
   try{
-    let query='select=model_code,mold_number,material_name,customer,mapped_models';
+    let query='select=mold_number,material_name,customer';
     if(custFilter)query+=`&customer=eq.${encodeURIComponent(custFilter)}`;
     const mm=await sbSelect('material_master_tj',query);
 
-    // 고객사 셀렉트 채우기 (전체 조회 시)
+    // 고객사 셀렉트 채우기
     if(!custFilter){
       const custSet=new Set();
       mm.forEach(r=>{if(r.customer)custSet.add(r.customer)});
@@ -1064,121 +1142,79 @@ async function previewImport(){
       sel.value=pv;
     }
 
-    // 기종 추출: model_code 또는 mapped_models에서 추출
-    const modelSet=new Map(); // name → {customer}
-    const moldMap=new Map(); // model_name → Set<mold_number>
+    // 금형재번 추출 (유니크, 빈값 제외)
+    const allMolds=new Set();
     mm.forEach(r=>{
-      const mc=(r.model_code||'').trim();
       const mn=(r.mold_number||'').trim();
-      const mapped=(r.mapped_models||'').trim();
-      
-      // 기종명 후보 수집
-      const modelNames=new Set();
-      if(mc)modelNames.add(mc);
-      // mapped_models: 쉼표 구분된 기종들
-      if(mapped){
-        mapped.split(',').forEach(s=>{const v=s.trim();if(v)modelNames.add(v)});
-      }
-      
-      // 기종이 하나도 없으면 material_name 사용
-      if(!modelNames.size){
-        const mname=(r.material_name||'').trim();
-        if(mname)modelNames.add(mname);
-      }
-      
-      modelNames.forEach(name=>{
-        if(!modelSet.has(name))modelSet.set(name,{customer:r.customer||''});
-        if(mn){
-          if(!moldMap.has(name))moldMap.set(name,new Set());
-          moldMap.get(name).add(mn);
-        }
-      });
+      if(mn)allMolds.add(mn);
     });
 
-    // 기존 데이터 비교
-    const existModels=new Set(models.map(m=>m.name));
-    const existMolds=new Map();
-    for(const m of models){
-      try{
-        const ml=await sbSelect('mold_info',`model_id=eq.${m.id}&select=mold_no`);
-        existMolds.set(m.name,new Set(ml.map(x=>x.mold_no)));
-      }catch(e){existMolds.set(m.name,new Set())}
-    }
+    // 선택한 기종에 이미 등록된 금형 조회
+    let existMolds=new Set();
+    try{
+      const ml=await sbSelect('mold_info',`model_id=eq.${targetModelId}&select=mold_no`);
+      existMolds=new Set(ml.map(x=>x.mold_no));
+    }catch(e){}
 
-    const newModels=[];
-    const newMolds=[];
-    modelSet.forEach((val,name)=>{
-      if(!existModels.has(name))newModels.push({name,customer:val.customer});
-      const molds=moldMap.get(name)||new Set();
-      const existSet=existMolds.get(name)||new Set();
-      molds.forEach(mn=>{
-        if(!existSet.has(mn))newMolds.push({model:name,mold:mn});
-      });
-    });
+    const newMolds=[...allMolds].filter(mn=>!existMolds.has(mn));
+    const targetModel=models.find(m=>m.id==targetModelId);
 
-    _importData={modelSet,moldMap,newModels,newMolds,existModels};
+    _moldImportData={targetModelId:parseInt(targetModelId),newMolds,allMolds:[...allMolds]};
 
     const custLabel=custFilter?` (${custFilter})`:'';
     let html=`<div style="padding:8px;background:#f5f5f5;border-radius:8px">`;
     html+=`<div style="font-weight:700;margin-bottom:4px">📊 분석 결과${custLabel}</div>`;
-    html+=`<div>대상 소재: <b>${mm.length}</b>건${custFilter?' ('+custFilter+')':''}</div>`;
-    html+=`<div>기종(model_code+mapped_models): <b>${modelSet.size}</b>개 (신규: <span style="color:#2e7d32;font-weight:700">${newModels.length}</span>)</div>`;
-    html+=`<div>금형재번(mold_number): <b>${[...moldMap.values()].reduce((s,set)=>s+set.size,0)}</b>개 (신규: <span style="color:#2e7d32;font-weight:700">${newMolds.length}</span>)</div>`;
-    if(newModels.length){
-      html+=`<div style="margin-top:6px;font-size:11px;color:#1565c0;font-weight:600">신규 기종:</div>`;
-      html+=newModels.slice(0,30).map(m=>`<span style="display:inline-block;padding:2px 6px;margin:2px;background:#e3f2fd;border-radius:4px;font-size:11px">${m.name}${m.customer?' <span style="color:#888">('+m.customer+')</span>':''}</span>`).join('');
-      if(newModels.length>30)html+=`<span style="font-size:11px;color:#888"> ...외 ${newModels.length-30}개</span>`;
-    }
+    html+=`<div>대상 소재: <b>${mm.length}</b>건 | 금형재번 유니크: <b>${allMolds.size}</b>개</div>`;
+    html+=`<div>대상 기종: <b style="color:#1565c0">${targetModel?targetModel.name:'-'}</b> (기존 ${existMolds.size}개)</div>`;
+    html+=`<div>신규 등록 대상: <span style="color:#2e7d32;font-weight:700">${newMolds.length}</span>개</div>`;
     if(newMolds.length){
       html+=`<div style="margin-top:6px;font-size:11px;color:#e65100;font-weight:600">신규 금형:</div>`;
-      html+=newMolds.slice(0,30).map(m=>`<span style="display:inline-block;padding:2px 6px;margin:2px;background:#fff3e0;border-radius:4px;font-size:11px">${m.model}→${m.mold}</span>`).join('');
+      html+=newMolds.slice(0,30).map(mn=>`<span style="display:inline-block;padding:2px 6px;margin:2px;background:#fff3e0;border-radius:4px;font-size:11px">${mn}</span>`).join('');
       if(newMolds.length>30)html+=`<span style="font-size:11px;color:#888"> ...외 ${newMolds.length-30}개</span>`;
     }
-    if(!newModels.length&&!newMolds.length)html+=`<div style="margin-top:6px;color:#888">✅ 모두 이미 등록됨 — 신규 없음</div>`;
+    if(!newMolds.length)html+=`<div style="margin-top:6px;color:#888">✅ 모두 이미 등록됨</div>`;
     html+=`</div>`;
     prev.innerHTML=html;
     st.textContent='미리보기 완료';st.style.color='#2e7d32';
   }catch(e){st.textContent='❌ 조회 실패: '+e.message;st.style.color='#c62828';prev.innerHTML=''}
 }
 
-async function executeImport(){
-  if(!_importData){showToast('미리보기를 먼저 실행하세요');return}
-  const{newModels,newMolds}=_importData;
-  if(!newModels.length&&!newMolds.length){showToast('신규 데이터 없음');return}
-  const custFilter=document.getElementById('importCustFilter').value;
-  const label=custFilter?` [${custFilter}]`:'';
-  if(!confirm(`${label} 기종 ${newModels.length}개 + 금형 ${newMolds.length}개를 등록합니다.\n계속?`))return;
+async function executeMoldImport(){
+  if(!_moldImportData||!_moldImportData.newMolds.length){showToast('신규 금형 없음 — 미리보기 먼저');return}
+  const{targetModelId,newMolds}=_moldImportData;
+  const targetModel=models.find(m=>m.id==targetModelId);
+  if(!confirm(`${targetModel?targetModel.name:''} 기종에 금형 ${newMolds.length}개를 등록합니다.\n계속?`))return;
   const st=document.getElementById('importStatus');
   st.textContent='등록 중...';st.style.color='#1565c0';
   try{
-    // 1. 신규 기종 등록
-    for(const nm of newModels){
-      await sbInsert('mold_model',{name:nm.name,process_count:20});
+    for(const mn of newMolds){
+      await sbInsert('mold_info',{model_id:targetModelId,mold_no:mn,note:''});
     }
-    // 모델 목록 재로드
-    models=await sbSelect('mold_model','order=name.asc');
-    // 2. 신규 금형 등록
-    for(const nm of newMolds){
-      const model=models.find(m=>m.name===nm.model);
-      if(!model)continue;
-      await sbInsert('mold_info',{model_id:model.id,mold_no:nm.mold,note:''});
-    }
-    populateModelSelects();
-    renderSettings();
-    _importData=null;
+    _moldImportData=null;
     document.getElementById('importPreview').innerHTML='';
-    st.textContent=`✅ 기종 ${newModels.length}개 + 금형 ${newMolds.length}개 등록 완료`;st.style.color='#2e7d32';
-    showToast(`✅ 가져오기 완료`);
+    st.textContent=`✅ 금형 ${newMolds.length}개 등록 완료`;st.style.color='#2e7d32';
+    showToast(`✅ 금형 ${newMolds.length}개 등록`);
+    // 현황 탭에서 사용하도록 금형 재로드
+    if(selModelId==targetModelId)await onModelChange();
   }catch(e){st.textContent='❌ 등록 실패: '+e.message;st.style.color='#c62828'}
 }
 
 // ===== 설정 =====
 function renderSettings(){
   const el=document.getElementById('modelList');
-  if(!models.length){el.innerHTML='<div style="color:#aaa;font-size:12px;padding:8px">기종 없음</div>';return}
-  el.innerHTML=models.map(m=>`<div class="model-card"><div><div class="mc-name">${m.name}</div><div class="mc-info">공정 수: ${m.process_count||20}</div></div><button class="btn btn-red btn-sm" onclick="deleteModel(${m.id})">삭제</button></div>`).join('');
+  if(!models.length){el.innerHTML='<div style="color:#aaa;font-size:12px;padding:8px">기종 없음</div>';}
+  else{el.innerHTML=models.map(m=>`<div class="model-card"><div><div class="mc-name">${m.name}</div><div class="mc-info">공정 수: ${m.process_count||20}</div></div><button class="btn btn-red btn-sm" onclick="deleteModel(${m.id})">삭제</button></div>`).join('');}
+  // 금형 관리 기종 셀렉트
   const sel=document.getElementById('settMoldModel');sel.innerHTML='<option value="">선택</option>';
   models.forEach(m=>{const o=document.createElement('option');o.value=m.id;o.textContent=m.name;sel.appendChild(o)});
+  // 소재마스터 금형 가져오기 대상 기종 셀렉트
+  const impSel=document.getElementById('importTargetModel');
+  if(impSel){
+    const pv=impSel.value;
+    impSel.innerHTML=models.length?'<option value="">기종 선택</option>':'<option value="">기종을 먼저 등록하세요</option>';
+    models.forEach(m=>{const o=document.createElement('option');o.value=m.id;o.textContent=m.name;impSel.appendChild(o)});
+    if(pv)impSel.value=pv;
+  }
 }
 async function loadMoldSettings(){
   const mid=document.getElementById('settMoldModel').value,el=document.getElementById('moldList');
