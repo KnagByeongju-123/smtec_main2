@@ -158,6 +158,13 @@
   .fab-mold-chip:active{transform:scale(.96)}
   .fab-mold-chip.on{border-color:#1a237e;background:#e8eaf6;color:#1a237e}
 
+  /* 기종 검색 결과 */
+  .model-sr{padding:10px 12px;border-bottom:1px solid #f0f0f0;cursor:pointer;font-size:13px;transition:.1s}
+  .model-sr:last-child{border:none}
+  .model-sr:hover,.model-sr:active{background:#e3f2fd}
+  .model-sr .msr-name{font-weight:700;color:#1a237e}
+  .model-sr .msr-info{font-size:10px;color:#888;margin-top:1px}
+
 </style>
 </head>
 <body>
@@ -176,8 +183,17 @@
 <div class="pnl on" id="pnl0">
   <div class="card">
     <div class="card-tit">📦 기종 선택</div>
-    <div class="fg"><select id="selModel" onchange="onModelChange()" style="font-size:15px;padding:11px"><option value="">기종을 선택하세요</option></select></div>
-    <div id="moldChips" style="display:none">
+    <div class="fg" style="position:relative">
+      <input type="text" id="selModelSearch" placeholder="기종명 입력하여 검색" oninput="onModelSearch()" onfocus="onModelSearch()" autocomplete="off" style="font-size:15px;padding:11px">
+      <div id="selModelResults" style="display:none;position:absolute;left:0;right:0;top:100%;z-index:60;max-height:220px;overflow-y:auto;background:#fff;border:1.5px solid #1565c0;border-radius:0 0 10px 10px;box-shadow:0 6px 20px rgba(0,0,0,.15)"></div>
+    </div>
+    <div id="selModelSelected" style="display:none;margin-top:6px;padding:8px 12px;background:#e8eaf6;border-radius:8px;display:none">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:14px;font-weight:700;color:#1a237e" id="selModelName">-</span>
+        <button class="btn btn-gray btn-sm" onclick="clearModelSelection()" style="padding:4px 10px;font-size:11px">✕ 해제</button>
+      </div>
+    </div>
+    <div id="moldChips" style="display:none;margin-top:8px">
       <div style="font-size:11px;font-weight:600;color:#888;margin-bottom:6px">금형 선택</div>
       <div id="moldChipList" style="display:flex;flex-wrap:wrap;gap:6px"></div>
     </div>
@@ -383,42 +399,82 @@ function setView(v){
 async function init(){
   try{models=await sbSelect('mold_model','order=name.asc')}catch(e){models=[]}
   populateModelSelects();
-  if(models.length){document.getElementById('selModel').value=models[0].id;await onModelChange()}
 }
 function populateModelSelects(){
-  ['selModel','settMoldModel','logModelFilter'].forEach(id=>{
+  ['settMoldModel','logModelFilter'].forEach(id=>{
     const el=document.getElementById(id);if(!el)return;
     const v=el.value,isF=id==='logModelFilter';
-    el.innerHTML=isF?'<option value="">전체 기종</option>':(id==='selModel'?'<option value="">기종을 선택하세요</option>':'<option value="">선택</option>');
+    el.innerHTML=isF?'<option value="">전체 기종</option>':'<option value="">선택</option>';
     models.forEach(m=>{const o=document.createElement('option');o.value=m.id;o.textContent=m.name;el.appendChild(o)});
     if(v)el.value=v;
   });
 }
-async function onModelChange(){
-  selModelId=document.getElementById('selModel').value||null;
+
+// ===== 현황 기종 검색 =====
+function onModelSearch(){
+  const q=document.getElementById('selModelSearch').value.trim().toLowerCase();
+  const results=document.getElementById('selModelResults');
+  if(!q){
+    if(document.activeElement===document.getElementById('selModelSearch')&&models.length){
+      results.style.display='block';
+      results.innerHTML=models.slice(0,20).map(m=>
+        `<div class="model-sr" onclick="pickModel(${m.id})"><div class="msr-name">${m.name}</div></div>`
+      ).join('')+(models.length>20?`<div style="padding:6px;text-align:center;color:#888;font-size:11px">...외 ${models.length-20}개</div>`:'');
+    }else{results.style.display='none'}
+    return;
+  }
+  const filtered=models.filter(m=>m.name.toLowerCase().includes(q));
+  if(!filtered.length){results.style.display='block';results.innerHTML='<div style="padding:12px;text-align:center;color:#888;font-size:12px">검색결과 없음</div>';return}
+  results.style.display='block';
+  results.innerHTML=filtered.slice(0,20).map(m=>{
+    const esc=q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+    const hl=m.name.replace(new RegExp('('+esc+')','gi'),'<b style="color:#1565c0">$1</b>');
+    return `<div class="model-sr" onclick="pickModel(${m.id})"><div class="msr-name">${hl}</div></div>`;
+  }).join('');
+}
+
+async function pickModel(mid){
+  document.getElementById('selModelResults').style.display='none';
+  const model=models.find(m=>m.id==mid);
+  if(!model)return;
+  selModelId=mid;
+  document.getElementById('selModelSearch').value=model.name;
+  document.getElementById('selModelName').textContent=model.name;
+  document.getElementById('selModelSelected').style.display='block';
+  await loadMoldsForModel();
+}
+
+function clearModelSelection(){
+  selModelId=null;selMoldId=null;
+  document.getElementById('selModelSearch').value='';
+  document.getElementById('selModelSelected').style.display='none';
+  document.getElementById('moldChips').style.display='none';
+  document.getElementById('boardArea').style.display='none';
+  document.getElementById('selModelSearch').focus();
+}
+
+document.addEventListener('click',e=>{
+  const wrap=document.getElementById('selModelSearch');
+  const results=document.getElementById('selModelResults');
+  if(wrap&&results&&!wrap.contains(e.target)&&!results.contains(e.target))results.style.display='none';
+});
+
+async function loadMoldsForModel(){
   const chipArea=document.getElementById('moldChips');
   const chipList=document.getElementById('moldChipList');
-  if(!selModelId){
-    selMoldId=null;chipArea.style.display='none';
-    document.getElementById('boardArea').style.display='none';return;
-  }
+  if(!selModelId){chipArea.style.display='none';document.getElementById('boardArea').style.display='none';return}
   try{molds=await sbSelect('mold_info',`model_id=eq.${selModelId}&order=mold_no.asc`)}catch(e){molds=[]}
-
   if(!molds.length){
     selMoldId=null;chipArea.style.display='none';
     document.getElementById('boardArea').style.display='none';
     showToast('등록된 금형 없음');return;
   }
-
-  // 각 금형의 부품 수 미리 조회
   const moldPartCounts={};
   try{
     const allParts=await sbSelect('mold_part',`model_id=eq.${selModelId}&status=neq.폐기&select=mold_id`);
     allParts.forEach(p=>{moldPartCounts[p.mold_id]=(moldPartCounts[p.mold_id]||0)+1});
   }catch(e){}
-
-  chipArea.style.display='block';
-  chipList.innerHTML='';
+  chipArea.style.display='block';chipList.innerHTML='';
   molds.forEach(m=>{
     const chip=document.createElement('div');
     chip.className='mold-chip'+(selMoldId==m.id?' on':'');
@@ -427,33 +483,12 @@ async function onModelChange(){
     chip.onclick=()=>selectMold(m.id);
     chipList.appendChild(chip);
   });
-
-  // 이전 선택 유지 또는 첫 번째 선택
-  if(!selMoldId||!molds.find(m=>m.id==selMoldId)){
-    selMoldId=molds[0].id;
-  }
+  if(!selMoldId||!molds.find(m=>m.id==selMoldId))selMoldId=molds[0].id;
   await onMoldSelect();
 }
 
-function selectMold(id){
-  selMoldId=id;
-  document.querySelectorAll('.mold-chip').forEach(c=>c.classList.remove('on'));
-  const chips=[...document.getElementById('moldChipList').children];
-  const idx=molds.findIndex(m=>m.id==id);
-  if(idx>=0&&chips[idx])chips[idx].classList.add('on');
-  onMoldSelect();
-}
-
-async function onMoldSelect(){
-  if(!selMoldId){document.getElementById('boardArea').style.display='none';return}
-  // 칩 하이라이트 갱신
-  document.querySelectorAll('.mold-chip').forEach((c,i)=>{
-    c.classList.toggle('on',molds[i]&&molds[i].id==selMoldId);
-  });
-  await loadParts();renderAll();
-}
-
-// 하위호환 (제작 탭 등에서 사용)
+async function onModelChange(){await loadMoldsForModel()}
+async function onMoldChange(){await onMoldSelect()}
 async function onMoldChange(){await onMoldSelect()}
 async function loadParts(){
   if(!selMoldId)return;
@@ -1203,7 +1238,17 @@ async function executeMoldImport(){
 function renderSettings(){
   const el=document.getElementById('modelList');
   if(!models.length){el.innerHTML='<div style="color:#aaa;font-size:12px;padding:8px">기종 없음</div>';}
-  else{el.innerHTML=models.map(m=>`<div class="model-card"><div><div class="mc-name">${m.name}</div><div class="mc-info">공정 수: ${m.process_count||20}</div></div><button class="btn btn-red btn-sm" onclick="deleteModel(${m.id})">삭제</button></div>`).join('');}
+  else{el.innerHTML=models.map(m=>`<div class="model-card">
+    <div style="flex:1;min-width:0">
+      <div class="mc-name">${m.name}</div>
+      <div style="display:flex;align-items:center;gap:6px;margin-top:4px">
+        <span style="font-size:11px;color:#888">공정 수:</span>
+        <input type="number" min="1" max="30" value="${m.process_count||20}" id="pc_${m.id}" style="width:50px;padding:4px 6px;border:1.5px solid #ddd;border-radius:6px;font-size:13px;font-weight:700;font-family:inherit;text-align:center">
+        <button class="btn btn-sm" onclick="updateProcCount(${m.id})" style="padding:4px 8px;font-size:10px;background:#e3f2fd;color:#1565c0;border:1px solid #bbdefb">저장</button>
+      </div>
+    </div>
+    <button class="btn btn-red btn-sm" onclick="deleteModel(${m.id})">삭제</button>
+  </div>`).join('');}
   // 금형 관리 기종 셀렉트
   const sel=document.getElementById('settMoldModel');sel.innerHTML='<option value="">선택</option>';
   models.forEach(m=>{const o=document.createElement('option');o.value=m.id;o.textContent=m.name;sel.appendChild(o)});
@@ -1215,6 +1260,19 @@ function renderSettings(){
     models.forEach(m=>{const o=document.createElement('option');o.value=m.id;o.textContent=m.name;impSel.appendChild(o)});
     if(pv)impSel.value=pv;
   }
+}
+
+async function updateProcCount(id){
+  const inp=document.getElementById('pc_'+id);
+  if(!inp)return;
+  const cnt=parseInt(inp.value);
+  if(!cnt||cnt<1||cnt>30){showToast('1~30 사이 입력');return}
+  try{
+    await sbUpdate('mold_model',`id=eq.${id}`,{process_count:cnt});
+    const m=models.find(x=>x.id===id);
+    if(m)m.process_count=cnt;
+    showToast('✅ 공정 수 '+cnt+'개로 변경');
+  }catch(e){showToast('실패: '+e.message)}
 }
 async function loadMoldSettings(){
   const mid=document.getElementById('settMoldModel').value,el=document.getElementById('moldList');
