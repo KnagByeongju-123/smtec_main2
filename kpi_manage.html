@@ -247,7 +247,8 @@ async function sbDelete(table,id){
   if(!r.ok)throw new Error(await r.text());
 }
 async function sbUpsert(table,data,conflict){
-  const r=await fetch(getSbUrl()+'/rest/v1/'+table,{method:'POST',headers:{'apikey':getSbKey(),'Authorization':'Bearer '+getSbKey(),'Content-Type':'application/json','Prefer':'return=representation,resolution=merge-duplicates'},body:JSON.stringify(data)});
+  const q=conflict?'?on_conflict='+conflict:'';
+  const r=await fetch(getSbUrl()+'/rest/v1/'+table+q,{method:'POST',headers:{'apikey':getSbKey(),'Authorization':'Bearer '+getSbKey(),'Content-Type':'application/json','Prefer':'return=representation,resolution=merge-duplicates'},body:JSON.stringify(data)});
   if(!r.ok)throw new Error(await r.text());return r.json();
 }
 
@@ -425,7 +426,7 @@ async function saveAllRecords(){
   try{
     // 개별 upsert (conflict on kpi_id+year+month)
     for(const item of batch){
-      await sbUpsert('kpi_record',item);
+      await sbUpsert('kpi_record',item,'kpi_id,year,month');
     }
     showToast('✅ '+batch.length+'건 저장 완료');
     records=await sbSelect('kpi_record','order=year.desc,month.desc');
@@ -716,29 +717,33 @@ async function initDefaultKpis(){
   try{
     showToast('등록 중...');
     for(const group of defaultData){
-      // 프로세스 등록 (중복 방지)
+      // 프로세스 등록 (upsert - name UNIQUE)
       let proc=processes.find(p=>p.name===group.proc);
       if(!proc){
-        const res=await sbInsert('kpi_process',{name:group.proc,sort_order:processes.length});
-        proc=res[0];
-        processes.push(proc);
+        const res=await sbUpsert('kpi_process',{name:group.proc,sort_order:processes.length},'name');
+        proc=Array.isArray(res)?res[0]:res;
+        if(proc)processes.push(proc);
+        else{showToast('프로세스 등록 실패: '+group.proc);continue}
       }
-      // KPI 등록
+      // KPI 등록 (개별 insert, 중복 건너뜀)
       for(const kd of group.kpis){
         const exists=kpis.find(k=>k.process_id===proc.id&&k.kpi_name===kd.name);
         if(exists)continue;
-        await sbInsert('kpi_master',{
-          process_id:proc.id,
-          kpi_name:kd.name,
-          unit:kd.unit,
-          direction:kd.dir,
-          target_value:kd.target,
-          alert_value:kd.alert,
-          iatf_clause:kd.clause,
-          description:kd.desc,
-          frequency:'monthly',
-          sort_order:0
-        });
+        try{
+          const inserted=await sbInsert('kpi_master',{
+            process_id:proc.id,
+            kpi_name:kd.name,
+            unit:kd.unit,
+            direction:kd.dir,
+            target_value:kd.target,
+            alert_value:kd.alert,
+            iatf_clause:kd.clause,
+            description:kd.desc,
+            frequency:'monthly',
+            sort_order:0
+          });
+          if(Array.isArray(inserted))kpis.push(...inserted);
+        }catch(ke){console.warn('KPI 등록 건너뜀:',kd.name,ke.message)}
       }
     }
     await loadAll();
