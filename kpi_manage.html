@@ -115,6 +115,15 @@ tr:hover td{background:#fafafa}
 <!-- ===== 설정 ===== -->
 <div class="pnl" id="pnl3">
   <div class="card">
+    <div class="card-tit">👥 부서 관리</div>
+    <div id="deptList"></div>
+    <div style="display:flex;gap:6px;margin-top:8px">
+      <input type="text" id="newDeptName" placeholder="새 부서명" style="flex:1;padding:8px;border:1px solid #ddd;border-radius:8px;font-size:13px;font-family:inherit">
+      <button class="btn btn-sm btn-blue" onclick="addDept()">추가</button>
+    </div>
+  </div>
+
+  <div class="card">
     <div class="card-tit">🏢 프로세스 관리</div>
     <div id="procList"></div>
     <div style="display:flex;gap:6px;margin-top:8px">
@@ -135,7 +144,7 @@ tr:hover td{background:#fafafa}
   <div class="card">
     <div class="card-tit">🔧 Supabase 설정</div>
     <div class="fg"><label>URL</label><input type="text" id="cfgUrl" placeholder="https://xxx.supabase.co"></div>
-    <div class="fg"><label>Anon Key</label><input type="text" id="cfgKey" placeholder="eyJ..."></div>
+    <div class="fg"><label>Anon Key</label><input type="password" id="cfgKey" placeholder="eyJ..."></div>
     <button class="btn btn-blue" onclick="saveCfg()">저장</button>
     <div style="margin-top:8px">
       <button class="btn btn-sm btn-gray" onclick="initDefaultKpis()">📋 기본 KPI 일괄등록</button>
@@ -162,12 +171,16 @@ CREATE TABLE IF NOT EXISTS kpi_master (
   target_value NUMERIC,
   alert_value NUMERIC,
   iatf_clause TEXT,
+  dept TEXT,
   description TEXT,
   frequency TEXT DEFAULT 'monthly',
   sort_order INT DEFAULT 0,
   is_active BOOLEAN DEFAULT TRUE,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- 기존 테이블에 dept 컬럼 추가 (이미 테이블이 있는 경우)
+-- ALTER TABLE kpi_master ADD COLUMN IF NOT EXISTS dept TEXT;
 
 -- 월별 실적
 CREATE TABLE IF NOT EXISTS kpi_record (
@@ -211,6 +224,7 @@ CREATE POLICY "kpi_record_all" ON kpi_record FOR ALL USING (true) WITH CHECK (tr
       <div class="fg" style="flex:1"><label>경고값</label><input type="number" id="kpiAlert" step="any" placeholder="예: 98"></div>
     </div>
     <div class="fg"><label>IATF 조항</label><input type="text" id="kpiClause" placeholder="예: 9.1.2, 8.5.1"></div>
+    <div class="fg"><label>담당부서</label><select id="kpiDept" style="font-size:13px"><option value="">선택</option></select></div>
     <div class="fg"><label>측정주기</label><select id="kpiFreq"><option value="monthly">월별</option><option value="quarterly">분기별</option><option value="yearly">연간</option></select></div>
     <div class="fg"><label>설명</label><textarea id="kpiDesc" placeholder="KPI 상세 설명, 산출공식 등"></textarea></div>
     <div class="fg"><label>정렬순서</label><input type="number" id="kpiSort" value="0"></div>
@@ -221,9 +235,102 @@ CREATE POLICY "kpi_record_all" ON kpi_record FOR ALL USING (true) WITH CHECK (tr
   </div>
 </div>
 
+<!-- KPI 상세정보 팝업 -->
+<div class="modal-bg" id="kpiDetailModal">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-tit"><span id="detailModalTit">KPI 상세</span><button onclick="closeDetailModal()" style="border:none;background:none;font-size:20px;cursor:pointer">✕</button></div>
+    <div id="detailModalBody"></div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
+// ===== IATF 16949 KPI 가이드 데이터 =====
+const KPI_GUIDE={
+  '품질목표 달성률':{clause:'6.2 품질목표 / 9.3 경영검토',dept:'경영기획팀 (품질경영대리인)',method:'연초 설정한 부문별 품질목표 항목 대비 달성 건수를 백분율로 산출. 경영검토 시 입력자료로 활용.\n\n산출식: (달성 목표수 / 전체 목표수) × 100\n\n근거자료: 품질목표관리대장, 경영검토 보고서'},
+  '경영검토 적시 실행률':{clause:'9.3 경영검토',dept:'경영기획팀 (품질경영대리인)',method:'연간 경영검토 계획 대비 실제 실시 횟수. 최소 연 1회(권장 반기 1회).\n\n산출식: (실시 횟수 / 계획 횟수) × 100\n\n근거자료: 경영검토 회의록, 경영검토 입력/출력 자료'},
+  '내부심사 부적합 종결률':{clause:'9.2.2.1 내부심사 프로그램',dept:'품질보증팀 (내부심사팀장)',method:'내부심사에서 발행된 부적합 건 중 기한 내 시정조치가 완료·검증된 비율.\n\n산출식: (종결 건수 / 발행 건수) × 100\n\n근거자료: 내부심사 보고서, 시정조치 보고서(CAR)'},
+  '비상계획 훈련 이행률':{clause:'6.1.2.3 비상사태 대응계획',dept:'경영기획팀 / 안전관리팀',method:'연간 비상사태 훈련 계획 대비 실시 비율. 화재·정전·설비고장·자연재해 등 시나리오별 훈련.\n\n산출식: (실시 횟수 / 계획 횟수) × 100\n\n근거자료: 비상사태 대응계획서, 훈련 기록'},
+  '고객만족도':{clause:'9.1.2 고객만족',dept:'영업팀 / 품질보증팀',method:'고객만족도 설문조사 결과 또는 고객 스코어카드 평균. 연 1회 이상 실시.\n\n산출식: 조사항목 평균 점수 (100점 만점 환산)\n\n근거자료: 고객만족도 조사서, 고객 스코어카드'},
+  '고객불만 건수':{clause:'9.1.2.1 고객만족 - 보충',dept:'품질보증팀 / 영업팀',method:'월간 접수된 고객불만(클레임) 건수. 반품, 라인스톱, 워런티 클레임 포함.\n\n산출식: 월간 총 클레임 접수 건수\n\n근거자료: 고객불만 접수대장, 8D 보고서'},
+  '고객불만 처리 적시율':{clause:'10.2.3 문제해결',dept:'품질보증팀',method:'고객불만 접수 후 고객 요구 기한 내 8D/시정조치 완료 비율.\n\n산출식: (기한 내 완료 건수 / 총 접수 건수) × 100\n\n근거자료: 8D 보고서, 시정조치 이력'},
+  '납기준수율':{clause:'8.5.4 보전과 보존',dept:'영업팀 / 생산관리팀',method:'고객 요구 납기일 대비 정시 납품 비율.\n\n산출식: (정시 납품 건수 / 전체 납품 건수) × 100\n\n근거자료: 출하대장, 납품 실적'},
+  '수입검사 합격률':{clause:'8.4.2 관리의 유형과 정도',dept:'품질보증팀 (수입검사)',method:'수입검사 로트 기준 합격률.\n\n산출식: (합격 로트수 / 검사 로트수) × 100\n\n근거자료: 수입검사 성적서, 부적합 보고서'},
+  '공급자 품질 점수':{clause:'8.4.2.4 공급자 모니터링',dept:'구매팀 / 품질보증팀',method:'공급자 정기평가 점수. 품질·납기·가격·대응력 항목 평가.\n\n산출식: 평가항목 가중평균 점수\n\n근거자료: 공급자 평가표, 공급자 실적 데이터'},
+  '공급자 납기준수율':{clause:'8.4.2.4 공급자 모니터링',dept:'구매팀',method:'공급자의 납기 준수 비율.\n\n산출식: (정시 입고 건수 / 전체 발주 건수) × 100\n\n근거자료: 발주서, 입고대장'},
+  '공급자 부적합 건수':{clause:'8.4.2.3 법적 및 규제적 요구사항',dept:'품질보증팀 / 구매팀',method:'공급자 원인 부적합 월간 발생 건수.\n\n산출식: 월간 공급자 귀책 부적합 건수\n\n근거자료: 수입검사 부적합 보고서, 공정 내 공급자 귀책 건'},
+  '공정불량률':{clause:'8.5.1 생산 및 서비스 제공의 관리',dept:'생산팀 / 품질보증팀',method:'공정 내 불량 발생률.\n\n산출식: (불량수 / 생산수) × 100\n\n근거자료: 일일 생산일보, 불량집계표'},
+  '초물검사 합격률':{clause:'8.5.1.3 작업 준비(set-up)의 검증',dept:'생산팀 / 품질보증팀',method:'기종변경·금형교체 후 초물(초도품) 검사 합격률.\n\n산출식: (합격 건수 / 검사 건수) × 100\n\n근거자료: 초물검사 기록부'},
+  '설비종합효율(OEE)':{clause:'8.5.1.5 TPM',dept:'생산팀 / 설비보전팀',method:'설비종합효율 = 가동률 × 성능률 × 양품률.\n\n산출식: 시간가동률 × 성능가동률 × 양품률\n\n근거자료: 설비가동 기록, 생산실적, 불량실적'},
+  '생산계획 준수율':{clause:'8.5.1 생산 및 서비스 제공의 관리',dept:'생산관리팀',method:'생산계획 대비 실제 생산량 달성률.\n\n산출식: (실제 생산량 / 계획 생산량) × 100\n\n근거자료: 생산계획서, 생산일보'},
+  '예방보전 이행률':{clause:'8.5.1.5 TPM',dept:'설비보전팀',method:'예방보전 계획 대비 실행 비율.\n\n산출식: (실행 건수 / 계획 건수) × 100\n\n근거자료: 예방보전 계획서, 보전 실적대장'},
+  '작업표준 준수율':{clause:'8.5.1.2 표준작업-작업자 지침 및 시각적 표준',dept:'생산팀 / 품질보증팀',method:'공정순회 점검 시 표준작업 준수 여부 평가.\n\n산출식: (적합 항목수 / 점검 항목수) × 100\n\n근거자료: 공정순회 점검표, 작업표준서'},
+  '4M 변경관리 적시율':{clause:'8.5.6.1 변경의 관리 - 보충',dept:'품질보증팀 / 생산팀',method:'Man·Machine·Material·Method 변경 발생 시 사전 승인/통보 이행률.\n\n산출식: (사전 승인 건수 / 전체 변경 건수) × 100\n\n근거자료: 4M 변경관리대장, 변경통보서'},
+  '출하검사 합격률':{clause:'8.6 제품 및 서비스의 불출',dept:'품질보증팀 (출하검사)',method:'출하검사 합격률.\n\n산출식: (합격 로트수 / 검사 로트수) × 100\n\n근거자료: 출하검사 성적서'},
+  '외부 부적합(ppm)':{clause:'10.2.3 문제해결',dept:'품질보증팀',method:'고객 출하 후 불량 ppm.\n\n산출식: (고객불량수 / 출하수) × 1,000,000\n\n근거자료: 고객 클레임 데이터, 출하실적'},
+  '시정조치 적시완료율':{clause:'10.2.1 시정조치',dept:'품질보증팀',method:'시정조치 요청 건 중 기한 내 완료된 비율.\n\n산출식: (기한 내 완료 건수 / 전체 발행 건수) × 100\n\n근거자료: 시정조치 보고서(CAR), 부적합 보고서'},
+  '측정시스템 적합률':{clause:'7.1.5.1.1 측정시스템 분석(MSA)',dept:'품질보증팀',method:'MSA(GR&R 등) 실시 결과 적합 판정 비율.\n\n산출식: (적합 장비수 / 분석 대상 장비수) × 100\n판정기준: GR&R ≤ 10% 적합, 10~30% 조건부, >30% 부적합\n\n근거자료: MSA 분석 보고서'},
+  '공정능력지수(Cpk)':{clause:'9.1.1.1 제조 프로세스의 모니터링 및 측정',dept:'품질보증팀',method:'주요 관리특성의 공정능력지수 평균.\n\n판정기준: Cpk ≥ 1.67 적합, 1.33~1.67 관리, < 1.33 개선 필요\n\n근거자료: SPC 관리도, 공정능력 분석 보고서'},
+  '교정 적시율':{clause:'7.1.5.2 측정 소급성',dept:'품질보증팀',method:'측정장비 교정 기한 준수율.\n\n산출식: (기한 내 교정 건수 / 교정 대상 건수) × 100\n\n근거자료: 계측기 관리대장, 교정 성적서'},
+  '교육훈련 이행률':{clause:'7.2 적격성',dept:'인사팀 / 각 부서',method:'연간 교육훈련 계획 대비 실행률.\n\n산출식: (실시 건수 / 계획 건수) × 100\n\n근거자료: 교육훈련 계획서, 교육 실시 기록'},
+  '다기능공 비율':{clause:'7.2 적격성',dept:'생산팀 / 인사팀',method:'2개 공정 이상 수행 가능한 작업자 비율.\n\n산출식: (다기능공 인원 / 전체 작업자) × 100\n\n근거자료: 다기능 훈련 매트릭스(Skill Matrix)'},
+  '자격인증 유효율':{clause:'7.2 적격성',dept:'인사팀 / 각 부서',method:'필수 자격증 보유·갱신 비율.\n\n산출식: (유효 자격 보유자 / 필수 자격 대상자) × 100\n\n근거자료: 자격증 관리대장'},
+  '안전사고 건수':{clause:'6.1 리스크 및 기회를 다루는 조치',dept:'안전관리팀',method:'산업안전사고 발생 건수 (무재해 관리).\n\n산출식: 월간 안전사고 발생 건수\n\n근거자료: 재해발생 보고서, 안전사고 대장'},
+  '안전점검 이행률':{clause:'6.1 리스크 및 기회를 다루는 조치',dept:'안전관리팀 / 각 부서',method:'안전점검 계획 대비 실행률.\n\n산출식: (실시 건수 / 계획 건수) × 100\n\n근거자료: 안전점검 체크리스트, 점검 기록'},
+  '환경법규 위반 건수':{clause:'해당 환경 법규',dept:'환경안전팀',method:'환경 관련 법규 위반 건수.\n\n산출식: 월간 위반 건수\n\n근거자료: 환경법규 준수 점검표, 관련 행정처분 기록'}
+};
+
+function openDetailPopup(kpiId){
+  const k=kpis.find(x=>x.id===kpiId);
+  if(!k)return;
+  const guide=KPI_GUIDE[k.kpi_name];
+  const pName=processes.find(p=>p.id===k.process_id)?.name||'';
+
+  document.getElementById('detailModalTit').textContent=k.kpi_name;
+  let html='';
+
+  // 기본 정보
+  html+=`<div style="padding:10px;background:#e3f2fd;border-radius:8px;margin-bottom:10px">
+    <div style="font-size:12px;color:#555">프로세스</div>
+    <div style="font-size:14px;font-weight:700;color:#0d47a1">${pName}</div>
+  </div>`;
+
+  // IATF 조항
+  html+=`<div style="padding:10px;background:#f5f5f5;border-radius:8px;margin-bottom:10px">
+    <div style="font-size:12px;color:#555;margin-bottom:4px">📌 IATF 16949 조항</div>
+    <div style="font-size:14px;font-weight:700;color:#333">${guide?guide.clause:(k.iatf_clause||'—')}</div>
+  </div>`;
+
+  // 담당부서 - DB에 저장된 값 우선, 없으면 가이드 기본값
+  const deptVal=k.dept||(guide?guide.dept:'')||'미지정';
+  html+=`<div style="padding:10px;background:#e8f5e9;border-radius:8px;margin-bottom:10px">
+    <div style="font-size:12px;color:#555;margin-bottom:4px">🏢 담당부서</div>
+    <div style="font-size:13px;font-weight:600;color:#2e7d32">${deptVal}</div>
+  </div>`;
+
+  // 작성방법
+  html+=`<div style="padding:10px;background:#fff8e1;border-radius:8px;margin-bottom:10px">
+    <div style="font-size:12px;color:#555;margin-bottom:4px">📝 산출방법 및 작성 가이드</div>
+    <div style="font-size:12px;color:#333;white-space:pre-line;line-height:1.6">${guide?guide.method:'KPI 설명을 참조하세요.'}</div>
+  </div>`;
+
+  // 현재 설정값
+  const dir=k.direction==='lower_better'?'낮을수록 좋음 (↓)':'높을수록 좋음 (↑)';
+  html+=`<div style="padding:10px;background:#fafafa;border-radius:8px;border:1px solid #eee">
+    <div style="font-size:12px;color:#555;margin-bottom:4px">⚙ 현재 설정</div>
+    <div style="font-size:12px;color:#333">
+      단위: <b>${k.unit||'—'}</b> · 방향: <b>${dir}</b><br>
+      목표: <b>${k.target_value??'—'}</b> · 경고: <b>${k.alert_value??'—'}</b> · 주기: <b>${k.frequency||'monthly'}</b>
+    </div>
+    ${k.description?'<div style="font-size:11px;color:#888;margin-top:4px">'+k.description+'</div>':''}
+  </div>`;
+
+  document.getElementById('detailModalBody').innerHTML=html;
+  document.getElementById('kpiDetailModal').classList.add('show');
+}
+function closeDetailModal(){document.getElementById('kpiDetailModal').classList.remove('show')}
+
 // ===== Supabase REST API helpers =====
 const LS_KEY='KPI_CFG';
 function getCfg(){try{return JSON.parse(localStorage.getItem(LS_KEY)||'{}')}catch{return{}}}
@@ -327,7 +434,7 @@ function renderDash(){
       const tc=j==='ok'?'#2e7d32':j==='ng'?'#c62828':j==='warn'?'#f57f17':'#999';
       const icon=j==='ok'?'✅':j==='ng'?'❌':j==='warn'?'⚠️':'—';
       const pct=(v!==null&&t)?((k.direction==='lower_better'&&t!==0)?(t/v*100).toFixed(1):(v/t*100).toFixed(1)):'—';
-      html+=`<div style="display:flex;align-items:center;gap:10px;padding:8px;background:${bc};border-radius:8px;margin-bottom:4px">
+      html+=`<div onclick="openDetailPopup(${k.id})" style="display:flex;align-items:center;gap:10px;padding:8px;background:${bc};border-radius:8px;margin-bottom:4px;cursor:pointer">
         <div style="font-size:18px">${icon}</div>
         <div style="flex:1;min-width:0">
           <div style="font-size:12px;font-weight:700;color:#333">${k.kpi_name}</div>
@@ -517,9 +624,52 @@ function initSettingTab(){
   const cfg=getCfg();
   document.getElementById('cfgUrl').value=cfg.url||'';
   document.getElementById('cfgKey').value=cfg.key||'';
+  renderDeptList();
   renderProcList();
   renderKpiFilterProc();
   renderKpiList();
+}
+
+// ===== 부서 관리 (localStorage) =====
+const DEPT_KEY='KPI_DEPTS';
+const DEFAULT_DEPTS=['품질관리팀','영업관리팀','생산팀','설계팀','개발팀'];
+function getDepts(){
+  try{const d=JSON.parse(localStorage.getItem(DEPT_KEY));return d&&d.length?d:DEFAULT_DEPTS}catch{return DEFAULT_DEPTS}
+}
+function saveDepts(arr){localStorage.setItem(DEPT_KEY,JSON.stringify(arr))}
+
+function renderDeptList(){
+  const depts=getDepts();
+  const c=document.getElementById('deptList');
+  if(!depts.length){c.innerHTML='<div class="empty">부서 없음</div>';return}
+  c.innerHTML=depts.map((d,i)=>`<div style="display:flex;align-items:center;gap:6px;padding:6px 0;border-bottom:1px solid #f0f0f0">
+    <span style="flex:1;font-size:13px;font-weight:600">${d}</span>
+    <button class="btn btn-sm btn-red" onclick="delDept(${i})">삭제</button>
+  </div>`).join('');
+}
+function addDept(){
+  const name=document.getElementById('newDeptName').value.trim();
+  if(!name){showToast('부서명을 입력하세요');return}
+  const depts=getDepts();
+  if(depts.includes(name)){showToast('이미 존재하는 부서');return}
+  depts.push(name);saveDepts(depts);
+  document.getElementById('newDeptName').value='';
+  renderDeptList();showToast('✅ 추가됨');
+}
+function delDept(idx){
+  const depts=getDepts();
+  if(!confirm(depts[idx]+' 부서를 삭제하시겠습니까?'))return;
+  depts.splice(idx,1);saveDepts(depts);
+  renderDeptList();showToast('삭제됨');
+}
+
+function populateDeptSelect(selId,selectedVal){
+  const sel=document.getElementById(selId);
+  if(!sel)return;
+  const depts=getDepts();
+  sel.innerHTML='<option value="">선택</option>';
+  depts.forEach(d=>{const o=document.createElement('option');o.value=d;o.textContent=d;sel.appendChild(o)});
+  if(selectedVal)sel.value=selectedVal;
 }
 
 function saveCfg(){
@@ -577,12 +727,12 @@ function renderKpiList(){
   const filtered=pid?kpis.filter(k=>k.process_id===parseInt(pid)):kpis;
   const c=document.getElementById('kpiListBody');
   if(!filtered.length){c.innerHTML='<div class="empty">KPI 없음</div>';return}
-  let html='<table><tr><th>프로세스</th><th>KPI명</th><th>단위</th><th>방향</th><th>목표</th><th>경고</th><th>조항</th><th>활성</th><th></th></tr>';
+  let html='<table><tr><th>프로세스</th><th>KPI명</th><th>부서</th><th>단위</th><th>방향</th><th>목표</th><th>경고</th><th>조항</th><th>활성</th><th></th></tr>';
   filtered.forEach(k=>{
     const pn=processes.find(p=>p.id===k.process_id)?.name||'?';
     const dir=k.direction==='lower_better'?'↓':'↑';
     html+=`<tr>
-      <td>${pn}</td><td style="font-weight:600">${k.kpi_name}</td><td>${k.unit||''}</td><td>${dir}</td>
+      <td>${pn}</td><td style="font-weight:600">${k.kpi_name}</td><td style="font-size:11px">${k.dept||'—'}</td><td>${k.unit||''}</td><td>${dir}</td>
       <td>${k.target_value??'—'}</td><td>${k.alert_value??'—'}</td><td style="font-size:10px">${k.iatf_clause||''}</td>
       <td>${k.is_active?'<span class="badge b-ok">ON</span>':'<span class="badge b-na">OFF</span>'}</td>
       <td style="white-space:nowrap">
@@ -610,6 +760,7 @@ function openKpiModal(data){
     document.getElementById('kpiTarget').value=data.target_value??'';
     document.getElementById('kpiAlert').value=data.alert_value??'';
     document.getElementById('kpiClause').value=data.iatf_clause||'';
+    populateDeptSelect('kpiDept',data.dept||'');
     document.getElementById('kpiFreq').value=data.frequency||'monthly';
     document.getElementById('kpiDesc').value=data.description||'';
     document.getElementById('kpiSort').value=data.sort_order||0;
@@ -621,6 +772,7 @@ function openKpiModal(data){
     document.getElementById('kpiTarget').value='';
     document.getElementById('kpiAlert').value='';
     document.getElementById('kpiClause').value='';
+    populateDeptSelect('kpiDept','');
     document.getElementById('kpiFreq').value='monthly';
     document.getElementById('kpiDesc').value='';
     document.getElementById('kpiSort').value=0;
@@ -638,6 +790,7 @@ async function saveKpi(){
     target_value:document.getElementById('kpiTarget').value?parseFloat(document.getElementById('kpiTarget').value):null,
     alert_value:document.getElementById('kpiAlert').value?parseFloat(document.getElementById('kpiAlert').value):null,
     iatf_clause:document.getElementById('kpiClause').value.trim(),
+    dept:document.getElementById('kpiDept').value,
     frequency:document.getElementById('kpiFreq').value,
     description:document.getElementById('kpiDesc').value.trim(),
     sort_order:parseInt(document.getElementById('kpiSort').value)||0
@@ -679,49 +832,49 @@ async function initDefaultKpis(){
 
   const defaultData=[
     {proc:'경영기획',kpis:[
-      {name:'품질목표 달성률',unit:'%',dir:'higher_better',target:100,alert:90,clause:'6.2/9.3',desc:'연간 품질목표 대비 달성률'},
-      {name:'경영검토 적시 실행률',unit:'%',dir:'higher_better',target:100,alert:90,clause:'9.3',desc:'계획된 경영검토 실행 비율'},
-      {name:'내부심사 부적합 종결률',unit:'%',dir:'higher_better',target:100,alert:85,clause:'9.2.2.1',desc:'내부심사 부적합 시정조치 완료율'},
-      {name:'비상계획 훈련 이행률',unit:'%',dir:'higher_better',target:100,alert:80,clause:'6.1.2.3',desc:'비상사태 대응 훈련 실시율'}
+      {name:'품질목표 달성률',unit:'%',dir:'higher_better',target:100,alert:90,clause:'6.2/9.3',desc:'연간 품질목표 대비 달성률',dept:'품질관리팀'},
+      {name:'경영검토 적시 실행률',unit:'%',dir:'higher_better',target:100,alert:90,clause:'9.3',desc:'계획된 경영검토 실행 비율',dept:'품질관리팀'},
+      {name:'내부심사 부적합 종결률',unit:'%',dir:'higher_better',target:100,alert:85,clause:'9.2.2.1',desc:'내부심사 부적합 시정조치 완료율',dept:'품질관리팀'},
+      {name:'비상계획 훈련 이행률',unit:'%',dir:'higher_better',target:100,alert:80,clause:'6.1.2.3',desc:'비상사태 대응 훈련 실시율',dept:'생산팀'}
     ]},
     {proc:'영업수주',kpis:[
-      {name:'고객만족도',unit:'점',dir:'higher_better',target:90,alert:80,clause:'9.1.2',desc:'고객만족도 조사 점수'},
-      {name:'고객불만 건수',unit:'건',dir:'lower_better',target:0,alert:3,clause:'9.1.2.1',desc:'월간 고객불만(클레임) 접수 건수'},
-      {name:'고객불만 처리 적시율',unit:'%',dir:'higher_better',target:100,alert:90,clause:'10.2.3',desc:'고객불만 기한내 처리 완료율'},
-      {name:'납기준수율',unit:'%',dir:'higher_better',target:99,alert:95,clause:'8.5.4',desc:'고객 요구 납기 대비 준수율'}
+      {name:'고객만족도',unit:'점',dir:'higher_better',target:90,alert:80,clause:'9.1.2',desc:'고객만족도 조사 점수',dept:'영업관리팀'},
+      {name:'고객불만 건수',unit:'건',dir:'lower_better',target:0,alert:3,clause:'9.1.2.1',desc:'월간 고객불만(클레임) 접수 건수',dept:'품질관리팀'},
+      {name:'고객불만 처리 적시율',unit:'%',dir:'higher_better',target:100,alert:90,clause:'10.2.3',desc:'고객불만 기한내 처리 완료율',dept:'품질관리팀'},
+      {name:'납기준수율',unit:'%',dir:'higher_better',target:99,alert:95,clause:'8.5.4',desc:'고객 요구 납기 대비 준수율',dept:'영업관리팀'}
     ]},
     {proc:'구매자재',kpis:[
-      {name:'수입검사 합격률',unit:'%',dir:'higher_better',target:99,alert:97,clause:'8.4.2',desc:'수입검사 합격률 (로트 기준)'},
-      {name:'공급자 품질 점수',unit:'점',dir:'higher_better',target:90,alert:80,clause:'8.4.2.4',desc:'공급자 평가 평균 점수'},
-      {name:'공급자 납기준수율',unit:'%',dir:'higher_better',target:98,alert:95,clause:'8.4.2.4',desc:'공급자 납기 준수율'},
-      {name:'공급자 부적합 건수',unit:'건',dir:'lower_better',target:0,alert:3,clause:'8.4.2.3',desc:'공급자 발생 부적합 건수'}
+      {name:'수입검사 합격률',unit:'%',dir:'higher_better',target:99,alert:97,clause:'8.4.2',desc:'수입검사 합격률 (로트 기준)',dept:'품질관리팀'},
+      {name:'공급자 품질 점수',unit:'점',dir:'higher_better',target:90,alert:80,clause:'8.4.2.4',desc:'공급자 평가 평균 점수',dept:'영업관리팀'},
+      {name:'공급자 납기준수율',unit:'%',dir:'higher_better',target:98,alert:95,clause:'8.4.2.4',desc:'공급자 납기 준수율',dept:'영업관리팀'},
+      {name:'공급자 부적합 건수',unit:'건',dir:'lower_better',target:0,alert:3,clause:'8.4.2.3',desc:'공급자 발생 부적합 건수',dept:'품질관리팀'}
     ]},
     {proc:'생산제조',kpis:[
-      {name:'공정불량률',unit:'%',dir:'lower_better',target:0.5,alert:1.0,clause:'8.5.1',desc:'공정 내 불량 발생률'},
-      {name:'초물검사 합격률',unit:'%',dir:'higher_better',target:100,alert:95,clause:'8.5.1.3',desc:'초물(초도품) 검사 합격률'},
-      {name:'설비종합효율(OEE)',unit:'%',dir:'higher_better',target:85,alert:75,clause:'8.5.1.5',desc:'설비 가동률×성능률×양품률'},
-      {name:'생산계획 준수율',unit:'%',dir:'higher_better',target:95,alert:90,clause:'8.5.1',desc:'생산계획 대비 실적 달성률'},
-      {name:'예방보전 이행률',unit:'%',dir:'higher_better',target:100,alert:90,clause:'8.5.1.5',desc:'예방보전 계획 대비 실행률'},
-      {name:'작업표준 준수율',unit:'%',dir:'higher_better',target:100,alert:95,clause:'8.5.1.2',desc:'표준작업 준수 점검 결과'},
-      {name:'4M 변경관리 적시율',unit:'%',dir:'higher_better',target:100,alert:90,clause:'8.5.6.1',desc:'4M 변경 사전 승인/통보 이행률'}
+      {name:'공정불량률',unit:'%',dir:'lower_better',target:0.5,alert:1.0,clause:'8.5.1',desc:'공정 내 불량 발생률',dept:'생산팀'},
+      {name:'초물검사 합격률',unit:'%',dir:'higher_better',target:100,alert:95,clause:'8.5.1.3',desc:'초물(초도품) 검사 합격률',dept:'품질관리팀'},
+      {name:'설비종합효율(OEE)',unit:'%',dir:'higher_better',target:85,alert:75,clause:'8.5.1.5',desc:'설비 가동률×성능률×양품률',dept:'생산팀'},
+      {name:'생산계획 준수율',unit:'%',dir:'higher_better',target:95,alert:90,clause:'8.5.1',desc:'생산계획 대비 실적 달성률',dept:'생산팀'},
+      {name:'예방보전 이행률',unit:'%',dir:'higher_better',target:100,alert:90,clause:'8.5.1.5',desc:'예방보전 계획 대비 실행률',dept:'생산팀'},
+      {name:'작업표준 준수율',unit:'%',dir:'higher_better',target:100,alert:95,clause:'8.5.1.2',desc:'표준작업 준수 점검 결과',dept:'생산팀'},
+      {name:'4M 변경관리 적시율',unit:'%',dir:'higher_better',target:100,alert:90,clause:'8.5.6.1',desc:'4M 변경 사전 승인/통보 이행률',dept:'품질관리팀'}
     ]},
     {proc:'품질보증',kpis:[
-      {name:'출하검사 합격률',unit:'%',dir:'higher_better',target:99.5,alert:98,clause:'8.6',desc:'출하검사 합격률'},
-      {name:'외부 부적합(ppm)',unit:'ppm',dir:'lower_better',target:50,alert:100,clause:'10.2.3',desc:'고객 출하 후 불량 ppm'},
-      {name:'시정조치 적시완료율',unit:'%',dir:'higher_better',target:100,alert:85,clause:'10.2.1',desc:'시정조치 기한내 완료율'},
-      {name:'측정시스템 적합률',unit:'%',dir:'higher_better',target:100,alert:95,clause:'7.1.5.1.1',desc:'MSA 적합 판정 비율'},
-      {name:'공정능력지수(Cpk)',unit:'',dir:'higher_better',target:1.67,alert:1.33,clause:'9.1.1.1',desc:'주요 특성 공정능력지수 평균'},
-      {name:'교정 적시율',unit:'%',dir:'higher_better',target:100,alert:95,clause:'7.1.5.2',desc:'측정장비 교정 기한 준수율'}
+      {name:'출하검사 합격률',unit:'%',dir:'higher_better',target:99.5,alert:98,clause:'8.6',desc:'출하검사 합격률',dept:'품질관리팀'},
+      {name:'외부 부적합(ppm)',unit:'ppm',dir:'lower_better',target:50,alert:100,clause:'10.2.3',desc:'고객 출하 후 불량 ppm',dept:'품질관리팀'},
+      {name:'시정조치 적시완료율',unit:'%',dir:'higher_better',target:100,alert:85,clause:'10.2.1',desc:'시정조치 기한내 완료율',dept:'품질관리팀'},
+      {name:'측정시스템 적합률',unit:'%',dir:'higher_better',target:100,alert:95,clause:'7.1.5.1.1',desc:'MSA 적합 판정 비율',dept:'품질관리팀'},
+      {name:'공정능력지수(Cpk)',unit:'',dir:'higher_better',target:1.67,alert:1.33,clause:'9.1.1.1',desc:'주요 특성 공정능력지수 평균',dept:'품질관리팀'},
+      {name:'교정 적시율',unit:'%',dir:'higher_better',target:100,alert:95,clause:'7.1.5.2',desc:'측정장비 교정 기한 준수율',dept:'품질관리팀'}
     ]},
     {proc:'인사교육',kpis:[
-      {name:'교육훈련 이행률',unit:'%',dir:'higher_better',target:100,alert:90,clause:'7.2',desc:'연간 교육계획 대비 실행률'},
-      {name:'다기능공 비율',unit:'%',dir:'higher_better',target:30,alert:20,clause:'7.2',desc:'2공정 이상 가능 작업자 비율'},
-      {name:'자격인증 유효율',unit:'%',dir:'higher_better',target:100,alert:95,clause:'7.2',desc:'필수 자격 보유/갱신 비율'}
+      {name:'교육훈련 이행률',unit:'%',dir:'higher_better',target:100,alert:90,clause:'7.2',desc:'연간 교육계획 대비 실행률',dept:'품질관리팀'},
+      {name:'다기능공 비율',unit:'%',dir:'higher_better',target:30,alert:20,clause:'7.2',desc:'2공정 이상 가능 작업자 비율',dept:'생산팀'},
+      {name:'자격인증 유효율',unit:'%',dir:'higher_better',target:100,alert:95,clause:'7.2',desc:'필수 자격 보유/갱신 비율',dept:'품질관리팀'}
     ]},
     {proc:'환경안전',kpis:[
-      {name:'안전사고 건수',unit:'건',dir:'lower_better',target:0,alert:1,clause:'6.1',desc:'안전사고 발생 건수'},
-      {name:'안전점검 이행률',unit:'%',dir:'higher_better',target:100,alert:90,clause:'6.1',desc:'안전점검 계획 대비 실행률'},
-      {name:'환경법규 위반 건수',unit:'건',dir:'lower_better',target:0,alert:1,clause:'',desc:'환경 관련 법규 위반 건수'}
+      {name:'안전사고 건수',unit:'건',dir:'lower_better',target:0,alert:1,clause:'6.1',desc:'안전사고 발생 건수',dept:'생산팀'},
+      {name:'안전점검 이행률',unit:'%',dir:'higher_better',target:100,alert:90,clause:'6.1',desc:'안전점검 계획 대비 실행률',dept:'생산팀'},
+      {name:'환경법규 위반 건수',unit:'건',dir:'lower_better',target:0,alert:1,clause:'',desc:'환경 관련 법규 위반 건수',dept:'생산팀'}
     ]}
   ];
 
@@ -760,7 +913,7 @@ async function initDefaultKpis(){
             method:'POST',
             headers:{'apikey':getSbKey(),'Authorization':'Bearer '+getSbKey(),'Content-Type':'application/json','Prefer':'return=representation'},
             body:JSON.stringify({
-              process_id:proc.id,kpi_name:kd.name,unit:kd.unit,direction:kd.dir,
+              process_id:proc.id,kpi_name:kd.name,unit:kd.unit,direction:kd.dir,dept:kd.dept||'',
               target_value:kd.target,alert_value:kd.alert,iatf_clause:kd.clause,
               description:kd.desc,frequency:'monthly',sort_order:0
             })
@@ -794,10 +947,10 @@ function exportExcel(mode){
   const today=new Date().toISOString().split('T')[0].replace(/-/g,'');
 
   if(mode==='kpi'||mode==='all'){
-    const hd=['ID','프로세스','KPI명','단위','방향','목표값','경고값','IATF조항','주기','설명','활성'];
+    const hd=['ID','프로세스','KPI명','담당부서','단위','방향','목표값','경고값','IATF조항','주기','설명','활성'];
     const rows=kpis.map(k=>{
       const pn=processes.find(p=>p.id===k.process_id)?.name||'';
-      return[k.id,pn,k.kpi_name,k.unit,k.direction==='lower_better'?'낮을수록':'높을수록',k.target_value,k.alert_value,k.iatf_clause,k.frequency,k.description,k.is_active?'Y':'N'];
+      return[k.id,pn,k.kpi_name,k.dept||'',k.unit,k.direction==='lower_better'?'낮을수록':'높을수록',k.target_value,k.alert_value,k.iatf_clause,k.frequency,k.description,k.is_active?'Y':'N'];
     });
     const ws=XLSX.utils.aoa_to_sheet([hd,...rows]);
     XLSX.utils.book_append_sheet(wb,ws,'KPI마스터');
