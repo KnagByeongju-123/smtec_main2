@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>회의록 관리</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700&display=swap');
 *{box-sizing:border-box;margin:0;padding:0}
@@ -184,6 +185,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:#f0f2f5;color:#1a1a2e;min-
     <button onclick="closeDetail()" style="border:none;background:rgba(255,255,255,.15);color:#fff;width:32px;height:32px;border-radius:8px;font-size:16px;cursor:pointer">←</button>
     <span style="font-size:15px;font-weight:700;flex:1" id="detailTitle"></span>
     <button class="btn btn-sm" onclick="toggleStatus()" id="btnToggle" style="background:#fdcb6e;color:#2d3436;font-size:11px">완료처리</button>
+    <button class="btn btn-sm" onclick="exportMeetingExcel()" style="background:#217346;color:#fff;font-size:11px">📥엑셀</button>
     <button class="btn btn-sm" onclick="editFromDetail()" style="background:rgba(255,255,255,.15);color:#fff;font-size:11px">수정</button>
     <button class="btn btn-sm" onclick="deleteFromDetail()" style="background:rgba(230,57,70,.8);color:#fff;font-size:11px">삭제</button>
   </div>
@@ -471,6 +473,98 @@ async function showDetail(id){
   }catch(e){body.innerHTML='<div class="empty" style="color:#e63946">'+e.message+'</div>'}
 }
 function closeDetail(){document.getElementById('detailModal').style.display='none';curId=null}
+
+// ===== 정석 회의록 엑셀 출력 =====
+async function exportMeetingExcel(){
+  if(!curId){showToast('회의록을 먼저 열어주세요');return}
+  try{
+    const{data:r,error}=await sb.from('meeting').select('*').eq('id',curId).single();
+    if(error)throw error;
+
+    const wb=XLSX.utils.book_new();
+
+    // 회의일시 포맷
+    let dateStr='';
+    if(r.meeting_date)try{dateStr=new Date(r.meeting_date).toLocaleDateString('ko-KR',{year:'numeric',month:'long',day:'numeric',weekday:'short',hour:'2-digit',minute:'2-digit'})}catch{dateStr=r.meeting_date}
+
+    // 정석 회의록 양식 구성
+    const rows=[
+      ['','','회  의  록','',''],
+      [],
+      ['회의제목',r.title||'','','',''],
+      ['회의일시',dateStr,'','회의장소',r.location||''],
+      ['사업장',r.site||'','','회의유형',r.meeting_type||''],
+      ['작 성 자',r.author||'','','상  태',r.status||'미결'],
+      ['참 석 자',r.attendees||'','','',''],
+      [],
+      ['안    건'],
+      [r.agenda||''],
+      [],
+      ['회의내용'],
+      [r.content||''],
+      [],
+      ['결정사항'],
+      [r.decision||'(없음)'],
+      [],
+      ['후속조치'],
+      [r.follow_up||'(없음)'],
+      [],
+      [],
+      ['작성일: '+new Date().toLocaleDateString('ko-KR'),'','','작성자:',r.author||''],
+      ['','','','(서명)','']
+    ];
+
+    const ws=XLSX.utils.aoa_to_sheet(rows);
+
+    // 컬럼 너비
+    ws['!cols']=[{wch:12},{wch:20},{wch:18},{wch:12},{wch:20}];
+
+    // 셀 병합 (정석 회의록 양식)
+    ws['!merges']=[
+      {s:{r:0,c:0},e:{r:0,c:4}},   // 제목
+      {s:{r:2,c:1},e:{r:2,c:4}},   // 회의제목 값
+      {s:{r:3,c:1},e:{r:3,c:2}},   // 회의일시 값
+      {s:{r:4,c:1},e:{r:4,c:2}},   // 사업장 값
+      {s:{r:5,c:1},e:{r:5,c:2}},   // 작성자 값
+      {s:{r:6,c:1},e:{r:6,c:4}},   // 참석자 값
+      {s:{r:8,c:0},e:{r:8,c:4}},   // 안건 라벨
+      {s:{r:9,c:0},e:{r:9,c:4}},   // 안건 내용
+      {s:{r:11,c:0},e:{r:11,c:4}}, // 회의내용 라벨
+      {s:{r:12,c:0},e:{r:12,c:4}}, // 회의내용 내용
+      {s:{r:14,c:0},e:{r:14,c:4}}, // 결정사항 라벨
+      {s:{r:15,c:0},e:{r:15,c:4}}, // 결정사항 내용
+      {s:{r:17,c:0},e:{r:17,c:4}}, // 후속조치 라벨
+      {s:{r:18,c:0},e:{r:18,c:4}}, // 후속조치 내용
+    ];
+
+    // 행 높이
+    ws['!rows']=[
+      {hpt:30},  // 제목
+      {hpt:8},   // 빈 줄
+      {hpt:24},{hpt:24},{hpt:24},{hpt:24},{hpt:24}, // 기본정보
+      {hpt:8},   // 빈 줄
+      {hpt:22},  // 안건 라벨
+      {hpt:50},  // 안건 내용
+      {hpt:8},
+      {hpt:22},  // 회의내용 라벨
+      {hpt:120}, // 회의내용 내용
+      {hpt:8},
+      {hpt:22},  // 결정사항 라벨
+      {hpt:60},  // 결정사항 내용
+      {hpt:8},
+      {hpt:22},  // 후속조치 라벨
+      {hpt:60},  // 후속조치 내용
+    ];
+
+    XLSX.utils.book_append_sheet(wb,ws,'회의록');
+
+    // 파일명: 회의록_제목_날짜
+    const safeTitle=(r.title||'회의록').replace(/[^가-힣a-zA-Z0-9]/g,'_').substring(0,20);
+    const dateTag=r.meeting_date?r.meeting_date.split('T')[0].replace(/-/g,''):new Date().toISOString().split('T')[0].replace(/-/g,'');
+    XLSX.writeFile(wb,'회의록_'+safeTitle+'_'+dateTag+'.xlsx');
+    showToast('📥 회의록 엑셀 다운로드 완료');
+  }catch(e){showToast('다운로드 실패: '+e.message)}
+}
 
 async function toggleStatus(){
   if(!curId)return;
