@@ -261,6 +261,35 @@ CREATE POLICY "kpi_ca_all" ON kpi_corrective_action FOR ALL USING (true) WITH CH
       </pre>
     </details>
   </div>
+
+  <!-- 이력 관리 -->
+  <div class="card">
+    <div class="card-tit">📊 이력 관리</div>
+    <div style="display:flex;gap:8px;margin-bottom:8px">
+      <div class="fg" style="flex:1;margin-bottom:0"><label>시작일</label><input type="date" id="histStart"></div>
+      <div class="fg" style="flex:1;margin-bottom:0"><label>종료일</label><input type="date" id="histEnd"></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:8px">
+      <div class="fg" style="flex:1;margin-bottom:0">
+        <label>데이터 종류</label>
+        <select id="histType" style="font-size:13px">
+          <option value="record">📝 KPI 실적</option>
+          <option value="ca">🔧 시정조치</option>
+        </select>
+      </div>
+      <div class="fg" style="flex:1;margin-bottom:0">
+        <label>프로세스</label>
+        <select id="histProc" style="font-size:13px"><option value="">전체</option></select>
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-blue" onclick="histQuery()" style="flex:1">🔍 조회</button>
+      <button class="btn btn-green" onclick="histExcel()" style="flex:1">📥 엑셀</button>
+    </div>
+    <button class="btn btn-red" onclick="histDeleteRange()" style="margin-top:6px">🗑 선택범위 삭제</button>
+    <div id="histResult" style="margin-top:10px"></div>
+    <div id="histTable" class="scroll-x" style="margin-top:8px"></div>
+  </div>
 </div>
 
 <!-- KPI 등록/수정 모달 -->
@@ -870,6 +899,208 @@ function initSettingTab(){
   renderProcList();
   renderKpiFilterProc();
   renderKpiList();
+  initHistMgr();
+}
+
+// ===== 이력 관리 =====
+let histData=[];
+
+function initHistMgr(){
+  const now=new Date(),m=new Date();m.setMonth(m.getMonth()-1);
+  document.getElementById('histEnd').value=now.toISOString().split('T')[0];
+  document.getElementById('histStart').value=m.toISOString().split('T')[0];
+  const ps=document.getElementById('histProc');
+  ps.innerHTML='<option value="">전체</option>';
+  processes.forEach(p=>{const o=document.createElement('option');o.value=p.id;o.textContent=p.name;ps.appendChild(o)});
+}
+
+async function histQuery(){
+  const type=document.getElementById('histType').value;
+  const start=document.getElementById('histStart').value;
+  const end=document.getElementById('histEnd').value;
+  const proc=document.getElementById('histProc').value;
+  if(!start||!end){showToast('시작일/종료일을 선택하세요');return}
+
+  const resEl=document.getElementById('histResult');
+  const tblEl=document.getElementById('histTable');
+  resEl.innerHTML='<div style="text-align:center;color:#888;font-size:12px;padding:8px">조회 중...</div>';
+  tblEl.innerHTML='';
+
+  try{
+    if(type==='record'){
+      // KPI 실적 조회: year/month 기반 필터
+      const sy=parseInt(start.split('-')[0]),sm=parseInt(start.split('-')[1]);
+      const ey=parseInt(end.split('-')[0]),em=parseInt(end.split('-')[1]);
+      histData=records.filter(r=>{
+        const rm=r.year*100+r.month;
+        return rm>=sy*100+sm&&rm<=ey*100+em;
+      });
+      if(proc){
+        const procKpiIds=kpis.filter(k=>k.process_id===parseInt(proc)).map(k=>k.id);
+        histData=histData.filter(r=>procKpiIds.includes(r.kpi_id));
+      }
+      resEl.innerHTML='<div style="font-size:12px;font-weight:600;color:#0d47a1;padding:4px">📝 KPI 실적 '+histData.length+'건 조회됨</div>';
+      renderHistRecordTable();
+    }else{
+      // 시정조치 조회: created_at 기반
+      histData=caList.filter(ca=>{
+        const cd=(ca.created_at||'').split('T')[0];
+        return cd>=start&&cd<=end;
+      });
+      if(proc){
+        const procKpiIds=kpis.filter(k=>k.process_id===parseInt(proc)).map(k=>k.id);
+        histData=histData.filter(ca=>procKpiIds.includes(ca.kpi_id));
+      }
+      resEl.innerHTML='<div style="font-size:12px;font-weight:600;color:#0d47a1;padding:4px">🔧 시정조치 '+histData.length+'건 조회됨</div>';
+      renderHistCaTable();
+    }
+  }catch(e){resEl.innerHTML='<div style="color:#c62828;font-size:12px">조회 실패: '+e.message+'</div>'}
+}
+
+function renderHistRecordTable(){
+  const tbl=document.getElementById('histTable');
+  if(!histData.length){tbl.innerHTML='<div style="text-align:center;color:#bbb;font-size:12px;padding:12px">데이터 없음</div>';return}
+  let html='<table><tr><th>년월</th><th>프로세스</th><th>KPI</th><th>실적</th><th>목표</th><th>판정</th><th>비고</th><th></th></tr>';
+  histData.forEach(r=>{
+    const k=kpis.find(x=>x.id===r.kpi_id);
+    const pn=k?processes.find(p=>p.id===k.process_id)?.name||'':'';
+    const t=r.target_value!==null?r.target_value:(k?k.target_value:null);
+    const j=(r.actual_value!==null&&t)?judge(r.actual_value,t,k?.alert_value,k?.direction):'na';
+    const jb=j==='ok'?'<span class="badge b-ok">달성</span>':j==='ng'?'<span class="badge b-ng">미달</span>':j==='warn'?'<span class="badge b-warn">주의</span>':'<span class="badge b-na">—</span>';
+    html+=`<tr>
+      <td>${r.year}.${String(r.month).padStart(2,'0')}</td>
+      <td style="font-size:11px">${pn}</td>
+      <td style="font-weight:600;font-size:11px">${k?.kpi_name||'?'}</td>
+      <td style="font-weight:700">${r.actual_value??'—'}</td>
+      <td>${t??'—'}</td>
+      <td>${jb}</td>
+      <td style="font-size:10px;max-width:60px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.note||''}</td>
+      <td style="white-space:nowrap">
+        <button class="btn btn-sm btn-gray" onclick="histEditRecord(${r.id})" style="padding:3px 6px;font-size:10px">수정</button>
+        <button class="btn btn-sm btn-red" onclick="histDelRecord(${r.id})" style="padding:3px 6px;font-size:10px">삭제</button>
+      </td>
+    </tr>`;
+  });
+  html+='</table>';
+  tbl.innerHTML=html;
+}
+
+function renderHistCaTable(){
+  const tbl=document.getElementById('histTable');
+  if(!histData.length){tbl.innerHTML='<div style="text-align:center;color:#bbb;font-size:12px;padding:12px">데이터 없음</div>';return}
+  let html='<table><tr><th>상태</th><th>KPI</th><th>년월</th><th>실적/목표</th><th>원인</th><th>담당</th><th>기한</th><th></th></tr>';
+  histData.forEach(ca=>{
+    const k=kpis.find(x=>x.id===ca.kpi_id);
+    const sc={'발행':'🔴','조치중':'🟡','효과확인':'🔵','완료':'✅'}[ca.status]||'⚪';
+    html+=`<tr>
+      <td>${sc}${ca.status}</td>
+      <td style="font-weight:600;font-size:11px">${k?.kpi_name||'?'}</td>
+      <td>${ca.record_year||''}.${String(ca.record_month||'').padStart(2,'0')}</td>
+      <td style="font-size:11px">${ca.actual_value??'—'}/${ca.target_value??'—'}</td>
+      <td style="font-size:10px;max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${ca.cause||''}</td>
+      <td style="font-size:11px">${ca.responsible||'—'}</td>
+      <td style="font-size:11px">${ca.due_date||'—'}</td>
+      <td style="white-space:nowrap">
+        <button class="btn btn-sm btn-gray" onclick="editCa(${ca.id});swTab(2)" style="padding:3px 6px;font-size:10px">수정</button>
+        <button class="btn btn-sm btn-red" onclick="histDelCa(${ca.id})" style="padding:3px 6px;font-size:10px">삭제</button>
+      </td>
+    </tr>`;
+  });
+  html+='</table>';
+  tbl.innerHTML=html;
+}
+
+// 실적 개별 수정 (인라인 prompt)
+async function histEditRecord(id){
+  const r=records.find(x=>x.id===id);
+  if(!r)return;
+  const k=kpis.find(x=>x.id===r.kpi_id);
+  const newVal=prompt((k?.kpi_name||'KPI')+' '+r.year+'.'+r.month+' 실적값 수정\n현재: '+r.actual_value,r.actual_value??'');
+  if(newVal===null)return;
+  const newNote=prompt('비고 수정',r.note||'');
+  try{
+    await sbUpdate('kpi_record',id,{actual_value:newVal?parseFloat(newVal):null,note:newNote||null});
+    records=await sbSelect('kpi_record','order=year.desc,month.desc');
+    histQuery();showToast('✅ 수정됨');
+  }catch(e){showToast('수정 실패: '+e.message)}
+}
+
+// 실적 개별 삭제
+async function histDelRecord(id){
+  if(!confirm('이 실적 데이터를 삭제하시겠습니까?'))return;
+  try{
+    await sbDelete('kpi_record',id);
+    records=await sbSelect('kpi_record','order=year.desc,month.desc');
+    histQuery();showToast('삭제됨');
+  }catch(e){showToast('삭제 실패: '+e.message)}
+}
+
+// 시정조치 개별 삭제
+async function histDelCa(id){
+  if(!confirm('이 시정조치를 삭제하시겠습니까?'))return;
+  try{
+    await sbDelete('kpi_corrective_action',id);
+    caList=await sbSelect('kpi_corrective_action','order=id.desc');
+    histQuery();showToast('삭제됨');
+  }catch(e){showToast('삭제 실패: '+e.message)}
+}
+
+// 범위 전체 삭제
+async function histDeleteRange(){
+  const type=document.getElementById('histType').value;
+  const typeName=type==='record'?'KPI 실적':'시정조치';
+  if(!histData.length){showToast('먼저 조회하세요');return}
+  if(!confirm('조회된 '+typeName+' '+histData.length+'건을 전부 삭제하시겠습니까?\n\n⚠️ 이 작업은 되돌릴 수 없습니다.'))return;
+  if(!confirm('정말로 '+histData.length+'건을 삭제합니까? (최종 확인)'))return;
+
+  const table=type==='record'?'kpi_record':'kpi_corrective_action';
+  let ok=0,fail=0;
+  showToast('삭제 중...');
+  for(const item of histData){
+    try{await sbDelete(table,item.id);ok++}catch{fail++}
+  }
+  // 데이터 리로드
+  if(type==='record')records=await sbSelect('kpi_record','order=year.desc,month.desc');
+  else caList=await sbSelect('kpi_corrective_action','order=id.desc');
+  histData=[];
+  document.getElementById('histResult').innerHTML='';
+  document.getElementById('histTable').innerHTML='';
+  showToast('✅ '+ok+'건 삭제'+(fail?' (실패 '+fail+'건)':''));
+}
+
+// 이력 엑셀 다운로드
+function histExcel(){
+  if(!histData.length){showToast('먼저 조회하세요');return}
+  const type=document.getElementById('histType').value;
+  const wb=XLSX.utils.book_new();
+  const today=new Date().toISOString().split('T')[0].replace(/-/g,'');
+
+  if(type==='record'){
+    const hd=['년도','월','프로세스','KPI명','실적','목표','달성률','판정','비고'];
+    const rows=histData.map(r=>{
+      const k=kpis.find(x=>x.id===r.kpi_id);
+      const pn=k?processes.find(p=>p.id===k.process_id)?.name||'':'';
+      const t=r.target_value!==null?r.target_value:(k?k.target_value:null);
+      let pct='',j='';
+      if(r.actual_value!==null&&t){
+        pct=k&&k.direction==='lower_better'?(t!==0?(t/r.actual_value*100).toFixed(1):''):(r.actual_value/t*100).toFixed(1);
+        const jv=judge(r.actual_value,t,k?.alert_value,k?.direction);
+        j=jv==='ok'?'달성':jv==='ng'?'미달':'주의';
+      }
+      return[r.year,r.month,pn,k?.kpi_name||'',r.actual_value,t,pct?pct+'%':'',j,r.note||''];
+    });
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([hd,...rows]),'KPI실적');
+  }else{
+    const hd=['상태','프로세스','KPI명','년도','월','실적','목표','발생원인','시정조치','담당','기한','조치결과','효과확인','종결일'];
+    const rows=histData.map(ca=>{
+      const k=kpis.find(x=>x.id===ca.kpi_id);
+      const pn=k?processes.find(p=>p.id===k.process_id)?.name||'':'';
+      return[ca.status,pn,k?.kpi_name||'',ca.record_year,ca.record_month,ca.actual_value,ca.target_value,ca.cause,ca.action_plan,ca.responsible,ca.due_date,ca.action_result,ca.effect_check,ca.close_date];
+    });
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([hd,...rows]),'시정조치');
+  }
+  XLSX.writeFile(wb,(type==='record'?'KPI실적':'시정조치')+'_'+today+'.xlsx');
+  showToast('📥 엑셀 다운로드 완료');
 }
 
 // ===== 부서 관리 (localStorage) =====
