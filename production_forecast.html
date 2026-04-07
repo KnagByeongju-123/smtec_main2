@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>생산가능 수량분석</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&display=swap');
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Noto Sans KR',sans-serif;background:#f0f2f5;color:#212121;padding-bottom:20px}
+.hdr{background:linear-gradient(135deg,#1b5e20,#2e7d32);color:#fff;padding:14px 16px;text-align:center}
+.hdr h1{font-size:17px;font-weight:700}.hdr p{font-size:10px;opacity:.7;margin-top:2px}
+.wrap{max-width:700px;margin:0 auto;padding:12px}
+.card{background:#fff;border-radius:12px;padding:16px;margin-bottom:12px;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+.card-tit{font-size:14px;font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:6px;color:#1b5e20}
+.fg{margin-bottom:10px}
+.fg label{display:block;font-size:12px;font-weight:600;color:#555;margin-bottom:4px}
+.fg select,.fg input{width:100%;padding:9px 10px;border:1.5px solid #ddd;border-radius:8px;font-size:13px;font-family:inherit;background:#fafafa}
+.btn{padding:11px;border:none;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;width:100%;transition:.15s}
+.btn:active{transform:scale(.97)}
+.btn-green{background:linear-gradient(135deg,#2e7d32,#43a047);color:#fff}
+.btn-blue{background:linear-gradient(135deg,#1565c0,#42a5f5);color:#fff}
+.btn-gray{background:#f5f5f5;color:#555;border:1px solid #ddd}
+.btn-sm{padding:7px 12px;font-size:11px;width:auto;border-radius:8px}
+.btn-row{display:flex;gap:8px;margin-bottom:10px}
+.btn-row .btn{flex:1}
+.summary-grid{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+.sum-box{flex:1;min-width:80px;padding:12px 8px;border-radius:10px;text-align:center}
+.sum-num{font-size:22px;font-weight:800}.sum-lbl{font-size:10px;margin-top:2px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{background:#e8f5e9;color:#1b5e20;padding:8px 6px;text-align:left;font-weight:700;border-bottom:2px solid #a5d6a7;white-space:nowrap}
+td{padding:7px 6px;border-bottom:1px solid #f0f0f0;vertical-align:top}
+tr:hover td{background:#f9fbe7}
+.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700}
+.b-stock{background:#e3f2fd;color:#1565c0}.b-remain{background:#fff3e0;color:#e65100}.b-total{background:#e8f5e9;color:#2e7d32}
+.scroll-x{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.empty{text-align:center;padding:30px;color:#bbb;font-size:13px}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.85);color:#fff;padding:8px 20px;border-radius:20px;font-size:12px;font-weight:600;z-index:9999;opacity:0;transition:opacity .3s;pointer-events:none}.toast.show{opacity:1}
+.detail-toggle{cursor:pointer;color:#1565c0;font-size:11px;text-decoration:underline}
+.detail-row{display:none;background:#fafafa}
+.detail-row.show{display:table-row}
+.warn{color:#c62828;font-weight:700}
+</style>
+</head>
+<body>
+<div class="hdr">
+  <h1>📦 생산가능 수량분석</h1>
+  <p>미생산 소재 + 잔여소재 기반 · 기종별 생산가능 수량</p>
+</div>
+<div class="wrap">
+
+<div class="card">
+  <div class="card-tit">📊 분석 결과</div>
+  <div class="btn-row">
+    <button class="btn btn-green" onclick="doAnalysis()" id="btnAnalysis">🔍 분석 실행</button>
+    <button class="btn btn-sm btn-blue" onclick="exportXlsx()">📥 엑셀</button>
+  </div>
+  <div id="summaryArea"></div>
+  <div class="fg">
+    <label>기종 필터</label>
+    <select id="filterModel" onchange="renderResult()" style="font-size:13px"><option value="">전체</option></select>
+  </div>
+  <div id="resultArea" class="scroll-x"></div>
+</div>
+
+<div class="card">
+  <div class="card-tit">📋 미생산 소재 상세</div>
+  <div id="unusedArea" class="scroll-x"></div>
+</div>
+
+<div class="card">
+  <div class="card-tit">🔄 잔여소재 상세</div>
+  <div id="remainArea" class="scroll-x"></div>
+</div>
+
+<div class="card">
+  <div class="card-tit">⚠ 소요량 미등록 소재</div>
+  <div id="warnArea"></div>
+</div>
+
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+// ===== Supabase =====
+const SB_STORAGE_KEY='LOT_TJ_SB_CFG';
+const SB_DEFAULT_URL='https://omngtyewdaqpphnzeate.supabase.co';
+const SB_DEFAULT_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tbmd0eWV3ZGFxcHBobnplYXRlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4ODk4ODksImV4cCI6MjA5MDQ2NTg4OX0.Zxur3t02JHtOcXforCMSwO3i2mMaf5sViE0tXXUC0-s';
+function getSbCfg(){return JSON.parse(localStorage.getItem(SB_STORAGE_KEY)||'{}')}
+function getSbUrl(){return(getSbCfg().url||SB_DEFAULT_URL).replace(/\/$/,'')}
+function getSbKey(){return getSbCfg().key||SB_DEFAULT_KEY}
+let _sb=null;
+function getSb(){
+  const url=getSbUrl(),key=getSbKey();
+  if(!_sb||_sb._url!==url){_sb=window.supabase.createClient(url,key);_sb._url=url}
+  return _sb;
+}
+
+// ===== 분석 데이터 =====
+let analysisResult=[];  // [{model, stockQty, remainQty, totalQty, details:[]}]
+let unusedList=[];      // 미생산 소재 목록
+let remainList=[];      // 잔여소재 목록
+let warnList=[];        // 소요량 미등록
+
+async function doAnalysis(){
+  const btn=document.getElementById('btnAnalysis');
+  btn.textContent='분석 중...';btn.disabled=true;
+  try{
+    const sb=getSb();if(!sb)throw new Error('Supabase 미설정');
+
+    // 1. 소재 마스터 로드
+    const{data:masters,error:e1}=await sb.from('material_master_tj').select('*');
+    if(e1)throw e1;
+
+    // 2. 전체 소재입고 이력 로드
+    const{data:incoming,error:e2}=await sb.from('move_history_tj')
+      .select('*').eq('process','소재입고').order('created_at',{ascending:false}).limit(2000);
+    if(e2)throw e2;
+
+    // 3. 생산 이력 로드 (소재별 실제 생산수량 합산용)
+    const{data:production,error:e3}=await sb.from('move_history_tj')
+      .select('*').eq('process','생산').order('created_at',{ascending:false}).limit(5000);
+    if(e3)throw e3;
+
+    // 4. lot_consumed 상태 확인
+    const consumedSet=new Set();
+    const{data:consumed}=await sb.from('move_history_tj')
+      .select('lot,barcode_raw').eq('lot_consumed',true).limit(5000);
+    if(consumed)consumed.forEach(r=>{
+      if(r.lot)consumedSet.add(r.lot.trim());
+      if(r.barcode_raw)consumedSet.add(r.barcode_raw.trim());
+    });
+
+    // 소재 마스터를 material_name으로 매핑
+    const masterMap={};
+    masters.forEach(m=>{if(m.material_name)masterMap[m.material_name.trim()]=m});
+
+    // ===== 미생산 소재 분석 =====
+    unusedList=[];
+    const seenLots=new Set();
+    (incoming||[]).forEach(h=>{
+      const lotKey=(h.lot||h.barcode_raw||'').trim();
+      if(!lotKey||seenLots.has(lotKey)||consumedSet.has(lotKey))return;
+      seenLots.add(lotKey);
+
+      const mi=h.material_info||'';
+      const master=findMaster(mi,masters);
+      const weightKg=h.weight||0;
+      const unitWt=master?parseFloat(master.unit_weight)||0:0;
+      const estQty=unitWt>0?Math.floor(weightKg*1000/unitWt):0;
+      const models=master?(master.mapped_models||'').split(/[,，、\/]/).map(s=>s.trim()).filter(Boolean):[];
+
+      unusedList.push({
+        lot:lotKey, material:mi, weightKg, unitWt, estQty,
+        models, masterName:master?master.material_name:'',
+        date:h.move_date||'', noMaster:!master, noUnitWt:master&&!unitWt
+      });
+    });
+
+    // ===== 잔여소재 분석 =====
+    remainList=[];
+    const consumedLots=new Set();
+    (incoming||[]).forEach(h=>{
+      const lotKey=(h.lot||h.barcode_raw||'').trim();
+      if(!lotKey||consumedLots.has(lotKey)||!consumedSet.has(lotKey))return;
+      consumedLots.add(lotKey);
+
+      const mi=h.material_info||'';
+      const master=findMaster(mi,masters);
+      const weightKg=h.weight||0;
+      const unitWt=master?parseFloat(master.unit_weight)||0:0;
+      const estQty=unitWt>0?Math.floor(weightKg*1000/unitWt):0;
+
+      // 해당 로트의 실제 생산수량 합산
+      let actualProduced=0;
+      (production||[]).forEach(p=>{
+        const pLot=(p.lot||p.barcode_raw||'').trim();
+        // 소재입고 바코드와 생산 로트 매칭
+        if(pLot===lotKey||(h.barcode_raw&&p.barcode_raw&&p.barcode_raw.trim()===h.barcode_raw.trim())){
+          actualProduced+=(p.qty||0);
+        }
+      });
+
+      const remainQty=Math.max(0,estQty-actualProduced);
+      const models=master?(master.mapped_models||'').split(/[,，、\/]/).map(s=>s.trim()).filter(Boolean):[];
+
+      if(remainQty>0){
+        remainList.push({
+          lot:lotKey, material:mi, weightKg, unitWt, estQty, actualProduced, remainQty,
+          models, masterName:master?master.material_name:'',
+          date:h.move_date||''
+        });
+      }
+    });
+
+    // ===== 기종별 합산 =====
+    const modelMap={};
+    function addToModel(modelName,type,qty,detail){
+      if(!modelName)modelName='(기종미지정)';
+      if(!modelMap[modelName])modelMap[modelName]={stockQty:0,remainQty:0,details:[]};
+      if(type==='stock')modelMap[modelName].stockQty+=qty;
+      else modelMap[modelName].remainQty+=qty;
+      modelMap[modelName].details.push(detail);
+    }
+
+    // 미생산 소재 → 기종별 분배
+    unusedList.forEach(u=>{
+      if(u.models.length===0){
+        addToModel('(기종미지정)','stock',u.estQty,{type:'미생산',lot:u.lot,material:u.material,weight:u.weightKg,unitWt:u.unitWt,qty:u.estQty,model:'(미지정)'});
+      }else{
+        // 공용소재: 각 기종별로 동일 수량 표시 (소재는 하나이므로 "가능" 수량)
+        u.models.forEach(m=>{
+          addToModel(m,'stock',u.estQty,{type:'미생산',lot:u.lot,material:u.material,weight:u.weightKg,unitWt:u.unitWt,qty:u.estQty,model:m,shared:u.models.length>1,sharedModels:u.models.join(',')});
+        });
+      }
+    });
+
+    // 잔여소재 → 기종별 분배
+    remainList.forEach(r=>{
+      if(r.models.length===0){
+        addToModel('(기종미지정)','remain',r.remainQty,{type:'잔여',lot:r.lot,material:r.material,weight:r.weightKg,estQty:r.estQty,produced:r.actualProduced,remainQty:r.remainQty,model:'(미지정)'});
+      }else{
+        r.models.forEach(m=>{
+          addToModel(m,'remain',r.remainQty,{type:'잔여',lot:r.lot,material:r.material,weight:r.weightKg,estQty:r.estQty,produced:r.actualProduced,remainQty:r.remainQty,model:m,shared:r.models.length>1,sharedModels:r.models.join(',')});
+        });
+      }
+    });
+
+    // 결과 정렬
+    analysisResult=Object.entries(modelMap).map(([model,v])=>({
+      model, stockQty:v.stockQty, remainQty:v.remainQty,
+      totalQty:v.stockQty+v.remainQty, details:v.details
+    })).sort((a,b)=>b.totalQty-a.totalQty);
+
+    // 소요량 미등록 경고
+    warnList=unusedList.filter(u=>u.noMaster||u.noUnitWt);
+
+    // 기종 필터 채우기
+    const fs=document.getElementById('filterModel');
+    fs.innerHTML='<option value="">전체 ('+analysisResult.length+'기종)</option>';
+    analysisResult.forEach(r=>{fs.innerHTML+='<option value="'+r.model+'">'+r.model+' ('+r.totalQty.toLocaleString()+')</option>'});
+
+    renderSummary();renderResult();renderUnused();renderRemain();renderWarn();
+    showToast('✅ 분석 완료: '+analysisResult.length+'기종');
+  }catch(e){showToast('분석 실패: '+e.message);console.error(e)}
+  finally{btn.textContent='🔍 분석 실행';btn.disabled=false}
+}
+
+function findMaster(materialInfo,masters){
+  if(!materialInfo)return null;
+  const mi=materialInfo.trim();
+  // 1. material_name 정확 매칭
+  let found=masters.find(m=>m.material_name&&mi.includes(m.material_name.trim()));
+  if(found)return found;
+  // 2. material_type+thickness+width 조합 매칭
+  for(const m of masters){
+    if(m.material_type&&mi.includes(m.material_type)){
+      if(m.width&&mi.includes(m.width))return m;
+      if(m.thickness&&mi.includes(m.thickness))return m;
+    }
+  }
+  return null;
+}
+
+// ===== 렌더링 =====
+function renderSummary(){
+  const totalStock=analysisResult.reduce((s,r)=>s+r.stockQty,0);
+  const totalRemain=analysisResult.reduce((s,r)=>s+r.remainQty,0);
+  const totalAll=totalStock+totalRemain;
+  const modelCnt=analysisResult.filter(r=>r.model!=='(기종미지정)').length;
+
+  document.getElementById('summaryArea').innerHTML=`<div class="summary-grid">
+    <div class="sum-box" style="background:#e3f2fd"><div class="sum-num" style="color:#1565c0">${totalStock.toLocaleString()}</div><div class="sum-lbl" style="color:#1565c0">미생산 소재</div></div>
+    <div class="sum-box" style="background:#fff3e0"><div class="sum-num" style="color:#e65100">${totalRemain.toLocaleString()}</div><div class="sum-lbl" style="color:#e65100">잔여소재</div></div>
+    <div class="sum-box" style="background:#e8f5e9"><div class="sum-num" style="color:#2e7d32">${totalAll.toLocaleString()}</div><div class="sum-lbl" style="color:#2e7d32">총 생산가능</div></div>
+    <div class="sum-box" style="background:#f3e5f5"><div class="sum-num" style="color:#7b1fa2">${modelCnt}</div><div class="sum-lbl" style="color:#7b1fa2">기종수</div></div>
+  </div>`;
+}
+
+function renderResult(){
+  const c=document.getElementById('resultArea');
+  const fv=document.getElementById('filterModel').value;
+  let data=fv?analysisResult.filter(r=>r.model===fv):analysisResult;
+  if(!data.length){c.innerHTML='<div class="empty">분석 데이터가 없습니다. "분석 실행"을 눌러주세요.</div>';return}
+
+  let html='<table><tr><th>기종</th><th>미생산</th><th>잔여</th><th>합계</th><th>상세</th></tr>';
+  data.forEach((r,i)=>{
+    const hasShared=r.details.some(d=>d.shared);
+    html+=`<tr>
+      <td style="font-weight:700;color:#1b5e20">${r.model}${hasShared?' <span style="font-size:9px;color:#e65100;background:#fff3e0;padding:1px 4px;border-radius:3px">공용</span>':''}</td>
+      <td><span class="badge b-stock">${r.stockQty.toLocaleString()}</span></td>
+      <td><span class="badge b-remain">${r.remainQty.toLocaleString()}</span></td>
+      <td style="font-weight:800;color:#2e7d32;font-size:14px">${r.totalQty.toLocaleString()}</td>
+      <td><span class="detail-toggle" onclick="toggleDetail(${i})">상세 ▼</span></td>
+    </tr>`;
+    // 상세 행
+    html+=`<tr class="detail-row" id="detail_${i}"><td colspan="5" style="padding:0">
+      <table style="margin:0;font-size:11px;background:#fafafa">
+        <tr style="background:#e0e0e0"><th>구분</th><th>로트</th><th>소재</th><th>중량kg</th><th>예상</th><th>생산</th><th>가능</th></tr>`;
+    r.details.forEach(d=>{
+      if(d.type==='미생산'){
+        html+=`<tr><td><span class="badge b-stock">미생산</span></td><td style="font-size:10px">${d.lot}</td><td style="font-size:10px">${d.material}</td><td>${d.weight||0}</td><td>${d.qty.toLocaleString()}</td><td>—</td><td style="font-weight:700;color:#1565c0">${d.qty.toLocaleString()}</td></tr>`;
+      }else{
+        html+=`<tr><td><span class="badge b-remain">잔여</span></td><td style="font-size:10px">${d.lot}</td><td style="font-size:10px">${d.material}</td><td>${d.weight||0}</td><td>${d.estQty.toLocaleString()}</td><td>${d.produced.toLocaleString()}</td><td style="font-weight:700;color:#e65100">${d.remainQty.toLocaleString()}</td></tr>`;
+      }
+      if(d.shared)html+=`<tr><td colspan="7" style="font-size:9px;color:#e65100;padding:2px 8px">⚠ 공용소재: ${d.sharedModels} (다른 기종과 공유)</td></tr>`;
+    });
+    html+='</table></td></tr>';
+  });
+  html+='</table>';
+  c.innerHTML=html;
+}
+
+function toggleDetail(i){
+  const el=document.getElementById('detail_'+i);
+  if(el)el.classList.toggle('show');
+}
+
+function renderUnused(){
+  const c=document.getElementById('unusedArea');
+  if(!unusedList.length){c.innerHTML='<div class="empty">미생산 소재 없음</div>';return}
+  let html='<table><tr><th>로트</th><th>소재</th><th>중량kg</th><th>소요량g</th><th>예상수량</th><th>매핑기종</th></tr>';
+  unusedList.forEach(u=>{
+    html+=`<tr${u.noMaster||u.noUnitWt?' class="warn"':''}>
+      <td style="font-size:10px">${u.lot}</td><td style="font-size:10px">${u.material}</td>
+      <td>${u.weightKg}</td><td>${u.unitWt||'<span class="warn">미등록</span>'}</td>
+      <td style="font-weight:700">${u.estQty.toLocaleString()}</td>
+      <td style="font-size:10px">${u.models.join(', ')||'<span class="warn">미지정</span>'}</td>
+    </tr>`;
+  });
+  c.innerHTML=html+'</table>';
+}
+
+function renderRemain(){
+  const c=document.getElementById('remainArea');
+  if(!remainList.length){c.innerHTML='<div class="empty">잔여소재 없음</div>';return}
+  let html='<table><tr><th>로트</th><th>소재</th><th>중량kg</th><th>예상</th><th>생산</th><th>잔여</th><th>기종</th></tr>';
+  remainList.forEach(r=>{
+    html+=`<tr>
+      <td style="font-size:10px">${r.lot}</td><td style="font-size:10px">${r.material}</td>
+      <td>${r.weightKg}</td><td>${r.estQty.toLocaleString()}</td>
+      <td>${r.actualProduced.toLocaleString()}</td>
+      <td style="font-weight:700;color:#e65100">${r.remainQty.toLocaleString()}</td>
+      <td style="font-size:10px">${r.models.join(', ')||'—'}</td>
+    </tr>`;
+  });
+  c.innerHTML=html+'</table>';
+}
+
+function renderWarn(){
+  const c=document.getElementById('warnArea');
+  if(!warnList.length){c.innerHTML='<div style="padding:10px;text-align:center;color:#2e7d32;font-size:12px">✅ 모든 소재에 소요량이 등록되어 있습니다</div>';return}
+  let html='<div style="font-size:12px;color:#c62828;margin-bottom:6px">⚠ 아래 소재는 소요량(unit_weight)이 미등록이어서 수량 계산이 불가합니다. 소재마스터에서 등록해주세요.</div>';
+  html+='<table><tr><th>로트</th><th>소재정보</th><th>중량kg</th><th>문제</th></tr>';
+  warnList.forEach(w=>{
+    const issue=w.noMaster?'마스터 미매칭':'소요량 0';
+    html+=`<tr><td style="font-size:10px">${w.lot}</td><td style="font-size:10px">${w.material}</td><td>${w.weightKg}</td><td class="warn">${issue}</td></tr>`;
+  });
+  c.innerHTML=html+'</table>';
+}
+
+// ===== 엑셀 =====
+function exportXlsx(){
+  if(!analysisResult.length){showToast('먼저 분석을 실행하세요');return}
+  const wb=XLSX.utils.book_new();
+  const today=new Date().toISOString().split('T')[0].replace(/-/g,'');
+
+  // 기종별 요약
+  const hd1=['기종','미생산수량','잔여수량','합계','공용여부'];
+  const rows1=analysisResult.map(r=>[r.model,r.stockQty,r.remainQty,r.totalQty,r.details.some(d=>d.shared)?'공용':'전용']);
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([hd1,...rows1]),'기종별요약');
+
+  // 미생산 소재
+  if(unusedList.length){
+    const hd2=['로트','소재','중량(kg)','소요량(g)','예상수량','매핑기종','입고일'];
+    const rows2=unusedList.map(u=>[u.lot,u.material,u.weightKg,u.unitWt,u.estQty,u.models.join(','),u.date]);
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([hd2,...rows2]),'미생산소재');
+  }
+
+  // 잔여소재
+  if(remainList.length){
+    const hd3=['로트','소재','중량(kg)','예상수량','실생산','잔여수량','매핑기종','입고일'];
+    const rows3=remainList.map(r=>[r.lot,r.material,r.weightKg,r.estQty,r.actualProduced,r.remainQty,r.models.join(','),r.date]);
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([hd3,...rows3]),'잔여소재');
+  }
+
+  XLSX.writeFile(wb,'생산가능수량_'+today+'.xlsx');
+  showToast('📥 엑셀 다운로드 완료');
+}
+
+let tt;function showToast(m){const el=document.getElementById('toast');el.textContent=m;el.classList.add('show');clearTimeout(tt);tt=setTimeout(()=>el.classList.remove('show'),2500)}
+
+// 초기 자동 분석
+doAnalysis();
+</script>
+</body>
+</html>
