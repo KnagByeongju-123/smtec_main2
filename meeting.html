@@ -7,6 +7,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.2/jspdf.umd.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700&display=swap');
 *{box-sizing:border-box;margin:0;padding:0}
@@ -190,6 +191,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:#f0f2f5;color:#1a1a2e;min-
     <div style="display:flex;gap:6px;justify-content:flex-end">
       <button class="btn btn-sm" onclick="toggleStatus()" id="btnToggle" style="background:#fdcb6e;color:#2d3436;font-size:11px">완료처리</button>
       <button class="btn btn-sm" onclick="exportMeetingExcel()" style="background:#217346;color:#fff;font-size:11px">📥엑셀</button>
+      <button class="btn btn-sm" onclick="exportMeetingPDF()" style="background:#c62828;color:#fff;font-size:11px">📄PDF</button>
       <button class="btn btn-sm" onclick="editFromDetail()" style="background:rgba(255,255,255,.15);color:#fff;font-size:11px">수정</button>
       <button class="btn btn-sm" onclick="deleteFromDetail()" style="background:rgba(230,57,70,.8);color:#fff;font-size:11px">삭제</button>
     </div>
@@ -660,6 +662,220 @@ async function exportMeetingExcel(){
     URL.revokeObjectURL(url);
     showToast('📥 회의록 엑셀 다운로드 완료');
   }catch(e){showToast('다운로드 실패: '+e.message);console.error(e)}
+}
+
+// ===== 정석 회의록 PDF 출력 (jsPDF) =====
+async function exportMeetingPDF(){
+  if(!curId){showToast('회의록을 먼저 열어주세요');return}
+  showToast('PDF 생성 중...');
+  try{
+    const{data:r,error}=await sb.from('meeting').select('*').eq('id',curId).single();
+    if(error)throw error;
+
+    const{jsPDF}=window.jspdf;
+    const doc=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
+    const pw=210,ph=297,mx=15,mxr=pw-mx; // A4 사이즈, 여백
+    const cw=mxr-mx; // 사용 가능 너비
+
+    // 한글 폰트 대신 기본 Helvetica + 유니코드 텍스트를 캔버스로 렌더링
+    // jsPDF에서 한글을 쓰려면 캔버스 기반으로 변환
+
+    // 캔버스 기반 PDF 생성
+    const cvs=document.createElement('canvas');
+    const scale=3; // 해상도 배율
+    cvs.width=pw*scale;cvs.height=ph*scale;
+    const ctx=cvs.getContext('2d');
+    ctx.scale(scale,scale);
+    ctx.fillStyle='#fff';ctx.fillRect(0,0,pw,ph);
+
+    let y=15; // 현재 Y 위치
+
+    // 유틸: 텍스트 그리기
+    function text(str,x,ty,opts={}){
+      ctx.font=(opts.bold?'bold ':'')+( opts.size||10)+'px "Noto Sans KR",sans-serif';
+      ctx.fillStyle=opts.color||'#000';
+      ctx.textAlign=opts.align||'left';
+      ctx.textBaseline='top';
+      ctx.fillText(str||'',x,ty);
+    }
+    function line(x1,y1,x2,y2,w=0.5,color='#333'){
+      ctx.strokeStyle=color;ctx.lineWidth=w;
+      ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
+    }
+    function rect(x,ry,w,h,opts={}){
+      if(opts.fill){ctx.fillStyle=opts.fill;ctx.fillRect(x,ry,w,h)}
+      ctx.strokeStyle=opts.stroke||'#333';ctx.lineWidth=opts.lw||0.4;
+      ctx.strokeRect(x,ry,w,h);
+    }
+    // 긴 텍스트 줄바꿈
+    function wrapText(str,maxW,fontSize){
+      ctx.font=fontSize+'px "Noto Sans KR",sans-serif';
+      const lines=[];const paragraphs=(str||'').split('\n');
+      paragraphs.forEach(para=>{
+        const words=para.split('');let cur='';
+        for(let i=0;i<words.length;i++){
+          const test=cur+words[i];
+          if(ctx.measureText(test).width>maxW&&cur){lines.push(cur);cur=words[i]}
+          else cur=test;
+        }
+        if(cur)lines.push(cur);
+        if(!para)lines.push('');
+      });
+      return lines;
+    }
+
+    // ===== 제목 =====
+    rect(mx,y,cw,12,{fill:'#0f3460'});
+    text('회  의  록',pw/2,y+2,{size:14,bold:true,color:'#fff',align:'center'});
+    y+=16;
+
+    // ===== 기본정보 테이블 =====
+    let dateStr='';
+    if(r.meeting_date)try{dateStr=new Date(r.meeting_date).toLocaleDateString('ko-KR',{year:'numeric',month:'long',day:'numeric',weekday:'short',hour:'2-digit',minute:'2-digit'})}catch{dateStr=r.meeting_date}
+
+    const labelW=25,rowH=8;
+    const col1x=mx,col2x=mx+labelW,col3x=mx+cw/2,col4x=col3x+labelW,col5x=mxr;
+
+    const infoData=[
+      {label:'회의제목',val:r.title||'',full:true},
+      {label:'회의일시',val:dateStr,label2:'회의장소',val2:r.location||''},
+      {label:'사 업 장',val:r.site||'',label2:'회의유형',val2:r.meeting_type||''},
+      {label:'작 성 자',val:r.author||'',label2:'상    태',val2:r.status||'미결'},
+      {label:'참 석 자',val:r.attendees||'',full:true}
+    ];
+
+    infoData.forEach(row=>{
+      // 라벨 배경
+      rect(col1x,y,labelW,rowH,{fill:'#e3f2fd'});
+      text(row.label,col1x+2,y+1.5,{size:8,bold:true,color:'#0f3460'});
+      if(row.full){
+        rect(col2x,y,cw-labelW,rowH);
+        text(row.val,col2x+2,y+1.5,{size:9});
+      }else{
+        rect(col2x,y,col3x-col2x,rowH);
+        text(row.val,col2x+2,y+1.5,{size:9});
+        rect(col3x,y,labelW,rowH,{fill:'#e3f2fd'});
+        text(row.label2,col3x+2,y+1.5,{size:8,bold:true,color:'#0f3460'});
+        rect(col4x,y,mxr-col4x,rowH);
+        text(row.val2,col4x+2,y+1.5,{size:9});
+      }
+      y+=rowH;
+    });
+
+    y+=4;
+
+    // ===== 섹션 (안건/회의내용/결정사항/후속조치) =====
+    const sections=[
+      ['안    건',r.agenda||''],
+      ['회의내용',r.content||''],
+      ['결정사항',r.decision||'(없음)'],
+      ['후속조치',r.follow_up||'(없음)']
+    ];
+
+    for(const[label,content] of sections){
+      // 남은 공간 체크 → 페이지 넘김
+      if(y>ph-50){
+        // 첫 페이지를 이미지로 추가
+        doc.addImage(cvs.toDataURL('image/jpeg',0.95),'JPEG',0,0,pw,ph);
+        doc.addPage();
+        ctx.fillStyle='#fff';ctx.fillRect(0,0,pw,ph);
+        y=15;
+      }
+
+      // 섹션 헤더
+      rect(mx,y,cw,8,{fill:'#0f3460'});
+      text(label,pw/2,y+1,{size:9,bold:true,color:'#fff',align:'center'});
+      y+=8;
+
+      // 내용
+      const lines=wrapText(content,cw-6,8);
+      const contentH=Math.max(lines.length*4+4,12);
+
+      // 페이지 넘김 체크
+      if(y+contentH>ph-20){
+        doc.addImage(cvs.toDataURL('image/jpeg',0.95),'JPEG',0,0,pw,ph);
+        doc.addPage();
+        ctx.fillStyle='#fff';ctx.fillRect(0,0,pw,ph);
+        y=15;
+      }
+
+      rect(mx,y,cw,contentH,{fill:'#fafafa'});
+      lines.forEach((ln,i)=>{
+        text(ln,mx+3,y+2+i*4,{size:8});
+      });
+      y+=contentH+3;
+    }
+
+    // ===== 첨부사진 =====
+    const photos=r.photos||r.photo_urls||[];
+    const photoArr=Array.isArray(photos)?photos:(typeof photos==='string'?JSON.parse(photos||'[]'):[]);
+
+    if(photoArr.length>0){
+      if(y>ph-60){
+        doc.addImage(cvs.toDataURL('image/jpeg',0.95),'JPEG',0,0,pw,ph);
+        doc.addPage();
+        ctx.fillStyle='#fff';ctx.fillRect(0,0,pw,ph);
+        y=15;
+      }
+
+      rect(mx,y,cw,8,{fill:'#0f3460'});
+      text('첨부사진 ('+photoArr.length+'장)',pw/2,y+1,{size:9,bold:true,color:'#fff',align:'center'});
+      y+=10;
+
+      let px=mx;
+      const imgW=cw/2-2,imgH=50;
+      for(let i=0;i<photoArr.length;i++){
+        try{
+          const resp=await fetch(photoArr[i]);
+          if(!resp.ok)continue;
+          const blob=await resp.blob();
+          const dataUrl=await new Promise(res=>{const rd=new FileReader();rd.onload=e=>res(e.target.result);rd.readAsDataURL(blob)});
+          const img=new Image();
+          await new Promise((res,rej)=>{img.onload=res;img.onerror=rej;img.src=dataUrl});
+
+          if(y+imgH>ph-15){
+            doc.addImage(cvs.toDataURL('image/jpeg',0.95),'JPEG',0,0,pw,ph);
+            doc.addPage();
+            ctx.fillStyle='#fff';ctx.fillRect(0,0,pw,ph);
+            y=15;px=mx;
+          }
+
+          // 이미지 비율 유지
+          const ratio=Math.min(imgW/img.width,imgH/img.height);
+          const dw=img.width*ratio,dh=img.height*ratio;
+          rect(px,y,imgW,imgH);
+          ctx.drawImage(img,px+(imgW-dw)/2,y+(imgH-dh)/2,dw,dh);
+
+          px+=imgW+4;
+          if(px+imgW>mxr){px=mx;y+=imgH+3}
+        }catch(pe){console.warn('사진 로드 실패:',pe)}
+      }
+      if(px>mx)y+=imgH+3;
+    }
+
+    // ===== 서명란 =====
+    if(y>ph-25){
+      doc.addImage(cvs.toDataURL('image/jpeg',0.95),'JPEG',0,0,pw,ph);
+      doc.addPage();
+      ctx.fillStyle='#fff';ctx.fillRect(0,0,pw,ph);
+      y=15;
+    }
+    y+=8;
+    text('작성일: '+new Date().toLocaleDateString('ko-KR'),mx,y,{size:8,color:'#666'});
+    text('작성자: '+(r.author||''),mxr,y,{size:8,color:'#666',align:'right'});
+    y+=6;
+    line(mxr-40,y,mxr,y,0.3,'#999');
+    text('(서명)',mxr,y+1,{size:7,color:'#999',align:'right'});
+
+    // 마지막 페이지 추가
+    doc.addImage(cvs.toDataURL('image/jpeg',0.95),'JPEG',0,0,pw,ph);
+
+    // 다운로드
+    const safeTitle=(r.title||'회의록').replace(/[^가-힣a-zA-Z0-9]/g,'_').substring(0,20);
+    const dateTag=r.meeting_date?r.meeting_date.split('T')[0].replace(/-/g,''):new Date().toISOString().split('T')[0].replace(/-/g,'');
+    doc.save('회의록_'+safeTitle+'_'+dateTag+'.pdf');
+    showToast('📄 PDF 다운로드 완료');
+  }catch(e){showToast('PDF 실패: '+e.message);console.error(e)}
 }
 
 async function toggleStatus(){
