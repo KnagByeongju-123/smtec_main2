@@ -507,8 +507,13 @@ async function onMoldSelect(){
 async function onModelChange(){await loadMoldsForModel()}
 async function onMoldChange(){await onMoldSelect()}
 async function loadParts(){
-  if(!selMoldId)return;
-  try{parts=await sbSelect('mold_part',`mold_id=eq.${selMoldId}&order=process_no.asc,sort_order.asc,id.asc`)}catch(e){parts=[]}
+  if(!selMoldId){parts=[];return}
+  try{parts=await sbSelect('mold_part',`mold_id=eq.${selMoldId}&order=process_no.asc,sort_order.asc,id.asc`)}
+  catch(e){
+    // sort_order 컬럼 없을 경우 fallback
+    try{parts=await sbSelect('mold_part',`mold_id=eq.${selMoldId}&order=process_no.asc,id.asc`)}
+    catch(e2){parts=[];console.error('loadParts failed:',e2)}
+  }
 }
 
 // ===== 렌더 =====
@@ -516,7 +521,7 @@ function renderAll(){
   if(!selModelId||!selMoldId){document.getElementById('boardArea').style.display='none';return}
   document.getElementById('boardArea').style.display='block';
   const model=models.find(m=>m.id==selModelId),mold=molds.find(m=>m.id==selMoldId);
-  if(!model||!mold)return;
+  if(!model||!mold){console.log('renderAll: model/mold not found',selModelId,selMoldId,models.length,molds.length);return}
   const active=parts.filter(p=>p.status!=='폐기');
   const disposed=parts.filter(p=>p.status==='폐기').length;
   const counts={};
@@ -524,7 +529,7 @@ function renderAll(){
     const[s,p]=k.split('-');counts[k]=active.filter(x=>x.status===s&&x.position===p).length;
   });
   document.getElementById('boardInfo').innerHTML=
-    `<strong>${model.name} / ${mold.mold_no}</strong> — 장착: <b style="color:#c62828">${counts['장착-상']+counts['장착-하']}</b> | 보관: <b style="color:#1565c0">${counts['보관-상']+counts['보관-하']}</b>${disposed?' | <span style="color:#999">폐기:'+disposed+'</span>':''} (공정 ${model.process_count}개)`;
+    `<strong>${model.name} / ${mold.mold_no}</strong> — 장착: <b style="color:#c62828">${counts['장착-상']+counts['장착-하']}</b> | 보관: <b style="color:#1565c0">${counts['보관-상']+counts['보관-하']}</b>${disposed?' | <span style="color:#999">폐기:'+disposed+'</span>':''} (공정 ${model.process_count||20}개)`;
   if(currentView==='card')renderCardView(model,counts);
   else if(currentView==='zoom')renderZoomView(model);
   else renderTableView(model);
