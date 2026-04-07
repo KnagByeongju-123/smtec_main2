@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>금형 부품 관리</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&display=swap');
   *{box-sizing:border-box;margin:0;padding:0}
@@ -256,6 +257,28 @@
 
 <!-- ===== 설정 ===== -->
 <div class="pnl" id="pnl3">
+  <!-- 이력 관리 -->
+  <div class="card">
+    <div class="card-tit">📊 이력 관리</div>
+    <div style="display:flex;gap:8px">
+      <div class="fg" style="flex:1"><label>시작일</label><input type="date" id="histStart"></div>
+      <div class="fg" style="flex:1"><label>종료일</label><input type="date" id="histEnd"></div>
+    </div>
+    <div class="fg">
+      <label>기종</label>
+      <select id="histModel"><option value="">전체</option></select>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-blue" onclick="histPreview()" style="flex:1;padding:10px;font-size:13px">🔍 조회</button>
+      <button class="btn btn-green" onclick="histDownload()" style="flex:1;padding:10px;font-size:13px">📥 엑셀 다운로드</button>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-red" onclick="histDelete()" style="flex:1;padding:10px;font-size:13px">🗑 선택범위 삭제</button>
+    </div>
+    <div id="histStatus" style="font-size:11px;margin-top:4px;color:#888"></div>
+    <div id="histPreviewArea" style="margin-top:8px;max-height:300px;overflow-y:auto"></div>
+  </div>
+
   <!-- 설비(호기)에서 기종 가져오기 -->
   <div class="card" style="border:2px solid #f59e0b">
     <div class="card-tit">🏭 설비(호기)에서 기종 가져오기</div>
@@ -353,7 +376,7 @@ let currentView='table';
 function swTab(n){
   document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('on',i===n));
   document.querySelectorAll('.pnl').forEach((p,i)=>p.classList.toggle('on',i===n));
-  if(n===0)renderAll();if(n===1){ensureModelsLoaded();loadRecentParts();}if(n===2)loadLogs();if(n===3){ensureModelsLoaded();renderSettings();}
+  if(n===0)renderAll();if(n===1){ensureModelsLoaded();loadRecentParts();}if(n===2)loadLogs();if(n===3){ensureModelsLoaded();renderSettings();initHistDates();}
 }
 
 async function ensureModelsLoaded(){
@@ -1199,6 +1222,85 @@ async function executeMoldImport(){
     // 현황 탭에서 사용하도록 금형 재로드
     if(selModelId==targetModelId)await onModelChange();
   }catch(e){st.textContent='❌ 등록 실패: '+e.message;st.style.color='#c62828'}
+}
+
+// ===== 이력 관리 =====
+function initHistDates(){
+  const today=new Date();
+  const monthAgo=new Date(today);monthAgo.setMonth(monthAgo.getMonth()-1);
+  if(!document.getElementById('histEnd').value)document.getElementById('histEnd').value=today.toISOString().split('T')[0];
+  if(!document.getElementById('histStart').value)document.getElementById('histStart').value=monthAgo.toISOString().split('T')[0];
+  // 기종 셀렉트 채우기
+  const sel=document.getElementById('histModel');
+  const pv=sel.value;
+  sel.innerHTML='<option value="">전체</option>';
+  models.forEach(m=>{sel.innerHTML+=`<option value="${m.id}">${m.name}</option>`});
+  if(pv)sel.value=pv;
+}
+
+async function histFetch(){
+  const start=document.getElementById('histStart').value;
+  const end=document.getElementById('histEnd').value;
+  const mid=document.getElementById('histModel').value;
+  if(!start||!end)return{ok:false,msg:'시작일/종료일 선택'};
+  let q=`order=created_at.desc&limit=5000&created_at=gte.${start}T00:00:00&created_at=lte.${end}T23:59:59`;
+  if(mid)q+=`&model_id=eq.${mid}`;
+  try{
+    const data=await sbSelect('mold_log',q);
+    return{ok:true,data};
+  }catch(e){return{ok:false,msg:e.message}}
+}
+
+async function histPreview(){
+  const st=document.getElementById('histStatus');
+  const area=document.getElementById('histPreviewArea');
+  st.textContent='조회 중...';st.style.color='#1565c0';area.innerHTML='';
+  const r=await histFetch();
+  if(!r.ok){st.textContent='❌ '+r.msg;st.style.color='#c62828';return}
+  if(!r.data.length){st.textContent='⚠ 이력 없음';st.style.color='#e65100';return}
+  st.textContent=`✅ ${r.data.length}건`;st.style.color='#2e7d32';
+  let h='<table style="width:100%;border-collapse:collapse;font-size:11px"><tr style="background:#f5f5f5"><th style="padding:6px 4px;border-bottom:1px solid #ddd;text-align:left">일시</th><th style="padding:6px 4px;border-bottom:1px solid #ddd;text-align:left">작업</th><th style="padding:6px 4px;border-bottom:1px solid #ddd;text-align:left">상세</th></tr>';
+  r.data.slice(0,100).forEach(l=>{
+    const cls=l.action==='제작'?'#2e7d32':l.action==='삭제'?'#c62828':'#1565c0';
+    h+=`<tr style="border-bottom:1px solid #f0f0f0"><td style="padding:4px">${l.created_at?l.created_at.substring(0,16).replace('T',' '):''}</td><td style="padding:4px;color:${cls};font-weight:600">${l.action||''}</td><td style="padding:4px;color:#555">${l.detail||''}</td></tr>`;
+  });
+  if(r.data.length>100)h+=`<tr><td colspan="3" style="padding:8px;text-align:center;color:#888">...외 ${r.data.length-100}건</td></tr>`;
+  area.innerHTML=h+'</table>';
+}
+
+async function histDownload(){
+  const st=document.getElementById('histStatus');
+  st.textContent='다운로드 준비...';st.style.color='#1565c0';
+  const r=await histFetch();
+  if(!r.ok){st.textContent='❌ '+r.msg;st.style.color='#c62828';return}
+  if(!r.data.length){st.textContent='⚠ 이력 없음';st.style.color='#e65100';return}
+  const hd=['일시','작업','부품명','상/하','공정','상세'];
+  const rows=r.data.map(l=>[l.created_at?l.created_at.substring(0,19).replace('T',' '):'',l.action||'',l.part_name||'',l.position||'',l.process_no||'',l.detail||'']);
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([hd,...rows]),'이력');
+  const s=document.getElementById('histStart').value.replace(/-/g,'');
+  const e=document.getElementById('histEnd').value.replace(/-/g,'');
+  XLSX.writeFile(wb,`금형부품이력_${s}_${e}.xlsx`);
+  st.textContent=`✅ ${r.data.length}건 다운로드`;st.style.color='#2e7d32';
+}
+
+async function histDelete(){
+  const st=document.getElementById('histStatus');
+  const r=await histFetch();
+  if(!r.ok){st.textContent='❌ '+r.msg;st.style.color='#c62828';return}
+  if(!r.data.length){st.textContent='⚠ 삭제할 이력 없음';st.style.color='#e65100';return}
+  if(!confirm(`⚠ ${r.data.length}건 삭제? 되돌릴 수 없습니다.`))return;
+  if(!confirm(`한번 더 확인: ${r.data.length}건 삭제합니다.`))return;
+  st.textContent='삭제 중...';st.style.color='#e65100';
+  const ids=r.data.map(l=>l.id);
+  let deleted=0;
+  for(let i=0;i<ids.length;i+=50){
+    const batch=ids.slice(i,i+50);
+    try{await sbDelete('mold_log',`id=in.(${batch.join(',')})`);deleted+=batch.length;st.textContent=`삭제 중... ${deleted}/${ids.length}`}
+    catch(e){st.textContent='❌ '+e.message;st.style.color='#c62828';return}
+  }
+  st.textContent=`✅ ${deleted}건 삭제 완료`;st.style.color='#2e7d32';
+  document.getElementById('histPreviewArea').innerHTML='';
 }
 
 // ===== 설정 =====
