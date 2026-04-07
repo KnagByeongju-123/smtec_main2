@@ -6,6 +6,7 @@
 <title>회의록 관리</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700&display=swap');
 *{box-sizing:border-box;margin:0;padding:0}
@@ -478,96 +479,187 @@ async function showDetail(id){
 }
 function closeDetail(){document.getElementById('detailModal').style.display='none';curId=null}
 
-// ===== 정석 회의록 엑셀 출력 =====
+// ===== 정석 회의록 엑셀 출력 (ExcelJS) =====
 async function exportMeetingExcel(){
   if(!curId){showToast('회의록을 먼저 열어주세요');return}
+  showToast('엑셀 생성 중...');
   try{
     const{data:r,error}=await sb.from('meeting').select('*').eq('id',curId).single();
     if(error)throw error;
 
-    const wb=XLSX.utils.book_new();
+    const wb=new ExcelJS.Workbook();
+    wb.creator='회의록 관리 시스템';
+    const ws=wb.addWorksheet('회의록',{properties:{defaultColWidth:15}});
 
-    // 회의일시 포맷
+    // 컬럼 너비
+    ws.columns=[{width:14},{width:22},{width:20},{width:14},{width:22}];
+
+    // 스타일 정의
+    const borderThin={top:{style:'thin'},bottom:{style:'thin'},left:{style:'thin'},right:{style:'thin'}};
+    const borderMed={top:{style:'medium'},bottom:{style:'medium'},left:{style:'medium'},right:{style:'medium'}};
+    const fillLabel={type:'pattern',pattern:'solid',fgColor:{argb:'FFE3F2FD'}};
+    const fillSection={type:'pattern',pattern:'solid',fgColor:{argb:'FF0F3460'}};
+    const fillContent={type:'pattern',pattern:'solid',fgColor:{argb:'FFFAFAFA'}};
+    const fontTitle={name:'맑은 고딕',size:18,bold:true};
+    const fontLabel={name:'맑은 고딕',size:10,bold:true,color:{argb:'FF0F3460'}};
+    const fontVal={name:'맑은 고딕',size:10};
+    const fontSection={name:'맑은 고딕',size:11,bold:true,color:{argb:'FFFFFFFF'}};
+    const alignC={vertical:'middle',horizontal:'center'};
+    const alignL={vertical:'middle',horizontal:'left',wrapText:true};
+    const alignLT={vertical:'top',horizontal:'left',wrapText:true};
+
+    let row=1;
+
+    // ===== 1. 제목 =====
+    ws.mergeCells(row,1,row,5);
+    const titleCell=ws.getCell(row,1);
+    titleCell.value='회  의  록';
+    titleCell.font={name:'맑은 고딕',size:20,bold:true,color:{argb:'FF0F3460'}};
+    titleCell.alignment=alignC;
+    titleCell.border={bottom:{style:'medium',color:{argb:'FF0F3460'}}};
+    ws.getRow(row).height=38;
+
+    row+=2; // row=3
+
+    // ===== 2. 기본정보 테이블 =====
     let dateStr='';
     if(r.meeting_date)try{dateStr=new Date(r.meeting_date).toLocaleDateString('ko-KR',{year:'numeric',month:'long',day:'numeric',weekday:'short',hour:'2-digit',minute:'2-digit'})}catch{dateStr=r.meeting_date}
 
-    // 정석 회의록 양식 구성
-    const rows=[
-      ['','','회  의  록','',''],
-      [],
+    const infoRows=[
       ['회의제목',r.title||'','','',''],
       ['회의일시',dateStr,'','회의장소',r.location||''],
-      ['사업장',r.site||'','','회의유형',r.meeting_type||''],
-      ['작 성 자',r.author||'','','상  태',r.status||'미결'],
-      ['참 석 자',r.attendees||'','','',''],
-      [],
-      ['안    건'],
-      [r.agenda||''],
-      [],
-      ['회의내용'],
-      [r.content||''],
-      [],
-      ['결정사항'],
-      [r.decision||'(없음)'],
-      [],
-      ['후속조치'],
-      [r.follow_up||'(없음)'],
-      [],
-      [],
-      ['작성일: '+new Date().toLocaleDateString('ko-KR'),'','','작성자:',r.author||''],
-      ['','','','(서명)','']
+      ['사 업 장',r.site||'','','회의유형',r.meeting_type||''],
+      ['작 성 자',r.author||'','','상    태',r.status||'미결'],
+      ['참 석 자',r.attendees||'','','','']
+    ];
+    const infoMerges=[
+      [[row,2,row,5]],          // 회의제목 값
+      [[row+1,2,row+1,3]],     // 회의일시 값
+      [[row+2,2,row+2,3]],     // 사업장 값
+      [[row+3,2,row+3,3]],     // 작성자 값
+      [[row+4,2,row+4,5]]      // 참석자 값
     ];
 
-    const ws=XLSX.utils.aoa_to_sheet(rows);
+    infoRows.forEach((ir,i)=>{
+      const cr=row+i;
+      ws.getRow(cr).height=26;
+      ir.forEach((v,j)=>{
+        const c=ws.getCell(cr,j+1);
+        c.value=v;
+        c.border=borderThin;
+        c.alignment=alignL;
+        if(j===0||j===3){c.font=fontLabel;c.fill=fillLabel;c.alignment={vertical:'middle',horizontal:'center'}}
+        else{c.font=fontVal}
+      });
+      infoMerges[i].forEach(m=>ws.mergeCells(m[0],m[1],m[2],m[3]));
+    });
 
-    // 컬럼 너비
-    ws['!cols']=[{wch:12},{wch:20},{wch:18},{wch:12},{wch:20}];
+    row+=infoRows.length; // 다음 행
 
-    // 셀 병합 (정석 회의록 양식)
-    ws['!merges']=[
-      {s:{r:0,c:0},e:{r:0,c:4}},   // 제목
-      {s:{r:2,c:1},e:{r:2,c:4}},   // 회의제목 값
-      {s:{r:3,c:1},e:{r:3,c:2}},   // 회의일시 값
-      {s:{r:4,c:1},e:{r:4,c:2}},   // 사업장 값
-      {s:{r:5,c:1},e:{r:5,c:2}},   // 작성자 값
-      {s:{r:6,c:1},e:{r:6,c:4}},   // 참석자 값
-      {s:{r:8,c:0},e:{r:8,c:4}},   // 안건 라벨
-      {s:{r:9,c:0},e:{r:9,c:4}},   // 안건 내용
-      {s:{r:11,c:0},e:{r:11,c:4}}, // 회의내용 라벨
-      {s:{r:12,c:0},e:{r:12,c:4}}, // 회의내용 내용
-      {s:{r:14,c:0},e:{r:14,c:4}}, // 결정사항 라벨
-      {s:{r:15,c:0},e:{r:15,c:4}}, // 결정사항 내용
-      {s:{r:17,c:0},e:{r:17,c:4}}, // 후속조치 라벨
-      {s:{r:18,c:0},e:{r:18,c:4}}, // 후속조치 내용
+    // ===== 3. 섹션별 내용 =====
+    const sections=[
+      ['📋 안    건',r.agenda||'',50],
+      ['📝 회의내용',r.content||'',120],
+      ['✅ 결정사항',r.decision||'(없음)',60],
+      ['🔄 후속조치',r.follow_up||'(없음)',60]
     ];
 
-    // 행 높이
-    ws['!rows']=[
-      {hpt:30},  // 제목
-      {hpt:8},   // 빈 줄
-      {hpt:24},{hpt:24},{hpt:24},{hpt:24},{hpt:24}, // 기본정보
-      {hpt:8},   // 빈 줄
-      {hpt:22},  // 안건 라벨
-      {hpt:50},  // 안건 내용
-      {hpt:8},
-      {hpt:22},  // 회의내용 라벨
-      {hpt:120}, // 회의내용 내용
-      {hpt:8},
-      {hpt:22},  // 결정사항 라벨
-      {hpt:60},  // 결정사항 내용
-      {hpt:8},
-      {hpt:22},  // 후속조치 라벨
-      {hpt:60},  // 후속조치 내용
-    ];
+    sections.forEach(([label,content,ht])=>{
+      row++;
+      // 섹션 헤더
+      ws.mergeCells(row,1,row,5);
+      const hc=ws.getCell(row,1);
+      hc.value=label;
+      hc.font=fontSection;
+      hc.fill=fillSection;
+      hc.alignment=alignC;
+      hc.border=borderThin;
+      ws.getRow(row).height=24;
 
-    XLSX.utils.book_append_sheet(wb,ws,'회의록');
+      // 섹션 내용
+      row++;
+      ws.mergeCells(row,1,row,5);
+      const cc=ws.getCell(row,1);
+      cc.value=content;
+      cc.font=fontVal;
+      cc.fill=fillContent;
+      cc.alignment=alignLT;
+      cc.border=borderThin;
+      ws.getRow(row).height=ht;
+    });
 
-    // 파일명: 회의록_제목_날짜
+    // ===== 4. 첨부사진 =====
+    const photos=r.photos||r.photo_urls||[];
+    const photoArr=Array.isArray(photos)?photos:(typeof photos==='string'?JSON.parse(photos||'[]'):[]);
+
+    if(photoArr.length>0){
+      row+=2;
+      ws.mergeCells(row,1,row,5);
+      const phc=ws.getCell(row,1);
+      phc.value='📷 첨부사진 ('+photoArr.length+'장)';
+      phc.font=fontSection;
+      phc.fill=fillSection;
+      phc.alignment=alignC;
+      phc.border=borderThin;
+      ws.getRow(row).height=24;
+      row++;
+
+      let col=1;
+      for(let i=0;i<photoArr.length;i++){
+        try{
+          const url=photoArr[i];
+          const resp=await fetch(url);
+          if(!resp.ok)continue;
+          const blob=await resp.blob();
+          const buf=await blob.arrayBuffer();
+          const ext=blob.type.includes('png')?'png':'jpeg';
+          const imgId=wb.addImage({buffer:buf,extension:ext});
+
+          // 사진 2장씩 한 줄에
+          const imgCol=col;
+          ws.addImage(imgId,{
+            tl:{col:imgCol-1+0.1,row:row-1+0.1},
+            br:{col:imgCol+1-0.1,row:row-1+8},
+            editAs:'oneCell'
+          });
+          col+=2;
+          if(col>4){col=1;row+=8}
+        }catch(pe){console.warn('사진 로드 실패:',pe)}
+      }
+      if(col>1)row+=8; // 마지막 사진 줄 여백
+    }
+
+    // ===== 5. 서명란 =====
+    row+=2;
+    ws.mergeCells(row,1,row,2);
+    ws.getCell(row,1).value='작성일: '+new Date().toLocaleDateString('ko-KR');
+    ws.getCell(row,1).font=fontVal;
+    ws.getCell(row,1).alignment=alignL;
+
+    ws.mergeCells(row,4,row,5);
+    ws.getCell(row,4).value='작성자: '+(r.author||'');
+    ws.getCell(row,4).font=fontVal;
+    ws.getCell(row,4).alignment={vertical:'middle',horizontal:'right'};
+
+    row++;
+    ws.mergeCells(row,4,row,5);
+    ws.getCell(row,4).value='(서명)';
+    ws.getCell(row,4).font={name:'맑은 고딕',size:9,color:{argb:'FF999999'}};
+    ws.getCell(row,4).alignment={vertical:'middle',horizontal:'right'};
+    ws.getCell(row,4).border={top:{style:'thin'}};
+
+    // ===== 파일 생성 및 다운로드 =====
+    const buf=await wb.xlsx.writeBuffer();
+    const blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
     const safeTitle=(r.title||'회의록').replace(/[^가-힣a-zA-Z0-9]/g,'_').substring(0,20);
     const dateTag=r.meeting_date?r.meeting_date.split('T')[0].replace(/-/g,''):new Date().toISOString().split('T')[0].replace(/-/g,'');
-    XLSX.writeFile(wb,'회의록_'+safeTitle+'_'+dateTag+'.xlsx');
+    a.href=url;a.download='회의록_'+safeTitle+'_'+dateTag+'.xlsx';
+    document.body.appendChild(a);a.click();document.body.removeChild(a);
+    URL.revokeObjectURL(url);
     showToast('📥 회의록 엑셀 다운로드 완료');
-  }catch(e){showToast('다운로드 실패: '+e.message)}
+  }catch(e){showToast('다운로드 실패: '+e.message);console.error(e)}
 }
 
 async function toggleStatus(){
@@ -631,7 +723,81 @@ function resetForm(){
   photoFiles=[];existPhotos=[];renderPhotos();
 }
 
-function handlePhotos(inp){Array.from(inp.files).forEach(f=>photoFiles.push(f));inp.value='';renderPhotos()}
+// ===== 이미지 압축 (50KB 이하) =====
+function compressPhoto(file,maxSize=50000){
+  return new Promise((resolve)=>{
+    if(!file.type.startsWith('image/')){resolve(file);return}
+    const img=new Image();
+    const url=URL.createObjectURL(file);
+    img.onload=()=>{
+      URL.revokeObjectURL(url);
+      const cv=document.createElement('canvas');
+      const ctx=cv.getContext('2d');
+
+      // 단계적 축소: 해상도를 줄여가며 50KB 이하 달성
+      let w=img.width,h=img.height;
+      const steps=[640,480,320,240];
+      let targetW=w,targetH=h;
+
+      // 첫 축소: 긴 변 기준
+      for(const maxDim of steps){
+        if(Math.max(w,h)>maxDim){
+          if(w>h){targetW=maxDim;targetH=Math.round(h*(maxDim/w))}
+          else{targetH=maxDim;targetW=Math.round(w*(maxDim/h))}
+          break;
+        }
+      }
+      if(targetW===w&&targetH===h&&Math.max(w,h)>640){
+        targetW=640;targetH=Math.round(h*(640/w));
+      }
+
+      cv.width=targetW;cv.height=targetH;
+      ctx.drawImage(img,0,0,targetW,targetH);
+
+      // 품질을 낮춰가며 50KB 이하 달성
+      let quality=0.5;
+      let blob=null;
+      const tryCompress=()=>{
+        cv.toBlob((b)=>{
+          if(b&&b.size>maxSize&&quality>0.1){
+            quality-=0.1;
+            // 해상도도 추가 축소
+            if(quality<=0.2&&cv.width>240){
+              const scale=0.7;
+              const nw=Math.round(cv.width*scale),nh=Math.round(cv.height*scale);
+              const tmpCv=document.createElement('canvas');
+              tmpCv.width=nw;tmpCv.height=nh;
+              tmpCv.getContext('2d').drawImage(cv,0,0,nw,nh);
+              cv.width=nw;cv.height=nh;
+              ctx.drawImage(tmpCv,0,0);
+              quality=0.4;
+            }
+            tryCompress();
+          }else{
+            const compressed=new File([b||blob],file.name.replace(/\.[^.]+$/,'.jpg'),{type:'image/jpeg'});
+            console.log('사진 압축: '+Math.round(file.size/1024)+'KB → '+Math.round(compressed.size/1024)+'KB ('+cv.width+'x'+cv.height+')');
+            resolve(compressed);
+          }
+        },'image/jpeg',quality);
+      };
+      tryCompress();
+    };
+    img.onerror=()=>{URL.revokeObjectURL(url);resolve(file)};
+    img.src=url;
+  });
+}
+
+async function handlePhotos(inp){
+  const files=Array.from(inp.files);
+  inp.value='';
+  if(!files.length)return;
+  document.getElementById('photoStatus').textContent='사진 압축 중... ('+files.length+'장)';
+  for(const f of files){
+    const compressed=await compressPhoto(f,50000);
+    photoFiles.push(compressed);
+  }
+  renderPhotos();
+}
 function renderPhotos(){
   const g=document.getElementById('photoPreview');g.innerHTML='';
   photoFiles.forEach((f,i)=>{
