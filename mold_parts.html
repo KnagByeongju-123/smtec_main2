@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -266,8 +265,8 @@
   <div class="card" style="border:2px solid #1565c0">
     <div class="card-tit">📤 소재마스터에서 가져오기</div>
     <div style="font-size:11px;color:#888;margin-bottom:8px;padding:6px 8px;background:#e3f2fd;border-radius:6px;color:#1565c0">
-      💡 <code>material_master_tj</code>의 <b>기종코드(model_code)</b> → 기종명, <b>금형재번(mold_number)</b> → 금형번호로 자동 등록합니다.<br>
-      이미 등록된 기종/금형은 건너뜁니다.
+      💡 <code>material_master_tj</code>의 <b>매핑기종(mapped_models)</b> · <b>기종코드(model_code)</b> → 기종명, <b>금형재번(mold_number)</b> → 금형번호로 자동 등록합니다.<br>
+      이미 등록된 기종/금형은 건너뜁니다. 쉼표 구분된 매핑기종은 각각 분리하여 등록합니다.
     </div>
     <div class="fg">
       <label>고객사 선택</label>
@@ -339,7 +338,14 @@ let currentView='card';
 function swTab(n){
   document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('on',i===n));
   document.querySelectorAll('.pnl').forEach((p,i)=>p.classList.toggle('on',i===n));
-  if(n===0)renderAll();if(n===1)loadRecentParts();if(n===2)loadLogs();if(n===3)renderSettings();
+  if(n===0)renderAll();if(n===1){ensureModelsLoaded();loadRecentParts();}if(n===2)loadLogs();if(n===3){ensureModelsLoaded();renderSettings();}
+}
+
+async function ensureModelsLoaded(){
+  if(!models.length){
+    try{models=await sbSelect('mold_model','order=name.asc')}catch(e){models=[]}
+    populateModelSelects();
+  }
 }
 function setView(v){
   currentView=v;
@@ -1043,7 +1049,7 @@ async function previewImport(){
   const custFilter=document.getElementById('importCustFilter').value;
   st.textContent='소재마스터 조회 중...';st.style.color='#1565c0';
   try{
-    let query='select=model_code,mold_number,material_name,customer';
+    let query='select=model_code,mold_number,material_name,customer,mapped_models';
     if(custFilter)query+=`&customer=eq.${encodeURIComponent(custFilter)}`;
     const mm=await sbSelect('material_master_tj',query);
 
@@ -1052,27 +1058,43 @@ async function previewImport(){
       const custSet=new Set();
       mm.forEach(r=>{if(r.customer)custSet.add(r.customer)});
       const sel=document.getElementById('importCustFilter');
-      const prev=sel.value;
+      const pv=sel.value;
       sel.innerHTML='<option value="">전체 고객사</option>';
-      [...custSet].sort().forEach(c=>{
-        sel.innerHTML+=`<option value="${c}">${c}</option>`;
-      });
-      sel.value=prev;
+      [...custSet].sort().forEach(c=>{sel.innerHTML+=`<option value="${c}">${c}</option>`});
+      sel.value=pv;
     }
 
-    // 기종코드 추출
-    const modelSet=new Map();
-    const moldMap=new Map();
+    // 기종 추출: model_code 또는 mapped_models에서 추출
+    const modelSet=new Map(); // name → {customer}
+    const moldMap=new Map(); // model_name → Set<mold_number>
     mm.forEach(r=>{
       const mc=(r.model_code||'').trim();
       const mn=(r.mold_number||'').trim();
-      if(!mc)return;
-      if(!modelSet.has(mc))modelSet.set(mc,{name:mc,customer:r.customer||''});
-      if(mn){
-        if(!moldMap.has(mc))moldMap.set(mc,new Set());
-        moldMap.get(mc).add(mn);
+      const mapped=(r.mapped_models||'').trim();
+      
+      // 기종명 후보 수집
+      const modelNames=new Set();
+      if(mc)modelNames.add(mc);
+      // mapped_models: 쉼표 구분된 기종들
+      if(mapped){
+        mapped.split(',').forEach(s=>{const v=s.trim();if(v)modelNames.add(v)});
       }
+      
+      // 기종이 하나도 없으면 material_name 사용
+      if(!modelNames.size){
+        const mname=(r.material_name||'').trim();
+        if(mname)modelNames.add(mname);
+      }
+      
+      modelNames.forEach(name=>{
+        if(!modelSet.has(name))modelSet.set(name,{customer:r.customer||''});
+        if(mn){
+          if(!moldMap.has(name))moldMap.set(name,new Set());
+          moldMap.get(name).add(mn);
+        }
+      });
     });
+
     // 기존 데이터 비교
     const existModels=new Set(models.map(m=>m.name));
     const existMolds=new Map();
@@ -1085,12 +1107,12 @@ async function previewImport(){
 
     const newModels=[];
     const newMolds=[];
-    modelSet.forEach((val,mc)=>{
-      if(!existModels.has(mc))newModels.push({name:mc,customer:val.customer});
-      const molds=moldMap.get(mc)||new Set();
-      const existSet=existMolds.get(mc)||new Set();
+    modelSet.forEach((val,name)=>{
+      if(!existModels.has(name))newModels.push({name,customer:val.customer});
+      const molds=moldMap.get(name)||new Set();
+      const existSet=existMolds.get(name)||new Set();
       molds.forEach(mn=>{
-        if(!existSet.has(mn))newMolds.push({model:mc,mold:mn});
+        if(!existSet.has(mn))newMolds.push({model:name,mold:mn});
       });
     });
 
@@ -1100,17 +1122,17 @@ async function previewImport(){
     let html=`<div style="padding:8px;background:#f5f5f5;border-radius:8px">`;
     html+=`<div style="font-weight:700;margin-bottom:4px">📊 분석 결과${custLabel}</div>`;
     html+=`<div>대상 소재: <b>${mm.length}</b>건${custFilter?' ('+custFilter+')':''}</div>`;
-    html+=`<div>기종코드: <b>${modelSet.size}</b>개 (신규: <span style="color:#2e7d32;font-weight:700">${newModels.length}</span>)</div>`;
-    html+=`<div>금형재번: <b>${[...moldMap.values()].reduce((s,set)=>s+set.size,0)}</b>개 (신규: <span style="color:#2e7d32;font-weight:700">${newMolds.length}</span>)</div>`;
+    html+=`<div>기종(model_code+mapped_models): <b>${modelSet.size}</b>개 (신규: <span style="color:#2e7d32;font-weight:700">${newModels.length}</span>)</div>`;
+    html+=`<div>금형재번(mold_number): <b>${[...moldMap.values()].reduce((s,set)=>s+set.size,0)}</b>개 (신규: <span style="color:#2e7d32;font-weight:700">${newMolds.length}</span>)</div>`;
     if(newModels.length){
       html+=`<div style="margin-top:6px;font-size:11px;color:#1565c0;font-weight:600">신규 기종:</div>`;
-      html+=newModels.slice(0,20).map(m=>`<span style="display:inline-block;padding:2px 6px;margin:2px;background:#e3f2fd;border-radius:4px;font-size:11px">${m.name}${m.customer?' <span style="color:#888">('+m.customer+')</span>':''}</span>`).join('');
-      if(newModels.length>20)html+=`<span style="font-size:11px;color:#888"> ...외 ${newModels.length-20}개</span>`;
+      html+=newModels.slice(0,30).map(m=>`<span style="display:inline-block;padding:2px 6px;margin:2px;background:#e3f2fd;border-radius:4px;font-size:11px">${m.name}${m.customer?' <span style="color:#888">('+m.customer+')</span>':''}</span>`).join('');
+      if(newModels.length>30)html+=`<span style="font-size:11px;color:#888"> ...외 ${newModels.length-30}개</span>`;
     }
     if(newMolds.length){
       html+=`<div style="margin-top:6px;font-size:11px;color:#e65100;font-weight:600">신규 금형:</div>`;
-      html+=newMolds.slice(0,20).map(m=>`<span style="display:inline-block;padding:2px 6px;margin:2px;background:#fff3e0;border-radius:4px;font-size:11px">${m.model}→${m.mold}</span>`).join('');
-      if(newMolds.length>20)html+=`<span style="font-size:11px;color:#888"> ...외 ${newMolds.length-20}개</span>`;
+      html+=newMolds.slice(0,30).map(m=>`<span style="display:inline-block;padding:2px 6px;margin:2px;background:#fff3e0;border-radius:4px;font-size:11px">${m.model}→${m.mold}</span>`).join('');
+      if(newMolds.length>30)html+=`<span style="font-size:11px;color:#888"> ...외 ${newMolds.length-30}개</span>`;
     }
     if(!newModels.length&&!newMolds.length)html+=`<div style="margin-top:6px;color:#888">✅ 모두 이미 등록됨 — 신규 없음</div>`;
     html+=`</div>`;
