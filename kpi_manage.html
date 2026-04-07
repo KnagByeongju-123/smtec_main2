@@ -58,8 +58,9 @@ tr:hover td{background:#fafafa}
 <div class="tabs">
   <div class="tab on" onclick="swTab(0)">📊 현황</div>
   <div class="tab" onclick="swTab(1)">📝 실적</div>
-  <div class="tab" onclick="swTab(2)">📈 추이</div>
-  <div class="tab" onclick="swTab(3)">⚙ 설정</div>
+  <div class="tab" onclick="swTab(2)">🔧 시정</div>
+  <div class="tab" onclick="swTab(3)">📈 추이</div>
+  <div class="tab" onclick="swTab(4)">⚙ 설정</div>
 </div>
 
 <!-- ===== 현황 대시보드 ===== -->
@@ -90,8 +91,36 @@ tr:hover td{background:#fafafa}
   </div>
 </div>
 
-<!-- ===== 추이 분석 ===== -->
+<!-- ===== 시정조치 ===== -->
 <div class="pnl" id="pnl2">
+  <div class="card">
+    <div class="card-tit" style="justify-content:space-between">
+      <span>🔧 KPI 시정조치 관리</span>
+      <button class="btn btn-sm btn-blue" onclick="openCaModal()">+ 시정조치 발행</button>
+    </div>
+    <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
+      <select id="caFilterStatus" onchange="renderCaList()" style="flex:1;padding:7px;border:1px solid #ddd;border-radius:6px;font-size:12px;font-family:inherit;min-width:0">
+        <option value="">전체 상태</option>
+        <option value="발행">🔴 발행</option>
+        <option value="조치중">🟡 조치중</option>
+        <option value="효과확인">🔵 효과확인</option>
+        <option value="완료">✅ 완료</option>
+      </select>
+      <select id="caFilterProc" onchange="renderCaList()" style="flex:1;padding:7px;border:1px solid #ddd;border-radius:6px;font-size:12px;font-family:inherit;min-width:0">
+        <option value="">전체 프로세스</option>
+      </select>
+    </div>
+    <div id="caListBody"></div>
+  </div>
+  <!-- 시정조치 통계 -->
+  <div class="card">
+    <div class="card-tit">📊 시정조치 현황</div>
+    <div id="caStats"></div>
+  </div>
+</div>
+
+<!-- ===== 추이 분석 ===== -->
+<div class="pnl" id="pnl3">
   <div class="card">
     <div class="card-tit">📈 KPI 추이 분석</div>
     <div style="display:flex;gap:8px;margin-bottom:10px">
@@ -107,13 +136,14 @@ tr:hover td{background:#fafafa}
     <div class="btn-row">
       <button class="btn btn-sm btn-gray" onclick="exportExcel('kpi')">KPI마스터</button>
       <button class="btn btn-sm btn-gray" onclick="exportExcel('record')">실적데이터</button>
+      <button class="btn btn-sm btn-gray" onclick="exportExcel('ca')">시정조치</button>
       <button class="btn btn-sm btn-gray" onclick="exportExcel('all')">전체</button>
     </div>
   </div>
 </div>
 
 <!-- ===== 설정 ===== -->
-<div class="pnl" id="pnl3">
+<div class="pnl" id="pnl4">
   <div class="card">
     <div class="card-tit">👥 부서 관리</div>
     <div id="deptList"></div>
@@ -205,6 +235,29 @@ DROP POLICY IF EXISTS "kpi_master_all" ON kpi_master;
 CREATE POLICY "kpi_master_all" ON kpi_master FOR ALL USING (true) WITH CHECK (true);
 DROP POLICY IF EXISTS "kpi_record_all" ON kpi_record;
 CREATE POLICY "kpi_record_all" ON kpi_record FOR ALL USING (true) WITH CHECK (true);
+
+-- 시정조치
+CREATE TABLE IF NOT EXISTS kpi_corrective_action (
+  id SERIAL PRIMARY KEY,
+  kpi_id INT REFERENCES kpi_master(id),
+  record_year INT,
+  record_month INT,
+  issue_date DATE DEFAULT CURRENT_DATE,
+  status TEXT DEFAULT '발행',
+  actual_value NUMERIC,
+  target_value NUMERIC,
+  cause TEXT,
+  action_plan TEXT,
+  responsible TEXT,
+  due_date DATE,
+  action_result TEXT,
+  effect_check TEXT,
+  close_date DATE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE kpi_corrective_action ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "kpi_ca_all" ON kpi_corrective_action;
+CREATE POLICY "kpi_ca_all" ON kpi_corrective_action FOR ALL USING (true) WITH CHECK (true);
       </pre>
     </details>
   </div>
@@ -231,6 +284,37 @@ CREATE POLICY "kpi_record_all" ON kpi_record FOR ALL USING (true) WITH CHECK (tr
     <div class="btn-row">
       <button class="btn btn-blue" onclick="saveKpi()">💾 저장</button>
       <button class="btn btn-gray" onclick="closeKpiModal()">취소</button>
+    </div>
+  </div>
+</div>
+
+<!-- 시정조치 등록/수정 모달 -->
+<div class="modal-bg" id="caModal">
+  <div class="modal">
+    <div class="modal-tit"><span id="caModalTit">시정조치 발행</span><button onclick="closeCaModal()" style="border:none;background:none;font-size:20px;cursor:pointer">✕</button></div>
+    <input type="hidden" id="caEditId">
+    <div class="fg"><label>KPI 항목 *</label><select id="caKpi" style="font-size:13px" onchange="onCaKpiSelect()"></select></div>
+    <div style="display:flex;gap:8px">
+      <div class="fg" style="flex:1"><label>년도</label><input type="number" id="caYear" style="text-align:center"></div>
+      <div class="fg" style="flex:1"><label>월</label><input type="number" id="caMonth" min="1" max="12" style="text-align:center"></div>
+    </div>
+    <div style="display:flex;gap:8px">
+      <div class="fg" style="flex:1"><label>실적값</label><input type="number" id="caActual" step="any"></div>
+      <div class="fg" style="flex:1"><label>목표값</label><input type="number" id="caTarget" step="any"></div>
+    </div>
+    <div class="fg"><label>상태</label><select id="caStatus"><option value="발행">🔴 발행</option><option value="조치중">🟡 조치중</option><option value="효과확인">🔵 효과확인</option><option value="완료">✅ 완료</option></select></div>
+    <div class="fg"><label>발생원인 분석 *</label><textarea id="caCause" placeholder="왜 미달되었는가? (5Why, 특성요인도 등)" rows="3"></textarea></div>
+    <div class="fg"><label>시정조치 계획 *</label><textarea id="caAction" placeholder="어떤 조치를 할 것인가?" rows="3"></textarea></div>
+    <div style="display:flex;gap:8px">
+      <div class="fg" style="flex:1"><label>담당자</label><select id="caResp" style="font-size:13px"></select></div>
+      <div class="fg" style="flex:1"><label>완료기한</label><input type="date" id="caDue"></div>
+    </div>
+    <div class="fg"><label>조치결과</label><textarea id="caResult" placeholder="실행한 조치 내용 및 결과" rows="2"></textarea></div>
+    <div class="fg"><label>효과확인</label><textarea id="caEffect" placeholder="조치 후 KPI 개선 여부, 데이터 근거" rows="2"></textarea></div>
+    <div class="fg"><label>종결일</label><input type="date" id="caClose"></div>
+    <div class="btn-row">
+      <button class="btn btn-blue" onclick="saveCa()">💾 저장</button>
+      <button class="btn btn-gray" onclick="closeCaModal()">취소</button>
     </div>
   </div>
 </div>
@@ -360,13 +444,14 @@ async function sbUpsert(table,data,conflict){
 }
 
 // ===== 데이터 캐시 =====
-let processes=[], kpis=[], records=[];
+let processes=[], kpis=[], records=[], caList=[];
 
 async function loadAll(){
   try{
     processes=await sbSelect('kpi_process','order=sort_order,id');
     kpis=await sbSelect('kpi_master','order=sort_order,id');
     records=await sbSelect('kpi_record','order=year.desc,month.desc');
+    try{caList=await sbSelect('kpi_corrective_action','order=id.desc')}catch(e){caList=[]}
   }catch(e){console.error(e);showToast('데이터 로드 실패: '+e.message)}
 }
 
@@ -376,8 +461,9 @@ function swTab(n){
   document.querySelectorAll('.pnl').forEach((p,i)=>{p.classList.toggle('on',i===n)});
   if(n===0)renderDash();
   if(n===1)initRecTab();
-  if(n===2)initTrendTab();
-  if(n===3)initSettingTab();
+  if(n===2)initCaTab();
+  if(n===3)initTrendTab();
+  if(n===4)initSettingTab();
 }
 
 // ===== 현황 대시보드 =====
@@ -434,11 +520,14 @@ function renderDash(){
       const tc=j==='ok'?'#2e7d32':j==='ng'?'#c62828':j==='warn'?'#f57f17':'#999';
       const icon=j==='ok'?'✅':j==='ng'?'❌':j==='warn'?'⚠️':'—';
       const pct=(v!==null&&t)?((k.direction==='lower_better'&&t!==0)?(t/v*100).toFixed(1):(v/t*100).toFixed(1)):'—';
+      const hasCa=caList.find(ca=>ca.kpi_id===k.id&&ca.record_year===y&&ca.record_month===m);
+      const caBtn=(j==='ng'&&!hasCa)?`<button onclick="event.stopPropagation();autoIssueCa(${k.id},${y},${m},${v},${t})" style="font-size:9px;padding:2px 6px;border:1px solid #c62828;background:#fff;color:#c62828;border-radius:4px;cursor:pointer;font-weight:700;margin-top:2px">🔧시정</button>`:(hasCa?'<span style="font-size:9px;color:#1565c0">📋발행됨</span>':'');
       html+=`<div onclick="openDetailPopup(${k.id})" style="display:flex;align-items:center;gap:10px;padding:8px;background:${bc};border-radius:8px;margin-bottom:4px;cursor:pointer">
         <div style="font-size:18px">${icon}</div>
         <div style="flex:1;min-width:0">
           <div style="font-size:12px;font-weight:700;color:#333">${k.kpi_name}</div>
           <div style="font-size:10px;color:#888">${k.iatf_clause||''} · ${k.unit||''} · 목표:${t??'—'}</div>
+          ${caBtn}
         </div>
         <div style="text-align:right">
           <div style="font-size:16px;font-weight:800;color:${tc}">${v!==null&&!isNaN(v)?v:'—'}</div>
@@ -539,6 +628,159 @@ async function saveAllRecords(){
     records=await sbSelect('kpi_record','order=year.desc,month.desc');
     loadRecKpis();
   }catch(e){showToast('저장 실패: '+e.message)}
+}
+
+// ===== 시정조치 관리 =====
+function initCaTab(){
+  const ps=document.getElementById('caFilterProc');
+  ps.innerHTML='<option value="">전체 프로세스</option>';
+  processes.forEach(p=>{const o=document.createElement('option');o.value=p.id;o.textContent=p.name;ps.appendChild(o)});
+  renderCaList();renderCaStats();
+}
+
+function renderCaList(){
+  const c=document.getElementById('caListBody');
+  const fs=document.getElementById('caFilterStatus').value;
+  const fp=document.getElementById('caFilterProc').value;
+  let filtered=caList;
+  if(fs)filtered=filtered.filter(ca=>ca.status===fs);
+  if(fp)filtered=filtered.filter(ca=>{const k=kpis.find(x=>x.id===ca.kpi_id);return k&&k.process_id===parseInt(fp)});
+  if(!filtered.length){c.innerHTML='<div style="text-align:center;padding:20px;color:#bbb;font-size:13px">시정조치 이력이 없습니다</div>';return}
+  c.innerHTML='';
+  filtered.forEach(ca=>{
+    const k=kpis.find(x=>x.id===ca.kpi_id);
+    const pn=k?processes.find(p=>p.id===k.process_id)?.name||'':'';
+    const kn=k?k.kpi_name:'(삭제된 KPI)';
+    const sc={'발행':'🔴','조치중':'🟡','효과확인':'🔵','완료':'✅'}[ca.status]||'⚪';
+    const bc={'발행':'#ffebee','조치중':'#fff8e1','효과확인':'#e3f2fd','완료':'#e8f5e9'}[ca.status]||'#fafafa';
+    const overdue=ca.due_date&&ca.status!=='완료'&&new Date(ca.due_date)<new Date();
+    const d=document.createElement('div');
+    d.style.cssText='padding:12px;background:'+bc+';border-radius:10px;margin-bottom:8px;cursor:pointer;border-left:4px solid '+(ca.status==='완료'?'#2e7d32':overdue?'#c62828':'#1565c0');
+    d.onclick=()=>editCa(ca.id);
+    d.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+      <span style="font-size:13px;font-weight:700;color:#333">${sc} ${kn}</span>
+      <span style="font-size:10px;color:#888">${ca.record_year||''}년 ${ca.record_month||''}월</span>
+    </div>
+    <div style="font-size:11px;color:#555;margin-bottom:4px">${pn} · 실적:${ca.actual_value??'—'} / 목표:${ca.target_value??'—'}</div>
+    <div style="font-size:11px;color:#666">${(ca.cause||'').substring(0,60)}${(ca.cause||'').length>60?'...':''}</div>
+    <div style="display:flex;gap:8px;margin-top:4px;font-size:10px;color:#888">
+      <span>담당: ${ca.responsible||'—'}</span><span>기한: ${ca.due_date||'—'}</span>
+      ${overdue?'<span style="color:#c62828;font-weight:700">⚠ 기한초과</span>':''}
+    </div>`;
+    c.appendChild(d);
+  });
+}
+
+function renderCaStats(){
+  const c=document.getElementById('caStats');
+  const total=caList.length,issued=caList.filter(ca=>ca.status==='발행').length;
+  const acting=caList.filter(ca=>ca.status==='조치중').length;
+  const checking=caList.filter(ca=>ca.status==='효과확인').length;
+  const done=caList.filter(ca=>ca.status==='완료').length;
+  const overdue=caList.filter(ca=>ca.due_date&&ca.status!=='완료'&&new Date(ca.due_date)<new Date()).length;
+  const closeRate=total?(done/total*100).toFixed(0):0;
+  c.innerHTML=`<div style="display:flex;gap:6px;flex-wrap:wrap;text-align:center">
+    <div style="flex:1;padding:10px;background:#ffebee;border-radius:8px;min-width:60px"><div style="font-size:20px;font-weight:800;color:#c62828">${issued}</div><div style="font-size:10px;color:#c62828">발행</div></div>
+    <div style="flex:1;padding:10px;background:#fff8e1;border-radius:8px;min-width:60px"><div style="font-size:20px;font-weight:800;color:#f57f17">${acting}</div><div style="font-size:10px;color:#f57f17">조치중</div></div>
+    <div style="flex:1;padding:10px;background:#e3f2fd;border-radius:8px;min-width:60px"><div style="font-size:20px;font-weight:800;color:#1565c0">${checking}</div><div style="font-size:10px;color:#1565c0">효과확인</div></div>
+    <div style="flex:1;padding:10px;background:#e8f5e9;border-radius:8px;min-width:60px"><div style="font-size:20px;font-weight:800;color:#2e7d32">${done}</div><div style="font-size:10px;color:#2e7d32">완료</div></div>
+  </div>
+  <div style="display:flex;gap:8px;margin-top:8px">
+    <div style="flex:1;padding:8px;background:#fafafa;border-radius:8px;text-align:center;border:1px solid #eee"><div style="font-size:11px;color:#888">종결률</div><div style="font-size:18px;font-weight:800;color:#0d47a1">${closeRate}%</div></div>
+    <div style="flex:1;padding:8px;background:${overdue?'#ffebee':'#fafafa'};border-radius:8px;text-align:center;border:1px solid ${overdue?'#ffcdd2':'#eee'}"><div style="font-size:11px;color:#888">기한초과</div><div style="font-size:18px;font-weight:800;color:${overdue?'#c62828':'#2e7d32'}">${overdue}건</div></div>
+  </div>`;
+}
+
+function openCaModal(data){
+  document.getElementById('caModal').classList.add('show');
+  document.getElementById('caModalTit').textContent=data&&data.id?'시정조치 수정':'시정조치 발행';
+  const ks=document.getElementById('caKpi');
+  ks.innerHTML='<option value="">KPI 선택</option>';
+  kpis.filter(k=>k.is_active).forEach(k=>{
+    const pn=processes.find(p=>p.id===k.process_id)?.name||'';
+    ks.innerHTML+='<option value="'+k.id+'">['+pn+'] '+k.kpi_name+'</option>';
+  });
+  populateDeptSelect('caResp','');
+  const now=new Date();
+  if(data){
+    document.getElementById('caEditId').value=data.id||'';
+    ks.value=data.kpi_id||'';
+    document.getElementById('caYear').value=data.record_year||now.getFullYear();
+    document.getElementById('caMonth').value=data.record_month||(now.getMonth()+1);
+    document.getElementById('caActual').value=data.actual_value??'';
+    document.getElementById('caTarget').value=data.target_value??'';
+    document.getElementById('caStatus').value=data.status||'발행';
+    document.getElementById('caCause').value=data.cause||'';
+    document.getElementById('caAction').value=data.action_plan||'';
+    populateDeptSelect('caResp',data.responsible||'');
+    document.getElementById('caDue').value=data.due_date||'';
+    document.getElementById('caResult').value=data.action_result||'';
+    document.getElementById('caEffect').value=data.effect_check||'';
+    document.getElementById('caClose').value=data.close_date||'';
+  }else{
+    document.getElementById('caEditId').value='';
+    document.getElementById('caYear').value=now.getFullYear();
+    document.getElementById('caMonth').value=now.getMonth()+1;
+    document.getElementById('caActual').value='';document.getElementById('caTarget').value='';
+    document.getElementById('caStatus').value='발행';
+    document.getElementById('caCause').value='';document.getElementById('caAction').value='';
+    const due=new Date();due.setDate(due.getDate()+14);
+    document.getElementById('caDue').value=due.toISOString().split('T')[0];
+    document.getElementById('caResult').value='';document.getElementById('caEffect').value='';
+    document.getElementById('caClose').value='';
+  }
+}
+function closeCaModal(){document.getElementById('caModal').classList.remove('show')}
+
+function onCaKpiSelect(){
+  const kpiId=parseInt(document.getElementById('caKpi').value);
+  const k=kpis.find(x=>x.id===kpiId);
+  if(k){
+    document.getElementById('caTarget').value=k.target_value??'';
+    const y=parseInt(document.getElementById('caYear').value),m=parseInt(document.getElementById('caMonth').value);
+    const rec=records.find(r=>r.kpi_id===kpiId&&r.year===y&&r.month===m);
+    if(rec)document.getElementById('caActual').value=rec.actual_value??'';
+  }
+}
+
+async function saveCa(){
+  const id=document.getElementById('caEditId').value;
+  const kpiId=document.getElementById('caKpi').value;
+  const cause=document.getElementById('caCause').value.trim();
+  const action=document.getElementById('caAction').value.trim();
+  if(!kpiId){showToast('KPI를 선택하세요');return}
+  if(!cause){showToast('발생원인을 입력하세요');return}
+  if(!action){showToast('시정조치 계획을 입력하세요');return}
+  const data={
+    kpi_id:parseInt(kpiId),
+    record_year:parseInt(document.getElementById('caYear').value)||null,
+    record_month:parseInt(document.getElementById('caMonth').value)||null,
+    actual_value:document.getElementById('caActual').value?parseFloat(document.getElementById('caActual').value):null,
+    target_value:document.getElementById('caTarget').value?parseFloat(document.getElementById('caTarget').value):null,
+    status:document.getElementById('caStatus').value,
+    cause:cause,action_plan:action,
+    responsible:document.getElementById('caResp').value,
+    due_date:document.getElementById('caDue').value||null,
+    action_result:document.getElementById('caResult').value.trim()||null,
+    effect_check:document.getElementById('caEffect').value.trim()||null,
+    close_date:document.getElementById('caClose').value||null
+  };
+  if(data.status==='완료'&&!data.close_date)data.close_date=new Date().toISOString().split('T')[0];
+  try{
+    if(id)await sbUpdate('kpi_corrective_action',id,data);
+    else await sbInsert('kpi_corrective_action',data);
+    closeCaModal();
+    caList=await sbSelect('kpi_corrective_action','order=id.desc');
+    renderCaList();renderCaStats();showToast('✅ 저장됨');
+  }catch(e){showToast('저장 실패: '+e.message)}
+}
+
+function editCa(id){const ca=caList.find(x=>x.id===id);if(ca)openCaModal(ca)}
+
+// 대시보드 ❌미달 → 시정조치 자동발행 연결
+function autoIssueCa(kpiId,year,month,actual,target){
+  openCaModal({kpi_id:kpiId,record_year:year,record_month:month,actual_value:actual,target_value:target,status:'발행'});
+  swTab(2);
 }
 
 // ===== 추이 분석 =====
@@ -971,6 +1213,18 @@ function exportExcel(mode){
     });
     const ws=XLSX.utils.aoa_to_sheet([hd,...rows]);
     XLSX.utils.book_append_sheet(wb,ws,'실적데이터');
+  }
+  if(mode==='ca'||mode==='all'){
+    if(caList.length){
+      const hd=['ID','프로세스','KPI명','년도','월','실적','목표','상태','발생원인','시정조치계획','담당','기한','조치결과','효과확인','종결일'];
+      const rows=caList.map(ca=>{
+        const k=kpis.find(x=>x.id===ca.kpi_id);
+        const pn=k?processes.find(p=>p.id===k.process_id)?.name||'':'';
+        return[ca.id,pn,k?.kpi_name||'',ca.record_year,ca.record_month,ca.actual_value,ca.target_value,ca.status,ca.cause,ca.action_plan,ca.responsible,ca.due_date,ca.action_result,ca.effect_check,ca.close_date];
+      });
+      const ws=XLSX.utils.aoa_to_sheet([hd,...rows]);
+      XLSX.utils.book_append_sheet(wb,ws,'시정조치');
+    }
   }
   if(!wb.SheetNames.length){showToast('데이터 없음');return}
   XLSX.writeFile(wb,'KPI_'+mode+'_'+today+'.xlsx');
