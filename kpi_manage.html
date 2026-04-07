@@ -664,28 +664,39 @@ async function delKpi(id){
 
 // ===== 기본 KPI 일괄등록 =====
 async function initDefaultKpis(){
-  if(!confirm('IATF 16949 기본 KPI를 일괄 등록합니다.\n(제품설계 제외)\n\n기존 데이터가 있으면 프로세스명 중복 시 건너뜁니다.\n진행하시겠습니까?'))return;
+  if(!getSbUrl()||!getSbKey()){alert('Supabase URL과 Key를 먼저 입력하고 저장하세요.');return}
+  if(!confirm('IATF 16949 기본 KPI를 일괄 등록합니다.\n(제품설계 제외)\n\n진행하시겠습니까?'))return;
+
+  // 테이블 존재 여부 체크
+  try{
+    const testR=await fetch(getSbUrl()+'/rest/v1/kpi_process?limit=0',{headers:{'apikey':getSbKey(),'Authorization':'Bearer '+getSbKey()}});
+    if(!testR.ok){
+      const errTxt=await testR.text();
+      alert('kpi_process 테이블 접근 실패!\n\nSupabase SQL Editor에서 테이블 생성 SQL을 먼저 실행하세요.\n\n에러: '+errTxt);
+      return;
+    }
+  }catch(e){alert('Supabase 연결 실패: '+e.message);return}
 
   const defaultData=[
-    {proc:'경영/기획',kpis:[
+    {proc:'경영기획',kpis:[
       {name:'품질목표 달성률',unit:'%',dir:'higher_better',target:100,alert:90,clause:'6.2/9.3',desc:'연간 품질목표 대비 달성률'},
       {name:'경영검토 적시 실행률',unit:'%',dir:'higher_better',target:100,alert:90,clause:'9.3',desc:'계획된 경영검토 실행 비율'},
       {name:'내부심사 부적합 종결률',unit:'%',dir:'higher_better',target:100,alert:85,clause:'9.2.2.1',desc:'내부심사 부적합 시정조치 완료율'},
       {name:'비상계획 훈련 이행률',unit:'%',dir:'higher_better',target:100,alert:80,clause:'6.1.2.3',desc:'비상사태 대응 훈련 실시율'}
     ]},
-    {proc:'영업/수주',kpis:[
+    {proc:'영업수주',kpis:[
       {name:'고객만족도',unit:'점',dir:'higher_better',target:90,alert:80,clause:'9.1.2',desc:'고객만족도 조사 점수'},
       {name:'고객불만 건수',unit:'건',dir:'lower_better',target:0,alert:3,clause:'9.1.2.1',desc:'월간 고객불만(클레임) 접수 건수'},
       {name:'고객불만 처리 적시율',unit:'%',dir:'higher_better',target:100,alert:90,clause:'10.2.3',desc:'고객불만 기한내 처리 완료율'},
       {name:'납기준수율',unit:'%',dir:'higher_better',target:99,alert:95,clause:'8.5.4',desc:'고객 요구 납기 대비 준수율'}
     ]},
-    {proc:'구매/자재',kpis:[
+    {proc:'구매자재',kpis:[
       {name:'수입검사 합격률',unit:'%',dir:'higher_better',target:99,alert:97,clause:'8.4.2',desc:'수입검사 합격률 (로트 기준)'},
       {name:'공급자 품질 점수',unit:'점',dir:'higher_better',target:90,alert:80,clause:'8.4.2.4',desc:'공급자 평가 평균 점수'},
       {name:'공급자 납기준수율',unit:'%',dir:'higher_better',target:98,alert:95,clause:'8.4.2.4',desc:'공급자 납기 준수율'},
       {name:'공급자 부적합 건수',unit:'건',dir:'lower_better',target:0,alert:3,clause:'8.4.2.3',desc:'공급자 발생 부적합 건수'}
     ]},
-    {proc:'생산/제조',kpis:[
+    {proc:'생산제조',kpis:[
       {name:'공정불량률',unit:'%',dir:'lower_better',target:0.5,alert:1.0,clause:'8.5.1',desc:'공정 내 불량 발생률'},
       {name:'초물검사 합격률',unit:'%',dir:'higher_better',target:100,alert:95,clause:'8.5.1.3',desc:'초물(초도품) 검사 합격률'},
       {name:'설비종합효율(OEE)',unit:'%',dir:'higher_better',target:85,alert:75,clause:'8.5.1.5',desc:'설비 가동률×성능률×양품률'},
@@ -702,54 +713,79 @@ async function initDefaultKpis(){
       {name:'공정능력지수(Cpk)',unit:'',dir:'higher_better',target:1.67,alert:1.33,clause:'9.1.1.1',desc:'주요 특성 공정능력지수 평균'},
       {name:'교정 적시율',unit:'%',dir:'higher_better',target:100,alert:95,clause:'7.1.5.2',desc:'측정장비 교정 기한 준수율'}
     ]},
-    {proc:'인사/교육',kpis:[
+    {proc:'인사교육',kpis:[
       {name:'교육훈련 이행률',unit:'%',dir:'higher_better',target:100,alert:90,clause:'7.2',desc:'연간 교육계획 대비 실행률'},
       {name:'다기능공 비율',unit:'%',dir:'higher_better',target:30,alert:20,clause:'7.2',desc:'2공정 이상 가능 작업자 비율'},
       {name:'자격인증 유효율',unit:'%',dir:'higher_better',target:100,alert:95,clause:'7.2',desc:'필수 자격 보유/갱신 비율'}
     ]},
-    {proc:'환경/안전',kpis:[
+    {proc:'환경안전',kpis:[
       {name:'안전사고 건수',unit:'건',dir:'lower_better',target:0,alert:1,clause:'6.1',desc:'안전사고 발생 건수'},
       {name:'안전점검 이행률',unit:'%',dir:'higher_better',target:100,alert:90,clause:'6.1',desc:'안전점검 계획 대비 실행률'},
       {name:'환경법규 위반 건수',unit:'건',dir:'lower_better',target:0,alert:1,clause:'',desc:'환경 관련 법규 위반 건수'}
     ]}
   ];
 
+  let okCnt=0,errCnt=0,errLog=[];
+  showToast('등록 중...');
+
   try{
-    showToast('등록 중...');
+    // 먼저 최신 데이터 로드
+    await loadAll();
+
     for(const group of defaultData){
-      // 프로세스 등록 (upsert - name UNIQUE)
+      // Step 1: 프로세스 등록
       let proc=processes.find(p=>p.name===group.proc);
       if(!proc){
-        const res=await sbUpsert('kpi_process',{name:group.proc,sort_order:processes.length},'name');
-        proc=Array.isArray(res)?res[0]:res;
-        if(proc)processes.push(proc);
-        else{showToast('프로세스 등록 실패: '+group.proc);continue}
+        try{
+          const r=await fetch(getSbUrl()+'/rest/v1/kpi_process',{
+            method:'POST',
+            headers:{'apikey':getSbKey(),'Authorization':'Bearer '+getSbKey(),'Content-Type':'application/json','Prefer':'return=representation,resolution=merge-duplicates'},
+            body:JSON.stringify({name:group.proc,sort_order:processes.length})
+          });
+          const txt=await r.text();
+          if(!r.ok){errLog.push('[프로세스:'+group.proc+'] '+txt);errCnt++;continue}
+          const arr=JSON.parse(txt);
+          proc=Array.isArray(arr)?arr[0]:arr;
+          if(!proc||!proc.id){errLog.push('[프로세스:'+group.proc+'] 응답에 id 없음: '+txt);errCnt++;continue}
+          processes.push(proc);
+        }catch(pe){errLog.push('[프로세스:'+group.proc+'] '+pe.message);errCnt++;continue}
       }
-      // KPI 등록 (개별 insert, 중복 건너뜀)
+
+      // Step 2: KPI 등록
       for(const kd of group.kpis){
         const exists=kpis.find(k=>k.process_id===proc.id&&k.kpi_name===kd.name);
-        if(exists)continue;
+        if(exists){okCnt++;continue}
         try{
-          const inserted=await sbInsert('kpi_master',{
-            process_id:proc.id,
-            kpi_name:kd.name,
-            unit:kd.unit,
-            direction:kd.dir,
-            target_value:kd.target,
-            alert_value:kd.alert,
-            iatf_clause:kd.clause,
-            description:kd.desc,
-            frequency:'monthly',
-            sort_order:0
+          const r=await fetch(getSbUrl()+'/rest/v1/kpi_master',{
+            method:'POST',
+            headers:{'apikey':getSbKey(),'Authorization':'Bearer '+getSbKey(),'Content-Type':'application/json','Prefer':'return=representation'},
+            body:JSON.stringify({
+              process_id:proc.id,kpi_name:kd.name,unit:kd.unit,direction:kd.dir,
+              target_value:kd.target,alert_value:kd.alert,iatf_clause:kd.clause,
+              description:kd.desc,frequency:'monthly',sort_order:0
+            })
           });
-          if(Array.isArray(inserted))kpis.push(...inserted);
-        }catch(ke){console.warn('KPI 등록 건너뜀:',kd.name,ke.message)}
+          if(!r.ok){
+            const txt=await r.text();
+            errLog.push('[KPI:'+kd.name+'] '+txt);errCnt++;
+          }else{
+            const arr=await r.json();
+            if(Array.isArray(arr))kpis.push(...arr);
+            okCnt++;
+          }
+        }catch(ke){errLog.push('[KPI:'+kd.name+'] '+ke.message);errCnt++}
       }
     }
+
     await loadAll();
     renderProcList();renderKpiFilterProc();renderKpiList();
-    showToast('✅ 기본 KPI 등록 완료 ('+kpis.length+'개)');
-  }catch(e){showToast('등록 실패: '+e.message)}
+
+    if(errCnt===0){
+      showToast('✅ 기본 KPI 등록 완료 ('+kpis.length+'개)');
+    }else{
+      alert('등록 결과: 성공 '+okCnt+'건, 실패 '+errCnt+'건\n\n에러 상세:\n'+errLog.join('\n'));
+    }
+  }catch(e){alert('일괄등록 실패:\n'+e.message)}
 }
 
 // ===== 엑셀 다운로드 =====
