@@ -59,7 +59,7 @@
   .vt-btn{padding:6px 12px;border:1.5px solid #ddd;border-radius:8px;background:#fff;font-size:12px;font-weight:600;cursor:pointer;color:#888;font-family:inherit}
   .vt-btn.on{border-color:#1565c0;color:#1565c0;background:#e3f2fd}
 
-  /* ===== 카드뷰 (제거됨 — 테이블/확대뷰만 사용) ===== */
+  /* ===== 카드뷰 (제거됨 — 테이블뷰만 사용) ===== */
 
   /* 드래그 고스트 (모바일) */
   .drag-ghost{position:fixed;z-index:200;pointer-events:none;opacity:.85;transform:rotate(2deg) scale(1.05);
@@ -103,7 +103,6 @@
   .zlh-store-up{background:#e3f2fd;color:#1565c0;border:1px solid #bbdefb}
   .zlh-store-lo{background:#fff8e1;color:#f57f17;border:1px solid #ffe082}
   .zoom-lane-body{padding:8px;min-height:56px;border-top:1px solid #e0e0e0}
-  .zoom-lane-body.zl-drop-target{background:#c8e6c9;outline:2px dashed #43a047}
   .zoom-lane-body:empty::after{content:'비어있음';display:block;text-align:center;color:#bbb;font-size:12px;padding:14px 0}
   .zoom-lane.lane-mount{border:2px solid #1565c0}
   .zoom-lane.lane-mount .zoom-lane-body{background:#f5f9ff}
@@ -115,10 +114,8 @@
   .zoom-lane.lane-store-lo .zoom-lane-body{background:#fffef8}
 
   .zcard{background:#fff;border:1.5px solid #e0e0e0;border-radius:10px;padding:10px 12px;margin-bottom:6px;
-    display:flex;align-items:center;gap:10px;cursor:grab;transition:.2s;touch-action:none}
+    display:flex;align-items:center;gap:10px;transition:.2s}
   .zcard:last-child{margin-bottom:0}
-  .zcard:active{cursor:grabbing}
-  .zcard.dragging{opacity:.35;transform:scale(.97)}
   .zcard-upper{border-left:4px solid #4285f4}
   .zcard-lower{border-left:4px solid #fbbc04}
   .zcard .zc-color{width:10px;height:36px;border-radius:4px;flex-shrink:0}
@@ -783,7 +780,8 @@ async function deletePart(id){
   if(!confirm('완전 삭제하시겠습니까? (복구 불가)'))return;
   try{await logAction('삭제',id);await sbDelete('mold_part',`id=eq.${id}`);closePopup('partPopup');await loadParts();renderAll();showToast('🗑 삭제')}catch(e){showToast('실패: '+e.message)}
 }
-// ===== 확대뷰 =====
+
+// ===== 확대뷰 (버튼 이동) =====
 let zoomProc=1;
 
 function zoomNav(dir){
@@ -806,10 +804,8 @@ function renderZoomView(model){
   if(zoomProc<1||zoomProc>pc)zoomProc=1;
   const active=parts.filter(p=>p.status!=='폐기');
 
-  // 공정번호 표시
   document.getElementById('zoomProcNum').textContent=`공정 ${zoomProc} / ${pc}`;
 
-  // 공정 dot 네비게이션
   const dotsEl=document.getElementById('zoomDots');
   dotsEl.innerHTML='';
   for(let i=1;i<=pc;i++){
@@ -821,7 +817,6 @@ function renderZoomView(model){
     dotsEl.appendChild(dot);
   }
 
-  // 4개 레인: 장착(상), 장착(하), 보관(상), 보관(하)
   const lanes=[
     {s:'장착',p:'상',hdr:'zlh-mount-up',laneClass:'lane-mount',icon:'🔧',label:'장착 (상)'},
     {s:'장착',p:'하',hdr:'zlh-mount-lo',laneClass:'lane-mount-lo',icon:'🔧',label:'장착 (하)'},
@@ -841,13 +836,10 @@ function renderZoomView(model){
 
     const body=document.createElement('div');
     body.className='zoom-lane-body';
-    body.dataset.status=lane.s;body.dataset.pos=lane.p;body.dataset.proc=zoomProc;
 
     list.forEach(p=>{
       const card=document.createElement('div');
       card.className=`zcard zcard-${p.position==='상'?'upper':'lower'}`;
-      card.dataset.partId=p.id;card.dataset.pos=p.position;
-      card.draggable=true;
 
       const moveTarget=lane.s==='장착'?'보관':'장착';
       const moveCls=lane.s==='장착'?'za-move-store':'za-move-mount';
@@ -864,68 +856,7 @@ function renderZoomView(model){
           <button class="za-edit" onclick="event.stopPropagation();showPartPopup(${p.id})">✏️</button>
         </div>`;
 
-      // 드래그 (순서변경 + 영역이동)
-      card.addEventListener('dragstart',e=>{
-        dragPartId=p.id;wasDragged=false;
-        card.classList.add('dragging');
-        e.dataTransfer.effectAllowed='move';
-        e.dataTransfer.setData('text/plain',p.id);
-      });
-      card.addEventListener('dragend',()=>{
-        card.classList.remove('dragging');
-        document.querySelectorAll('.zl-drop-target').forEach(z=>z.classList.remove('zl-drop-target'));
-      });
-
-      // 터치 드래그
-      card.addEventListener('touchstart',e=>{
-        touchEl=card;touchMoved=false;wasDragged=false;
-        const t=e.touches[0];touchSX=t.clientX;touchSY=t.clientY;
-        dragPartId=p.id;
-      },{passive:false});
-      card.addEventListener('touchmove',e=>{
-        if(!touchEl)return;e.preventDefault();
-        const t=e.touches[0];
-        if(!touchMoved&&(Math.abs(t.clientX-touchSX)>8||Math.abs(t.clientY-touchSY)>8)){
-          touchMoved=true;wasDragged=true;touchEl.classList.add('dragging');
-          touchGhost=document.createElement('div');touchGhost.className='drag-ghost';
-          touchGhost.textContent=p.part_name;
-          document.body.appendChild(touchGhost);
-        }
-        if(touchMoved&&touchGhost){
-          touchGhost.style.left=(t.clientX-40)+'px';touchGhost.style.top=(t.clientY-30)+'px';
-          document.querySelectorAll('.zoom-lane-body').forEach(z=>{
-            const r=z.getBoundingClientRect();
-            z.classList.toggle('zl-drop-target',t.clientX>=r.left&&t.clientX<=r.right&&t.clientY>=r.top&&t.clientY<=r.bottom);
-          });
-        }
-      },{passive:false});
-      card.addEventListener('touchend',e=>{
-        if(!touchEl)return;touchEl.classList.remove('dragging');
-        if(touchGhost){touchGhost.remove();touchGhost=null}
-        if(touchMoved){
-          const t=e.changedTouches[0];let drop=null;
-          document.querySelectorAll('.zoom-lane-body').forEach(z=>{
-            const r=z.getBoundingClientRect();
-            if(t.clientX>=r.left&&t.clientX<=r.right&&t.clientY>=r.top&&t.clientY<=r.bottom)drop=z;
-            z.classList.remove('zl-drop-target');
-          });
-          if(drop)handleZoomDrop(p,drop,t.clientY);
-        }
-        touchEl=null;touchMoved=false;
-      });
-
       body.appendChild(card);
-    });
-
-    // 드롭 이벤트 (PC)
-    body.addEventListener('dragover',e=>{e.preventDefault();body.classList.add('zl-drop-target')});
-    body.addEventListener('dragleave',()=>body.classList.remove('zl-drop-target'));
-    body.addEventListener('drop',e=>{
-      e.preventDefault();body.classList.remove('zl-drop-target');
-      const id=parseInt(e.dataTransfer.getData('text/plain'))||dragPartId;
-      const pt=parts.find(x=>x.id===id);if(!pt)return;
-      wasDragged=true;
-      handleZoomDrop(pt,body,e.clientY);
     });
 
     sec.appendChild(body);
@@ -933,23 +864,21 @@ function renderZoomView(model){
   });
 }
 
-function handleZoomDrop(pt,dropBody,clientY){
-  const toS=dropBody.dataset.status,toP=dropBody.dataset.pos;
-  if(pt.position!==toP){showToast(`❌ ${pt.position} → ${toP} 이동 불가`);return}
-
-  if(pt.status===toS){
-    // 같은 영역 → 순서 변경
-    const cards=[...dropBody.querySelectorAll('.zcard')];
-    let insertIdx=cards.length;
-    for(let i=0;i<cards.length;i++){
-      const r=cards[i].getBoundingClientRect();
-      if(clientY<r.top+r.height/2){insertIdx=i;break}
-    }
-    reorderInZone(pt,toS,toP,insertIdx);
-  }else{
-    doMovePart(pt.id,toS);
-  }
-}
+// 확대뷰 좌우 스와이프
+let swSX=0,swSY=0,swActive=false;
+document.addEventListener('touchstart',e=>{
+  if(currentView!=='zoom')return;
+  const zv=document.getElementById('zoomView');
+  if(!zv||!zv.contains(e.target))return;
+  if(e.target.closest('.zcard'))return;
+  swSX=e.touches[0].clientX;swSY=e.touches[0].clientY;swActive=true;
+},{passive:true});
+document.addEventListener('touchend',e=>{
+  if(!swActive||currentView!=='zoom')return;swActive=false;
+  const dx=e.changedTouches[0].clientX-swSX;
+  const dy=Math.abs(e.changedTouches[0].clientY-swSY);
+  if(Math.abs(dx)>60&&dy<80){zoomNav(dx<0?1:-1)}
+},{passive:true});
 
 function renderTableView(model){
   const pc=model.process_count||20;
@@ -1404,25 +1333,6 @@ async function deleteMold(id){
 function openPopup(id){document.getElementById(id).classList.add('show')}
 function closePopup(id){document.getElementById(id).classList.remove('show')}
 let tt;function showToast(m){const el=document.getElementById('toast');el.textContent=m;el.classList.add('show');clearTimeout(tt);tt=setTimeout(()=>el.classList.remove('show'),2000)}
-
-// 확대뷰 좌우 스와이프 네비게이션
-let swSX=0,swSY=0,swActive=false;
-document.addEventListener('touchstart',e=>{
-  if(currentView!=='zoom')return;
-  const zv=document.getElementById('zoomView');
-  if(!zv||!zv.contains(e.target))return;
-  // 드래그 중이면 스와이프 무시
-  if(e.target.closest('.zcard'))return;
-  swSX=e.touches[0].clientX;swSY=e.touches[0].clientY;swActive=true;
-},{passive:true});
-document.addEventListener('touchend',e=>{
-  if(!swActive||currentView!=='zoom')return;swActive=false;
-  const dx=e.changedTouches[0].clientX-swSX;
-  const dy=Math.abs(e.changedTouches[0].clientY-swSY);
-  if(Math.abs(dx)>60&&dy<80){
-    zoomNav(dx<0?1:-1);
-  }
-},{passive:true});
 
 // ===== 이력있는 금형 아코디언 =====
 async function loadAccordionModels(){
