@@ -196,7 +196,15 @@
       <div id="accModelList" style="padding:4px 0"></div>
     </div>
   </div>
-  <div class="card">
+  <!-- 아코디언에서 선택 시 간소 표시 -->
+  <div id="accSelectedBar" style="display:none;margin-bottom:12px;padding:10px 14px;background:#e8eaf6;border-radius:10px;display:none">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <span style="font-size:15px;font-weight:700;color:#1a237e" id="accSelName">-</span>
+      <button class="btn btn-gray btn-sm" onclick="clearModelSelection()" style="padding:5px 12px;font-size:11px">✕ 해제</button>
+    </div>
+    <div id="accMoldChips" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px"></div>
+  </div>
+  <div class="card" id="modelSearchCard">
     <div class="card-tit">📦 기종 선택</div>
     <div class="fg" style="position:relative">
       <input type="text" id="selModelSearch" placeholder="기종명 입력하여 검색" oninput="onModelSearch()" onfocus="onModelSearch()" autocomplete="off" style="font-size:15px;padding:11px">
@@ -474,6 +482,9 @@ function clearModelSelection(){
   document.getElementById('selModelSelected').style.display='none';
   document.getElementById('moldChips').style.display='none';
   document.getElementById('boardArea').style.display='none';
+  // 간소 바 숨기고 검색 카드 복원
+  document.getElementById('accSelectedBar').style.display='none';
+  document.getElementById('modelSearchCard').style.display='block';
   document.getElementById('selModelSearch').focus();
 }
 
@@ -1389,11 +1400,59 @@ function toggleAccordion(){
 }
 
 function accPickModel(mid){
-  // 아코디언에서 기종 선택 → 기존 pickModel 호출
   const btn=document.getElementById('accToggleBtn');
   const body=document.getElementById('accBody');
   btn.classList.remove('open');body.classList.remove('open');
-  pickModel(mid);
+  // 기종 선택 카드 숨기고 간소 바 표시
+  document.getElementById('modelSearchCard').style.display='none';
+  const model=models.find(m=>m.id==mid);
+  if(!model)return;
+  selModelId=mid;
+  document.getElementById('accSelName').textContent=model.name;
+  document.getElementById('accSelectedBar').style.display='block';
+  loadMoldsForAccBar();
+}
+
+async function loadMoldsForAccBar(){
+  if(!selModelId){document.getElementById('accSelectedBar').style.display='none';return}
+  try{molds=await sbSelect('mold_info',`model_id=eq.${selModelId}&order=mold_no.asc`)}catch(e){molds=[]}
+  if(!molds.length){
+    selMoldId=null;document.getElementById('accMoldChips').innerHTML='<span style="font-size:12px;color:#888">등록된 금형 없음</span>';
+    document.getElementById('boardArea').style.display='none';showToast('등록된 금형 없음');return;
+  }
+  const moldPartCounts={};
+  try{
+    const allParts=await sbSelect('mold_part',`model_id=eq.${selModelId}&status=neq.폐기&select=mold_id`);
+    allParts.forEach(p=>{moldPartCounts[p.mold_id]=(moldPartCounts[p.mold_id]||0)+1});
+  }catch(e){}
+  const chipList=document.getElementById('accMoldChips');
+  chipList.innerHTML='';
+  molds.forEach(m=>{
+    const chip=document.createElement('div');
+    chip.className='mold-chip'+(selMoldId==m.id?' on':'');
+    const cnt=moldPartCounts[m.id]||0;
+    chip.innerHTML=`${m.mold_no}${cnt?'<span class="mc-cnt">'+cnt+'</span>':''}`;
+    chip.onclick=()=>selectMoldAcc(m.id);
+    chipList.appendChild(chip);
+  });
+  if(!selMoldId||!molds.find(m=>m.id==selMoldId))selMoldId=molds[0].id;
+  await onMoldSelectAcc();
+}
+
+function selectMoldAcc(id){
+  selMoldId=id;
+  [...document.getElementById('accMoldChips').children].forEach((c,i)=>{
+    c.classList.toggle('on',molds[i]&&molds[i].id==id);
+  });
+  onMoldSelectAcc();
+}
+
+async function onMoldSelectAcc(){
+  if(!selMoldId){document.getElementById('boardArea').style.display='none';return}
+  [...document.getElementById('accMoldChips').children].forEach((c,i)=>{
+    c.classList.toggle('on',molds[i]&&molds[i].id==selMoldId);
+  });
+  await loadParts();renderAll();
 }
 
 init();
