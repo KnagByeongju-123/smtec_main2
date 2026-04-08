@@ -446,10 +446,12 @@ function openDetailPopup(kpiId){
 function closeDetailModal(){document.getElementById('kpiDetailModal').classList.remove('show')}
 
 // ===== Supabase REST API helpers =====
+const SB_DEFAULT_URL='https://omngtyewdaqpphnzeate.supabase.co';
+const SB_DEFAULT_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tbmd0eWV3ZGFxcHBobnplYXRlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4ODk4ODksImV4cCI6MjA5MDQ2NTg4OX0.Zxur3t02JHtOcXforCMSwO3i2mMaf5sViE0tXXUC0-s';
 const LS_KEY='KPI_CFG';
 function getCfg(){try{return JSON.parse(localStorage.getItem(LS_KEY)||'{}')}catch{return{}}}
-function getSbUrl(){return getCfg().url||''}
-function getSbKey(){return getCfg().key||''}
+function getSbUrl(){return getCfg().url||SB_DEFAULT_URL}
+function getSbKey(){return getCfg().key||SB_DEFAULT_KEY}
 
 async function sbSelect(table,query=''){
   const r=await fetch(getSbUrl()+'/rest/v1/'+table+'?'+query,{headers:{'apikey':getSbKey(),'Authorization':'Bearer '+getSbKey(),'Accept':'application/json'}});
@@ -482,6 +484,7 @@ async function loadAll(){
     kpis=await sbSelect('kpi_master','order=sort_order,id');
     records=await sbSelect('kpi_record','order=year.desc,month.desc');
     try{caList=await sbSelect('kpi_corrective_action','order=id.desc')}catch(e){caList=[]}
+    try{await loadDepts()}catch(e){}
   }catch(e){console.error(e);showToast('데이터 로드 실패: '+e.message)}
 }
 
@@ -894,8 +897,8 @@ function drawTrend(){
 // ===== 설정 탭 =====
 function initSettingTab(){
   const cfg=getCfg();
-  document.getElementById('cfgUrl').value=cfg.url||'';
-  document.getElementById('cfgKey').value=cfg.key||'';
+  document.getElementById('cfgUrl').value=cfg.url||SB_DEFAULT_URL;
+  document.getElementById('cfgKey').value=cfg.key||SB_DEFAULT_KEY;
   renderDeptList();
   renderProcList();
   renderKpiFilterProc();
@@ -1104,37 +1107,46 @@ function histExcel(){
   showToast('📥 엑셀 다운로드 완료');
 }
 
-// ===== 부서 관리 (localStorage) =====
-const DEPT_KEY='KPI_DEPTS';
+// ===== 부서 관리 (Supabase common_code: kpi_dept) =====
 const DEFAULT_DEPTS=['품질관리팀','영업관리팀','생산팀','설계팀','개발팀'];
-function getDepts(){
-  try{const d=JSON.parse(localStorage.getItem(DEPT_KEY));return d&&d.length?d:DEFAULT_DEPTS}catch{return DEFAULT_DEPTS}
-}
-function saveDepts(arr){localStorage.setItem(DEPT_KEY,JSON.stringify(arr))}
+let cachedDepts=[];
 
-function renderDeptList(){
-  const depts=getDepts();
+async function loadDepts(){
+  try{
+    const d=await sbSelect('common_code','code_group=eq.kpi_dept&order=sort_order,id');
+    cachedDepts=d.map(r=>({id:r.id, name:r.code_value}));
+  }catch(e){cachedDepts=[]}
+}
+function getDepts(){
+  return cachedDepts.length?cachedDepts.map(d=>d.name):DEFAULT_DEPTS;
+}
+
+async function renderDeptList(){
+  if(!cachedDepts.length)await loadDepts();
+  const depts=cachedDepts.length?cachedDepts:DEFAULT_DEPTS.map((d,i)=>({id:null,name:d}));
   const c=document.getElementById('deptList');
   if(!depts.length){c.innerHTML='<div class="empty">부서 없음</div>';return}
   c.innerHTML=depts.map((d,i)=>`<div style="display:flex;align-items:center;gap:6px;padding:6px 0;border-bottom:1px solid #f0f0f0">
-    <span style="flex:1;font-size:13px;font-weight:600">${d}</span>
-    <button class="btn btn-sm btn-red" onclick="delDept(${i})">삭제</button>
+    <span style="flex:1;font-size:13px;font-weight:600">${d.name}</span>
+    <button class="btn btn-sm btn-red" onclick="delDept(${d.id||0},'${d.name.replace(/'/g,"\\'")}')">삭제</button>
   </div>`).join('');
 }
-function addDept(){
+async function addDept(){
   const name=document.getElementById('newDeptName').value.trim();
   if(!name){showToast('부서명을 입력하세요');return}
-  const depts=getDepts();
-  if(depts.includes(name)){showToast('이미 존재하는 부서');return}
-  depts.push(name);saveDepts(depts);
-  document.getElementById('newDeptName').value='';
-  renderDeptList();showToast('✅ 추가됨');
+  if(getDepts().includes(name)){showToast('이미 존재하는 부서');return}
+  try{
+    await sbInsert('common_code',{code_group:'kpi_dept',code_value:name,sort_order:cachedDepts.length});
+    document.getElementById('newDeptName').value='';
+    await loadDepts();renderDeptList();showToast('✅ 추가됨');
+  }catch(e){showToast('추가 실패: '+e.message)}
 }
-function delDept(idx){
-  const depts=getDepts();
-  if(!confirm(depts[idx]+' 부서를 삭제하시겠습니까?'))return;
-  depts.splice(idx,1);saveDepts(depts);
-  renderDeptList();showToast('삭제됨');
+async function delDept(id,name){
+  if(!confirm(name+' 부서를 삭제하시겠습니까?'))return;
+  if(id){
+    try{await sbDelete('common_code',id);await loadDepts();renderDeptList();showToast('삭제됨')}
+    catch(e){showToast('삭제 실패: '+e.message)}
+  }else{renderDeptList();showToast('기본값은 서버에 등록 후 삭제 가능합니다')}
 }
 
 function populateDeptSelect(selId,selectedVal){
