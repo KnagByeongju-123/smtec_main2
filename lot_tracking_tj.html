@@ -159,16 +159,20 @@
             </div>
             <!-- 미사용 소재 리스트 -->
             <div id="fgUnusedLotSel" style="display:none;margin-bottom:10px">
-              <label style="display:block;font-size:12px;font-weight:600;color:#555;margin-bottom:4px">📋 미사용 소재 선택 <span style="font-size:10px;color:#888;font-weight:400">재질→폭→로트</span></label>
+              <label style="display:block;font-size:12px;font-weight:600;color:#555;margin-bottom:4px">📋 미사용 소재 선택 <span style="font-size:10px;color:#888;font-weight:400">업체→재질→폭→로트</span></label>
+              <div style="margin-bottom:6px">
+                <label style="display:block;font-size:10px;font-weight:600;color:#888;margin-bottom:3px">① 소재업체</label>
+                <select id="selFilterSupplier" onchange="onSupplierFilter()" style="width:100%;font-size:14px;padding:10px;border:2px solid #00897b;background:#e0f2f1;font-weight:700;color:#00897b;border-radius:8px;font-family:inherit"><option value="">전체 업체</option></select>
+              </div>
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px">
-                <div><label style="display:block;font-size:10px;font-weight:600;color:#888;margin-bottom:3px">① 재질</label>
+                <div><label style="display:block;font-size:10px;font-weight:600;color:#888;margin-bottom:3px">② 재질</label>
                   <select id="selFilterMatType" onchange="onMaterialTypeFilter()" style="width:100%;font-size:14px;padding:10px;border:2px solid #1565c0;background:#e3f2fd;font-weight:700;color:#1565c0;border-radius:8px;font-family:inherit"><option value="">전체 재질</option></select>
                 </div>
-                <div><label style="display:block;font-size:10px;font-weight:600;color:#888;margin-bottom:3px">② 폭</label>
+                <div><label style="display:block;font-size:10px;font-weight:600;color:#888;margin-bottom:3px">③ 폭</label>
                   <select id="selFilterWidth" onchange="onWidthFilter()" style="width:100%;font-size:14px;padding:10px;border:2px solid #7b1fa2;background:#f3e5f5;font-weight:700;color:#7b1fa2;border-radius:8px;font-family:inherit"><option value="">전체 폭</option></select>
                 </div>
               </div>
-              <div><label style="display:block;font-size:10px;font-weight:600;color:#888;margin-bottom:3px">③ 소재 로트 선택</label>
+              <div><label style="display:block;font-size:10px;font-weight:600;color:#888;margin-bottom:3px">④ 소재 로트 선택</label>
                 <select id="selUnusedLot" onchange="onUnusedLotSelect()" style="width:100%;font-size:12px;padding:10px;border:2px solid #e65100;background:#fff3e0;font-weight:600;color:#e65100;border-radius:8px;font-family:inherit"><option value="">소재를 선택하세요</option></select>
               </div>
               <div id="unusedLotInfo" style="display:none;margin-top:6px;padding:8px 10px;background:#e8f5e9;border:1.5px solid #a5d6a7;border-radius:8px;font-size:11px;line-height:1.8"></div>
@@ -531,8 +535,8 @@ function onMaterialSelect(){/* 기존과 동일 */}
 let _unusedLots=[],_selectedUnusedLot=null;
 
 async function loadUnusedIncomingLots(){
-  const sel=document.getElementById('selUnusedLot');const loading=document.getElementById('unusedLotLoading');const infoDiv=document.getElementById('unusedLotInfo');const selMatType=document.getElementById('selFilterMatType');const selWidth=document.getElementById('selFilterWidth');
-  if(!sel)return;sel.innerHTML='<option value="">로딩 중...</option>';if(selMatType)selMatType.innerHTML='<option value="">전체 재질</option>';if(selWidth)selWidth.innerHTML='<option value="">전체 폭</option>';if(loading)loading.style.display='block';if(infoDiv)infoDiv.style.display='none';_unusedLots=[];
+  const sel=document.getElementById('selUnusedLot');const loading=document.getElementById('unusedLotLoading');const infoDiv=document.getElementById('unusedLotInfo');const selMatType=document.getElementById('selFilterMatType');const selWidth=document.getElementById('selFilterWidth');const selSupplier=document.getElementById('selFilterSupplier');
+  if(!sel)return;sel.innerHTML='<option value="">로딩 중...</option>';if(selMatType)selMatType.innerHTML='<option value="">전체 재질</option>';if(selWidth)selWidth.innerHTML='<option value="">전체 폭</option>';if(selSupplier)selSupplier.innerHTML='<option value="">전체 업체</option>';if(loading)loading.style.display='block';if(infoDiv)infoDiv.style.display='none';_unusedLots=[];
   try{
     const sb=getSb();if(!sb)throw new Error('Supabase 미설정');
     const{data:incoming,error:e1}=await sb.from('move_history_tj').select('*').eq('process','소재입고').order('created_at',{ascending:false}).limit(500);if(e1)throw e1;
@@ -545,16 +549,29 @@ async function loadUnusedIncomingLots(){
     // ★ 입고일자(내림) → 로트(오름) 정렬
     _unusedLots.sort((a,b)=>{const da=a.incoming_date||a.move_date||'';const db=b.incoming_date||b.move_date||'';if(da!==db)return db.localeCompare(da);const la=(a.lot||a.barcode_raw||'').trim();const lb=(b.lot||b.barcode_raw||'').trim();return la.localeCompare(lb,undefined,{numeric:true})});
     await loadMaterialMaster();
-    _unusedLots.forEach(h=>{h._parsedMatType='';h._parsedWidth='';const mi=h.material_info||'';if(!mi)return;const mm=_materialMaster.find(m=>mi.includes(m.material_name));if(mm){h._parsedMatType=mm.material_type||'';h._parsedWidth=mm.width||'';return}const parts=mi.split(/[\/\s]+/).map(s=>s.trim());if(parts[0]){const m2=parts[0].match(/^([A-Za-z0-9]+)/);h._parsedMatType=m2?m2[1]:parts[0]}for(let i=2;i<parts.length;i++){const wm=parts[i].match(/^(\d+\.?\d*)W?$/i);if(wm){h._parsedWidth=wm[1];break}}});
+    _unusedLots.forEach(h=>{h._parsedMatType='';h._parsedWidth='';h._parsedSupplier=(h.departure||'').trim();const mi=h.material_info||'';if(!mi)return;const mm=_materialMaster.find(m=>mi.includes(m.material_name));if(mm){h._parsedMatType=mm.material_type||'';h._parsedWidth=mm.width||'';return}const parts=mi.split(/[\/\s]+/).map(s=>s.trim());if(parts[0]){const m2=parts[0].match(/^([A-Za-z0-9]+)/);h._parsedMatType=m2?m2[1]:parts[0]}for(let i=2;i<parts.length;i++){const wm=parts[i].match(/^(\d+\.?\d*)W?$/i);if(wm){h._parsedWidth=wm[1];break}}});
+    // ★ 업체 select 채우기
+    const suppliers=[...new Set(_unusedLots.map(h=>h._parsedSupplier).filter(Boolean))].sort();
+    if(selSupplier){selSupplier.innerHTML='<option value="">전체 업체 ('+_unusedLots.length+'건)</option>';suppliers.forEach(s=>{const cnt=_unusedLots.filter(h=>h._parsedSupplier===s).length;selSupplier.innerHTML+='<option value="'+s+'">'+s+' ('+cnt+'건)</option>'})}
     const matTypes=[...new Set(_unusedLots.map(h=>h._parsedMatType).filter(Boolean))].sort();
     if(selMatType){selMatType.innerHTML='<option value="">전체 재질 ('+_unusedLots.length+'건)</option>';matTypes.forEach(t=>{const cnt=_unusedLots.filter(h=>h._parsedMatType===t).length;selMatType.innerHTML+='<option value="'+t+'">'+t+' ('+cnt+'건)</option>'})}
     _renderFilteredLotSelect();
   }catch(e){sel.innerHTML='<option value="">⚠ 로드 실패</option>'}
   if(loading)loading.style.display='none';
 }
-function onMaterialTypeFilter(){const matType=document.getElementById('selFilterMatType').value;const selWidth=document.getElementById('selFilterWidth');const filtered=matType?_unusedLots.filter(h=>h._parsedMatType===matType):_unusedLots;const widths=[...new Set(filtered.map(h=>h._parsedWidth).filter(Boolean))].sort((a,b)=>parseFloat(a)-parseFloat(b));if(selWidth){selWidth.innerHTML='<option value="">전체 폭 ('+filtered.length+'건)</option>';widths.forEach(w=>{const cnt=filtered.filter(h=>h._parsedWidth===w).length;selWidth.innerHTML+='<option value="'+w+'">'+w+'mm ('+cnt+'건)</option>'})}_renderFilteredLotSelect()}
+// ★ 업체 필터 → 재질/폭 연쇄 갱신
+function _getSupplierFiltered(){const supplier=(document.getElementById('selFilterSupplier')||{}).value||'';return supplier?_unusedLots.filter(h=>h._parsedSupplier===supplier):_unusedLots}
+function onSupplierFilter(){
+  const filtered=_getSupplierFiltered();
+  const selMatType=document.getElementById('selFilterMatType');const selWidth=document.getElementById('selFilterWidth');
+  const matTypes=[...new Set(filtered.map(h=>h._parsedMatType).filter(Boolean))].sort();
+  if(selMatType){selMatType.innerHTML='<option value="">전체 재질 ('+filtered.length+'건)</option>';matTypes.forEach(t=>{const cnt=filtered.filter(h=>h._parsedMatType===t).length;selMatType.innerHTML+='<option value="'+t+'">'+t+' ('+cnt+'건)</option>'})}
+  if(selWidth)selWidth.innerHTML='<option value="">전체 폭 ('+filtered.length+'건)</option>';
+  _renderFilteredLotSelect();
+}
+function onMaterialTypeFilter(){const matType=document.getElementById('selFilterMatType').value;const selWidth=document.getElementById('selFilterWidth');let filtered=_getSupplierFiltered();if(matType)filtered=filtered.filter(h=>h._parsedMatType===matType);const widths=[...new Set(filtered.map(h=>h._parsedWidth).filter(Boolean))].sort((a,b)=>parseFloat(a)-parseFloat(b));if(selWidth){selWidth.innerHTML='<option value="">전체 폭 ('+filtered.length+'건)</option>';widths.forEach(w=>{const cnt=filtered.filter(h=>h._parsedWidth===w).length;selWidth.innerHTML+='<option value="'+w+'">'+w+'mm ('+cnt+'건)</option>'})}_renderFilteredLotSelect()}
 function onWidthFilter(){_renderFilteredLotSelect()}
-function _renderFilteredLotSelect(){const sel=document.getElementById('selUnusedLot');if(!sel)return;const matType=(document.getElementById('selFilterMatType')||{}).value||'';const width=(document.getElementById('selFilterWidth')||{}).value||'';let filtered=_unusedLots;if(matType)filtered=filtered.filter(h=>h._parsedMatType===matType);if(width)filtered=filtered.filter(h=>h._parsedWidth===width);sel.innerHTML='<option value="">소재 선택 ('+filtered.length+'건)</option>';filtered.forEach(h=>{const idx=_unusedLots.indexOf(h);const lot=(h.lot||h.barcode_raw||'-').trim();const wt=h.weight?h.weight+'kg':'';sel.innerHTML+='<option value="'+idx+'">'+lot+(wt?' '+wt:'')+'</option>'});if(!filtered.length)sel.innerHTML='<option value="">해당 조건 소재 없음</option>';document.getElementById('unusedLotInfo').style.display='none';_selectedUnusedLot=null}
+function _renderFilteredLotSelect(){const sel=document.getElementById('selUnusedLot');if(!sel)return;const supplier=(document.getElementById('selFilterSupplier')||{}).value||'';const matType=(document.getElementById('selFilterMatType')||{}).value||'';const width=(document.getElementById('selFilterWidth')||{}).value||'';let filtered=_unusedLots;if(supplier)filtered=filtered.filter(h=>h._parsedSupplier===supplier);if(matType)filtered=filtered.filter(h=>h._parsedMatType===matType);if(width)filtered=filtered.filter(h=>h._parsedWidth===width);sel.innerHTML='<option value="">소재 선택 ('+filtered.length+'건)</option>';filtered.forEach(h=>{const idx=_unusedLots.indexOf(h);const lot=(h.lot||h.barcode_raw||'-').trim();const wt=h.weight?h.weight+'kg':'';sel.innerHTML+='<option value="'+idx+'">'+lot+(wt?' '+wt:'')+'</option>'});if(!filtered.length)sel.innerHTML='<option value="">해당 조건 소재 없음</option>';document.getElementById('unusedLotInfo').style.display='none';_selectedUnusedLot=null}
 
 async function onUnusedLotSelect(){
   const sel=document.getElementById('selUnusedLot');const infoDiv=document.getElementById('unusedLotInfo');
@@ -1005,9 +1022,9 @@ function _resetRegModalForNext(){
   document.getElementById('scanOverlay').style.display='none';scanAccum=[];renderScanAccum();
   document.getElementById('moveSetupInputs').style.display='block';document.getElementById('moveSetupConfirm').style.display='none';
   const modal=document.getElementById('moveSetupModal');modal.classList.add('show','center');document.body.style.overflow='hidden';
-  const savedMatType=(document.getElementById('selFilterMatType')||{}).value||'';const savedWidth=(document.getElementById('selFilterWidth')||{}).value||'';
+  const savedSupplier=(document.getElementById('selFilterSupplier')||{}).value||'';const savedMatType=(document.getElementById('selFilterMatType')||{}).value||'';const savedWidth=(document.getElementById('selFilterWidth')||{}).value||'';
   _selectedUnusedLot=null;const infoDiv=document.getElementById('unusedLotInfo');if(infoDiv)infoDiv.style.display='none';const wtEl=document.getElementById('inpWeight');if(wtEl)wtEl.value='';
-  loadUnusedIncomingLots().then(()=>{const matSel=document.getElementById('selFilterMatType');if(matSel&&savedMatType){for(let o of matSel.options){if(o.value===savedMatType){matSel.value=savedMatType;break}}onMaterialTypeFilter();const wSel=document.getElementById('selFilterWidth');if(wSel&&savedWidth){setTimeout(()=>{for(let o of wSel.options){if(o.value===savedWidth){wSel.value=savedWidth;break}}onWidthFilter()},50)}}});
+  loadUnusedIncomingLots().then(()=>{const supSel=document.getElementById('selFilterSupplier');if(supSel&&savedSupplier){for(let o of supSel.options){if(o.value===savedSupplier){supSel.value=savedSupplier;break}}onSupplierFilter()}const matSel=document.getElementById('selFilterMatType');if(matSel&&savedMatType){for(let o of matSel.options){if(o.value===savedMatType){matSel.value=savedMatType;break}}onMaterialTypeFilter();const wSel=document.getElementById('selFilterWidth');if(wSel&&savedWidth){setTimeout(()=>{for(let o of wSel.options){if(o.value===savedWidth){wSel.value=savedWidth;break}}onWidthFilter()},50)}}});
   showToast('✅ 등록 완료 — 다음 소재 선택');
 }
 
