@@ -539,7 +539,9 @@ async function loadUnusedIncomingLots(){
     const{data:consumed}=await sb.from('move_history_tj').select('lot,barcode_raw').eq('lot_consumed',true).limit(1000);
     const consumedSet=new Set();if(consumed)consumed.forEach(r=>{if(r.lot)consumedSet.add(r.lot.trim());if(r.barcode_raw)consumedSet.add(r.barcode_raw.trim())});
     const active=(incoming||[]).filter(h=>{const lotKey=(h.lot||h.barcode_raw||'').trim();return lotKey&&!consumedSet.has(lotKey)});
-    const seen=new Set();_unusedLots=active.filter(h=>{const key=(h.lot||h.barcode_raw||'').trim();if(seen.has(key))return false;seen.add(key);return true});
+    // ★ 생산진행 카드에 있는 로트도 제외
+    const pendingLots=new Set(loadPendingCards().map(c=>(c.lot||'').trim()).filter(Boolean));
+    const seen=new Set();_unusedLots=active.filter(h=>{const key=(h.lot||h.barcode_raw||'').trim();if(seen.has(key)||pendingLots.has(key))return false;seen.add(key);return true});
     await loadMaterialMaster();
     _unusedLots.forEach(h=>{h._parsedMatType='';h._parsedWidth='';const mi=h.material_info||'';if(!mi)return;const mm=_materialMaster.find(m=>mi.includes(m.material_name));if(mm){h._parsedMatType=mm.material_type||'';h._parsedWidth=mm.width||'';return}const parts=mi.split(/[\/\s]+/).map(s=>s.trim());if(parts[0]){const m2=parts[0].match(/^([A-Za-z0-9]+)/);h._parsedMatType=m2?m2[1]:parts[0]}for(let i=2;i<parts.length;i++){const wm=parts[i].match(/^(\d+\.?\d*)W?$/i);if(wm){h._parsedWidth=wm[1];break}}});
     const matTypes=[...new Set(_unusedLots.map(h=>h._parsedMatType).filter(Boolean))].sort();
