@@ -156,6 +156,23 @@
   .model-sr .msr-name{font-weight:700;color:#1a237e}
   .model-sr .msr-info{font-size:10px;color:#888;margin-top:1px}
 
+  /* 아코디언 */
+  .acc-wrap{margin-top:12px}
+  .acc-toggle{width:100%;display:flex;justify-content:space-between;align-items:center;padding:10px 14px;
+    background:#f5f5f5;border:1.5px solid #e0e0e0;border-radius:10px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700;color:#555;transition:.2s}
+  .acc-toggle:active{background:#eeeeee}
+  .acc-toggle.open{border-radius:10px 10px 0 0;border-bottom-color:transparent;background:#e8eaf6;color:#1a237e}
+  .acc-toggle .acc-arrow{transition:transform .2s;font-size:12px}
+  .acc-toggle.open .acc-arrow{transform:rotate(180deg)}
+  .acc-body{display:none;border:1.5px solid #e0e0e0;border-top:none;border-radius:0 0 10px 10px;background:#fff;max-height:400px;overflow-y:auto}
+  .acc-body.open{display:block}
+  .acc-model-item{padding:10px 14px;border-bottom:1px solid #f0f0f0;cursor:pointer;transition:.1s;display:flex;justify-content:space-between;align-items:center}
+  .acc-model-item:last-child{border:none}
+  .acc-model-item:active{background:#e3f2fd}
+  .acc-model-item .ami-name{font-size:13px;font-weight:700;color:#1a237e}
+  .acc-model-item .ami-info{font-size:10px;color:#888;margin-top:1px}
+  .acc-model-item .ami-badge{font-size:10px;font-weight:700;padding:3px 8px;border-radius:10px;background:#e3f2fd;color:#1565c0;white-space:nowrap}
+
 </style>
 </head>
 <body>
@@ -187,6 +204,16 @@
     <div id="moldChips" style="display:none;margin-top:8px">
       <div style="font-size:11px;font-weight:600;color:#888;margin-bottom:6px">금형 선택</div>
       <div id="moldChipList" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+    </div>
+    <!-- 이력있는 금형 아코디언 -->
+    <div class="acc-wrap" id="accModelsWrap" style="display:none">
+      <button class="acc-toggle" id="accToggleBtn" onclick="toggleAccordion()">
+        <span id="accToggleLabel">📂 이력있는 금형 (0개 기종)</span>
+        <span class="acc-arrow">▼</span>
+      </button>
+      <div class="acc-body" id="accBody">
+        <div id="accModelList" style="padding:4px 0"></div>
+      </div>
     </div>
   </div>
   <div id="boardArea" style="display:none">
@@ -398,6 +425,7 @@ function setView(v){
 async function init(){
   try{models=await sbSelect('mold_model','order=name.asc')}catch(e){models=[]}
   populateModelSelects();
+  loadAccordionModels();
 }
 function populateModelSelects(){
   ['settMoldModel','logModelFilter'].forEach(id=>{
@@ -1395,6 +1423,68 @@ document.addEventListener('touchend',e=>{
     zoomNav(dx<0?1:-1);
   }
 },{passive:true});
+
+// ===== 이력있는 금형 아코디언 =====
+async function loadAccordionModels(){
+  const wrap=document.getElementById('accModelsWrap');
+  const list=document.getElementById('accModelList');
+  const label=document.getElementById('accToggleLabel');
+  try{
+    // 부품이 있는 model_id 목록 (폐기 제외)
+    const allParts=await sbSelect('mold_part','status=neq.폐기&select=model_id,mold_id,process_no,status');
+    if(!allParts.length){wrap.style.display='none';return}
+    // model_id별 집계
+    const stats={};
+    allParts.forEach(p=>{
+      if(!stats[p.model_id])stats[p.model_id]={partCount:0,moldIds:new Set(),procs:{}};
+      stats[p.model_id].partCount++;
+      stats[p.model_id].moldIds.add(p.mold_id);
+      const pn=p.process_no||0;
+      if(!stats[p.model_id].procs[pn])stats[p.model_id].procs[pn]={mount:0,store:0};
+      if(p.status==='장착')stats[p.model_id].procs[pn].mount++;
+      else stats[p.model_id].procs[pn].store++;
+    });
+    // 기종명 매핑 후 이름순 정렬
+    const accModels=Object.keys(stats).map(mid=>{
+      const m=models.find(x=>x.id==mid);
+      const procNums=Object.keys(stats[mid].procs).map(Number).sort((a,b)=>a-b);
+      return{id:parseInt(mid),name:m?m.name:'(삭제된 기종)',partCount:stats[mid].partCount,moldCount:stats[mid].moldIds.size,procs:stats[mid].procs,procNums};
+    }).sort((a,b)=>a.name.localeCompare(b.name,'ko'));
+
+    label.textContent='📂 이력있는 금형 ('+accModels.length+'개 기종)';
+    list.innerHTML=accModels.map(m=>{
+      const chips=m.procNums.map(pn=>{
+        const info=m.procs[pn];
+        const isMounted=info.mount>0;
+        const bg=isMounted?'#c62828':'#1565c0';
+        const label=isMounted?pn+'공정(장착'+info.mount+')':pn+'공정';
+        return `<span style="display:inline-block;padding:2px 5px;border-radius:4px;font-size:9px;font-weight:600;background:${bg};color:#fff;margin:1px">${label}</span>`;
+      }).join('');
+      return `<div class="acc-model-item" onclick="accPickModel(${m.id})">
+        <div style="flex:1;min-width:0"><div class="ami-name">${m.name}</div><div class="ami-info">금형 ${m.moldCount}개 · 부품 ${m.partCount}개</div>
+        <div style="margin-top:4px;line-height:1.6">${chips}</div></div>
+        <span class="ami-badge" style="flex-shrink:0;margin-left:6px">${m.moldCount}금형</span>
+      </div>`;
+    }).join('');
+    wrap.style.display='block';
+  }catch(e){wrap.style.display='none';console.log('accordion load error:',e)}
+}
+
+function toggleAccordion(){
+  const btn=document.getElementById('accToggleBtn');
+  const body=document.getElementById('accBody');
+  const isOpen=btn.classList.contains('open');
+  btn.classList.toggle('open',!isOpen);
+  body.classList.toggle('open',!isOpen);
+}
+
+function accPickModel(mid){
+  // 아코디언에서 기종 선택 → 기존 pickModel 호출
+  const btn=document.getElementById('accToggleBtn');
+  const body=document.getElementById('accBody');
+  btn.classList.remove('open');body.classList.remove('open');
+  pickModel(mid);
+}
 
 init();
 </script>
