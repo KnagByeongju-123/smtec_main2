@@ -489,7 +489,8 @@ async function autoCreateTables(){
 `CREATE TABLE IF NOT EXISTS general_model_tj(id BIGSERIAL PRIMARY KEY,customer TEXT NOT NULL,model_name TEXT NOT NULL,note TEXT DEFAULT '',sort_order INTEGER DEFAULT 0,created_at TIMESTAMPTZ DEFAULT NOW());ALTER TABLE general_model_tj ENABLE ROW LEVEL SECURITY;DROP POLICY IF EXISTS "allow_all_general_model_tj" ON general_model_tj;CREATE POLICY "allow_all_general_model_tj" ON general_model_tj FOR ALL USING(true) WITH CHECK(true);`,
 `CREATE TABLE IF NOT EXISTS material_master_tj(id BIGSERIAL PRIMARY KEY,material_name TEXT NOT NULL,material_type TEXT DEFAULT '',thickness TEXT DEFAULT '',width TEXT DEFAULT '',pitch TEXT DEFAULT '',mapped_models TEXT DEFAULT '',customer TEXT DEFAULT '',note TEXT DEFAULT '',sort_order INTEGER DEFAULT 0,mold_number TEXT DEFAULT '',model_code TEXT DEFAULT '',monthly_order NUMERIC DEFAULT 0,specific_gravity NUMERIC DEFAULT 7.85,unit_weight NUMERIC DEFAULT 0,est_material_order NUMERIC DEFAULT 0,created_at TIMESTAMPTZ DEFAULT NOW());ALTER TABLE material_master_tj ENABLE ROW LEVEL SECURITY;DROP POLICY IF EXISTS "allow_all_material_master_tj" ON material_master_tj;CREATE POLICY "allow_all_material_master_tj" ON material_master_tj FOR ALL USING(true) WITH CHECK(true);`,
 `CREATE TABLE IF NOT EXISTS lot_setting_tj(id BIGSERIAL PRIMARY KEY,setting_key TEXT UNIQUE NOT NULL,setting_value TEXT,created_at TIMESTAMPTZ DEFAULT NOW());ALTER TABLE lot_setting_tj ENABLE ROW LEVEL SECURITY;DROP POLICY IF EXISTS "allow_all_lot_setting_tj" ON lot_setting_tj;CREATE POLICY "allow_all_lot_setting_tj" ON lot_setting_tj FOR ALL USING(true) WITH CHECK(true);`,
-`CREATE TABLE IF NOT EXISTS scan_relay(id BIGSERIAL PRIMARY KEY,barcode TEXT NOT NULL,format TEXT,sender TEXT DEFAULT 'phone',created_at TIMESTAMPTZ DEFAULT NOW());ALTER TABLE scan_relay ENABLE ROW LEVEL SECURITY;DROP POLICY IF EXISTS "allow_all_scan_relay" ON scan_relay;CREATE POLICY "allow_all_scan_relay" ON scan_relay FOR ALL USING(true) WITH CHECK(true);`
+`CREATE TABLE IF NOT EXISTS scan_relay(id BIGSERIAL PRIMARY KEY,barcode TEXT NOT NULL,format TEXT,sender TEXT DEFAULT 'phone',created_at TIMESTAMPTZ DEFAULT NOW());ALTER TABLE scan_relay ENABLE ROW LEVEL SECURITY;DROP POLICY IF EXISTS "allow_all_scan_relay" ON scan_relay;CREATE POLICY "allow_all_scan_relay" ON scan_relay FOR ALL USING(true) WITH CHECK(true);`,
+`CREATE TABLE IF NOT EXISTS pending_production_tj(id BIGSERIAL PRIMARY KEY,card_data JSONB NOT NULL,created_at TIMESTAMPTZ DEFAULT NOW());ALTER TABLE pending_production_tj ENABLE ROW LEVEL SECURITY;DROP POLICY IF EXISTS "allow_all_pending_production_tj" ON pending_production_tj;CREATE POLICY "allow_all_pending_production_tj" ON pending_production_tj FOR ALL USING(true) WITH CHECK(true);`
   ];
   let ok=0,fail=0;
   for(const sql of sqls){try{const res=await fetch(url+'/rest/v1/rpc/exec_sql',{method:'POST',headers:{'Content-Type':'application/json','apikey':key,'Authorization':'Bearer '+key},body:JSON.stringify({query:sql})});if(res.ok)ok++;else fail++}catch(e){fail++}}
@@ -698,16 +699,62 @@ function backToMoveInputs(){document.getElementById('moveSetupInputs').style.dis
 //  대기카드 관리 (★ 패치4)
 // ============================================================
 const PENDING_KEY='LOT_TJ_PENDING_PROD';
-function loadPendingCards(){return JSON.parse(localStorage.getItem(PENDING_KEY)||'[]')}
-function savePendingCards(cards){localStorage.setItem(PENDING_KEY,JSON.stringify(cards))}
-function addPendingCard(cardData){const cards=loadPendingCards();cardData.id='PND_'+Date.now();cardData.createdAt=kstISO();cards.unshift(cardData);savePendingCards(cards);renderPendingCards()}
-function removePendingCard(id){let cards=loadPendingCards();cards=cards.filter(c=>c.id!==id);savePendingCards(cards);renderPendingCards()}
+let _pendingCards=[];// 메모리 캐시
+
+function loadPendingCards(){return _pendingCards}
+
+async function loadPendingCardsFromServer(){
+  try{
+    const data=await sbSelect('pending_production_tj',{},'created_at.desc',100);
+    _pendingCards=(data||[]).map(r=>{
+      const d=typeof r.card_data==='string'?JSON.parse(r.card_data):r.card_data;
+      return{...d,id:String(r.id),_dbId:r.id,createdAt:r.created_at||d.createdAt};
+    });
+  }catch(e){
+    // 서버 실패 시 localStorage 폴백
+    _pendingCards=JSON.parse(localStorage.getItem(PENDING_KEY)||'[]');
+  }
+  localStorage.setItem(PENDING_KEY,JSON.stringify(_pendingCards));
+  return _pendingCards;
+}
+
+function savePendingCards(cards){_pendingCards=cards;localStorage.setItem(PENDING_KEY,JSON.stringify(cards))}
+
+async function addPendingCard(cardData){
+  cardData.createdAt=kstISO();
+  try{
+    const res=await sbInsert('pending_production_tj',[{card_data:JSON.stringify(cardData)}]);
+    if(res&&res[0]){cardData.id=String(res[0].id);cardData._dbId=res[0].id}
+    else{cardData.id='PND_'+Date.now()}
+  }catch(e){
+    cardData.id='PND_'+Date.now();
+    showToast('⚠ 서버 저장 실패, 로컬 저장');
+  }
+  _pendingCards.unshift(cardData);
+  localStorage.setItem(PENDING_KEY,JSON.stringify(_pendingCards));
+  renderPendingCards();
+}
+
+async function removePendingCard(id){
+  const card=_pendingCards.find(c=>c.id===id||String(c._dbId)===id);
+  const dbId=card?card._dbId:parseInt(id);
+  if(dbId){try{await sbDelete('pending_production_tj',{id:'eq.'+dbId})}catch(e){}}
+  _pendingCards=_pendingCards.filter(c=>c.id!==id&&String(c._dbId)!==id);
+  localStorage.setItem(PENDING_KEY,JSON.stringify(_pendingCards));
+  renderPendingCards();
+}
+
+async function clearAllPendingCards(){
+  if(!confirm('전체 삭제?'))return;
+  try{const sb=getSb();if(sb){await sb.from('pending_production_tj').delete().neq('id',0)}}catch(e){}
+  _pendingCards=[];localStorage.setItem(PENDING_KEY,'[]');renderPendingCards();
+}
 
 function renderPendingCards(){
   const container=document.getElementById('pendingCardsArea');if(!container)return;
   const cards=loadPendingCards();
   if(!cards.length){container.innerHTML='';return}
-  let html='<div style="font-size:13px;font-weight:700;color:#1a237e;margin-bottom:8px;display:flex;align-items:center;gap:6px">📋 생산진행 ('+cards.length+'건)<button onclick="if(confirm(\'전체 삭제?\')){savePendingCards([]);renderPendingCards()}" style="margin-left:auto;padding:3px 8px;border:1px solid #ffcdd2;border-radius:5px;background:#ffebee;color:#c62828;font-size:10px;font-weight:700;cursor:pointer;font-family:inherit">전체삭제</button></div>';
+  let html='<div style="font-size:13px;font-weight:700;color:#1a237e;margin-bottom:8px;display:flex;align-items:center;gap:6px">📋 생산진행 ('+cards.length+'건)<button onclick="clearAllPendingCards()" style="margin-left:auto;padding:3px 8px;border:1px solid #ffcdd2;border-radius:5px;background:#ffebee;color:#c62828;font-size:10px;font-weight:700;cursor:pointer;font-family:inherit">전체삭제</button></div>';
   cards.forEach(c=>{
     const lot=c.lot||'-';const mi=c.materialInfo||'';const wt=c.weight?c.weight+'kg':'';
     let matLabel='';if(mi){const parts=mi.split(/[\/\s]+/).filter(Boolean);matLabel=parts.length>=3?parts[0]+' / '+parts[2]+'mm':mi}
@@ -727,7 +774,7 @@ function renderPendingCards(){
 let _currentPendingCardId=null;
 
 async function openPendingCard(cardId){
-  const cards=loadPendingCards();const card=cards.find(c=>c.id===cardId);
+  const cards=loadPendingCards();const card=cards.find(c=>String(c.id)===String(cardId)||String(c._dbId)===String(cardId));
   if(!card){showToast('카드를 찾을 수 없습니다');return}
   const prodProc=PROCESSES.find(p=>p.id==='production');if(!prodProc)return;
   selectedProcess=prodProc;renderProcessGrid();
@@ -968,7 +1015,7 @@ async function saveHistToServer(entry){try{let noteText=entry.note||'';if(entry.
 // ============================================================
 //  탭/이력/설정
 // ============================================================
-function swTab(n){document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('on',i===n));document.querySelectorAll('.pnl').forEach((p,i)=>p.classList.toggle('on',i===n));if(n===0){renderRegFields();renderProcessGrid();renderPendingCards()}if(n===1)initHistTab();if(n===2){restoreCardOrder();renderCatEditor();loadSbConfigUI();loadGeneralModels(true);loadMaterialMaster(true);loadRacewayMasterCard()}}
+function swTab(n){document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('on',i===n));document.querySelectorAll('.pnl').forEach((p,i)=>p.classList.toggle('on',i===n));if(n===0){renderRegFields();renderProcessGrid();loadPendingCardsFromServer().then(()=>renderPendingCards())}if(n===1)initHistTab();if(n===2){restoreCardOrder();renderCatEditor();loadSbConfigUI();loadGeneralModels(true);loadMaterialMaster(true);loadRacewayMasterCard()}}
 let savedSelections={};
 function renderRegFields(){cats.forEach((cat,i)=>{const el=document.getElementById('sel_'+i);if(el&&el.value)savedSelections[cat.name]=el.value});const c=document.getElementById('regFields');c.innerHTML='';['출발지','도착지'].forEach(fn=>{const i=cats.findIndex(cat=>cat.name===fn);if(i<0)return;const cat=cats[i],prev=savedSelections[cat.name]||'';const div=document.createElement('div');div.className='fg';div.innerHTML='<label>'+cat.name+'</label><select id="sel_'+i+'"><option value="">선택하세요</option>'+cat.subs.map(s=>'<option value="'+s+'"'+(s===prev?' selected':'')+'>'+s+'</option>').join('')+'</select>';c.appendChild(div)})}
 function renderRecentList(){}
@@ -1002,7 +1049,8 @@ let tt;function showToast(m){const el=document.getElementById('toast');el.textCo
 // ============================================================
 (async function loadCatsFromServer(){try{const data=await sbSelect('lot_setting_tj',{setting_key:'eq.cats'},'',1);if(data&&data.length&&data[0].setting_value){const serverCats=JSON.parse(data[0].setting_value);if(serverCats&&serverCats.length){cats=serverCats;localStorage.setItem('LOT_TJ_CATS',JSON.stringify(cats))}}}catch(e){}renderRegFields()})();
 renderProcessGrid();
-renderPendingCards(); // ★ 대기카드 초기 렌더링
+// 서버에서 생산진행 카드 로드 후 렌더링
+loadPendingCardsFromServer().then(()=>renderPendingCards()); // ★ 서버 기반 초기 렌더링
 (async function initPartTree(){_partTree=null;_partTreeTime=0;try{await loadPartTreeData()}catch(e){}})();
 loadGeneralModels(true);
 </script>
