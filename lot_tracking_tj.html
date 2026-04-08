@@ -443,6 +443,43 @@
 <canvas id="analysisCv"></canvas>
 <input type="file" id="uniCamInput" accept="image/*" capture="environment">
 <input type="file" id="uniImgInput" accept="image/*">
+<!-- 이력 수정 팝업 -->
+<div class="modal-overlay" id="editHistModal">
+  <div class="modal-box" style="border-radius:20px;max-width:420px;align-self:center;max-height:85vh">
+    <div class="modal-handle"></div>
+    <div class="modal-hdr">
+      <span class="modal-hdr-tit">✏️ 이력 수정</span>
+      <button class="modal-close" onclick="closeEditHist()">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="editHistId">
+      <div class="modal-row2">
+        <div class="fg"><label>📅 일자</label><input type="date" id="editDate"></div>
+        <div class="fg"><label>⏰ 시간</label><input type="time" id="editTime" step="1"></div>
+      </div>
+      <div class="fg"><label>📦 기종/품번</label><input type="text" id="editBasePart"></div>
+      <div class="fg"><label>🧱 소재정보</label><input type="text" id="editMaterialInfo"></div>
+      <div class="modal-row2">
+        <div class="fg"><label>출발지</label><input type="text" id="editDeparture"></div>
+        <div class="fg"><label>도착지</label><input type="text" id="editDestination"></div>
+      </div>
+      <div class="fg"><label>로트</label><input type="text" id="editLot"></div>
+      <div class="modal-row2">
+        <div class="fg"><label>수량</label><input type="number" id="editQty" inputmode="numeric"></div>
+        <div class="fg"><label>⚖ 중량(kg)</label><input type="number" id="editWeight" step="0.1"></div>
+      </div>
+      <div class="modal-row2">
+        <div class="fg"><label>👤 작업자</label><input type="text" id="editWorker"></div>
+        <div class="fg"><label>🏭 설비</label><input type="text" id="editEquipment"></div>
+      </div>
+      <div class="fg"><label>비고</label><textarea id="editNote" style="min-height:40px"></textarea></div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn btn-gray" onclick="closeEditHist()" style="flex:0 0 auto;width:auto;padding:12px 20px">취소</button>
+        <button class="btn btn-green" onclick="saveEditHist()" style="flex:1;font-size:15px;padding:12px">💾 수정 저장</button>
+      </div>
+    </div>
+  </div>
+</div>
 <div class="toast" id="toast"></div>
 <script>
 // ============================================================
@@ -1048,10 +1085,52 @@ let _serverHist=[],_serverHistPage=0;
 function initHistTab(){const procSel=document.getElementById('histFiltProc');if(procSel&&procSel.options.length<=1){const o=document.createElement('option');o.value='생산';o.textContent='🏭 생산';procSel.appendChild(o)}const today=kstDateStr();const weekAgo=kstDateStr(new Date(Date.now()-7*86400000));const dfEl=document.getElementById('histDateFrom');const dtEl=document.getElementById('histDateTo');if(dfEl&&!dfEl.value)dfEl.value=weekAgo;if(dtEl&&!dtEl.value)dtEl.value=today;if(!_serverHist.length)loadServerHist()}
 async function loadServerHist(){const container=document.getElementById('serverHistList');container.innerHTML='<div style="text-align:center;padding:12px;color:#1565c0;font-size:12px">🔄 조회 중...</div>';_serverHistPage=0;const dateFrom=document.getElementById('histDateFrom')?document.getElementById('histDateFrom').value:'';const dateTo=document.getElementById('histDateTo')?document.getElementById('histDateTo').value:'';try{const sb=getSb();if(!sb)throw new Error('Supabase 미설정');let q=sb.from('move_history_tj').select('*');if(dateFrom)q=q.gte('move_date',dateFrom);if(dateTo)q=q.lte('move_date',dateTo);q=q.order('created_at',{ascending:false}).limit(1000);const{data,error}=await q;if(error)throw error;_serverHist=data||[];renderServerHist();showToast('✅ '+_serverHist.length+'건')}catch(e){container.innerHTML='<div class="h-empty">⚠ '+e.message+'</div>';_serverHist=[]}}
 function getFilteredServerHist(){const proc=document.getElementById('histFiltProc')?document.getElementById('histFiltProc').value:'';const search=(document.getElementById('histFiltSearch')?document.getElementById('histFiltSearch').value:'').trim().toLowerCase();let filtered=_serverHist;if(proc)filtered=filtered.filter(h=>h.process===proc);if(search)filtered=filtered.filter(h=>(h.base_part||'').toLowerCase().includes(search)||(h.barcode_raw||'').toLowerCase().includes(search)||(h.lot||'').toLowerCase().includes(search)||(h.general_model||'').toLowerCase().includes(search));return filtered}
-function renderServerHist(){const container=document.getElementById('serverHistList');const statsEl=document.getElementById('histStats');const filtered=getFilteredServerHist();if(filtered.length){const totalQty=filtered.reduce((s,h)=>s+(h.qty||0),0);statsEl.style.display='block';statsEl.innerHTML='총 <b>'+filtered.length+'</b>건 · 총수량 <b>'+totalQty.toLocaleString()+'</b>개'}else statsEl.style.display='none';if(!filtered.length){container.innerHTML='<div class="h-empty">이력 없음</div>';return}const showing=filtered.slice(0,(_serverHistPage+1)*30);container.innerHTML='';showing.forEach(h=>{const d=document.createElement('div');d.className='h-item';d.style.padding='8px 0';const typeBadge=h.child_type?'<span style="font-size:9px;padding:1px 5px;border-radius:3px;font-weight:700;'+(h.child_type==='Inner'?'background:#e3f2fd;color:#1565c0':'background:#fce4ec;color:#c62828')+'">'+h.child_type+'</span>':'';const matBadge=h.material_info?'<span style="font-size:9px;padding:1px 5px;border-radius:3px;font-weight:600;background:#e3f2fd;color:#1565c0">🧱'+h.material_info+'</span>':'';d.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:13px;font-weight:700;color:#1a237e">'+(h.base_part||h.barcode_raw||'-')+' '+typeBadge+'</span><span style="font-size:10px;color:#aaa">'+(h.move_date||'')+' '+(h.move_time||'')+'</span></div>'+(matBadge?'<div style="margin-top:2px">'+matBadge+'</div>':'')+'<div style="font-size:10px;color:#666;margin-top:3px">'+(h.departure||'')+' → '+(h.destination||'')+' '+(h.qty?'<b>수량:'+h.qty+'</b>':'')+' '+(h.lot?'LOT:'+h.lot:'')+'</div>'+(h.worker?'<div style="font-size:10px;color:#888;margin-top:1px">👤'+h.worker+(h.equipment?' 🏭'+h.equipment:'')+'</div>':'')+'<div style="display:flex;gap:4px;margin-top:4px"><button onclick="deleteServerHist('+h.id+')" style="padding:3px 8px;border:none;border-radius:4px;font-size:10px;font-weight:600;cursor:pointer;font-family:inherit;background:#ffebee;color:#c62828">🗑 삭제</button></div>';container.appendChild(d)});document.getElementById('histLoadMore').style.display=showing.length<filtered.length?'block':'none'}
+function renderServerHist(){const container=document.getElementById('serverHistList');const statsEl=document.getElementById('histStats');const filtered=getFilteredServerHist();if(filtered.length){const totalQty=filtered.reduce((s,h)=>s+(h.qty||0),0);statsEl.style.display='block';statsEl.innerHTML='총 <b>'+filtered.length+'</b>건 · 총수량 <b>'+totalQty.toLocaleString()+'</b>개'}else statsEl.style.display='none';if(!filtered.length){container.innerHTML='<div class="h-empty">이력 없음</div>';return}const showing=filtered.slice(0,(_serverHistPage+1)*30);container.innerHTML='';showing.forEach(h=>{const d=document.createElement('div');d.className='h-item';d.style.padding='8px 0';const typeBadge=h.child_type?'<span style="font-size:9px;padding:1px 5px;border-radius:3px;font-weight:700;'+(h.child_type==='Inner'?'background:#e3f2fd;color:#1565c0':'background:#fce4ec;color:#c62828')+'">'+h.child_type+'</span>':'';const matBadge=h.material_info?'<span style="font-size:9px;padding:1px 5px;border-radius:3px;font-weight:600;background:#e3f2fd;color:#1565c0">🧱'+h.material_info+'</span>':'';d.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:13px;font-weight:700;color:#1a237e">'+(h.base_part||h.barcode_raw||'-')+' '+typeBadge+'</span><span style="font-size:10px;color:#aaa">'+(h.move_date||'')+' '+(h.move_time||'')+'</span></div>'+(matBadge?'<div style="margin-top:2px">'+matBadge+'</div>':'')+'<div style="font-size:10px;color:#666;margin-top:3px">'+(h.departure||'')+' → '+(h.destination||'')+' '+(h.qty?'<b>수량:'+h.qty+'</b>':'')+' '+(h.lot?'LOT:'+h.lot:'')+'</div>'+(h.worker?'<div style="font-size:10px;color:#888;margin-top:1px">👤'+h.worker+(h.equipment?' 🏭'+h.equipment:'')+'</div>':'')+'<div style="display:flex;gap:4px;margin-top:4px"><button onclick="openEditHist('+h.id+')" style="padding:3px 8px;border:none;border-radius:4px;font-size:10px;font-weight:600;cursor:pointer;font-family:inherit;background:#e3f2fd;color:#1565c0">✏️ 수정</button><button onclick="deleteServerHist('+h.id+')" style="padding:3px 8px;border:none;border-radius:4px;font-size:10px;font-weight:600;cursor:pointer;font-family:inherit;background:#ffebee;color:#c62828">🗑 삭제</button></div>';container.appendChild(d)});document.getElementById('histLoadMore').style.display=showing.length<filtered.length?'block':'none'}
 function loadMoreServerHist(){_serverHistPage++;renderServerHist()}
 function clearHistFilter(){['histFiltProc','histFiltCust','histFiltModel','histFiltSearch'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=''});const today=kstDateStr();document.getElementById('histDateFrom').value=kstDateStr(new Date(Date.now()-7*86400000));document.getElementById('histDateTo').value=today;loadServerHist()}
 async function deleteServerHist(id){if(!confirm('삭제?'))return;try{await sbDelete('move_history_tj',{id:'eq.'+id});_serverHist=_serverHist.filter(h=>h.id!==id);renderServerHist();showToast('🗑 삭제')}catch(e){showToast('⚠ '+e.message)}}
+
+function openEditHist(id){
+  const h=_serverHist.find(r=>r.id===id);if(!h){showToast('데이터 없음');return}
+  document.getElementById('editHistId').value=id;
+  document.getElementById('editDate').value=h.move_date||'';
+  document.getElementById('editTime').value=h.move_time||'';
+  document.getElementById('editBasePart').value=h.base_part||'';
+  document.getElementById('editMaterialInfo').value=h.material_info||'';
+  document.getElementById('editDeparture').value=h.departure||'';
+  document.getElementById('editDestination').value=h.destination||'';
+  document.getElementById('editLot').value=h.lot||'';
+  document.getElementById('editQty').value=h.qty||'';
+  document.getElementById('editWeight').value=h.weight||'';
+  document.getElementById('editWorker').value=h.worker||'';
+  document.getElementById('editEquipment').value=h.equipment||'';
+  document.getElementById('editNote').value=h.note||'';
+  document.getElementById('editHistModal').classList.add('show','center');
+}
+function closeEditHist(){document.getElementById('editHistModal').classList.remove('show','center')}
+async function saveEditHist(){
+  const id=parseInt(document.getElementById('editHistId').value);if(!id){showToast('ID 오류');return}
+  const updates={
+    move_date:document.getElementById('editDate').value,
+    move_time:document.getElementById('editTime').value,
+    base_part:document.getElementById('editBasePart').value.trim(),
+    material_info:document.getElementById('editMaterialInfo').value.trim(),
+    departure:document.getElementById('editDeparture').value.trim(),
+    destination:document.getElementById('editDestination').value.trim(),
+    lot:document.getElementById('editLot').value.trim(),
+    qty:document.getElementById('editQty').value?parseInt(document.getElementById('editQty').value):null,
+    weight:document.getElementById('editWeight').value?parseFloat(document.getElementById('editWeight').value):null,
+    worker:document.getElementById('editWorker').value.trim(),
+    equipment:document.getElementById('editEquipment').value.trim(),
+    note:document.getElementById('editNote').value.trim()
+  };
+  try{
+    await sbUpdate('move_history_tj',{id:'eq.'+id},updates);
+    const idx=_serverHist.findIndex(h=>h.id===id);
+    if(idx>=0)Object.assign(_serverHist[idx],updates);
+    renderServerHist();closeEditHist();showToast('✅ 수정 완료');
+  }catch(e){showToast('⚠ 수정 실패: '+e.message)}
+}
 function expServerXlsx(){const filtered=getFilteredServerHist();if(!filtered.length){showToast('이력 없음');return}const wb=XLSX.utils.book_new();const hd=['일자','시간','공정','출발지','도착지','바코드','기준품번','소재정보','로트','수량','작업자','설비','비고'];const rows=filtered.map(h=>[h.move_date||'',h.move_time||'',h.process||'',h.departure||'',h.destination||'',h.barcode_raw||'',h.base_part||'',h.material_info||'',h.lot||'',h.qty||'',h.worker||'',h.equipment||'',h.note||'']);const ws=XLSX.utils.aoa_to_sheet([hd,...rows]);XLSX.utils.book_append_sheet(wb,ws,'이동이력');XLSX.writeFile(wb,'이동이력_'+kstDateStr().replace(/-/g,'')+'.xlsx')}
 
 // 항목관리
