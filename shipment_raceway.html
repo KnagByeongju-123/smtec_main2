@@ -25,7 +25,7 @@
     .fg textarea{resize:vertical;min-height:60px}
     .fg-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
     .tabs{display:flex;background:var(--surface);border-bottom:2px solid rgba(255,255,255,.06)}
-    .tab{flex:1;padding:11px 4px;text-align:center;font-size:13px;font-weight:600;cursor:pointer;border-bottom:3px solid transparent;color:var(--text3);transition:all .15s}
+    .tab{flex:1;padding:11px 4px;text-align:center;font-size:12px;font-weight:600;cursor:pointer;border-bottom:3px solid transparent;color:var(--text3);transition:all .15s}
     .tab.on{color:var(--accent);border-bottom-color:var(--accent)}
     .pnl{display:none}.pnl.on{display:block}
     .submit-btn{width:100%;padding:15px;font-size:16px;font-weight:800;background:linear-gradient(135deg,#1e40af,#3b82f6);border:none;border-radius:var(--radius);color:#fff;cursor:pointer;font-family:inherit;transition:transform .1s;box-shadow:0 4px 16px rgba(59,130,246,.25)}
@@ -68,13 +68,14 @@
 </head>
 <body>
 <div class="hdr">
-  <h1>🔩 출하(레이스웨이)</h1>
-  <p>레이스웨이 출하등록 · 생산일자 LOT 추적 · move_history_tj 연동</p>
+  <h1>🔩 출하(SBC)</h1>
+  <p>SBC 출하검사등록 · 출하LOT관리 · 생산일자 LOT 추적</p>
 </div>
 <div class="tabs">
   <div class="tab on" onclick="swTab(0)">🚚 출하검사등록</div>
-  <div class="tab" onclick="swTab(1)">📋 이력</div>
-  <div class="tab" onclick="swTab(2)">⚙ 설정</div>
+  <div class="tab" onclick="swTab(1)">📦 출하</div>
+  <div class="tab" onclick="swTab(2)">📋 이력</div>
+  <div class="tab" onclick="swTab(3)">⚙ 설정</div>
 </div>
 
 <!-- ===== 출하등록 ===== -->
@@ -143,8 +144,35 @@
 </div>
 </div>
 
-<!-- ===== 이력 ===== -->
+<!-- ===== 출하 LOT관리 ===== -->
 <div class="pnl" id="pnl1">
+<div class="form-wrap">
+  <div class="card">
+    <div class="card-title">📦 출하 LOT 관리 <span style="font-size:10px;color:var(--text3);font-weight:400;margin-left:4px">검사완료 재고 기반 출하요청</span></div>
+    <div style="display:flex;gap:6px;margin-bottom:12px">
+      <button class="btn-sm" onclick="loadShipStock()" style="flex:1;background:var(--accent);color:#fff;padding:12px;font-size:14px">📥 재고 데이터 불러오기</button>
+    </div>
+    <div id="shipStockStatus" style="font-size:11px;color:var(--text3);margin-bottom:8px"></div>
+    <!-- 검색 -->
+    <div class="fg" id="shipStockSearchWrap" style="display:none">
+      <input type="text" id="shipStockSearch" placeholder="품번 검색..." oninput="renderShipStock()" style="font-size:14px;padding:10px">
+    </div>
+  </div>
+  <!-- 재고 리스트 -->
+  <div id="shipStockList"></div>
+  <!-- 출하요청 요약 -->
+  <div class="card" id="shipReqSummary" style="display:none;border:2px solid var(--accent)">
+    <div class="card-title" style="justify-content:space-between"><span>📋 출하요청 요약</span><button class="btn-sm" onclick="clearAllShipReq()" style="background:rgba(239,68,68,.15);color:#ef4444">초기화</button></div>
+    <div id="shipReqList"></div>
+    <div style="margin-top:12px">
+      <button class="submit-btn" onclick="confirmShipReq()" style="font-size:15px;padding:14px;background:linear-gradient(135deg,#059669,#34d399)">🚚 출하 확정 (LOT 차감)</button>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ===== 이력 ===== -->
+<div class="pnl" id="pnl2">
 <div class="form-wrap">
   <div class="card">
     <div class="card-title">📋 출하 이력 조회</div>
@@ -168,7 +196,7 @@
 </div>
 
 <!-- ===== 설정 ===== -->
-<div class="pnl" id="pnl2">
+<div class="pnl" id="pnl3">
 <div class="form-wrap">
   <!-- 고객사 관리 -->
   <div class="card">
@@ -261,7 +289,7 @@ function kstTime(d){const n=d||kstNow();return String(n.getHours()).padStart(2,'
 function toast(m){const el=document.getElementById('toast');if(!el)return;el.textContent=m;el.classList.add('show');clearTimeout(window._tt);window._tt=setTimeout(()=>el.classList.remove('show'),2000)}
 
 // ===== 탭 =====
-function swTab(n){document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('on',i===n));document.querySelectorAll('.pnl').forEach((p,i)=>p.classList.toggle('on',i===n));if(n===1)initHistTab();if(n===2)loadStgUI()}
+function swTab(n){document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('on',i===n));document.querySelectorAll('.pnl').forEach((p,i)=>p.classList.toggle('on',i===n));if(n===2)initHistTab();if(n===3)loadStgUI()}
 
 // ===== 공용 데이터 =====
 let _customers=[],_workers=[],_departures=[],_destinations=[],_partTree=[];
@@ -804,6 +832,179 @@ function delTg(i){const u=tgUsers();u.splice(i,1);const s=getStg();s.tg_users=JS
 function saveStg(){const s={sb_url:document.getElementById('stgUrl').value.trim().replace(/\/$/,''),sb_key:document.getElementById('stgKey').value.trim(),tg_bot:document.getElementById('stgTgBot').value.trim(),tg_users:JSON.stringify(tgUsers())};localStorage.setItem(LS,JSON.stringify(s));document.getElementById('stgSaveStatus').textContent='✅ 저장 ('+new Date().toLocaleTimeString()+')';document.getElementById('stgSaveStatus').style.color='#22c55e'}
 async function testConn(){const st=document.getElementById('stgConnStatus');const u=document.getElementById('stgUrl').value.trim(),k=document.getElementById('stgKey').value.trim();if(!u||!k){st.textContent='❌ URL/Key 입력';st.style.color='#ef4444';return}st.textContent='연결 중...';try{const r=await fetch(u+'/rest/v1/move_history_tj?select=id&limit=1',{headers:{'apikey':k,'Authorization':'Bearer '+k}});st.textContent=r.ok?'✅ 연결 성공':'❌ '+r.status;st.style.color=r.ok?'#22c55e':'#ef4444'}catch(e){st.textContent='❌ '+e.message;st.style.color='#ef4444'}}
 async function testTg(){const st=document.getElementById('stgTgStatus');let bot=document.getElementById('stgTgBot').value.trim(),users=tgUsers();if(!bot||!users.length){if(!_ccTgBot)await loadTgFromCC();if(!bot&&_ccTgBot)bot=_ccTgBot;if(!users.length&&_ccTgUsers.length)users=_ccTgUsers}if(!bot||!users.length){st.textContent='❌ Bot/수신자 없음';st.style.color='#ef4444';return}let ok=0;for(const u of users){try{const r=await fetch('https://api.telegram.org/bot'+bot+'/sendMessage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:u.chat_id,text:'🔩 레이스웨이 출하 알림 테스트\n'+new Date().toLocaleString()})});const d=await r.json();if(d.ok)ok++}catch(e){}}st.textContent=ok===users.length?'✅ '+ok+'명':'⚠ '+ok+'/'+users.length;st.style.color=ok===users.length?'#22c55e':'#f59e0b'}
+
+// ===== 출하 LOT 관리 =====
+const SHIP_GAS_URL='https://script.google.com/macros/s/AKfycbwh0BIx1N4i7V0bxbEyohUuoJpaUJaFJ6V2RfENwIJXzTN2_UM6KGiJZURGcDQwkf0/exec';
+let _shipStock=[]; // {partA,partB,waiting,completed,reqQty}
+let _shipReqs={}; // partA → reqQty
+
+async function loadShipStock(){
+  const st=document.getElementById('shipStockStatus');
+  st.textContent='📥 구글시트에서 데이터 불러오는 중...';st.style.color='var(--accent)';
+  try{
+    const res=await fetch(SHIP_GAS_URL);
+    const raw=await res.text();
+    let data;
+    try{data=JSON.parse(raw)}catch(e){
+      // GAS가 JSON 배열로 반환한다고 가정, 아니면 CSV 파싱
+      st.textContent='⚠ 응답 파싱 오류';st.style.color='#ef4444';return;
+    }
+    // data = [{partA,partB,waiting,completed},...] 또는 2D 배열
+    if(Array.isArray(data)&&data.length){
+      if(Array.isArray(data[0])){
+        // 2D 배열: [품번, 품번, 검사대기, 검사완료]
+        const hdr=data[0];
+        _shipStock=data.slice(1).map(r=>({
+          partA:String(r[0]||'').trim(),
+          partB:String(r[1]||'').trim(),
+          waiting:parseInt(r[2])||0,
+          completed:parseInt(r[3])||0,
+          reqQty:_shipReqs[String(r[0]||'').trim()]||0
+        })).filter(r=>r.partA);
+      }else{
+        // 객체 배열
+        _shipStock=data.map(r=>({
+          partA:String(r['품번']||r.partA||'').trim(),
+          partB:String(r['품번2']||r.partB||'').trim(),
+          waiting:parseInt(r['검사대기']||r.waiting)||0,
+          completed:parseInt(r['검사완료']||r.completed)||0,
+          reqQty:_shipReqs[String(r['품번']||r.partA||'').trim()]||0
+        })).filter(r=>r.partA);
+      }
+    }
+    st.textContent='✅ '+_shipStock.length+'개 품번 로드';st.style.color='#22c55e';
+    document.getElementById('shipStockSearchWrap').style.display='block';
+    renderShipStock();
+  }catch(e){st.textContent='❌ 네트워크 오류: '+e.message;st.style.color='#ef4444'}
+}
+
+function renderShipStock(){
+  const c=document.getElementById('shipStockList');
+  const search=(document.getElementById('shipStockSearch').value||'').trim().toUpperCase();
+  let filtered=_shipStock;
+  if(search)filtered=filtered.filter(r=>r.partA.toUpperCase().includes(search)||r.partB.toUpperCase().includes(search));
+  
+  if(!filtered.length){c.innerHTML='<div class="card" style="text-align:center;color:var(--text3);font-size:13px;padding:16px">'+(search?'검색 결과 없음':'데이터를 불러오세요')+'</div>';updateShipSummary();return}
+
+  c.innerHTML=filtered.map((r,i)=>{
+    const idx=_shipStock.indexOf(r);
+    const remain=r.completed-(r.reqQty||0);
+    const hasReq=r.reqQty>0;
+    const overReq=remain<0;
+    return'<div class="card" style="padding:12px;margin-bottom:6px;'+(hasReq?'border:1.5px solid '+(overReq?'#ef4444':'#22c55e'):'')+'">'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">'
+      +'<span style="font-size:14px;font-weight:800;color:var(--accent)">'+esc(r.partA)+'</span>'
+      +'<span style="font-size:10px;color:var(--text3)">'+esc(r.partB)+'</span></div>'
+      +'<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:8px">'
+      +'<div style="text-align:center;padding:6px;background:rgba(245,158,11,.1);border-radius:6px"><div style="font-size:9px;color:var(--text3)">검사대기</div><div style="font-size:14px;font-weight:700;color:#fbbf24">'+r.waiting.toLocaleString()+'</div></div>'
+      +'<div style="text-align:center;padding:6px;background:rgba(34,197,94,.1);border-radius:6px"><div style="font-size:9px;color:var(--text3)">검사완료(출하가능)</div><div style="font-size:14px;font-weight:700;color:#86efac">'+r.completed.toLocaleString()+'</div></div>'
+      +'<div style="text-align:center;padding:6px;background:rgba(59,130,246,.1);border-radius:6px"><div style="font-size:9px;color:var(--text3)">잔량</div><div style="font-size:14px;font-weight:700;color:'+(overReq?'#ef4444':'#93c5fd')+'">'+remain.toLocaleString()+'</div></div>'
+      +'</div>'
+      +'<div style="display:flex;gap:6px;align-items:center">'
+      +'<label style="font-size:11px;color:var(--text2);white-space:nowrap;margin:0">출하요청</label>'
+      +'<input type="number" inputmode="numeric" value="'+(r.reqQty||'')+'" placeholder="0" '
+      +'oninput="setShipReq('+idx+',this.value)" '
+      +'style="flex:1;padding:8px 10px;font-size:15px;font-weight:700;background:var(--bg);border:1.5px solid '+(hasReq?(overReq?'#ef4444':'#22c55e'):'var(--border)')+';border-radius:8px;color:'+(hasReq?(overReq?'#ef4444':'#22c55e'):'var(--text)')+';font-family:inherit;text-align:right">'
+      +(hasReq?'<button onclick="setShipReq('+idx+',0);renderShipStock()" style="border:none;background:rgba(239,68,68,.15);color:#ef4444;width:32px;height:32px;border-radius:8px;font-size:14px;cursor:pointer;flex-shrink:0">✕</button>':'')
+      +'</div>'
+      +(overReq?'<div style="font-size:10px;color:#ef4444;margin-top:4px;font-weight:600">⚠ 출하가능수량 초과 ('+Math.abs(remain).toLocaleString()+'개 부족)</div>':'')
+      +'</div>';
+  }).join('');
+  updateShipSummary();
+}
+
+function setShipReq(idx,val){
+  const q=parseInt(val)||0;
+  _shipStock[idx].reqQty=q;
+  _shipReqs[_shipStock[idx].partA]=q;
+  // 요약만 업데이트 (전체 리렌더 안함 — 입력 중 포커스 유지)
+  updateShipSummary();
+}
+
+function updateShipSummary(){
+  const reqs=_shipStock.filter(r=>r.reqQty>0);
+  const card=document.getElementById('shipReqSummary');
+  const list=document.getElementById('shipReqList');
+  if(!reqs.length){card.style.display='none';return}
+  card.style.display='block';
+  const hasOver=reqs.some(r=>r.reqQty>r.completed);
+  list.innerHTML=reqs.map(r=>{
+    const remain=r.completed-r.reqQty;
+    const over=remain<0;
+    return'<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.06);font-size:13px">'
+      +'<span style="font-weight:700;color:var(--text)">'+esc(r.partA)+'</span>'
+      +'<span style="font-weight:700;color:'+(over?'#ef4444':'#22c55e')+'">'+r.reqQty.toLocaleString()+' / '+r.completed.toLocaleString()
+      +' <span style="font-size:10px;color:var(--text3)">(잔량: '+remain.toLocaleString()+')</span></span></div>';
+  }).join('');
+  if(hasOver){
+    list.innerHTML+='<div style="font-size:11px;color:#ef4444;margin-top:8px;font-weight:600">⚠ 출하가능수량 초과 항목 있음 — 확인 후 조정하세요</div>';
+  }
+}
+
+function clearAllShipReq(){
+  _shipStock.forEach(r=>r.reqQty=0);
+  _shipReqs={};
+  renderShipStock();
+  toast('초기화됨');
+}
+
+async function confirmShipReq(){
+  const reqs=_shipStock.filter(r=>r.reqQty>0);
+  if(!reqs.length){toast('출하요청 수량을 입력하세요');return}
+  const hasOver=reqs.some(r=>r.reqQty>r.completed);
+  if(hasOver){if(!confirm('⚠ 출하가능수량 초과 항목이 있습니다. 그래도 진행하시겠습니까?'))return}
+
+  const summary=reqs.map(r=>r.partA+': '+r.reqQty.toLocaleString()+'개 (잔량: '+(r.completed-r.reqQty).toLocaleString()+')').join('\n');
+  if(!confirm('출하 확정:\n\n'+summary+'\n\nmove_history_tj에 기록하고 LOT를 차감합니다.'))return;
+
+  const now=new Date();
+  const date=kstDate(now),time=kstTime(now);
+  let successCnt=0;
+
+  for(const r of reqs){
+    const row={
+      move_date:date,
+      move_time:time,
+      process:'출하',
+      departure:'출하대기장',
+      destination:'SBC',
+      barcode_raw:'',
+      base_part:r.partA,
+      lot:'출하확정_'+date.replace(/-/g,''),
+      qty:r.reqQty,
+      note:'[출하확정] 검사완료:'+r.completed+' 출하:'+r.reqQty+' 잔량:'+(r.completed-r.reqQty)+' [품번B:'+r.partB+']',
+      format:'레이스웨이출하',
+      worker:'',
+      equipment:'',
+      weight:null,
+      incoming_date:null,
+      parent_part:null,
+      child_type:null,
+      model_type:'raceway',
+      general_model:null,
+      material_info:null,
+      lot_consumed:false
+    };
+    try{
+      await sbInsert('move_history_tj',row);
+      successCnt++;
+    }catch(e){toast('❌ '+r.partA+' 저장 실패: '+e.message)}
+  }
+
+  if(successCnt>0){
+    toast('✅ '+successCnt+'건 출하 확정 완료');
+    if(navigator.vibrate)navigator.vibrate([100,50,100,50,100]);
+    // 텔레그램 알림
+    const tgMsg='📦 SBC 출하 확정\n━━━━━━━━━━━━━━\n📅 '+date+' '+time+'\n\n'+reqs.map(r=>'• '+r.partA+': '+r.reqQty.toLocaleString()+'개').join('\n')+'\n\n총 '+reqs.length+'개 품번, '+reqs.reduce((s,r)=>s+r.reqQty,0).toLocaleString()+'개';
+    let bot=tgBot(),users=tgUsers();
+    if(!bot||!users.length){if(_ccTgBot)bot=_ccTgBot;if(_ccTgUsers.length)users=_ccTgUsers}
+    if(bot&&users.length){for(const u of users){try{await fetch('https://api.telegram.org/bot'+bot+'/sendMessage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:u.chat_id,text:tgMsg})})}catch(e){}}}
+    // 초기화 후 새로고침
+    clearAllShipReq();
+    loadShipStock();
+    loadRecent();
+  }
+}
 
 // ===== 초기화 =====
 window.addEventListener('DOMContentLoaded',()=>{
