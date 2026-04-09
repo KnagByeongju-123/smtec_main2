@@ -205,6 +205,14 @@ tr:hover td{background:rgba(37,99,235,.04)}tr.selected td{background:rgba(37,99,
     <div id="histResult" style="margin-top:10px"></div>
   </div>
 
+  <!-- 사유열람 암호 -->
+  <div class="card">
+    <div class="card-tit">🔒 사유 열람 암호</div>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:8px">연차신청 사유는 개인정보 보호를 위해 **** 로 표시됩니다. 암호를 아는 인원만 열람 가능합니다.</div>
+    <div class="setting-row"><label>열람 암호</label><input id="cfgReasonPw" type="password" placeholder="기본값: 1234"></div>
+    <button class="btn btn-accent" onclick="saveReasonPw()" style="width:100%">🔒 암호 저장</button>
+  </div>
+
   <!-- 공지사항 -->
   <div class="card">
     <div class="card-tit">📢 공지사항 등록</div>
@@ -369,6 +377,7 @@ function initSettings(){
   document.getElementById('cfgTgToken').value=c.tgToken||'';
   document.getElementById('cfgTgChats').value=c.tgChats||'';
   document.getElementById('cfgDiscord').value=c.discord||'';
+  document.getElementById('cfgReasonPw').value=c.reasonPw||'';
   // 이력관리 날짜 기본값
   const d1=new Date();d1.setMonth(d1.getMonth()-1);
   document.getElementById('histStart').value=d1.toISOString().split('T')[0];
@@ -380,6 +389,7 @@ function initSettings(){
 async function saveCfg(){const url=document.getElementById('cfgUrl').value.trim().replace(/\/$/,''),key=document.getElementById('cfgKey').value.trim();if(!url||!key){toast('URL과 Key');return}const c=getCfg();c.url=url;c.key=key;localStorage.setItem(LS,JSON.stringify(c));const st=document.getElementById('cfgStatus');st.textContent='테스트 중...';st.style.color='var(--accent)';try{await sb('employees?select=id&limit=1');st.textContent='✅ 연결 성공';st.style.color='var(--green)';toast('✅ 연결 성공')}catch(e){st.textContent='❌ '+e.message;st.style.color='var(--red)'}}
 function saveDepts(){const c=getCfg();c.depts=document.getElementById('cfgDepts').value;localStorage.setItem(LS,JSON.stringify(c));populateDeptSelects();toast('부서 저장')}
 function saveNotice(){const c=getCfg();c.notice=document.getElementById('cfgNotice').value;localStorage.setItem(LS,JSON.stringify(c));showNotice();toast('공지 저장')}
+function saveReasonPw(){const c=getCfg();const pw=document.getElementById('cfgReasonPw').value.trim();if(!pw){toast('암호를 입력하세요');return}c.reasonPw=pw;localStorage.setItem(LS,JSON.stringify(c));toast('🔒 사유 열람 암호 저장 완료')}
 function showNotice(){const c=getCfg();const n=c.notice||'';const banner=document.getElementById('noticeBanner');if(n.trim()){document.getElementById('noticeBody').textContent=n;banner.classList.add('show')}else{banner.classList.remove('show')}}
 
 // 텔레그램
@@ -447,7 +457,7 @@ async function histSearch(){
       histData=data;
       box.innerHTML=`<div style="font-size:14px;font-weight:600;color:var(--accent);margin-bottom:6px">연차신청 ${data.length}건</div>
         <div class="tbl-wrap"><table><thead><tr><th>ID</th><th>신청일</th><th>부서</th><th>성명</th><th>유형</th><th>시작일</th><th>종료일</th><th>일수</th><th>사유</th><th>상태</th></tr></thead>
-        <tbody>${data.map(r=>`<tr><td>${r.id}</td><td>${r.request_date||''}</td><td>${r.dept||''}</td><td>${r.name||''}</td><td>${r.leave_type||''}</td><td>${r.start_date||''}</td><td>${r.end_date||''}</td><td>${r.days||''}</td><td style="text-align:left">${r.reason||''}</td><td><span class="badge badge-${r.status||''}">${r.status||''}</span></td></tr>`).join('')}</tbody></table></div>`;
+        <tbody>${data.map(r=>`<tr><td>${r.id}</td><td>${r.request_date||''}</td><td>${r.dept||''}</td><td>${r.name||''}</td><td>${r.leave_type||''}</td><td>${r.start_date||''}</td><td>${r.end_date||''}</td><td>${r.days||''}</td><td style="text-align:left">${r.reason?(reasonUnlocked?r.reason:'****'):''}</td><td><span class="badge badge-${r.status||''}">${r.status||''}</span></td></tr>`).join('')}</tbody></table></div>`;
     }
     toast(data.length+'건 조회');
   }catch(e){toast('조회 실패: '+e.message)}
@@ -456,7 +466,15 @@ async function histSearch(){
 function histExcel(){
   if(!histData.length){toast('먼저 조회');return}
   const target=document.getElementById('histTarget').value;
-  let csv='\uFEFF'; // BOM for Excel
+  // 연차신청 CSV는 암호 확인 필요 (사유 포함)
+  if(target==='leave'&&!reasonUnlocked){
+    const c=getCfg();const pw=c.reasonPw||'2638877';
+    const input=prompt('🔒 사유가 포함된 엑셀입니다.\n열람 암호를 입력하세요:');
+    if(!input){toast('취소됨');return}
+    if(input!==pw){toast('❌ 암호가 틀립니다');return}
+    reasonUnlocked=true;renderLvTable();
+  }
+  let csv='\uFEFF';
   if(target==='overtime'){
     csv+='ID,금일일자,부서,성명,직위,전일일자,전일정상,전일잔업,전일비고,금일정상,금일잔업,금일간식,금일비고,휴일일자,휴일특근,휴일비고,승인\n';
     histData.forEach(r=>{csv+=[r.id,r.today_date,r.dept,r.name,r.position,r.prev_date,r.prev_normal,r.prev_overtime,r.prev_note,r.today_normal,r.today_overtime,r.today_snack,r.today_note,r.holiday_date,r.holiday_work,r.holiday_note,r.approval].map(v=>'"'+(v??'')+'"').join(',')+'\n'});
@@ -720,9 +738,18 @@ function lvAutoPos(){const dept=document.getElementById('lvDept').value,name=doc
 function lvCalcDays(){const s=document.getElementById('lvStart').value,e=document.getElementById('lvEnd').value;if(s&&e)document.getElementById('lvDays').value=Math.max(Math.round((new Date(e)-new Date(s))/86400000)+1,1)}
 async function lvSave(){const dept=document.getElementById('lvDept').value,name=document.getElementById('lvName').value,pos=document.getElementById('lvPos').value,type=document.getElementById('lvType').value,start=document.getElementById('lvStart').value,end=document.getElementById('lvEnd').value,days=parseFloat(document.getElementById('lvDays').value)||1,reason=document.getElementById('lvReason').value.trim();if(!name){toast('성명');return}if(!reason){toast('사유');return}try{await sb('leave_requests','POST',{request_date:TODAY,dept,name,position:pos,leave_type:type,start_date:start,end_date:end,days,reason,writer:name,write_date:TODAY,status:'작성'});toast('✅ 신청 저장');document.getElementById('lvReason').value='';lvSearch()}catch(e){toast('❌ '+e.message)}}
 async function lvSearch(){let q='leave_requests?select=*&order=start_date.desc,id.desc';const s=document.getElementById('fStart').value,e=document.getElementById('fEnd').value;if(s)q+='&start_date=gte.'+s;if(e)q+='&start_date=lte.'+e;const dept=document.getElementById('fDept').value;if(dept)q+='&dept=eq.'+encodeURIComponent(dept);const st=document.getElementById('fStatus').value;if(st)q+='&status=eq.'+encodeURIComponent(st);try{lvData=await sb(q)||[];renderLvTable()}catch{toast('조회 실패')}}
-function renderLvTable(){const b=document.getElementById('lvBody');if(!lvData.length){b.innerHTML='<tr><td colspan="19" style="color:var(--text3);padding:20px">데이터 없음</td></tr>';return}b.innerHTML=lvData.map(r=>`<tr ${r.id===lvSelId?'class="selected"':''} onclick="lvSelect(${r.id})" style="cursor:pointer"><td>${r.id}</td><td>${r.request_date||''}</td><td>${r.dept||''}</td><td>${r.name||''}</td><td>${r.position||''}</td><td>${r.leave_type||''}</td><td>${r.start_date||''}</td><td>${r.end_date||''}</td><td>${r.days||''}</td><td style="text-align:left;max-width:150px;overflow:hidden;text-overflow:ellipsis">${r.reason||''}</td><td>${r.writer||''}</td><td>${fD(r.write_date)}</td><td>${r.reviewer||''}</td><td>${fD(r.review_date)}</td><td>${r.confirmer||''}</td><td>${fD(r.confirm_date)}</td><td>${r.approver||''}</td><td>${fD(r.approve_date)}</td><td><span class="badge badge-${r.status||''}">${r.status||''}</span></td></tr>`).join('')}
+let reasonUnlocked=false;
+function renderLvTable(){const b=document.getElementById('lvBody');if(!lvData.length){b.innerHTML='<tr><td colspan="19" style="color:var(--text3);padding:20px">데이터 없음</td></tr>';return}b.innerHTML=lvData.map(r=>`<tr ${r.id===lvSelId?'class="selected"':''} onclick="lvSelect(${r.id})" style="cursor:pointer"><td>${r.id}</td><td>${r.request_date||''}</td><td>${r.dept||''}</td><td>${r.name||''}</td><td>${r.position||''}</td><td>${r.leave_type||''}</td><td>${r.start_date||''}</td><td>${r.end_date||''}</td><td>${r.days||''}</td><td style="text-align:left;max-width:150px;overflow:hidden;text-overflow:ellipsis;cursor:pointer;color:${reasonUnlocked?'var(--text)':'var(--text3)'}" onclick="event.stopPropagation();revealReason(${r.id})">${r.reason?(reasonUnlocked?r.reason:'****'):''}</td><td>${r.writer||''}</td><td>${fD(r.write_date)}</td><td>${r.reviewer||''}</td><td>${fD(r.review_date)}</td><td>${r.confirmer||''}</td><td>${fD(r.confirm_date)}</td><td>${r.approver||''}</td><td>${fD(r.approve_date)}</td><td><span class="badge badge-${r.status||''}">${r.status||''}</span></td></tr>`).join('')}
+function revealReason(id){
+  if(reasonUnlocked){const r=lvData.find(x=>x.id===id);if(r&&r.reason)toast('사유: '+r.reason);return}
+  const c=getCfg();const pw=c.reasonPw||'2638877';
+  const input=prompt('🔒 사유 열람 암호를 입력하세요:');
+  if(!input)return;
+  if(input===pw){reasonUnlocked=true;renderLvTable();toast('🔓 사유 열람 해제')}
+  else{toast('❌ 암호가 틀립니다')}
+}
 function fD(v){return v?v.substring(0,10):''}
-function lvSelect(id){lvSelId=lvSelId===id?null:id;renderLvTable();const r=lvData.find(x=>x.id===id);if(r){document.getElementById('lvDept').value=r.dept||'';lvLoadNames();document.getElementById('lvName').value=r.name||'';document.getElementById('lvPos').value=r.position||'';document.getElementById('lvType').value=r.leave_type||'연차';document.getElementById('lvStart').value=r.start_date||'';document.getElementById('lvEnd').value=r.end_date||'';document.getElementById('lvDays').value=r.days||1;document.getElementById('lvReason').value=r.reason||''}}
+function lvSelect(id){lvSelId=lvSelId===id?null:id;renderLvTable();const r=lvData.find(x=>x.id===id);if(r){document.getElementById('lvDept').value=r.dept||'';lvLoadNames();document.getElementById('lvName').value=r.name||'';document.getElementById('lvPos').value=r.position||'';document.getElementById('lvType').value=r.leave_type||'연차';document.getElementById('lvStart').value=r.start_date||'';document.getElementById('lvEnd').value=r.end_date||'';document.getElementById('lvDays').value=r.days||1;document.getElementById('lvReason').value=reasonUnlocked?(r.reason||''):'****'}}
 async function lvStep(step){if(!lvSelId){toast((step==='확인'?'팀장':step==='승인'?'관리':step)+' 항목 선택');return}const r=lvData.find(x=>x.id===lvSelId);if(!r)return;const al={검토:['작성'],확인:['작성','검토'],승인:['작성','검토','확인']};if(!al[step].includes(r.status)){toast('현재('+r.status+') 불가');return}const label=step==='확인'?'팀장':step==='승인'?'관리':step;const who=prompt(label+' 성명:');if(!who)return;const cm={검토:{reviewer:who,review_date:TODAY},확인:{confirmer:who,confirm_date:TODAY},승인:{approver:who,approve_date:TODAY}};try{await sb('leave_requests?id=eq.'+lvSelId,'PATCH',{...cm[step],status:step});toast('✅ '+label+' 완료');lvSelId=null;lvSearch()}catch(e){toast('❌ '+e.message)}}
 async function lvReject(){if(!lvSelId){toast('선택');return}const r=lvData.find(x=>x.id===lvSelId);if(!r||!['작성','검토','확인'].includes(r.status)){toast('반려 불가');return}if(!confirm('반려?'))return;try{await sb('leave_requests?id=eq.'+lvSelId,'PATCH',{status:'반려'});toast('반려');lvSelId=null;lvSearch()}catch(e){toast('❌ '+e.message)}}
 async function lvDelete(){if(!lvSelId){toast('선택');return}if(!confirm('삭제?'))return;try{await sb('leave_requests?id=eq.'+lvSelId,'DELETE');toast('삭제');lvSelId=null;lvSearch()}catch(e){toast('❌ '+e.message)}}
