@@ -149,6 +149,10 @@
 <div class="form-wrap">
   <div class="card">
     <div class="card-title">📦 출하 LOT 관리 <span style="font-size:10px;color:var(--text3);font-weight:400;margin-left:4px">검사완료 재고 기반 출하요청</span></div>
+    <div class="fg-row" style="margin-bottom:10px">
+      <div class="fg"><label>출발지</label><select id="shipLotFrom"><option value="">전체</option></select></div>
+      <div class="fg"><label>도착지</label><select id="shipLotTo"><option value="">전체</option></select></div>
+    </div>
     <div style="display:flex;gap:6px;margin-bottom:12px">
       <button class="btn-sm" onclick="loadShipStock()" style="flex:1;background:var(--accent);color:#fff;padding:12px;font-size:14px">📥 재고 데이터 불러오기</button>
     </div>
@@ -183,6 +187,10 @@
     <div class="fg-row">
       <div class="fg"><label>고객사</label><select id="histCust"><option value="">전체</option></select></div>
       <div class="fg"><label>기종</label><input type="text" id="histSearch" placeholder="기종 검색"></div>
+    </div>
+    <div class="fg-row">
+      <div class="fg"><label>출발지</label><select id="histDep"><option value="">전체</option></select></div>
+      <div class="fg"><label>도착지</label><select id="histDest"><option value="">전체</option></select></div>
     </div>
     <div style="display:flex;gap:6px;margin-top:4px">
       <button class="btn-sm" onclick="loadHist()" style="flex:1;background:var(--accent);color:#fff">🔍 조회</button>
@@ -289,7 +297,12 @@ function kstTime(d){const n=d||kstNow();return String(n.getHours()).padStart(2,'
 function toast(m){const el=document.getElementById('toast');if(!el)return;el.textContent=m;el.classList.add('show');clearTimeout(window._tt);window._tt=setTimeout(()=>el.classList.remove('show'),2000)}
 
 // ===== 탭 =====
-function swTab(n){document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('on',i===n));document.querySelectorAll('.pnl').forEach((p,i)=>p.classList.toggle('on',i===n));if(n===2)initHistTab();if(n===3)loadStgUI()}
+function swTab(n){document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('on',i===n));document.querySelectorAll('.pnl').forEach((p,i)=>p.classList.toggle('on',i===n));if(n===1)initShipLotTab();if(n===2)initHistTab();if(n===3)loadStgUI()}
+
+function initShipLotTab(){
+  fillSelect('shipLotFrom',_departures.map(d=>d.name),'전체',true);
+  fillSelect('shipLotTo',_destinations.map(d=>d.name),'전체',true);
+}
 
 // ===== 공용 데이터 =====
 let _customers=[],_workers=[],_departures=[],_destinations=[],_partTree=[];
@@ -666,6 +679,8 @@ function initHistTab(){
   if(!document.getElementById('histFrom').value)document.getElementById('histFrom').value=week;
   if(!document.getElementById('histTo').value)document.getElementById('histTo').value=today;
   fillSelect('histCust',_customers.map(c=>c.name),'전체',true);
+  fillSelect('histDep',_departures.map(d=>d.name),'전체',true);
+  fillSelect('histDest',_destinations.map(d=>d.name),'전체',true);
 }
 
 async function loadHist(){
@@ -675,15 +690,19 @@ async function loadHist(){
   st.textContent='조회 중...';st.style.color='var(--accent)';
   const cust=document.getElementById('histCust').value;
   const search=document.getElementById('histSearch').value.trim();
+  const depFilter=document.getElementById('histDep').value;
+  const destFilter=document.getElementById('histDest').value;
   let q='process=eq.출하&format=eq.레이스웨이출하&move_date=gte.'+from+'&move_date=lte.'+to+'&order=move_date.desc,created_at.desc&limit=500';
   if(cust)q+='&destination=eq.'+encodeURIComponent(cust);
+  if(depFilter)q+='&departure=eq.'+encodeURIComponent(depFilter);
+  if(destFilter)q+='&destination=eq.'+encodeURIComponent(destFilter);
   try{
     let d=await sbSelect('move_history_tj',q);
     if(search)d=d.filter(r=>(r.base_part||'').includes(search)||(r.lot||'').includes(search));
     _histData=d;
     st.textContent='✅ '+d.length+'건';st.style.color='#22c55e';
     if(!d.length){area.innerHTML='<div class="card" style="text-align:center;color:var(--text3);font-size:13px;padding:20px">이력 없음</div>';return}
-    area.innerHTML='<div class="card">'+d.map((r,i)=>'<div class="hist-item"><div class="hi-top"><span class="hi-part">'+esc(r.base_part)+'</span><span style="display:flex;align-items:center;gap:4px"><span class="hi-date">'+r.move_date+'</span><button onclick="editHist('+i+')" style="border:none;background:rgba(59,130,246,.15);color:#93c5fd;width:28px;height:28px;border-radius:6px;font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center" title="수정">✏️</button><button onclick="delHist('+i+')" style="border:none;background:rgba(239,68,68,.1);color:#fca5a5;width:28px;height:28px;border-radius:6px;font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center" title="삭제">🗑</button></span></div><div class="hi-tags"><span class="hi-tag" style="background:rgba(59,130,246,.15);color:#93c5fd">'+esc(r.destination||'')+'</span>'+(r.lot?'<span class="hi-tag" style="background:rgba(245,158,11,.15);color:#fbbf24">LOT:'+esc(r.lot)+'</span>':'')+(r.qty?'<span class="hi-tag" style="background:rgba(34,197,94,.15);color:#86efac">'+r.qty+'개</span>':'')+'</div></div>').join('')+'</div>';
+    area.innerHTML='<div class="card">'+d.map((r,i)=>'<div class="hist-item"><div class="hi-top"><span class="hi-part">'+esc(r.base_part)+'</span><span style="display:flex;align-items:center;gap:4px"><span class="hi-date">'+r.move_date+'</span><button onclick="editHist('+i+')" style="border:none;background:rgba(59,130,246,.15);color:#93c5fd;width:28px;height:28px;border-radius:6px;font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center" title="수정">✏️</button><button onclick="delHist('+i+')" style="border:none;background:rgba(239,68,68,.1);color:#fca5a5;width:28px;height:28px;border-radius:6px;font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center" title="삭제">🗑</button></span></div><div class="hi-tags">'+(r.departure?'<span class="hi-tag" style="background:rgba(139,92,246,.12);color:#c4b5fd">'+esc(r.departure)+'</span>':'')+'<span class="hi-tag" style="background:rgba(59,130,246,.15);color:#93c5fd">→ '+esc(r.destination||'')+'</span>'+(r.lot?'<span class="hi-tag" style="background:rgba(245,158,11,.15);color:#fbbf24">LOT:'+esc(r.lot)+'</span>':'')+(r.qty?'<span class="hi-tag" style="background:rgba(34,197,94,.15);color:#86efac">'+r.qty+'개</span>':'')+'</div></div>').join('')+'</div>';
   }catch(e){st.textContent='❌ '+e.message;st.style.color='#ef4444'}
 }
 
@@ -936,10 +955,9 @@ function renderShipStock(){
         +'<input type="number" inputmode="numeric" value="'+r.completed+'" onchange="editStockVal('+idx+',\'completed\',this.value)" style="width:100%;padding:7px;font-size:14px;font-weight:700;background:var(--bg);border:1.5px solid #86efac;border-radius:6px;color:#86efac;font-family:inherit;text-align:right"></div>'
         +'<div style="grid-column:1/-1;font-size:9px;color:#f59e0b;text-align:center;margin-top:2px">⚠ 임시 수정 — 구글시트에는 반영되지 않습니다</div></div>'
       :
-        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:8px">'
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">'
         +'<div style="text-align:center;padding:6px;background:rgba(245,158,11,.1);border-radius:6px"><div style="font-size:9px;color:#fff;font-weight:600">검사대기</div><div style="font-size:14px;font-weight:700;color:#fbbf24">'+r.waiting.toLocaleString()+'</div></div>'
         +'<div style="text-align:center;padding:6px;background:rgba(34,197,94,.1);border-radius:6px"><div style="font-size:9px;color:#fff;font-weight:600">검사완료(출하가능)</div><div style="font-size:14px;font-weight:700;color:#86efac">'+r.completed.toLocaleString()+'</div></div>'
-        +'<div style="text-align:center;padding:6px;background:rgba(59,130,246,.1);border-radius:6px"><div style="font-size:9px;color:#fff;font-weight:600">잔량</div><div style="font-size:14px;font-weight:700;color:'+(overReq?'#ef4444':'#93c5fd')+'">'+remain.toLocaleString()+'</div></div>'
         +'</div>'
       )
       +'<div style="display:flex;gap:6px;align-items:center">'
@@ -1055,8 +1073,8 @@ async function confirmShipReq(){
         move_date:date,
         move_time:time,
         process:'출하',
-        departure:'출하대기장',
-        destination:'SBC',
+        departure:document.getElementById('shipLotFrom').value||'출하대기장',
+        destination:document.getElementById('shipLotTo').value||'SBC',
         barcode_raw:'',
         base_part:r.partA,
         lot:lb.lot,
