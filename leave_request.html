@@ -6,6 +6,7 @@
 <title>근태관리 시스템</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
 :root{--bg:#f8f6f0;--card:#ffffff;--card2:#f2f0ea;--border:#e0ddd4;--accent:#2563eb;
 --green:#16a34a;--red:#dc2626;--orange:#ea580c;--yellow:#ca8a04;--purple:#9333ea;
@@ -177,7 +178,23 @@ tr:hover td{background:rgba(37,99,235,.04)}tr.selected td{background:rgba(37,99,
   <div class="btn-row">
     <button class="btn btn-accent" onclick="lbLoad()">🔍 조회</button>
     <button class="btn btn-green" onclick="lbSyncAll()">🔄 전체 동기화</button>
+    <button class="btn btn-purple" onclick="lbShowChart()">📈 사용현황</button>
     <button class="btn btn-gray" onclick="lbExcel()">📊 엑셀</button>
+  </div>
+  <!-- 차트 영역 -->
+  <div class="card" id="lbChartCard" style="display:none">
+    <div class="card-tit" style="justify-content:space-between">
+      <span>📈 연차 사용 현황</span>
+      <button class="btn btn-gray" onclick="document.getElementById('lbChartCard').style.display='none'" style="padding:4px 12px;font-size:12px">✕</button>
+    </div>
+    <div style="margin-bottom:12px">
+      <div style="font-size:13px;font-weight:600;color:var(--text2);margin-bottom:6px">부서별 사용 현황</div>
+      <canvas id="chartDept" height="200"></canvas>
+    </div>
+    <div>
+      <div style="font-size:13px;font-weight:600;color:var(--text2);margin-bottom:6px">월별 사용 추이</div>
+      <canvas id="chartMonth" height="200"></canvas>
+    </div>
   </div>
   <div class="card" style="padding:8px">
     <div class="tbl-wrap">
@@ -945,6 +962,63 @@ function lbExcel(){
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);
   a.download='연차현황_'+year+'년_'+TODAY+'.csv';
   a.click();toast('📊 엑셀 다운로드');
+}
+
+// 연차 사용현황 차트
+let chartDeptInst=null,chartMonthInst=null;
+async function lbShowChart(){
+  const year=document.getElementById('lbYear').value||new Date().getFullYear();
+  const yStart=year+'-01-01',yEnd=year+'-12-31';
+  let leaves=[];
+  try{leaves=await sb('leave_requests?select=dept,name,days,start_date,status&start_date=gte.'+yStart+'&start_date=lte.'+yEnd+'&status=in.(작성,검토,확인,승인)')||[]}catch{}
+  if(!leaves.length){toast('해당 연도 연차 데이터 없음');return}
+
+  document.getElementById('lbChartCard').style.display='block';
+
+  // 부서별 집계
+  const deptMap={};
+  leaves.forEach(l=>{const d=l.dept||'기타';deptMap[d]=(deptMap[d]||0)+(parseFloat(l.days)||0)});
+  const deptLabels=Object.keys(deptMap).sort();
+  const deptData=deptLabels.map(d=>deptMap[d]);
+  const deptColors=['#2563eb','#16a34a','#ea580c','#9333ea','#dc2626','#ca8a04','#06b6d4','#64748b'];
+
+  if(chartDeptInst)chartDeptInst.destroy();
+  chartDeptInst=new Chart(document.getElementById('chartDept'),{
+    type:'bar',
+    data:{labels:deptLabels,datasets:[{label:'사용일수',data:deptData,backgroundColor:deptLabels.map((_,i)=>deptColors[i%deptColors.length]),borderRadius:6}]},
+    options:{responsive:true,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,title:{display:true,text:'일수'}}}}
+  });
+
+  // 월별 집계
+  const monthMap={};
+  for(let m=1;m<=12;m++)monthMap[m]=0;
+  leaves.forEach(l=>{if(l.start_date){const m=parseInt(l.start_date.split('-')[1]);monthMap[m]+=(parseFloat(l.days)||0)}});
+  const monthLabels=Array.from({length:12},(_,i)=>(i+1)+'월');
+  const monthData=Array.from({length:12},(_,i)=>monthMap[i+1]);
+
+  // 부서별 월별 (다중 라인)
+  const deptMonthMap={};
+  leaves.forEach(l=>{
+    const d=l.dept||'기타';const m=l.start_date?parseInt(l.start_date.split('-')[1]):0;
+    if(!deptMonthMap[d])deptMonthMap[d]={};
+    deptMonthMap[d][m]=(deptMonthMap[d][m]||0)+(parseFloat(l.days)||0);
+  });
+  const datasets=deptLabels.map((d,i)=>({
+    label:d,
+    data:Array.from({length:12},(_,m)=>deptMonthMap[d]?.[m+1]||0),
+    borderColor:deptColors[i%deptColors.length],
+    backgroundColor:deptColors[i%deptColors.length]+'33',
+    fill:false,tension:0.3,borderWidth:2,pointRadius:3
+  }));
+  // 전체 합계 라인 추가
+  datasets.push({label:'전체',data:monthData,borderColor:'#1a1a2e',backgroundColor:'rgba(26,26,46,.1)',fill:true,tension:0.3,borderWidth:3,pointRadius:4,borderDash:[5,3]});
+
+  if(chartMonthInst)chartMonthInst.destroy();
+  chartMonthInst=new Chart(document.getElementById('chartMonth'),{
+    type:'line',
+    data:{labels:monthLabels,datasets},
+    options:{responsive:true,plugins:{legend:{position:'bottom',labels:{font:{size:11}}}},scales:{y:{beginAtZero:true,title:{display:true,text:'일수'}}}}
+  });
 }
 
 let tt;function toast(m){const el=document.getElementById('toast');el.textContent=m;el.classList.add('show');clearTimeout(tt);tt=setTimeout(()=>el.classList.remove('show'),2500)}
