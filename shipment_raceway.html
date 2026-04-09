@@ -1006,51 +1006,95 @@ async function confirmShipReq(){
   if(hasOver){if(!confirm('⚠ 출하가능수량 초과 항목이 있습니다. 그래도 진행하시겠습니까?'))return}
 
   const summary=reqs.map(r=>r.partA+': '+r.reqQty.toLocaleString()+'개 (잔량: '+(r.completed-r.reqQty).toLocaleString()+')').join('\n');
-  if(!confirm('출하 확정:\n\n'+summary+'\n\nmove_history_tj에 기록하고 LOT를 차감합니다.'))return;
+  if(!confirm('출하 확정:\n\n'+summary+'\n\n검사완료 이력에서 LOT를 역추적하여 기록합니다.'))return;
 
   const now=new Date();
   const date=kstDate(now),time=kstTime(now);
   let successCnt=0;
+  let allLotDetails=[];
 
   for(const r of reqs){
-    const row={
-      move_date:date,
-      move_time:time,
-      process:'출하',
-      departure:'출하대기장',
-      destination:'SBC',
-      barcode_raw:'',
-      base_part:r.partA,
-      lot:'출하확정_'+date.replace(/-/g,''),
-      qty:r.reqQty,
-      note:'[출하확정] 검사완료:'+r.completed+' 출하:'+r.reqQty+' 잔량:'+(r.completed-r.reqQty)+' [품번B:'+r.partB+']',
-      format:'레이스웨이출하',
-      worker:'',
-      equipment:'',
-      weight:null,
-      incoming_date:null,
-      parent_part:null,
-      child_type:null,
-      model_type:'raceway',
-      general_model:null,
-      material_info:null,
-      lot_consumed:false
-    };
+    // 해당 품번의 검사완료 이력 조회 (오래된 순)
+    let lotBreakdown=[];
     try{
-      await sbInsert('move_history_tj',row);
-      successCnt++;
-    }catch(e){toast('❌ '+r.partA+' 저장 실패: '+e.message)}
+      const hist=await sbSelect('move_history_tj',
+        'format=eq.레이스웨이출하&base_part=eq.'+encodeURIComponent(r.partA)
+        +'&lot_consumed=eq.false&order=move_date.asc,created_at.asc&limit=200');
+      
+      // LOT별로 그룹핑 (같은 LOT는 수량 합산)
+      const lotGroups=[];
+      (hist||[]).forEach(h=>{
+        if(!h.qty||h.qty<=0)return;
+        const existing=lotGroups.find(g=>g.lot===h.lot);
+        if(existing){existing.qty+=h.qty;existing.ids.push(h.id)}
+        else lotGroups.push({lot:h.lot||'미지정',qty:h.qty,date:h.move_date,ids:[h.id]});
+      });
+
+      // 오래된 LOT부터 출하수량만큼 차감
+      let remaining=r.reqQty;
+      for(const lg of lotGroups){
+        if(remaining<=0)break;
+        const take=Math.min(remaining,lg.qty);
+        lotBreakdown.push({lot:lg.lot,qty:take,date:lg.date});
+        remaining-=take;
+      }
+
+      // LOT 매칭 안 된 잔여분 (검사완료 이력이 부족한 경우)
+      if(remaining>0){
+        lotBreakdown.push({lot:'미매칭_'+date.replace(/-/g,''),qty:remaining,date:date});
+      }
+    }catch(e){
+      // 이력 조회 실패 시 기본 LOT로
+      lotBreakdown=[{lot:'출하_'+date.replace(/-/g,''),qty:r.reqQty,date:date}];
+    }
+
+    // LOT별로 개별 레코드 저장
+    for(const lb of lotBreakdown){
+      const lotLabel=lotBreakdown.map(l=>l.lot+':'+l.qty).join(', ');
+      const row={
+        move_date:date,
+        move_time:time,
+        process:'출하',
+        departure:'출하대기장',
+        destination:'SBC',
+        barcode_raw:'',
+        base_part:r.partA,
+        lot:lb.lot,
+        qty:lb.qty,
+        note:'[출하확정] 원LOT:'+lb.lot+' 수량:'+lb.qty+' / 총요청:'+r.reqQty+' [검사완료:'+r.completed+' 잔량:'+(r.completed-r.reqQty)+'] [품번B:'+r.partB+'] [LOT내역:'+lotLabel+']',
+        format:'레이스웨이출하',
+        worker:'',
+        equipment:'',
+        weight:null,
+        incoming_date:null,
+        parent_part:null,
+        child_type:null,
+        model_type:'raceway',
+        general_model:null,
+        material_info:null,
+        lot_consumed:false
+      };
+      try{
+        await sbInsert('move_history_tj',row);
+        successCnt++;
+      }catch(e){toast('❌ '+r.partA+'/'+lb.lot+' 저장 실패: '+e.message)}
+    }
+    allLotDetails.push({partA:r.partA,reqQty:r.reqQty,lots:lotBreakdown});
   }
 
   if(successCnt>0){
     toast('✅ '+successCnt+'건 출하 확정 완료');
     if(navigator.vibrate)navigator.vibrate([100,50,100,50,100]);
-    // 텔레그램 알림
-    const tgMsg='📦 SBC 출하 확정\n━━━━━━━━━━━━━━\n📅 '+date+' '+time+'\n\n'+reqs.map(r=>'• '+r.partA+': '+r.reqQty.toLocaleString()+'개').join('\n')+'\n\n총 '+reqs.length+'개 품번, '+reqs.reduce((s,r)=>s+r.reqQty,0).toLocaleString()+'개';
+    // 텔레그램 알림 (LOT 내역 포함)
+    let tgMsg='📦 SBC 출하 확정\n━━━━━━━━━━━━━━\n📅 '+date+' '+time+'\n';
+    allLotDetails.forEach(d=>{
+      tgMsg+='\n📦 '+d.partA+' ('+d.reqQty.toLocaleString()+'개)\n';
+      d.lots.forEach(l=>{tgMsg+='   • LOT:'+l.lot+' → '+l.qty.toLocaleString()+'개\n'});
+    });
+    tgMsg+='\n총 '+reqs.length+'개 품번, '+reqs.reduce((s,r)=>s+r.reqQty,0).toLocaleString()+'개';
     let bot=tgBot(),users=tgUsers();
     if(!bot||!users.length){if(_ccTgBot)bot=_ccTgBot;if(_ccTgUsers.length)users=_ccTgUsers}
     if(bot&&users.length){for(const u of users){try{await fetch('https://api.telegram.org/bot'+bot+'/sendMessage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:u.chat_id,text:tgMsg})})}catch(e){}}}
-    // 초기화 후 새로고침
     clearAllShipReq();
     loadShipStock();
     loadRecent();
