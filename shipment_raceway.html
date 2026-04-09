@@ -517,11 +517,118 @@ async function loadRecent(){
     const d=await sbSelect('move_history_tj','process=eq.출하&format=eq.레이스웨이출하&order=created_at.desc&limit=20');
     document.getElementById('recentCnt').textContent=d.length;
     if(!d.length){c.innerHTML='<div style="text-align:center;padding:12px;color:var(--text3);font-size:12px">등록 이력 없음</div>';return}
-    c.innerHTML=d.map(r=>{
-      let lot=r.lot||'';const m=(r.note||'').match(/\[생산일:([^\]]+)\]/);if(m)lot=m[1].replace(/-/g,'').split(',').map((v,i)=>i===0?v:v.length>4?v:v).join('/');
-      return'<div class="hist-item"><div class="hi-top"><span class="hi-part">'+esc(r.base_part)+'</span><span class="hi-date">'+r.move_date+'</span></div><div class="hi-tags"><span class="hi-tag" style="background:rgba(59,130,246,.15);color:#93c5fd">🏢 '+(r.destination||'')+'</span>'+(r.lot?'<span class="hi-tag" style="background:rgba(245,158,11,.15);color:#fbbf24">LOT: '+esc(r.lot)+'</span>':'')+(r.qty?'<span class="hi-tag" style="background:rgba(34,197,94,.15);color:#86efac">'+r.qty+'개</span>':'')+'</div></div>'
+    window._recentData=d;
+    c.innerHTML=d.map((r,i)=>{
+      let lot=r.lot||'';const m=(r.note||'').match(/\[생산일:([^\]]+)\]/);if(m)lot=m[1].replace(/-/g,'').split(',').map((v,j)=>j===0?v:v.length>4?v:v).join('/');
+      const custMatch=(r.note||'').match(/\[고객사:([^\]]+)\]/);
+      const custName=custMatch?custMatch[1]:(r.destination||'');
+      return'<div class="hist-item"><div class="hi-top"><span class="hi-part">'+esc(r.base_part)+'</span><span class="hi-date">'+r.move_date+'</span></div><div class="hi-tags"><span class="hi-tag" style="background:rgba(59,130,246,.15);color:#93c5fd">🏢 '+esc(custName)+'</span>'+(r.lot?'<span class="hi-tag" style="background:rgba(245,158,11,.15);color:#fbbf24">LOT: '+esc(r.lot)+'</span>':'')+(r.qty?'<span class="hi-tag" style="background:rgba(34,197,94,.15);color:#86efac">'+r.qty+'개</span>':'')+'</div><div style="display:flex;gap:6px;margin-top:8px"><button class="btn-sm" onclick="editRecent('+i+')" style="flex:1;background:rgba(59,130,246,.15);color:#93c5fd;border:1px solid rgba(59,130,246,.3)">✏️ 수정</button><button class="btn-sm" onclick="delRecent('+i+')" style="flex:1;background:rgba(239,68,68,.1);color:#fca5a5;border:1px solid rgba(239,68,68,.25)">🗑 삭제</button></div></div>'
     }).join('');
   }catch(e){c.innerHTML='<div style="color:var(--ng);font-size:12px;padding:8px">로드 실패: '+e.message+'</div>'}
+}
+
+async function delRecent(idx){
+  const r=window._recentData[idx];if(!r)return;
+  if(!confirm(r.base_part+' ('+r.move_date+') 삭제?'))return;
+  try{
+    await fetch(sbUrl()+'/rest/v1/move_history_tj?id=eq.'+r.id,{method:'DELETE',headers:{'apikey':sbKey(),'Authorization':'Bearer '+sbKey()}});
+    toast('✅ 삭제 완료');loadRecent();
+  }catch(e){toast('❌ 삭제 실패: '+e.message)}
+}
+
+function editRecent(idx){
+  const r=window._recentData[idx];if(!r)return;
+  window._editId=r.id;
+  // 폼에 값 채우기
+  document.getElementById('shipDate').value=r.move_date||'';
+  // 고객사
+  const custMatch=(r.note||'').match(/\[고객사:([^\]]+)\]/);
+  const custName=custMatch?custMatch[1]:'';
+  if(custName){const cs=document.getElementById('shipCustomer');for(const o of cs.options){if(o.value===custName){cs.value=custName;onCustChange();break}}}
+  // 출하기종 (onCustChange 비동기 아니므로 바로 설정)
+  setTimeout(()=>{const ms=document.getElementById('shipModel');for(const o of ms.options){if(o.value===r.base_part){ms.value=r.base_part;break}}},100);
+  // 출발지/도착지
+  if(r.departure){const fs=document.getElementById('shipFrom');for(const o of fs.options){if(o.value===r.departure){fs.value=r.departure;break}}}
+  if(r.destination){const ts=document.getElementById('shipTo');for(const o of ts.options){if(o.value===r.destination){ts.value=r.destination;break}}}
+  // 수량
+  document.getElementById('shipQty').value=r.qty||'';
+  // 생산일자 복원
+  const pdMatch=(r.note||'').match(/\[생산일:([^\]]+)\]/);
+  prodDates=[];
+  if(pdMatch){prodDates=pdMatch[1].split(',').map(d=>d.trim()).filter(d=>d)}
+  if(!prodDates.length&&r.lot){
+    // LOT에서 날짜 복원 시도 (YYYYMMDD/MMDD 형식)
+    const parts=r.lot.split('/');
+    if(parts.length&&parts[0].length===8){
+      const y=parts[0].substring(0,4);
+      prodDates=parts.map((p,i)=>{
+        if(p.length===8)return p.substring(0,4)+'-'+p.substring(4,6)+'-'+p.substring(6,8);
+        if(p.length===4)return y+'-'+p.substring(0,2)+'-'+p.substring(2,4);
+        return'';
+      }).filter(d=>d);
+    }
+  }
+  calRender();renderProdDates();
+  // 비고 (태그 제거)
+  let note=(r.note||'').replace(/\[작업자:[^\]]+\]\s*/g,'').replace(/\[생산일:[^\]]+\]\s*/g,'').replace(/\[고객사:[^\]]+\]\s*/g,'').trim();
+  document.getElementById('shipMemo').value=note;
+  // 작업자
+  const wkMatch=(r.note||'').match(/\[작업자:([^\]]+)\]/);
+  if(wkMatch){const ws=document.getElementById('shipWorker');for(const o of ws.options){if(o.value===wkMatch[1]){ws.value=wkMatch[1];break}}}
+  // 버튼 변경
+  const btn=document.querySelector('.submit-btn[onclick="doShipment()"]');
+  btn.textContent='📝 수정 저장';btn.style.background='linear-gradient(135deg,#d97706,#f59e0b)';
+  btn.onclick=function(){doUpdate()};
+  // 스크롤 상단
+  window.scrollTo({top:0,behavior:'smooth'});
+  toast('✏️ 수정 모드: '+r.base_part);
+}
+
+async function doUpdate(){
+  const id=window._editId;if(!id){toast('수정 대상 없음');return}
+  const date=document.getElementById('shipDate').value;
+  const worker=document.getElementById('shipWorker').value;
+  const customer=document.getElementById('shipCustomer').value;
+  const model=document.getElementById('shipModel').value;
+  const qty=document.getElementById('shipQty').value;
+  const memo=document.getElementById('shipMemo').value.trim();
+  const dest=document.getElementById('shipTo').value;
+  if(!date){toast('검사일자를 선택하세요');return}
+  if(!customer){toast('고객사를 선택하세요');return}
+  if(!model){toast('출하기종을 선택하세요');return}
+  const lot=buildLot(prodDates);
+  const now=kstNow();
+  let noteText=memo||'';
+  if(worker)noteText=('[작업자:'+worker+'] '+noteText).trim();
+  if(prodDates.length)noteText=('[생산일:'+prodDates.join(',')+'] '+noteText).trim();
+  if(customer)noteText=('[고객사:'+customer+'] '+noteText).trim();
+  const row={
+    move_date:date,
+    departure:document.getElementById('shipFrom').value||'출하대기장',
+    destination:dest||customer,
+    base_part:model,
+    lot:lot,
+    qty:qty?parseInt(qty):null,
+    note:noteText,
+    worker:worker||''
+  };
+  try{
+    const res=await fetch(sbUrl()+'/rest/v1/move_history_tj?id=eq.'+id,{method:'PATCH',headers:{'Content-Type':'application/json','apikey':sbKey(),'Authorization':'Bearer '+sbKey()},body:JSON.stringify(row)});
+    if(!res.ok)throw new Error(res.status);
+    toast('✅ 수정 완료: '+model);
+    if(navigator.vibrate)navigator.vibrate([100,50,100]);
+    resetEditMode();
+    loadRecent();
+  }catch(e){toast('❌ 수정 실패: '+e.message)}
+}
+
+function resetEditMode(){
+  window._editId=null;
+  const btn=document.querySelector('.submit-btn[onclick="doUpdate()"]')||document.querySelector('.submit-btn');
+  if(btn){btn.textContent='✅ 출하검사 완료 등록';btn.style.background='linear-gradient(135deg,#1e40af,#3b82f6)';btn.onclick=function(){doShipment()}}
+  prodDates=[];calRender();renderProdDates();
+  document.getElementById('shipQty').value='';
+  document.getElementById('shipMemo').value='';
 }
 
 // ===== 이력 =====
