@@ -205,14 +205,6 @@ tr:hover td{background:rgba(37,99,235,.04)}tr.selected td{background:rgba(37,99,
     <div id="histResult" style="margin-top:10px"></div>
   </div>
 
-  <!-- 사유열람 암호 -->
-  <div class="card">
-    <div class="card-tit">🔒 사유 열람 암호</div>
-    <div style="font-size:12px;color:var(--text3);margin-bottom:8px">연차신청 사유는 개인정보 보호를 위해 **** 로 표시됩니다. 암호를 아는 인원만 열람 가능합니다.</div>
-    <div class="setting-row"><label>열람 암호</label><input id="cfgReasonPw" type="password" placeholder="기본값: 1234"></div>
-    <button class="btn btn-accent" onclick="saveReasonPw()" style="width:100%">🔒 암호 저장</button>
-  </div>
-
   <!-- 공지사항 -->
   <div class="card">
     <div class="card-tit">📢 공지사항 등록</div>
@@ -377,7 +369,6 @@ function initSettings(){
   document.getElementById('cfgTgToken').value=c.tgToken||'';
   document.getElementById('cfgTgChats').value=c.tgChats||'';
   document.getElementById('cfgDiscord').value=c.discord||'';
-  document.getElementById('cfgReasonPw').value=c.reasonPw||'';
   // 이력관리 날짜 기본값
   const d1=new Date();d1.setMonth(d1.getMonth()-1);
   document.getElementById('histStart').value=d1.toISOString().split('T')[0];
@@ -389,7 +380,6 @@ function initSettings(){
 async function saveCfg(){const url=document.getElementById('cfgUrl').value.trim().replace(/\/$/,''),key=document.getElementById('cfgKey').value.trim();if(!url||!key){toast('URL과 Key');return}const c=getCfg();c.url=url;c.key=key;localStorage.setItem(LS,JSON.stringify(c));const st=document.getElementById('cfgStatus');st.textContent='테스트 중...';st.style.color='var(--accent)';try{await sb('employees?select=id&limit=1');st.textContent='✅ 연결 성공';st.style.color='var(--green)';toast('✅ 연결 성공')}catch(e){st.textContent='❌ '+e.message;st.style.color='var(--red)'}}
 function saveDepts(){const c=getCfg();c.depts=document.getElementById('cfgDepts').value;localStorage.setItem(LS,JSON.stringify(c));populateDeptSelects();toast('부서 저장')}
 function saveNotice(){const c=getCfg();c.notice=document.getElementById('cfgNotice').value;localStorage.setItem(LS,JSON.stringify(c));showNotice();toast('공지 저장')}
-function saveReasonPw(){const c=getCfg();const pw=document.getElementById('cfgReasonPw').value.trim();if(!pw){toast('암호를 입력하세요');return}c.reasonPw=pw;localStorage.setItem(LS,JSON.stringify(c));toast('🔒 사유 열람 암호 저장 완료')}
 function showNotice(){const c=getCfg();const n=c.notice||'';const banner=document.getElementById('noticeBanner');if(n.trim()){document.getElementById('noticeBody').textContent=n;banner.classList.add('show')}else{banner.classList.remove('show')}}
 
 // 텔레그램
@@ -468,10 +458,9 @@ function histExcel(){
   const target=document.getElementById('histTarget').value;
   // 연차신청 CSV는 암호 확인 필요 (사유 포함)
   if(target==='leave'&&!reasonUnlocked){
-    const c=getCfg();const pw=c.reasonPw||'2638877';
-    const input=prompt('🔒 사유가 포함된 엑셀입니다.\n열람 암호를 입력하세요:');
+    const input=prompt('🔒 사유가 포함된 엑셀입니다.\n열람 암호를 입력하세요:\n(현재 시각 4자리)');
     if(!input){toast('취소됨');return}
-    if(input!==pw){toast('❌ 암호가 틀립니다');return}
+    if(input!==getTimePw()){toast('❌ 암호가 틀립니다');return}
     reasonUnlocked=true;renderLvTable();
   }
   let csv='\uFEFF';
@@ -740,12 +729,12 @@ async function lvSave(){const dept=document.getElementById('lvDept').value,name=
 async function lvSearch(){let q='leave_requests?select=*&order=start_date.desc,id.desc';const s=document.getElementById('fStart').value,e=document.getElementById('fEnd').value;if(s)q+='&start_date=gte.'+s;if(e)q+='&start_date=lte.'+e;const dept=document.getElementById('fDept').value;if(dept)q+='&dept=eq.'+encodeURIComponent(dept);const st=document.getElementById('fStatus').value;if(st)q+='&status=eq.'+encodeURIComponent(st);try{lvData=await sb(q)||[];renderLvTable()}catch{toast('조회 실패')}}
 let reasonUnlocked=false;
 function renderLvTable(){const b=document.getElementById('lvBody');if(!lvData.length){b.innerHTML='<tr><td colspan="19" style="color:var(--text3);padding:20px">데이터 없음</td></tr>';return}b.innerHTML=lvData.map(r=>`<tr ${r.id===lvSelId?'class="selected"':''} onclick="lvSelect(${r.id})" style="cursor:pointer"><td>${r.id}</td><td>${r.request_date||''}</td><td>${r.dept||''}</td><td>${r.name||''}</td><td>${r.position||''}</td><td>${r.leave_type||''}</td><td>${r.start_date||''}</td><td>${r.end_date||''}</td><td>${r.days||''}</td><td style="text-align:left;max-width:150px;overflow:hidden;text-overflow:ellipsis;cursor:pointer;color:${reasonUnlocked?'var(--text)':'var(--text3)'}" onclick="event.stopPropagation();revealReason(${r.id})">${r.reason?(reasonUnlocked?r.reason:'****'):''}</td><td>${r.writer||''}</td><td>${fD(r.write_date)}</td><td>${r.reviewer||''}</td><td>${fD(r.review_date)}</td><td>${r.confirmer||''}</td><td>${fD(r.confirm_date)}</td><td>${r.approver||''}</td><td>${fD(r.approve_date)}</td><td><span class="badge badge-${r.status||''}">${r.status||''}</span></td></tr>`).join('')}
+function getTimePw(){const n=new Date();return String(n.getHours()).padStart(2,'0')+String(n.getMinutes()).padStart(2,'0')}
 function revealReason(id){
   if(reasonUnlocked){const r=lvData.find(x=>x.id===id);if(r&&r.reason)toast('사유: '+r.reason);return}
-  const c=getCfg();const pw=c.reasonPw||'2638877';
-  const input=prompt('🔒 사유 열람 암호를 입력하세요:');
+  const input=prompt('🔒 사유 열람 암호를 입력하세요:\n(현재 시각 4자리)');
   if(!input)return;
-  if(input===pw){reasonUnlocked=true;renderLvTable();toast('🔓 사유 열람 해제')}
+  if(input===getTimePw()){reasonUnlocked=true;renderLvTable();toast('🔓 사유 열람 해제')}
   else{toast('❌ 암호가 틀립니다')}
 }
 function fD(v){return v?v.substring(0,10):''}
