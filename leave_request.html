@@ -269,17 +269,6 @@ tr:hover td{background:rgba(37,99,235,.04)}tr.selected td{background:rgba(37,99,
     <button class="btn btn-gray" onclick="testDiscord()" style="width:100%;margin-top:6px">💬 테스트 발송</button>
   </div>
 
-  <!-- Supabase 연결 (접힘) -->
-  <div class="card">
-    <div class="card-tit" onclick="document.getElementById('sbDetail').style.display=document.getElementById('sbDetail').style.display==='none'?'block':'none'" style="cursor:pointer">⚙ Supabase 연결 <span style="font-size:12px;color:var(--text3);margin-left:auto">▼ 펼치기</span></div>
-    <div id="sbDetail" style="display:none">
-      <div class="setting-row"><label>URL</label><input id="cfgUrl"></div>
-      <div class="setting-row"><label>Anon Key</label><input id="cfgKey"></div>
-      <button class="btn btn-accent" onclick="saveCfg()" style="width:100%;margin-top:8px">💾 저장 및 테스트</button>
-      <div id="cfgStatus" style="font-size:13px;color:var(--text3);margin-top:8px;text-align:center"></div>
-    </div>
-  </div>
-
   <!-- 부서 목록 -->
   <div class="card">
     <div class="card-tit">📋 부서 목록</div>
@@ -388,8 +377,10 @@ tr:hover td{background:rgba(37,99,235,.04)}tr.selected td{background:rgba(37,99,
 const LS='LEAVE_CFG';
 
 function getCfg(){try{return JSON.parse(localStorage.getItem(LS))||{}}catch{return{}}}
-function getSbUrl(){return getCfg().url||''}
-function getSbKey(){return getCfg().key||''}
+const SB_URL='https://omngtyewdaqpphnzeate.supabase.co';
+const SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tbmd0eWV3ZGFxcHBobnplYXRlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4ODk4ODksImV4cCI6MjA5MDQ2NTg4OX0.Zxur3t02JHtOcXforCMSwO3i2mMaf5sViE0tXXUC0-s';
+function getSbUrl(){return SB_URL}
+function getSbKey(){return SB_KEY}
 function getDepts(){return(getCfg().depts||'개발팀,생산팀,설계팀,품질관리팀,영업관리팀').split(',').map(s=>s.trim()).filter(Boolean)}
 async function sb(path,method='GET',body=null){const url=getSbUrl(),key=getSbKey();if(!url||!key){toast('⚠ 설정에서 Supabase 연결 먼저');return null}const opts={method,headers:{'apikey':key,'Authorization':'Bearer '+key,'Content-Type':'application/json','Prefer':method==='POST'?'return=representation':''}};if(body)opts.body=JSON.stringify(body);const res=await fetch(url+'/rest/v1/'+path,opts);if(!res.ok)throw new Error(await res.text());const t=await res.text();return t?JSON.parse(t):null}
 
@@ -398,8 +389,6 @@ function swTab(n){document.querySelectorAll('.tab').forEach((t,i)=>t.classList.t
 // ===== 설정 =====
 function initSettings(){
   const c=getCfg();
-  document.getElementById('cfgUrl').value=c.url||'';
-  document.getElementById('cfgKey').value=c.key||'';
   document.getElementById('cfgDepts').value=c.depts||'개발팀,생산팀,설계팀,품질관리팀,영업관리팀';
   document.getElementById('cfgNotice').value=c.notice||'';
   document.getElementById('cfgTgToken').value=c.tgToken||'';
@@ -413,7 +402,6 @@ function initSettings(){
   const hd=document.getElementById('histDept');hd.innerHTML='<option value="">전체</option>';
   getDepts().forEach(d=>{const o=document.createElement('option');o.value=d;o.textContent=d;hd.appendChild(o)});
 }
-async function saveCfg(){const url=document.getElementById('cfgUrl').value.trim().replace(/\/$/,''),key=document.getElementById('cfgKey').value.trim();if(!url||!key){toast('URL과 Key');return}const c=getCfg();c.url=url;c.key=key;localStorage.setItem(LS,JSON.stringify(c));const st=document.getElementById('cfgStatus');st.textContent='테스트 중...';st.style.color='var(--accent)';try{await sb('employees?select=id&limit=1');st.textContent='✅ 연결 성공';st.style.color='var(--green)';toast('✅ 연결 성공')}catch(e){st.textContent='❌ '+e.message;st.style.color='var(--red)'}}
 function saveDepts(){const c=getCfg();c.depts=document.getElementById('cfgDepts').value;localStorage.setItem(LS,JSON.stringify(c));populateDeptSelects();toast('부서 저장')}
 function saveNotice(){const c=getCfg();c.notice=document.getElementById('cfgNotice').value;localStorage.setItem(LS,JSON.stringify(c));showNotice();toast('공지 저장')}
 function showNotice(){const c=getCfg();const n=c.notice||'';const banner=document.getElementById('noticeBanner');if(n.trim()){document.getElementById('noticeBody').textContent=n;banner.classList.add('show')}else{banner.classList.remove('show')}}
@@ -492,20 +480,13 @@ async function histSearch(){
 function histExcel(){
   if(!histData.length){toast('먼저 조회');return}
   const target=document.getElementById('histTarget').value;
-  // 연차신청 CSV는 암호 확인 필요 (사유 포함)
-  if(target==='leave'&&!reasonUnlocked){
-    const input=prompt('🔒 사유가 포함된 엑셀입니다.\n열람 암호를 입력하세요:\n(현재 시각 4자리)');
-    if(!input){toast('취소됨');return}
-    if(input!==getTimePw()){toast('❌ 암호가 틀립니다');return}
-    reasonUnlocked=true;renderLvTable();
-  }
   let csv='\uFEFF';
   if(target==='overtime'){
     csv+='ID,금일일자,부서,성명,직위,전일일자,전일정상,전일잔업,전일비고,금일정상,금일잔업,금일간식,금일비고,휴일일자,휴일특근,휴일비고,승인\n';
     histData.forEach(r=>{csv+=[r.id,r.today_date,r.dept,r.name,r.position,r.prev_date,r.prev_normal,r.prev_overtime,r.prev_note,r.today_normal,r.today_overtime,r.today_snack,r.today_note,r.holiday_date,r.holiday_work,r.holiday_note,r.approval].map(v=>'"'+(v??'')+'"').join(',')+'\n'});
   }else{
     csv+='ID,신청일,부서,성명,직위,휴가유형,시작일,종료일,일수,사유,작성자,검토자,팀장,관리,상태\n';
-    histData.forEach(r=>{csv+=[r.id,r.request_date,r.dept,r.name,r.position,r.leave_type,r.start_date,r.end_date,r.days,r.reason,r.writer,r.reviewer,r.confirmer,r.approver,r.status].map(v=>'"'+(v??'')+'"').join(',')+'\n'});
+    histData.forEach(r=>{csv+=[r.id,r.request_date,r.dept,r.name,r.position,r.leave_type,r.start_date,r.end_date,r.days,reasonUnlocked?r.reason:'****',r.writer,r.reviewer,r.confirmer,r.approver,r.status].map(v=>'"'+(v??'')+'"').join(',')+'\n'});
   }
   const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);
@@ -515,6 +496,9 @@ function histExcel(){
 
 async function histDelete(){
   if(!histData.length){toast('먼저 조회');return}
+  const pw=prompt('🔒 삭제 암호를 입력하세요:\n(현재 시각 4자리)');
+  if(!pw){toast('취소됨');return}
+  if(pw!==getTimePw()){toast('❌ 암호가 틀립니다');return}
   const target=document.getElementById('histTarget').value;
   const tbl=target==='overtime'?'overtime_reports':'leave_requests';
   const cnt=histData.length;
@@ -777,7 +761,17 @@ function fD(v){return v?v.substring(0,10):''}
 function lvSelect(id){lvSelId=lvSelId===id?null:id;renderLvTable();const r=lvData.find(x=>x.id===id);if(r){document.getElementById('lvDept').value=r.dept||'';lvLoadNames();document.getElementById('lvName').value=r.name||'';document.getElementById('lvPos').value=r.position||'';document.getElementById('lvType').value=r.leave_type||'연차';document.getElementById('lvStart').value=r.start_date||'';document.getElementById('lvEnd').value=r.end_date||'';document.getElementById('lvDays').value=r.days||1;document.getElementById('lvReason').value=reasonUnlocked?(r.reason||''):'****'}}
 async function lvStep(step){if(!lvSelId){toast((step==='확인'?'팀장':step==='승인'?'관리':step)+' 항목 선택');return}const r=lvData.find(x=>x.id===lvSelId);if(!r)return;const al={검토:['작성'],확인:['작성','검토'],승인:['작성','검토','확인']};if(!al[step].includes(r.status)){toast('현재('+r.status+') 불가');return}const label=step==='확인'?'팀장':step==='승인'?'관리':step;const who=prompt(label+' 성명:');if(!who)return;const cm={검토:{reviewer:who,review_date:TODAY},확인:{confirmer:who,confirm_date:TODAY},승인:{approver:who,approve_date:TODAY}};try{await sb('leave_requests?id=eq.'+lvSelId,'PATCH',{...cm[step],status:step});toast('✅ '+label+' 완료');lvSelId=null;lvSearch()}catch(e){toast('❌ '+e.message)}}
 async function lvReject(){if(!lvSelId){toast('선택');return}const r=lvData.find(x=>x.id===lvSelId);if(!r||!['작성','검토','확인'].includes(r.status)){toast('반려 불가');return}if(!confirm('반려?'))return;try{await sb('leave_requests?id=eq.'+lvSelId,'PATCH',{status:'반려'});toast('반려');lvSelId=null;lvSearch()}catch(e){toast('❌ '+e.message)}}
-async function lvDelete(){if(!lvSelId){toast('선택');return}if(!confirm('삭제?'))return;try{await sb('leave_requests?id=eq.'+lvSelId,'DELETE');toast('삭제');lvSelId=null;lvSearch()}catch(e){toast('❌ '+e.message)}}
+async function lvDelete(){
+  if(!lvSelId){toast('선택');return}
+  const r=lvData.find(x=>x.id===lvSelId);
+  if(r&&(r.status==='승인'||r.status==='확인')){
+    const pw=prompt('🔒 승인 완료된 건입니다.\n삭제 암호를 입력하세요:\n(현재 시각 4자리)');
+    if(!pw){toast('취소됨');return}
+    if(pw!==getTimePw()){toast('❌ 암호가 틀립니다');return}
+  }
+  if(!confirm('삭제?'))return;
+  try{await sb('leave_requests?id=eq.'+lvSelId,'DELETE');toast('삭제');lvSelId=null;lvSearch()}catch(e){toast('❌ '+e.message)}
+}
 
 // ========== 사원관리 ==========
 let empData=[],empSelId=null;
@@ -961,7 +955,7 @@ document.getElementById('lvStart').value=TODAY;document.getElementById('lvEnd').
 const d0=new Date();d0.setMonth(d0.getMonth()-1);document.getElementById('fStart').value=d0.toISOString().split('T')[0];
 d0.setMonth(d0.getMonth()+2);document.getElementById('fEnd').value=d0.toISOString().split('T')[0];
 showNotice();
-if(getSbUrl()&&getSbKey())initOtTab();renderOtTable();
+initOtTab();renderOtTable();
 </script>
 </body>
 </html>
