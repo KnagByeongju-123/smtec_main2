@@ -728,8 +728,8 @@ function editHist(idx){
 async function histDownload(){
   if(!_histData.length){await loadHist()}
   if(!_histData.length){toast('다운로드할 이력 없음');return}
-  const hd=['검사일','시간','고객사','기종','LOT','수량','비고'];
-  const rows=_histData.map(r=>[r.move_date,r.move_time||'',r.destination||'',r.base_part||'',r.lot||'',r.qty||'',r.note||'']);
+  const hd=['등록일','시간','출발지','도착지','고객사','기종','LOT','수량','비고'];
+  const rows=_histData.map(r=>[r.move_date,r.move_time||'',r.departure||'',r.destination||'',(r.note||'').match(/\[고객사:([^\]]+)\]/)?r.note.match(/\[고객사:([^\]]+)\]/)[1]:(r.destination||''),r.base_part||'',r.lot||'',r.qty||'',r.note||'']);
   const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([hd,...rows]),'레이스웨이출하');
   XLSX.writeFile(wb,'레이스웨이출하_'+document.getElementById('histFrom').value.replace(/-/g,'')+'_'+document.getElementById('histTo').value.replace(/-/g,'')+'.xlsx');
 }
@@ -1038,13 +1038,34 @@ async function confirmShipReq(){
   let allLotDetails=[];
 
   for(const r of reqs){
-    // 해당 품번의 검사완료 이력 조회 (오래된 순)
+    // 해당 품번의 검사등록 이력 조회 (오래된 순)
+    // 검사등록 = 검사실→출하대기장 (destination이 '출하대기장'이거나, note에 '출하확정'이 없는 것)
     let lotBreakdown=[];
     try{
-      const hist=await sbSelect('move_history_tj',
+      // 방법1: destination=출하대기장 으로 검사등록 이력만 조회
+      let hist=await sbSelect('move_history_tj',
         'format=eq.레이스웨이출하&base_part=eq.'+encodeURIComponent(r.partA)
-        +'&lot_consumed=eq.false&note=not.like.*출하확정*&order=move_date.asc,created_at.asc&limit=200');
+        +'&destination=neq.SBC&order=move_date.asc,created_at.asc&limit=200');
       
+      // 방법1 결과 없으면 방법2: note 기반 필터
+      if(!hist||!hist.length){
+        hist=await sbSelect('move_history_tj',
+          'format=eq.레이스웨이출하&base_part=eq.'+encodeURIComponent(r.partA)
+          +'&note=not.like.%25출하확정%25&order=move_date.asc,created_at.asc&limit=200');
+      }
+      
+      // 그래도 없으면 전체에서 출하확정 제외 (JS필터)
+      if(!hist||!hist.length){
+        const allHist=await sbSelect('move_history_tj',
+          'format=eq.레이스웨이출하&base_part=eq.'+encodeURIComponent(r.partA)
+          +'&order=move_date.asc,created_at.asc&limit=200');
+        hist=(allHist||[]).filter(h=>!(h.note||'').includes('출하확정'));
+      }
+
+      console.log('[LOT역추적] '+r.partA+': 검사등록 이력 '+((hist||[]).length)+'건 조회됨');
+      if(hist&&hist.length){console.log('[LOT역추적] 첫번째:', JSON.stringify({id:hist[0].id,lot:hist[0].lot,qty:hist[0].qty,dep:hist[0].departure,dest:hist[0].destination}))}
+      else{console.log('[LOT역추적] '+r.partA+': ⚠ 검사등록 이력 0건')}
+
       // LOT별로 그룹핑 (같은 LOT는 수량 합산)
       const lotGroups=[];
       (hist||[]).forEach(h=>{
@@ -1063,8 +1084,9 @@ async function confirmShipReq(){
         remaining-=take;
       }
 
-      // LOT 매칭 안 된 잔여분 (검사완료 이력이 부족한 경우)
+      // LOT 매칭 안 된 잔여분
       if(remaining>0){
+        console.log('[LOT역추적] '+r.partA+': 미매칭 '+remaining+'개 (lotGroups: '+lotGroups.length+'건, 총수량: '+lotGroups.reduce((s,g)=>s+g.qty,0)+')');
         lotBreakdown.push({lot:'미매칭_'+date.replace(/-/g,''),qty:remaining,date:date});
       }
     }catch(e){
