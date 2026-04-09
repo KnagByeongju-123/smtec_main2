@@ -99,7 +99,11 @@
     </div>
     <div class="fg-row">
       <div class="fg"><label>출발지</label><select id="shipFrom"><option value="출하대기장">출하대기장</option></select></div>
+      <div class="fg"><label>도착지</label><select id="shipTo"><option value="">선택</option></select></div>
+    </div>
+    <div class="fg-row">
       <div class="fg"><label>수량</label><input type="number" id="shipQty" placeholder="수량" inputmode="numeric"></div>
+      <div class="fg"></div>
     </div>
   </div>
 
@@ -197,7 +201,17 @@
     </div>
     <div id="depStatus" style="font-size:11px;margin-top:6px;color:var(--text3)"></div>
   </div>
-  <!-- Supabase -->
+  <!-- 도착지 관리 (신규) -->
+  <div class="card">
+    <div class="card-title">📍 도착지 관리</div>
+    <div style="font-size:10px;color:var(--text3);margin-bottom:8px;padding:6px 8px;background:rgba(59,130,246,.08);border-radius:6px">💡 common_code (code_group: rw_destination) — 출하등록 도착지 목록</div>
+    <div id="destList"></div>
+    <div style="display:flex;gap:6px;margin-top:8px">
+      <input type="text" id="newDestName" placeholder="도착지명" style="flex:1;padding:9px 12px;font-size:13px;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit">
+      <button class="btn-sm" onclick="addDest()" style="background:var(--accent);color:#fff">+ 추가</button>
+    </div>
+    <div id="destStatus" style="font-size:11px;margin-top:6px;color:var(--text3)"></div>
+  </div>
   <div class="card">
     <div class="card-title">Supabase 연결</div>
     <div class="fg"><label>URL</label><input type="password" id="stgUrl" placeholder="https://xxx.supabase.co"></div>
@@ -249,7 +263,7 @@ function toast(m){const el=document.getElementById('toast');if(!el)return;el.tex
 function swTab(n){document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('on',i===n));document.querySelectorAll('.pnl').forEach((p,i)=>p.classList.toggle('on',i===n));if(n===1)initHistTab();if(n===2)loadStgUI()}
 
 // ===== 공용 데이터 =====
-let _customers=[],_workers=[],_departures=[],_partTree=[];
+let _customers=[],_workers=[],_departures=[],_destinations=[],_partTree=[];
 
 async function loadCustomers(){
   try{const d=await sbSelect('common_code','code_group=eq.customer&order=sort_order.asc');_customers=(d||[]).map(r=>({id:r.id,name:String(r.code_value||'').trim(),sort:r.sort_order||0}))}catch(e){}
@@ -274,6 +288,16 @@ async function loadDepartures(){
   }else{
     names.forEach(n=>{sel.innerHTML+='<option value="'+esc(n)+'">'+esc(n)+'</option>'});
   }
+  if(prev)sel.value=prev;
+}
+
+async function loadDestinations(){
+  try{const d=await sbSelect('common_code','code_group=eq.rw_destination&order=sort_order.asc');_destinations=(d||[]).map(r=>({id:r.id,name:String(r.code_value||'').trim(),sort:r.sort_order||0}))}catch(e){}
+  const names=_destinations.map(d=>d.name);
+  const sel=document.getElementById('shipTo');
+  const prev=sel.value;
+  sel.innerHTML='<option value="">선택</option>';
+  names.forEach(n=>{sel.innerHTML+='<option value="'+esc(n)+'">'+esc(n)+'</option>'});
   if(prev)sel.value=prev;
 }
 
@@ -425,6 +449,7 @@ async function doShipment(){
   const model=document.getElementById('shipModel').value;
   const qty=document.getElementById('shipQty').value;
   const memo=document.getElementById('shipMemo').value.trim();
+  const dest=document.getElementById('shipTo').value;
   if(!date){toast('검사일자를 선택하세요');return}
   if(!customer){toast('고객사를 선택하세요');return}
   if(!model){toast('출하기종을 선택하세요');return}
@@ -433,12 +458,13 @@ async function doShipment(){
   let noteText=memo||'';
   if(worker)noteText=('[작업자:'+worker+'] '+noteText).trim();
   if(prodDates.length)noteText=('[생산일:'+prodDates.join(',')+'] '+noteText).trim();
+  if(customer)noteText=('[고객사:'+customer+'] '+noteText).trim();
   const row={
     move_date:date,
     move_time:kstTime(now),
     process:'출하',
     departure:document.getElementById('shipFrom').value||'출하대기장',
-    destination:customer,
+    destination:dest||customer,
     barcode_raw:'',
     base_part:model,
     lot:lot,
@@ -479,7 +505,7 @@ async function sendTelegram(data){
   let bot=tgBot(),users=tgUsers();
   if(!bot||!users.length){if(!_ccTgBot)await loadTgFromCC();if(!bot&&_ccTgBot)bot=_ccTgBot;if(!users.length&&_ccTgUsers.length)users=_ccTgUsers}
   if(!bot||!users.length)return;
-  const msg='🔩 레이스웨이 출하등록\n━━━━━━━━━━━━━━\n📅 '+data.move_date+' '+data.move_time+'\n🏢 고객사: '+data.destination+'\n📦 기종: '+data.base_part+'\n📋 LOT: '+(data.lot||'미입력')+'\n📦 수량: '+(data.qty||'-')+(data.note?'\n📝 '+data.note:'');
+  const msg='🔩 레이스웨이 출하등록\n━━━━━━━━━━━━━━\n📅 '+data.move_date+' '+data.move_time+'\n🏢 고객사: '+(data.note&&data.note.match(/\[고객사:([^\]]+)\]/)?data.note.match(/\[고객사:([^\]]+)\]/)[1]:'')+'\n📍 출발: '+(data.departure||'-')+' → 도착: '+(data.destination||'-')+'\n📦 기종: '+data.base_part+'\n📋 LOT: '+(data.lot||'미입력')+'\n📦 수량: '+(data.qty||'-')+(data.note?'\n📝 '+data.note:'');
   for(const u of users){try{await fetch('https://api.telegram.org/bot'+bot+'/sendMessage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:u.chat_id,text:msg})})}catch(e){}}
 }
 
@@ -553,7 +579,7 @@ function loadStgUI(){
   document.getElementById('stgUrl').value=s.sb_url||'';
   document.getElementById('stgKey').value=s.sb_key||'';
   document.getElementById('stgTgBot').value=s.tg_bot||'';
-  renderCustList();renderWorkerList();renderDepList();renderTgList();
+  renderCustList();renderWorkerList();renderDepList();renderDestList();renderTgList();
 }
 
 // 고객사 CRUD
@@ -612,6 +638,42 @@ async function moveDep(i,d){
   _departures.sort((a,b)=>a.sort-b.sort);renderDepList();loadDepartures();
 }
 
+// ===== 도착지 CRUD (code_group: rw_destination) =====
+function renderDestList(){
+  const c=document.getElementById('destList');
+  if(!_destinations.length){c.innerHTML='<div style="font-size:11px;color:var(--text3);padding:6px 0">없음 — 추가하세요</div>';return}
+  c.innerHTML=_destinations.map((item,i)=>'<div class="stg-list-item"><span style="color:var(--text3);font-size:11px;min-width:18px">'+(i+1)+'</span><span class="stg-name">'+esc(item.name)+'</span><button class="stg-move" onclick="moveDest('+i+',-1)">▲</button><button class="stg-move" onclick="moveDest('+i+',1)">▼</button><button class="stg-del" onclick="delDest('+i+')">✕</button></div>').join('');
+}
+async function addDest(){
+  const n=document.getElementById('newDestName').value.trim();if(!n)return;
+  const st=document.getElementById('destStatus');
+  if(_destinations.find(d=>d.name===n)){st.textContent='⚠ 이미 존재';st.style.color='#f59e0b';return}
+  const ns=_destinations.length?Math.max(..._destinations.map(d=>d.sort))+1:1;
+  try{
+    const s=await sbInsert('common_code',{code_group:'rw_destination',code_value:n,sort_order:ns});
+    if(s&&s.length)_destinations.push({id:s[0].id,name:n,sort:ns});
+    document.getElementById('newDestName').value='';
+    renderDestList();loadDestinations();
+    st.textContent='✅ '+n;st.style.color='#22c55e';
+  }catch(e){st.textContent='❌ '+e.message;st.style.color='#ef4444'}
+}
+async function delDest(i){
+  const it=_destinations[i];if(!confirm(it.name+' 삭제?'))return;
+  try{await fetch(sbUrl()+'/rest/v1/common_code?id=eq.'+it.id,{method:'DELETE',headers:{'apikey':sbKey(),'Authorization':'Bearer '+sbKey()}});
+    _destinations=_destinations.filter(d=>d.id!==it.id);renderDestList();loadDestinations();
+  }catch(e){}
+}
+async function moveDest(i,d){
+  const n=i+d;if(n<0||n>=_destinations.length)return;
+  const t=_destinations[i].sort;_destinations[i].sort=_destinations[n].sort;_destinations[n].sort=t;
+  [_destinations[i],_destinations[n]]=[_destinations[n],_destinations[i]];
+  try{
+    await fetch(sbUrl()+'/rest/v1/common_code?id=eq.'+_destinations[i].id,{method:'PATCH',headers:{'Content-Type':'application/json','apikey':sbKey(),'Authorization':'Bearer '+sbKey()},body:JSON.stringify({sort_order:_destinations[i].sort})});
+    await fetch(sbUrl()+'/rest/v1/common_code?id=eq.'+_destinations[n].id,{method:'PATCH',headers:{'Content-Type':'application/json','apikey':sbKey(),'Authorization':'Bearer '+sbKey()},body:JSON.stringify({sort_order:_destinations[n].sort})});
+  }catch(e){}
+  _destinations.sort((a,b)=>a.sort-b.sort);renderDestList();loadDestinations();
+}
+
 // 텔레그램 수신자
 function renderTgList(){const u=tgUsers();const c=document.getElementById('tgList');if(!u.length){c.innerHTML='<div style="font-size:11px;color:var(--text3)">수신자 없음</div>';return}c.innerHTML=u.map((t,i)=>'<div class="stg-list-item"><span class="stg-name">'+esc(t.name)+'</span><span style="color:var(--text2);font-size:11px">'+t.chat_id+'</span><button class="stg-del" onclick="delTg('+i+')">✕</button></div>').join('')}
 function addTg(){const n=document.getElementById('tgNewName').value.trim(),id=document.getElementById('tgNewId').value.trim();if(!n||!id)return;const u=tgUsers();u.push({name:n,chat_id:id});const s=getStg();s.tg_users=JSON.stringify(u);localStorage.setItem(LS,JSON.stringify(s));document.getElementById('tgNewName').value='';document.getElementById('tgNewId').value='';renderTgList()}
@@ -626,7 +688,7 @@ window.addEventListener('DOMContentLoaded',()=>{
   if(!localStorage.getItem(LS)){localStorage.setItem(LS,JSON.stringify({sb_url:'https://omngtyewdaqpphnzeate.supabase.co',sb_key:'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tbmd0eWV3ZGFxcHBobnplYXRlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4ODk4ODksImV4cCI6MjA5MDQ2NTg4OX0.Zxur3t02JHtOcXforCMSwO3i2mMaf5sViE0tXXUC0-s',tg_bot:'',tg_users:'[]'}))}
   document.getElementById('shipDate').value=kstDate();
   calInit();
-  if(ok()){loadCustomers();loadWorkers();loadDepartures();loadPartTree().then(()=>loadRecent())}
+  if(ok()){loadCustomers();loadWorkers();loadDepartures();loadDestinations();loadPartTree().then(()=>loadRecent())}
   else{document.getElementById('pnl0').insertAdjacentHTML('afterbegin','<div style="background:rgba(239,68,68,.15);border:1.5px solid rgba(239,68,68,.3);border-radius:10px;padding:12px;margin:0 12px 12px;font-size:12px;color:#fca5a5;text-align:center">⚠️ Supabase 미설정 — ⚙ 설정 탭</div>')}
   setTimeout(()=>{if(ok())loadTgFromCC()},1000);
 });
