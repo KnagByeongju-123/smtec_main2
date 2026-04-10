@@ -384,12 +384,17 @@ async function sb(path,method='GET',body=null){const url=getSbUrl(),key=getSbKey
 function swTab(n){document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('on',i===n));document.querySelectorAll('.pnl').forEach((p,i)=>p.classList.toggle('on',i===n));if(n===0)initOtTab();if(n===1)initLvTab();if(n===2)initRvTab();if(n===3)loadEmployees();if(n===4)initSettings()}
 
 // ===== 설정 =====
-function initSettings(){
+async function initSettings(){
   const c=getCfg();
   document.getElementById('cfgDepts').value=c.depts||'개발팀,생산팀,설계팀,품질관리팀,영업관리팀';
   document.getElementById('cfgNotice').value=c.notice||'';
-  document.getElementById('cfgTgChats').value=c.tgChats||'';
-  document.getElementById('cfgDiscord').value=c.discord||'';
+  // common_code에서 텔레그램/디스코드 수신자 로드
+  try{
+    const tg=await sb("common_code?code_group=eq.leave_telegram&order=sort_order")||[];
+    document.getElementById('cfgTgChats').value=tg.map(r=>r.code_value).join('\n');
+    const dc=await sb("common_code?code_group=eq.leave_discord&order=sort_order")||[];
+    document.getElementById('cfgDiscord').value=dc.map(r=>r.code_value).join('\n');
+  }catch{}
   const d1=new Date();d1.setMonth(d1.getMonth()-1);
   document.getElementById('histStart').value=d1.toISOString().split('T')[0];
   document.getElementById('histEnd').value=TODAY;
@@ -402,39 +407,56 @@ function showNotice(){const c=getCfg();const n=c.notice||'';const banner=documen
 
 const TG_BOT_TOKEN='8367539669:AAFzZeMULV8B4adNROtENsUc6wr0MvLpSi0';
 
-// 텔레그램 — 형식: 부서:이름:ChatID
-function saveTelegram(){const c=getCfg();c.tgChats=document.getElementById('cfgTgChats').value;localStorage.setItem(LS,JSON.stringify(c));toast('텔레그램 저장')}
-function parseTgChats(){const c=getCfg();return(c.tgChats||'').split('\n').map(s=>s.trim()).filter(Boolean).map(line=>{const p=line.split(':');if(p.length>=3)return{dept:p[0].trim(),name:p[1].trim(),chatId:p[2].trim()};if(p.length===2)return{dept:'',name:p[0].trim(),chatId:p[1].trim()};return null}).filter(Boolean)}
+// common_code 저장 헬퍼: 기존 삭제 후 새로 insert
+async function saveCodeGroup(group,lines){
+  await sb('common_code?code_group=eq.'+encodeURIComponent(group),'DELETE');
+  const rows=lines.split('\n').map(s=>s.trim()).filter(Boolean).map((v,i)=>({code_group:group,code_value:v,sort_order:i+1,note:''}));
+  if(rows.length)await sb('common_code','POST',rows);
+}
+
+// 텔레그램 — common_code: leave_telegram, 형식: 부서:이름:ChatID
+async function saveTelegram(){
+  const val=document.getElementById('cfgTgChats').value;
+  try{await saveCodeGroup('leave_telegram',val);toast('✅ 텔레그램 서버 저장')}catch(e){toast('❌ '+e.message)}
+}
+async function loadTgChats(){
+  try{const data=await sb("common_code?code_group=eq.leave_telegram&order=sort_order")||[];return data.map(r=>r.code_value.trim()).filter(Boolean).map(line=>{const p=line.split(':');if(p.length>=3)return{dept:p[0].trim(),name:p[1].trim(),chatId:p[2].trim()};if(p.length===2)return{dept:'',name:p[0].trim(),chatId:p[1].trim()};return null}).filter(Boolean)}catch{return[]}
+}
 async function testTelegram(){
-  const list=parseTgChats();if(!list.length){toast('수신자 입력');return}
+  const list=await loadTgChats();if(!list.length){toast('수신자 등록 필요');return}
   let ok=0;
   for(const r of list){try{await fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:r.chatId,text:'📋 근태관리 테스트 — '+r.name+'('+r.dept+')'})});ok++}catch{}}
   toast(`📨 ${ok}/${list.length}건 발송`);
 }
 async function sendTelegramByDept(dept,text){
-  const list=parseTgChats().filter(r=>!r.dept||r.dept===dept);
+  const list=(await loadTgChats()).filter(r=>!r.dept||r.dept===dept);
   for(const r of list){try{await fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:r.chatId,text,parse_mode:'HTML'})})}catch{}}
 }
 async function sendTelegramAll(text){
-  const list=parseTgChats();
+  const list=await loadTgChats();
   for(const r of list){try{await fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:r.chatId,text,parse_mode:'HTML'})})}catch{}}
 }
 
-// 디스코드 — 형식: 부서:이름:WebhookURL
-function saveDiscord(){const c=getCfg();c.discord=document.getElementById('cfgDiscord').value;localStorage.setItem(LS,JSON.stringify(c));toast('디스코드 저장')}
-function parseDiscord(){const c=getCfg();return(c.discord||'').split('\n').map(s=>s.trim()).filter(Boolean).map(line=>{const p=line.split(':');if(p.length>=3){const dept=p[0].trim(),name=p[1].trim(),url=p.slice(2).join(':').trim();return{dept,name,url}}return{dept:'',name:'',url:line.trim()}}).filter(r=>r.url)}
+// 디스코드 — common_code: leave_discord, 형식: 부서:이름:WebhookURL
+async function saveDiscord(){
+  const val=document.getElementById('cfgDiscord').value;
+  try{await saveCodeGroup('leave_discord',val);toast('✅ 디스코드 서버 저장')}catch(e){toast('❌ '+e.message)}
+}
+async function loadDiscord(){
+  try{const data=await sb("common_code?code_group=eq.leave_discord&order=sort_order")||[];return data.map(r=>r.code_value.trim()).filter(Boolean).map(line=>{const idx=line.indexOf(':'),idx2=line.indexOf(':',idx+1);if(idx>0&&idx2>idx){return{dept:line.substring(0,idx).trim(),name:line.substring(idx+1,idx2).trim(),url:line.substring(idx2+1).trim()}}return{dept:'',name:'',url:line.trim()}}).filter(r=>r.url)}catch{return[]}
+}
 async function testDiscord(){
-  const list=parseDiscord();if(!list.length){toast('웹훅 입력');return}
+  const list=await loadDiscord();if(!list.length){toast('웹훅 등록 필요');return}
   let ok=0;
   for(const r of list){try{await fetch(r.url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:'📋 근태관리 테스트 — '+(r.name||'')+(r.dept?'('+r.dept+')':'')})});ok++}catch{}}
   toast(`💬 ${ok}/${list.length}건 발송`);
 }
 async function sendDiscordByDept(dept,text){
-  const list=parseDiscord().filter(r=>!r.dept||r.dept===dept);
+  const list=(await loadDiscord()).filter(r=>!r.dept||r.dept===dept);
   for(const r of list){try{await fetch(r.url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:text})})}catch{}}
 }
 async function sendDiscordAll(text){
-  const list=parseDiscord();
+  const list=await loadDiscord();
   for(const r of list){try{await fetch(r.url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:text})})}catch{}}
 }
 
