@@ -255,13 +255,25 @@ tr:hover td{background:rgba(91,127,166,.08)}tr.selected td{background:rgba(59,12
     <button class="btn btn-orange" onclick="saveNotice()" style="width:100%">📢 공지 저장</button>
   </div>
 
-  <!-- 텔레그램 설정 -->
+  <!-- 텔레그램 마스터 수신자 (모든 신청 수신) -->
   <div class="card">
-    <div class="card-tit">📨 텔레그램 수신자 설정</div>
-    <div class="fg"><label>수신자 등록 (줄바꿈으로 여러 명 — 형식: 부서:이름:ChatID)</label>
+    <div class="card-tit">📨 텔레그램 마스터 수신자</div>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:8px">모든 부서의 연차신청 알림을 수신합니다</div>
+    <div class="fg"><label>수신자 등록 (줄바꿈 — 형식: 이름:ChatID)</label>
+      <textarea id="cfgTgMaster" rows="3" placeholder="강병주:123456789&#10;김상기:987654321" style="resize:vertical;font-size:13px"></textarea>
+    </div>
+    <button class="btn btn-accent" onclick="saveTgMaster()" style="width:100%">💾 마스터 저장</button>
+    <button class="btn btn-gray" onclick="testTgMaster()" style="width:100%;margin-top:6px">📨 테스트 발송</button>
+  </div>
+
+  <!-- 텔레그램 부서별 수신자 -->
+  <div class="card">
+    <div class="card-tit">📨 텔레그램 부서별 수신자</div>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:8px">해당 부서 인원의 신청만 수신합니다</div>
+    <div class="fg"><label>수신자 등록 (줄바꿈 — 형식: 부서:이름:ChatID)</label>
       <textarea id="cfgTgChats" rows="4" placeholder="품질관리팀:강병주:123456789&#10;생산팀:김상기:987654321" style="resize:vertical;font-size:13px"></textarea>
     </div>
-    <button class="btn btn-accent" onclick="saveTelegram()" style="width:100%">💾 텔레그램 저장</button>
+    <button class="btn btn-accent" onclick="saveTelegram()" style="width:100%">💾 부서별 저장</button>
     <button class="btn btn-gray" onclick="testTelegram()" style="width:100%;margin-top:6px">📨 테스트 발송</button>
   </div>
 
@@ -271,7 +283,7 @@ tr:hover td{background:rgba(91,127,166,.08)}tr.selected td{background:rgba(59,12
     <div class="fg"><label>웹훅 등록 (줄바꿈으로 여러 개 — 형식: 부서:이름:WebhookURL)</label>
       <textarea id="cfgDiscord" rows="4" placeholder="품질관리팀:강병주:https://discord.com/api/webhooks/..." style="resize:vertical;font-size:13px"></textarea>
     </div>
-    <button class="btn btn-accent" onclick="saveDiscord()" style="width:100%">💾 디스코드 저장</button>
+    <button class="btn btn-accent" onclick="saveDiscord()" style="width:100%">💾 부서별 저장</button>
     <button class="btn btn-gray" onclick="testDiscord()" style="width:100%;margin-top:6px">💬 테스트 발송</button>
   </div>
 
@@ -390,6 +402,8 @@ async function initSettings(){
   document.getElementById('cfgNotice').value=c.notice||'';
   // common_code에서 텔레그램/디스코드 수신자 로드
   try{
+    const tgm=await sb("common_code?code_group=eq.leave_tg_master&order=sort_order")||[];
+    document.getElementById('cfgTgMaster').value=tgm.map(r=>r.code_value).join('\n');
     const tg=await sb("common_code?code_group=eq.leave_telegram&order=sort_order")||[];
     document.getElementById('cfgTgChats').value=tg.map(r=>r.code_value).join('\n');
     const dc=await sb("common_code?code_group=eq.leave_discord&order=sort_order")||[];
@@ -414,25 +428,46 @@ async function saveCodeGroup(group,lines){
   if(rows.length)await sb('common_code','POST',rows);
 }
 
-// 텔레그램 — common_code: leave_telegram, 형식: 부서:이름:ChatID
+// 텔레그램 마스터 — common_code: leave_tg_master, 형식: 이름:ChatID
+async function saveTgMaster(){
+  const val=document.getElementById('cfgTgMaster').value;
+  try{await saveCodeGroup('leave_tg_master',val);toast('✅ 마스터 서버 저장')}catch(e){toast('❌ '+e.message)}
+}
+async function loadTgMaster(){
+  try{const data=await sb("common_code?code_group=eq.leave_tg_master&order=sort_order")||[];return data.map(r=>r.code_value.trim()).filter(Boolean).map(line=>{const p=line.split(':');if(p.length>=2)return{name:p[0].trim(),chatId:p[1].trim()};return null}).filter(Boolean)}catch{return[]}
+}
+async function testTgMaster(){
+  const list=await loadTgMaster();if(!list.length){toast('마스터 수신자 등록 필요');return}
+  let ok=0;
+  for(const r of list){try{await fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:r.chatId,text:'📋 근태관리 마스터 테스트 — '+r.name})});ok++}catch{}}
+  toast(`📨 ${ok}/${list.length}건 발송`);
+}
+
+// 텔레그램 부서별 — common_code: leave_telegram, 형식: 부서:이름:ChatID
 async function saveTelegram(){
   const val=document.getElementById('cfgTgChats').value;
-  try{await saveCodeGroup('leave_telegram',val);toast('✅ 텔레그램 서버 저장')}catch(e){toast('❌ '+e.message)}
+  try{await saveCodeGroup('leave_telegram',val);toast('✅ 부서별 서버 저장')}catch(e){toast('❌ '+e.message)}
 }
 async function loadTgChats(){
   try{const data=await sb("common_code?code_group=eq.leave_telegram&order=sort_order")||[];return data.map(r=>r.code_value.trim()).filter(Boolean).map(line=>{const p=line.split(':');if(p.length>=3)return{dept:p[0].trim(),name:p[1].trim(),chatId:p[2].trim()};if(p.length===2)return{dept:'',name:p[0].trim(),chatId:p[1].trim()};return null}).filter(Boolean)}catch{return[]}
 }
 async function testTelegram(){
-  const list=await loadTgChats();if(!list.length){toast('수신자 등록 필요');return}
+  const list=await loadTgChats();if(!list.length){toast('부서별 수신자 등록 필요');return}
   let ok=0;
   for(const r of list){try{await fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:r.chatId,text:'📋 근태관리 테스트 — '+r.name+'('+r.dept+')'})});ok++}catch{}}
   toast(`📨 ${ok}/${list.length}건 발송`);
 }
 async function sendTelegramByDept(dept,text){
+  // 마스터 수신자 (모든 부서)
+  const masters=await loadTgMaster();
+  for(const r of masters){try{await fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:r.chatId,text,parse_mode:'HTML'})})}catch{}}
+  // 부서별 수신자
   const list=(await loadTgChats()).filter(r=>!r.dept||r.dept===dept);
   for(const r of list){try{await fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:r.chatId,text,parse_mode:'HTML'})})}catch{}}
 }
 async function sendTelegramAll(text){
+  const masters=await loadTgMaster();
+  for(const r of masters){try{await fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:r.chatId,text,parse_mode:'HTML'})})}catch{}}
   const list=await loadTgChats();
   for(const r of list){try{await fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:r.chatId,text,parse_mode:'HTML'})})}catch{}}
 }
