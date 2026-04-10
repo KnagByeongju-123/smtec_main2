@@ -760,7 +760,21 @@ function closeLvForm(){document.getElementById('lvFormOverlay').style.display='n
 (function(){const hdr=document.getElementById('lvFormHeader'),dlg=document.getElementById('lvFormDialog');let dr=false,ox=0,oy=0;function md(x,y){dr=true;const r=dlg.getBoundingClientRect();ox=x-r.left;oy=y-r.top;dlg.style.transform='none';dlg.style.left=r.left+'px';dlg.style.top=r.top+'px'}hdr.addEventListener('mousedown',e=>{md(e.clientX,e.clientY);e.preventDefault()});hdr.addEventListener('touchstart',e=>{const t=e.touches[0];md(t.clientX,t.clientY)},{passive:false});document.addEventListener('mousemove',e=>{if(!dr)return;dlg.style.left=(e.clientX-ox)+'px';dlg.style.top=(e.clientY-oy)+'px'});document.addEventListener('touchmove',e=>{if(!dr)return;const t=e.touches[0];dlg.style.left=(t.clientX-ox)+'px';dlg.style.top=(t.clientY-oy)+'px';e.preventDefault()},{passive:false});document.addEventListener('mouseup',()=>{dr=false});document.addEventListener('touchend',()=>{dr=false})})()
 async function lvSave(){const dept=document.getElementById('lvDept').value,name=document.getElementById('lvName').value,pos=document.getElementById('lvPos').value,type=document.getElementById('lvType').value,start=document.getElementById('lvStart').value,end=document.getElementById('lvEnd').value;const daysVal=parseFloat(document.getElementById('lvDays').value);let days=isNaN(daysVal)?1:daysVal;const reason=document.getElementById('lvReason').value.trim();const delPw=document.getElementById('lvDelPw').value.trim();const isTime=['지각','조퇴','외출'].includes(type);let hours=0;if(isTime){hours=parseFloat(document.getElementById('lvHours').value)||0;days=0}if(!dept){toast('부서 선택');return}if(!name){toast('성명');return}if(!type){toast('휴가유형 선택');return}if(!reason){toast('사유');return}if(!delPw||delPw.length!==4||!/^\d{4}$/.test(delPw)){toast('삭제비번 4자리 숫자 입력');return}if(isTime&&hours<=0){toast('시간을 확인하세요');return}try{const payload={request_date:TODAY,dept,name,position:pos,leave_type:type,start_date:start,end_date:isTime?start:end,days,reason:isTime?reason+' ('+hours+'시간)':reason,writer:name,write_date:TODAY,status:'작성'};const result=await sb('leave_requests','POST',payload);if(result&&result.length){localStorage.setItem('LV_DEL_PW_'+result[0].id,delPw)}if(isTime){await lvUpdateOtNote(name,dept,start,type,hours)}localStorage.setItem('LV_MY_NAME',name);toast('✅ 신청 저장');closeLvForm();lvMySearch()}catch(e){toast('❌ '+e.message)}}
 async function lvUpdateOtNote(name,dept,date,type,hours){try{const data=await sb('overtime_reports?today_date=eq.'+date+'&name=eq.'+encodeURIComponent(name)+'&dept=eq.'+encodeURIComponent(dept))||[];if(data.length){const r=data[0];const tag=type+'('+hours+')';const note=r.today_note?(r.today_note.includes(type)?r.today_note:r.today_note+' '+tag):tag;await sb('overtime_reports?id=eq.'+r.id,'PATCH',{today_note:note})}}catch{}}
-async function lvMySearch(){const myName=localStorage.getItem('LV_MY_NAME');if(!myName){toast('먼저 신청서를 작성하세요');return}try{const d=new Date();d.setMonth(d.getMonth()-3);const q='leave_requests?select=*&order=start_date.desc,id.desc&name=eq.'+encodeURIComponent(myName)+'&start_date=gte.'+d.toISOString().split('T')[0];lvData=await sb(q)||[];document.getElementById('lvMyPanel').style.display='block';renderLvTable();toast(myName+' 님 '+lvData.length+'건')}catch{toast('조회 실패')}}
+async function lvMySearch(){
+  // localStorage에 저장된 LV_DEL_PW_{id} 키들에서 ID 목록 추출
+  const myIds=[];
+  for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k&&k.startsWith('LV_DEL_PW_'))myIds.push(k.replace('LV_DEL_PW_',''))}
+  if(!myIds.length){toast('이 기기에서 작성한 신청서가 없습니다');return}
+  try{
+    const q='leave_requests?select=*&order=start_date.desc,id.desc&id=in.('+myIds.join(',')+')';
+    lvData=await sb(q)||[];
+    // DB에서 삭제된 건은 localStorage에서도 정리
+    const dbIds=new Set(lvData.map(r=>String(r.id)));
+    myIds.forEach(id=>{if(!dbIds.has(id))localStorage.removeItem('LV_DEL_PW_'+id)});
+    document.getElementById('lvMyPanel').style.display='block';
+    renderLvTable();toast(lvData.length+'건 조회')
+  }catch{toast('조회 실패')}
+}
 async function lvSearch(){await lvMySearch()}
 function renderLvTable(){const b=document.getElementById('lvBody');if(!lvData.length){b.innerHTML='<tr><td colspan="8" style="color:var(--text3);padding:20px">데이터 없음</td></tr>';return}b.innerHTML=lvData.map(r=>`<tr ${r.id===lvSelId?'class="selected"':''} onclick="lvSelect(${r.id})" style="cursor:pointer"><td>${r.id}</td><td>${r.request_date||''}</td><td>${r.leave_type||''}</td><td>${r.start_date||''}</td><td>${r.end_date||''}</td><td>${r.days||''}</td><td style="text-align:left;max-width:150px;overflow:hidden;text-overflow:ellipsis">${r.reason||''}</td><td><span class="badge badge-${r.status||''}">${r.status||''}</span></td></tr>`).join('')}
 function getTimePw(){const n=new Date();return String(n.getHours()).padStart(2,'0')+String(n.getMinutes()).padStart(2,'0')}
@@ -855,13 +869,13 @@ function initRvTab(){
 }
 async function rvSearch(){
   let q='leave_requests?select=*&order=start_date.desc,id.desc';
-  const s=document.getElementById('fStart2').value,e=document.getElementById('fEnd2').value;
-  if(s)q+='&start_date=gte.'+s;if(e)q+='&start_date=lte.'+e;
-  const dept=document.getElementById('fDept2').value;if(dept)q+='&dept=eq.'+encodeURIComponent(dept);
+  const s=document.getElementById('fStart2'),e=document.getElementById('fEnd2');
+  if(s&&s.value)q+='&start_date=gte.'+s.value;if(e&&e.value)q+='&start_date=lte.'+e.value;
+  const dept=document.getElementById('fDept2');if(dept&&dept.value)q+='&dept=eq.'+encodeURIComponent(dept.value);
   const tp=document.getElementById('fType2');if(tp&&tp.value)q+='&leave_type=eq.'+encodeURIComponent(tp.value);
-  const nm=document.getElementById('fName2');if(nm&&nm.value.trim())q+='&name=like.*'+encodeURIComponent(nm.value.trim())+'*';
-  const st=document.getElementById('fStatus2').value;if(st)q+='&status=eq.'+encodeURIComponent(st);
-  try{rvData=await sb(q)||[];renderRvTable()}catch{toast('조회 실패')}
+  const nm=document.getElementById('fName2');if(nm&&nm.value&&nm.value.trim())q+='&name=like.*'+encodeURIComponent(nm.value.trim())+'*';
+  const st=document.getElementById('fStatus2');if(st&&st.value)q+='&status=eq.'+encodeURIComponent(st.value);
+  try{rvData=await sb(q)||[];renderRvTable();toast(rvData.length+'건 조회')}catch(ex){toast('조회 실패: '+ex.message)}
 }
 function renderRvTable(){
   const b=document.getElementById('rvBody');
