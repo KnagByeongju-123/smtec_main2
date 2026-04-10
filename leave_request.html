@@ -257,10 +257,9 @@ tr:hover td{background:rgba(91,127,166,.08)}tr.selected td{background:rgba(59,12
 
   <!-- 텔레그램 설정 -->
   <div class="card">
-    <div class="card-tit">📨 텔레그램 봇 설정</div>
-    <div class="setting-row"><label>Bot Token</label><input id="cfgTgToken" placeholder=""></div>
-    <div class="fg"><label>수신 Chat ID (줄바꿈으로 여러 명 등록 — 형식: 이름:ChatID)</label>
-      <textarea id="cfgTgChats" rows="3" placeholder="" style="resize:vertical;font-size:13px"></textarea>
+    <div class="card-tit">📨 텔레그램 수신자 설정</div>
+    <div class="fg"><label>수신자 등록 (줄바꿈으로 여러 명 — 형식: 부서:이름:ChatID)</label>
+      <textarea id="cfgTgChats" rows="4" placeholder="품질관리팀:강병주:123456789&#10;생산팀:김상기:987654321" style="resize:vertical;font-size:13px"></textarea>
     </div>
     <button class="btn btn-accent" onclick="saveTelegram()" style="width:100%">💾 텔레그램 저장</button>
     <button class="btn btn-gray" onclick="testTelegram()" style="width:100%;margin-top:6px">📨 테스트 발송</button>
@@ -269,8 +268,8 @@ tr:hover td{background:rgba(91,127,166,.08)}tr.selected td{background:rgba(59,12
   <!-- 디스코드 설정 -->
   <div class="card">
     <div class="card-tit">💬 디스코드 웹훅 설정</div>
-    <div class="fg"><label>Webhook URL (줄바꿈으로 여러 개 등록)</label>
-      <textarea id="cfgDiscord" rows="3" placeholder="https://discord.com/api/webhooks/..." style="resize:vertical;font-size:13px"></textarea>
+    <div class="fg"><label>웹훅 등록 (줄바꿈으로 여러 개 — 형식: 부서:이름:WebhookURL)</label>
+      <textarea id="cfgDiscord" rows="4" placeholder="품질관리팀:강병주:https://discord.com/api/webhooks/..." style="resize:vertical;font-size:13px"></textarea>
     </div>
     <button class="btn btn-accent" onclick="saveDiscord()" style="width:100%">💾 디스코드 저장</button>
     <button class="btn btn-gray" onclick="testDiscord()" style="width:100%;margin-top:6px">💬 테스트 발송</button>
@@ -389,14 +388,11 @@ function initSettings(){
   const c=getCfg();
   document.getElementById('cfgDepts').value=c.depts||'개발팀,생산팀,설계팀,품질관리팀,영업관리팀';
   document.getElementById('cfgNotice').value=c.notice||'';
-  document.getElementById('cfgTgToken').value=c.tgToken||'';
   document.getElementById('cfgTgChats').value=c.tgChats||'';
   document.getElementById('cfgDiscord').value=c.discord||'';
-  // 이력관리 날짜 기본값
   const d1=new Date();d1.setMonth(d1.getMonth()-1);
   document.getElementById('histStart').value=d1.toISOString().split('T')[0];
   document.getElementById('histEnd').value=TODAY;
-  // 이력관리 부서 필터
   const hd=document.getElementById('histDept');hd.innerHTML='<option value="">전체</option>';
   getDepts().forEach(d=>{const o=document.createElement('option');o.value=d;o.textContent=d;hd.appendChild(o)});
 }
@@ -404,43 +400,42 @@ function saveDepts(){const c=getCfg();c.depts=document.getElementById('cfgDepts'
 function saveNotice(){const c=getCfg();c.notice=document.getElementById('cfgNotice').value;localStorage.setItem(LS,JSON.stringify(c));showNotice();toast('공지 저장')}
 function showNotice(){const c=getCfg();const n=c.notice||'';const banner=document.getElementById('noticeBanner');if(n.trim()){document.getElementById('noticeBody').textContent=n;banner.classList.add('show')}else{banner.classList.remove('show')}}
 
-// 텔레그램
-function saveTelegram(){const c=getCfg();c.tgToken=document.getElementById('cfgTgToken').value.trim();c.tgChats=document.getElementById('cfgTgChats').value;localStorage.setItem(LS,JSON.stringify(c));toast('텔레그램 설정 저장')}
+const TG_BOT_TOKEN='8367539669:AAFzZeMULV8B4adNROtENsUc6wr0MvLpSi0';
+
+// 텔레그램 — 형식: 부서:이름:ChatID
+function saveTelegram(){const c=getCfg();c.tgChats=document.getElementById('cfgTgChats').value;localStorage.setItem(LS,JSON.stringify(c));toast('텔레그램 저장')}
+function parseTgChats(){const c=getCfg();return(c.tgChats||'').split('\n').map(s=>s.trim()).filter(Boolean).map(line=>{const p=line.split(':');if(p.length>=3)return{dept:p[0].trim(),name:p[1].trim(),chatId:p[2].trim()};if(p.length===2)return{dept:'',name:p[0].trim(),chatId:p[1].trim()};return null}).filter(Boolean)}
 async function testTelegram(){
-  const c=getCfg();if(!c.tgToken){toast('Bot Token 입력');return}
-  const chats=c.tgChats.split('\n').map(s=>s.trim()).filter(Boolean);
-  if(!chats.length){toast('Chat ID 입력');return}
+  const list=parseTgChats();if(!list.length){toast('수신자 입력');return}
   let ok=0;
-  for(const line of chats){
-    const parts=line.split(':');const chatId=parts.length>=2?parts[parts.length-1].trim():parts[0].trim();
-    try{
-      await fetch(`https://api.telegram.org/bot${c.tgToken}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({chat_id:chatId,text:'📋 근태관리 시스템 테스트 발송입니다.'})});ok++
-    }catch{}
-  }
-  toast(`📨 ${ok}/${chats.length}건 발송`);
+  for(const r of list){try{await fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:r.chatId,text:'📋 근태관리 테스트 — '+r.name+'('+r.dept+')'})});ok++}catch{}}
+  toast(`📨 ${ok}/${list.length}건 발송`);
 }
-async function sendTelegram(text){
-  const c=getCfg();if(!c.tgToken)return;
-  const chats=c.tgChats.split('\n').map(s=>s.trim()).filter(Boolean);
-  for(const line of chats){
-    const parts=line.split(':');const chatId=parts.length>=2?parts[parts.length-1].trim():parts[0].trim();
-    try{await fetch(`https://api.telegram.org/bot${c.tgToken}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:chatId,text,parse_mode:'HTML'})})}catch{}
-  }
+async function sendTelegramByDept(dept,text){
+  const list=parseTgChats().filter(r=>!r.dept||r.dept===dept);
+  for(const r of list){try{await fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:r.chatId,text,parse_mode:'HTML'})})}catch{}}
+}
+async function sendTelegramAll(text){
+  const list=parseTgChats();
+  for(const r of list){try{await fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:r.chatId,text,parse_mode:'HTML'})})}catch{}}
 }
 
-// 디스코드
-function saveDiscord(){const c=getCfg();c.discord=document.getElementById('cfgDiscord').value;localStorage.setItem(LS,JSON.stringify(c));toast('디스코드 설정 저장')}
+// 디스코드 — 형식: 부서:이름:WebhookURL
+function saveDiscord(){const c=getCfg();c.discord=document.getElementById('cfgDiscord').value;localStorage.setItem(LS,JSON.stringify(c));toast('디스코드 저장')}
+function parseDiscord(){const c=getCfg();return(c.discord||'').split('\n').map(s=>s.trim()).filter(Boolean).map(line=>{const p=line.split(':');if(p.length>=3){const dept=p[0].trim(),name=p[1].trim(),url=p.slice(2).join(':').trim();return{dept,name,url}}return{dept:'',name:'',url:line.trim()}}).filter(r=>r.url)}
 async function testDiscord(){
-  const c=getCfg();const urls=c.discord.split('\n').map(s=>s.trim()).filter(Boolean);
-  if(!urls.length){toast('Webhook URL 입력');return}
+  const list=parseDiscord();if(!list.length){toast('웹훅 입력');return}
   let ok=0;
-  for(const url of urls){try{await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:'📋 근태관리 시스템 테스트 발송입니다.'})});ok++}catch{}}
-  toast(`💬 ${ok}/${urls.length}건 발송`);
+  for(const r of list){try{await fetch(r.url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:'📋 근태관리 테스트 — '+(r.name||'')+(r.dept?'('+r.dept+')':'')})});ok++}catch{}}
+  toast(`💬 ${ok}/${list.length}건 발송`);
 }
-async function sendDiscord(text){
-  const c=getCfg();const urls=(c.discord||'').split('\n').map(s=>s.trim()).filter(Boolean);
-  for(const url of urls){try{await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:text})})}catch{}}
+async function sendDiscordByDept(dept,text){
+  const list=parseDiscord().filter(r=>!r.dept||r.dept===dept);
+  for(const r of list){try{await fetch(r.url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:text})})}catch{}}
+}
+async function sendDiscordAll(text){
+  const list=parseDiscord();
+  for(const r of list){try{await fetch(r.url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:text})})}catch{}}
 }
 
 // ===== 이력관리 =====
@@ -751,7 +746,7 @@ function openLvForm(){const ov=document.getElementById('lvFormOverlay'),dlg=docu
 function closeLvForm(){document.getElementById('lvFormOverlay').style.display='none'}
 // 드래그
 (function(){const hdr=document.getElementById('lvFormHeader'),dlg=document.getElementById('lvFormDialog');let dr=false,ox=0,oy=0;function md(x,y){dr=true;const r=dlg.getBoundingClientRect();ox=x-r.left;oy=y-r.top;dlg.style.transform='none';dlg.style.left=r.left+'px';dlg.style.top=r.top+'px'}hdr.addEventListener('mousedown',e=>{md(e.clientX,e.clientY);e.preventDefault()});hdr.addEventListener('touchstart',e=>{const t=e.touches[0];md(t.clientX,t.clientY)},{passive:false});document.addEventListener('mousemove',e=>{if(!dr)return;dlg.style.left=(e.clientX-ox)+'px';dlg.style.top=(e.clientY-oy)+'px'});document.addEventListener('touchmove',e=>{if(!dr)return;const t=e.touches[0];dlg.style.left=(t.clientX-ox)+'px';dlg.style.top=(t.clientY-oy)+'px';e.preventDefault()},{passive:false});document.addEventListener('mouseup',()=>{dr=false});document.addEventListener('touchend',()=>{dr=false})})()
-async function lvSave(){const dept=document.getElementById('lvDept').value,name=document.getElementById('lvName').value,pos=document.getElementById('lvPos').value,type=document.getElementById('lvType').value,start=document.getElementById('lvStart').value,end=document.getElementById('lvEnd').value;const daysVal=parseFloat(document.getElementById('lvDays').value);let days=isNaN(daysVal)?1:daysVal;const reason=document.getElementById('lvReason').value.trim();const delPw=document.getElementById('lvDelPw').value.trim();const isTime=['지각','조퇴','외출'].includes(type);let hours=0;if(isTime){hours=parseFloat(document.getElementById('lvHours').value)||0;days=0}if(!dept){toast('부서 선택');return}if(!name){toast('성명');return}if(!type){toast('휴가유형 선택');return}if(!reason){toast('사유');return}if(!delPw||delPw.length!==4||!/^\d{4}$/.test(delPw)){toast('삭제비번 4자리 숫자 입력');return}if(isTime&&hours<=0){toast('시간을 확인하세요');return}try{const payload={request_date:TODAY,dept,name,position:pos,leave_type:type,start_date:start,end_date:isTime?start:end,days,reason:isTime?reason+' ('+hours+'시간)':reason,writer:name,write_date:TODAY,status:'작성'};const result=await sb('leave_requests','POST',payload);if(result&&result.length){localStorage.setItem('LV_DEL_PW_'+result[0].id,delPw)}if(isTime){await lvUpdateOtNote(name,dept,start,type,hours)}localStorage.setItem('LV_MY_NAME',name);toast('✅ 신청 저장');closeLvForm();lvMySearch()}catch(e){toast('❌ '+e.message)}}
+async function lvSave(){const dept=document.getElementById('lvDept').value,name=document.getElementById('lvName').value,pos=document.getElementById('lvPos').value,type=document.getElementById('lvType').value,start=document.getElementById('lvStart').value,end=document.getElementById('lvEnd').value;const daysVal=parseFloat(document.getElementById('lvDays').value);let days=isNaN(daysVal)?1:daysVal;const reason=document.getElementById('lvReason').value.trim();const delPw=document.getElementById('lvDelPw').value.trim();const isTime=['지각','조퇴','외출'].includes(type);let hours=0;if(isTime){hours=parseFloat(document.getElementById('lvHours').value)||0;days=0}if(!dept){toast('부서 선택');return}if(!name){toast('성명');return}if(!type){toast('휴가유형 선택');return}if(!reason){toast('사유');return}if(!delPw||delPw.length!==4||!/^\d{4}$/.test(delPw)){toast('삭제비번 4자리 숫자 입력');return}if(isTime&&hours<=0){toast('시간을 확인하세요');return}try{const payload={request_date:TODAY,dept,name,position:pos,leave_type:type,start_date:start,end_date:isTime?start:end,days,reason:isTime?reason+' ('+hours+'시간)':reason,writer:name,write_date:TODAY,status:'작성'};const result=await sb('leave_requests','POST',payload);if(result&&result.length){localStorage.setItem('LV_DEL_PW_'+result[0].id,delPw)}if(isTime){await lvUpdateOtNote(name,dept,start,type,hours)}localStorage.setItem('LV_MY_NAME',name);const nMsg=`📋 연차신청 알림\n${dept} ${name}(${pos})\n유형: ${type}\n기간: ${start}${isTime?' '+document.getElementById('lvStartH').value+':'+String(document.getElementById('lvStartM').value).padStart(2,'0')+'~'+document.getElementById('lvEndH').value+':'+String(document.getElementById('lvEndM').value).padStart(2,'0')+'('+hours+'시간)':' ~ '+end+' ('+days+'일)'}\n사유: ${reason}`;sendTelegramByDept(dept,nMsg);sendDiscordByDept(dept,nMsg);toast('✅ 신청 저장');closeLvForm();lvMySearch()}catch(e){toast('❌ '+e.message)}}
 async function lvUpdateOtNote(name,dept,date,type,hours){try{const data=await sb('overtime_reports?today_date=eq.'+date+'&name=eq.'+encodeURIComponent(name)+'&dept=eq.'+encodeURIComponent(dept))||[];if(data.length){const r=data[0];const tag=type+'('+hours+')';const note=r.today_note?(r.today_note.includes(type)?r.today_note:r.today_note+' '+tag):tag;await sb('overtime_reports?id=eq.'+r.id,'PATCH',{today_note:note})}}catch{}}
 async function lvMySearch(){
   // localStorage에 저장된 LV_DEL_PW_{id} 키들에서 ID 목록 추출
