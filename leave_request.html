@@ -761,30 +761,39 @@ async function openSnsReport(){
   const d=new Date(bd);
   const days=['일요일','월요일','화요일','수요일','목요일','금요일','토요일'];
   const dateStr=`${d.getFullYear()}년 ${d.getMonth()+1}월 ${d.getDate()}일 ${days[d.getDay()]}`;
-  
-  // 총인원
   await loadEmpCache();
   const totalEmp=empCache.length;
-  
-  // 당일 연차자 조회
+  // 부서별 인원수
+  const depts=getDepts();
+  const deptEmpCnt={};depts.forEach(dp=>deptEmpCnt[dp]=0);
+  empCache.forEach(e=>{if(e.dept)deptEmpCnt[e.dept]=(deptEmpCnt[e.dept]||0)+1});
+  // 당일 연차자
   let leaveList=[];
   try{leaveList=await sb('leave_requests?start_date=lte.'+bd+'&end_date=gte.'+bd+'&status=in.(작성,검토,확인,승인)&select=dept,name,position')||[]}catch{}
   const absentCount=leaveList.length;
   const attendCount=totalEmp-absentCount;
-  
-  // 연장근무 데이터
+  // 금일 연장근무
   let otData=[];
-  try{otData=await sb('overtime_reports?today_date=eq.'+bd+'&select=dept,name,today_overtime')||[]}catch{}
-  
-  // 부서별 연장근무 인원 집계
-  const depts=getDepts();
-  const otByDept={};depts.forEach(d=>otByDept[d]=0);
-  otData.forEach(r=>{if(pN(r.today_overtime)>0&&r.dept)otByDept[r.dept]=(otByDept[r.dept]||0)+1});
-  
-  // 연차자 목록 부서별 정리
+  try{otData=await sb('overtime_reports?today_date=eq.'+bd+'&select=dept,name,today_normal,today_overtime')||[]}catch{}
+  const otByDept={};depts.forEach(dp=>otByDept[dp]=0);
+  const deptOtHours={};depts.forEach(dp=>deptOtHours[dp]=0);
+  otData.forEach(r=>{const ot=pN(r.today_overtime)||0;if(r.dept){deptOtHours[r.dept]=(deptOtHours[r.dept]||0)+ot;if(ot>0)otByDept[r.dept]=(otByDept[r.dept]||0)+1}});
+  // 연차자 부서별
   const leaveByDept={};
   leaveList.forEach(l=>{if(!leaveByDept[l.dept])leaveByDept[l.dept]=[];leaveByDept[l.dept].push(l.name+(l.position?l.position:''))});
-  
+  // 금주 누적 (월~오늘) → 주52시간 관리
+  const dayOfWeek=d.getDay();const mondayOffset=dayOfWeek===0?-6:1-dayOfWeek;
+  const monday=new Date(d);monday.setDate(d.getDate()+mondayOffset);
+  const monStr=monday.toISOString().split('T')[0];
+  let weekData=[];
+  try{weekData=await sb('overtime_reports?today_date=gte.'+monStr+'&today_date=lte.'+bd+'&select=name,dept,today_normal,today_overtime,holiday_work')||[]}catch{}
+  const weeklyMap={};
+  weekData.forEach(r=>{if(!r.name)return;if(!weeklyMap[r.name])weeklyMap[r.name]={dept:r.dept||'',normal:0,ot:0,hol:0};weeklyMap[r.name].normal+=(pN(r.today_normal)||0);weeklyMap[r.name].ot+=(pN(r.today_overtime)||0);weeklyMap[r.name].hol+=(pN(r.holiday_work)||0)});
+  // 주52시간 초과/위험자
+  const overList=[];const warnList=[];
+  Object.entries(weeklyMap).forEach(([name,v])=>{const total=v.normal+v.ot+v.hol;if(total>52)overList.push({name,dept:v.dept,total});else if(total>=48)warnList.push({name,dept:v.dept,total})});
+
+  // === HTML 생성 ===
   let html=`<h2>일일 근태현황 보고</h2>
     <table class="sns-tbl">
       <tr><td>날짜</td><td colspan="2"><b>${dateStr}</b></td></tr>
@@ -792,21 +801,33 @@ async function openSnsReport(){
       <tr><td style="color:#d32f2f">결근자(연차및휴가)</td><td colspan="2"><b style="color:#d32f2f">${absentCount} 명</b></td></tr>
       <tr class="y"><td class="y">출근 인원</td><td class="y" colspan="2"><b>${attendCount} 명</b></td></tr>
     </table>`;
-  
   if(absentCount>0){
     html+=`<div style="margin:12px 0"><b style="color:#1565c0"># 년차 휴가</b><br>`;
-    Object.entries(leaveByDept).forEach(([dept,names])=>{
-      html+=`<span style="color:#d32f2f">_ ${dept}: ${names.join(', ')}</span><br>`;
-    });
+    Object.entries(leaveByDept).forEach(([dept,names])=>{html+=`<span style="color:#d32f2f">_ ${dept}: ${names.join(', ')}</span><br>`});
     html+=`</div>`;
   }
-  
-  html+=`<div style="margin:12px 0"><b style="color:#d32f2f">※ 금일 연장근무</b><br>`;
+  // 금일 연장근무 + 잔업률
+  html+=`<div style="margin:12px 0"><b style="color:#d32f2f">※ 금일 연장근무</b></div>`;
+  html+=`<table class="sns-tbl"><tr style="background:#f5f5f5"><td style="font-weight:700">부서</td><td style="font-weight:700">인원</td><td style="font-weight:700">잔업</td><td style="font-weight:700">잔업률</td></tr>`;
+  let totalOtPpl=0,totalDeptPpl=0;
   depts.forEach(dept=>{
-    html+=`<span>_ ${dept}: &nbsp;&nbsp;&nbsp;&nbsp;<b>${otByDept[dept]||0}명</b></span><br>`;
+    const cnt=deptEmpCnt[dept]||0;const ot=otByDept[dept]||0;
+    const rate=cnt>0?Math.round(ot/cnt*100):0;
+    totalOtPpl+=ot;totalDeptPpl+=cnt;
+    html+=`<tr><td>${dept}</td><td>${cnt}명</td><td><b>${ot}명</b></td><td style="color:${rate>=80?'#d32f2f':rate>=50?'#e65100':'#333'};font-weight:700">${rate}%</td></tr>`;
   });
-  html+=`</div>`;
-  
+  const totalRate=totalDeptPpl>0?Math.round(totalOtPpl/totalDeptPpl*100):0;
+  html+=`<tr style="background:#fff9c4"><td style="font-weight:700">합계</td><td style="font-weight:700">${totalDeptPpl}명</td><td style="font-weight:700">${totalOtPpl}명</td><td style="font-weight:700;color:#d32f2f">${totalRate}%</td></tr></table>`;
+  // 주52시간 관리
+  const weekLabel=`${parseInt(monStr.split('-')[1])}/${monStr.split('-')[2]}~${parseInt(bd.split('-')[1])}/${bd.split('-')[2]}`;
+  if(overList.length||warnList.length){
+    html+=`<div style="margin:12px 0"><b style="color:#d32f2f">⚠ 주52시간 관리 (${weekLabel})</b><br>`;
+    if(overList.length){html+=`<span style="color:#d32f2f;font-weight:700">🚨 초과자:</span><br>`;overList.forEach(p=>{html+=`<span style="color:#d32f2f">_ ${p.dept} ${p.name}: <b>${p.total}h</b></span><br>`})}
+    if(warnList.length){html+=`<span style="color:#e65100;font-weight:700">⚠ 주의(48h↑):</span><br>`;warnList.forEach(p=>{html+=`<span style="color:#e65100">_ ${p.dept} ${p.name}: <b>${p.total}h</b></span><br>`})}
+    html+=`</div>`;
+  }else{
+    html+=`<div style="margin:12px 0;color:#16a34a"><b>✅ 주52시간 관리 (${weekLabel})</b> — 초과/주의 없음</div>`;
+  }
   document.getElementById('snsContent').innerHTML=html;
   document.getElementById('snsOverlay').style.display='block';
 }
