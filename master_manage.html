@@ -53,7 +53,7 @@ input[type="file"]{display:none}
 <body>
 <div class="hdr">
 <h1>📋 마스터 관리</h1>
-<p>소재 · 알림수신자 · 고객사 · 기종 · ntfy알림 마스터 통합관리</p>
+<p>소재 · 알림수신자 · 고객사 · 기종 마스터 통합관리</p>
 </div>
 <div class="tabs">
 <div class="tab on" onclick="swTab(0)">🧱 소재</div>
@@ -63,7 +63,6 @@ input[type="file"]{display:none}
 <div class="tab" onclick="swTab(4)">⚙ 가공기종</div>
 <div class="tab" onclick="swTab(5)">🔩 레이스웨이</div>
 <div class="tab" onclick="swTab(6)">⚙ DB설정</div>
-<div class="tab" onclick="swTab(7)">🔔 ntfy알림</div>
 </div>
 
 <!-- ===== 0: 소재 마스터 ===== -->
@@ -274,48 +273,6 @@ input[type="file"]{display:none}
 </div>
 
 <div class="toast" id="toast"></div>
-
-<!-- ===== 7: ntfy 알림 설정 ===== -->
-<div class="pnl" id="pnl7">
-<div class="form-wrap">
-  <div class="card">
-    <div class="card-title" style="justify-content:space-between">
-      <span>🔔 ntfy 알림 토픽 관리</span>
-      <button class="btn-sm" onclick="loadNtfyTopics(true)" style="background:var(--accent2);color:#fff">🔄</button>
-    </div>
-    <div style="font-size:11px;color:var(--text3);line-height:1.6;margin-bottom:12px;padding:8px 10px;background:rgba(79,140,255,.06);border-radius:8px">
-      💡 대항목(카테고리)별 ntfy 토픽(방 이름)을 설정합니다.<br>
-      각 점검 HTML이 여기 지정된 토픽으로 메세지를 발송하고,<br>
-      관리자는 ntfy 앱에서 원하는 토픽을 구독하여 알림을 받습니다.
-    </div>
-
-    <!-- 카테고리 추가 -->
-    <div style="display:flex;gap:6px;margin-bottom:12px">
-      <input type="text" id="ntfyCatName" placeholder="대항목 (예: 생산설비점검)" style="flex:1;padding:8px 10px;font-size:13px;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit">
-      <button class="btn-sm" onclick="addNtfyCat()" style="background:var(--accent);color:#fff">+ 대항목</button>
-    </div>
-
-    <!-- 토픽 목록 -->
-    <div id="ntfyList"></div>
-
-    <!-- 테스트 발송 -->
-    <div style="margin-top:16px;padding-top:12px;border-top:1px solid rgba(255,255,255,.06)">
-      <div class="card-title">🧪 테스트 발송</div>
-      <div class="fg-row" style="margin-bottom:8px">
-        <div class="fg">
-          <label>토픽 선택</label>
-          <select id="ntfyTestTopic" style="padding:8px;font-size:13px"></select>
-        </div>
-        <div class="fg">
-          <label>메세지</label>
-          <input type="text" id="ntfyTestMsg" value="테스트 알림입니다" style="padding:8px;font-size:13px">
-        </div>
-      </div>
-      <button class="btn-sm" onclick="testNtfySend()" style="width:100%;background:linear-gradient(135deg,#e94560,#c0392b);color:#fff;padding:10px;font-size:13px">🔔 테스트 알림 발송</button>
-    </div>
-  </div>
-</div>
-</div>
 
 <script>
 const LS='MASTER_MANAGE_STG';
@@ -775,138 +732,6 @@ async function delRwItem(id){if(!confirm('삭제?'))return;try{await sbDel('part
 async function delRwByCust(cust){const items=_rw.filter(r=>r.customer===cust);if(!confirm(cust+' '+items.length+'건 삭제?'))return;try{for(const r of items)await sbDel('part_hierarchy',r.id);toast('✅ 삭제');await loadRW(true)}catch(e){}}
 
 // ===== 설정 =====
-// ===== ntfy 알림 토픽 관리 =====
-let _ntfyCats=[]; // [{id, cat, topics:[{id, name, topic}]}]
-
-async function loadNtfyTopics(force){
-  if(!isOk())return;
-  try{
-    // 대항목 로드
-    const cats=await sbSelect('common_code','code_group=eq.ntfy_category&order=sort_order.asc');
-    // 소항목(토픽) 로드
-    const topics=await sbSelect('common_code','code_group=eq.ntfy_topic&order=sort_order.asc');
-    _ntfyCats=(cats||[]).map(c=>({
-      id:c.id,
-      cat:String(c.code_value||'').trim(),
-      sort:c.sort_order||0,
-      topics:(topics||[]).filter(t=>(String(t.note||'').split('|')[0]||'').trim()===String(c.code_value||'').trim()).map(t=>({
-        id:t.id,
-        name:String(t.note||'').split('|')[1]||'',
-        topic:String(t.code_value||'').trim()
-      }))
-    }));
-  }catch(e){_ntfyCats=[]}
-  renderNtfyTopics();
-  renderNtfyTestSelect();
-}
-
-function renderNtfyTopics(){
-  const c=document.getElementById('ntfyList');
-  if(!_ntfyCats.length){c.innerHTML='<div style="text-align:center;padding:20px;color:var(--text3);font-size:12px">등록된 대항목이 없습니다</div>';return}
-  c.innerHTML=_ntfyCats.map(cat=>{
-    const topicHtml=cat.topics.map(t=>
-      '<div class="list-item" style="padding:10px 12px;margin-bottom:6px"><span style="font-size:14px">📡</span><span class="li-name" style="font-size:13px;flex:1">'+esc(t.name)+'</span><span style="color:var(--accent);font-size:11px;font-family:monospace">#'+esc(t.topic)+'</span><button class="li-btn" onclick="copyTopic(\''+esc(t.topic)+'\')" style="background:rgba(79,140,255,.15);color:var(--accent);font-size:10px" title="토픽 복사">📋</button><button class="li-btn li-del" onclick="delNtfyTopic('+t.id+',\''+esc(cat.cat)+'\')">✕</button></div>'
-    ).join('');
-    return '<div style="margin-bottom:14px;border:1px solid rgba(255,255,255,.1);border-radius:12px">'+
-      '<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;background:rgba(255,255,255,.04);border-radius:12px 12px 0 0">'+
-        '<span style="font-size:15px;font-weight:700">'+esc(cat.cat)+' <span style="color:var(--text3);font-weight:400;font-size:11px">('+cat.topics.length+'개)</span></span>'+
-        '<span style="display:flex;gap:4px"><button class="li-btn li-del" onclick="event.stopPropagation();delNtfyCat('+cat.id+')">✕</button></span>'+
-      '</div>'+
-      '<div style="padding:14px">'+
-        topicHtml+
-        '<div style="margin-top:12px">'+
-          '<div style="display:flex;gap:6px;margin-bottom:8px">'+
-            '<input type="text" id="ntfySubName_'+cat.id+'" placeholder="소항목명" style="flex:1;min-width:0;padding:10px;font-size:13px;background:var(--surface);border:1.5px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit">'+
-            '<input type="text" id="ntfySubTopic_'+cat.id+'" placeholder="토픽명" style="flex:1;min-width:0;padding:10px;font-size:13px;background:var(--surface);border:1.5px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit">'+
-          '</div>'+
-          '<button class="btn-sm" onclick="addNtfyTopic('+cat.id+',\''+esc(cat.cat)+'\')" style="width:100%;background:var(--accent);color:#fff;padding:10px;font-size:13px">💾 서버에 저장</button>'+
-        '</div>'+
-      '</div>'+
-    '</div>';
-  }).join('');
-}
-
-function renderNtfyTestSelect(){
-  const sel=document.getElementById('ntfyTestTopic');
-  if(!sel)return;
-  sel.innerHTML='<option value="">선택</option>'+_ntfyCats.map(cat=>
-    cat.topics.map(t=>'<option value="'+esc(t.topic)+'">'+esc(cat.cat)+' → '+esc(t.name)+' (#'+esc(t.topic)+')</option>').join('')
-  ).join('');
-}
-
-async function addNtfyCat(){
-  const name=document.getElementById('ntfyCatName').value.trim();
-  if(!name){toast('대항목명을 입력하세요');return}
-  if(_ntfyCats.find(c=>c.cat===name)){toast('⚠ 이미 존재');return}
-  const ns=_ntfyCats.length?Math.max(..._ntfyCats.map(c=>c.sort))+1:1;
-  try{
-    await sbInsert('common_code',{code_group:'ntfy_category',code_value:name,sort_order:ns,note:''});
-    document.getElementById('ntfyCatName').value='';
-    toast('✅ '+name+' 추가');
-    await loadNtfyTopics(true);
-  }catch(e){toast('❌ '+e.message)}
-}
-
-async function delNtfyCat(id){
-  const cat=_ntfyCats.find(c=>c.id===id);
-  if(!cat)return;
-  if(!confirm(cat.cat+' 카테고리 삭제? (소항목 '+cat.topics.length+'개 포함)'))return;
-  try{
-    // 소항목 삭제
-    for(const t of cat.topics) await sbDel('common_code',t.id);
-    // 대항목 삭제
-    await sbDel('common_code',id);
-    toast('삭제됨');
-    await loadNtfyTopics(true);
-  }catch(e){toast('❌ '+e.message)}
-}
-
-async function addNtfyTopic(catId,catName){
-  const name=document.getElementById('ntfySubName_'+catId).value.trim();
-  const topic=document.getElementById('ntfySubTopic_'+catId).value.trim().replace(/\s/g,'-');
-  if(!name||!topic){toast('소항목명과 토픽을 입력하세요');return}
-  const cat=_ntfyCats.find(c=>c.id===catId);
-  const ns=cat?cat.topics.length+1:1;
-  try{
-    await sbInsert('common_code',{code_group:'ntfy_topic',code_value:topic,note:catName+'|'+name,sort_order:ns});
-    document.getElementById('ntfySubName_'+catId).value='';
-    document.getElementById('ntfySubTopic_'+catId).value='';
-    toast('✅ #'+topic+' 추가');
-    await loadNtfyTopics(true);
-  }catch(e){toast('❌ '+e.message)}
-}
-
-async function delNtfyTopic(id,catName){
-  if(!confirm('토픽 삭제?'))return;
-  try{await sbDel('common_code',id);toast('삭제됨');await loadNtfyTopics(true)}catch(e){}
-}
-
-function copyTopic(topic){
-  navigator.clipboard.writeText(topic).then(()=>toast('📋 복사됨: '+topic)).catch(()=>{
-    const t=document.createElement('textarea');t.value=topic;document.body.appendChild(t);t.select();document.execCommand('copy');document.body.removeChild(t);toast('📋 복사됨: '+topic);
-  });
-}
-
-async function testNtfySend(){
-  const topic=document.getElementById('ntfyTestTopic').value;
-  const msg=document.getElementById('ntfyTestMsg').value.trim();
-  const server='https://ntfy.sh';
-  if(!topic){toast('토픽을 선택하세요');return}
-  if(!msg){toast('메세지를 입력하세요');return}
-  try{
-    await fetch(server+'/'+topic,{
-      method:'POST',
-      headers:{'Tags':'white_check_mark,test_tube','Priority':'3'},
-      body:msg+' ('+new Date().toLocaleTimeString()+')'
-    });
-    toast('✅ 발송 완료! 앱에서 확인하세요');
-  }catch(e){toast('❌ '+e.message)}
-}
-
-// ntfy 토픽 조회 (외부 HTML에서 사용)
-// 사용법: const topics = await getNtfyTopics('생산설비점검');
-// → [{name:'점검완료',topic:'tj-p-done'}, {name:'NG발생',topic:'tj-p-ng'}]
-
 function loadStgUI(){const s=getStg();document.getElementById('stgUrl').value=s.sb_url||'';document.getElementById('stgKey').value=s.sb_key||''}
 function saveStg(){const s={sb_url:document.getElementById('stgUrl').value.trim().replace(/\/$/,''),sb_key:document.getElementById('stgKey').value.trim()};localStorage.setItem(LS,JSON.stringify(s));document.getElementById('stgSaveStatus').textContent='✅ 저장 ('+new Date().toLocaleTimeString()+')';document.getElementById('stgSaveStatus').style.color='#22c55e'}
 async function testConn(){const st=document.getElementById('stgStatus');const u=document.getElementById('stgUrl').value.trim(),k=document.getElementById('stgKey').value.trim();if(!u||!k){st.textContent='❌ 입력 필요';st.style.color='#ef4444';return}try{const r=await fetch(u+'/rest/v1/common_code?select=id&limit=1',{headers:{'apikey':k,'Authorization':'Bearer '+k}});st.textContent=r.ok?'✅ 연결 성공':'❌ '+r.status;st.style.color=r.ok?'#22c55e':'#ef4444'}catch(e){st.textContent='❌ '+e.message;st.style.color='#ef4444'}}
@@ -914,7 +739,7 @@ async function testConn(){const st=document.getElementById('stgStatus');const u=
 // ===== 초기화 =====
 window.addEventListener('DOMContentLoaded',()=>{
   if(!localStorage.getItem(LS)){localStorage.setItem(LS,JSON.stringify({sb_url:'https://omngtyewdaqpphnzeate.supabase.co',sb_key:'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tbmd0eWV3ZGFxcHBobnplYXRlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4ODk4ODksImV4cCI6MjA5MDQ2NTg4OX0.Zxur3t02JHtOcXforCMSwO3i2mMaf5sViE0tXXUC0-s'}))}
-  if(isOk()){loadMM();loadCustTab();loadNtfyTopics()}
+  if(isOk()){loadMM();loadCustTab()}
   else{document.getElementById('pnl0').insertAdjacentHTML('afterbegin','<div style="background:rgba(239,68,68,.15);border:1.5px solid rgba(239,68,68,.3);border-radius:10px;padding:12px;margin:0 12px 12px;font-size:12px;color:#fca5a5;text-align:center">⚠️ Supabase 미설정 — ⚙ DB설정 탭</div>')}
 });
 </script>
