@@ -303,7 +303,7 @@ async function sbDelete(table,query){const u=getSbUrl(),k=getSbKey();await fetch
 
 // ===== 탭 =====
 async function swTab(n){document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('on',i===n));document.querySelectorAll('.pnl').forEach((p,i)=>p.classList.toggle('on',i===n));if(n===1){loadSettingsUI()
-    renderNtfyRules();renderTgRules();renderDcRules();;if(isConfigured())await loadRefPhotosFromServer();renderRefPhotoList()}}
+    _loadAllRulesFromServer();renderNtfyRules();renderTgRules();renderDcRules();;if(isConfigured())await loadRefPhotosFromServer();renderRefPhotoList()}}
 
 // ===== 날짜/시간 =====
 function setDateTimeNow(){const n=new Date();document.getElementById('checkDate').value=n.toISOString().split('T')[0];document.getElementById('checkTime').value=String(n.getHours()).padStart(2,'0')+':'+String(n.getMinutes()).padStart(2,'0')}
@@ -559,12 +559,7 @@ async function testDiscordAll(){const rules=getDcRules();const st=document.getEl
   st.textContent='✅ '+sent+'/'+rules.length+'개 발송 완료';st.style.color='#22c55e'}
 
 // ===== 통합 설정 저장 =====
-function saveAllSettings(){
-  const s=getSettings();
-  s.sb_url='https://omngtyewdaqpphnzeate.supabase.co';
-  localStorage.setItem(LS_KEY,JSON.stringify(s));
-  document.getElementById('stgSaveStatus').textContent='✅ 저장 완료 ('+new Date().toLocaleTimeString()+')';
-  document.getElementById('stgSaveStatus').style.color='#22c55e';updateConnInfo()}
+async function saveAllSettings(){const st=document.getElementById('stgSaveStatus');st.textContent='서버 저장 중...';st.style.color='var(--text3)';try{await _saveAllRulesToServer();st.textContent='\u2705 서버 저장 완료 ('+new Date().toLocaleTimeString()+')';st.style.color='#22c55e'}catch(e){st.textContent='\u274c '+e.message;st.style.color='#ef4444'}updateConnInfo()}
 function updateConnInfo(){
   const s=getSettings();const sbOk=!!(s.sb_url&&s.sb_key);
   const tgCnt=getTgRules().length;const dcCnt=getDcRules().length;const ntfyCnt=getNtfyRules().length;
@@ -573,6 +568,34 @@ function updateConnInfo(){
     (tgCnt?'🟢':'🔴')+' 텔레그램: '+tgCnt+'명<br>'+
     (dcCnt?'🟢':'🔴')+' 디스코드: '+dcCnt+'개 Webhook<br>'+
     (ntfyCnt?'🟢':'🔴')+' ntfy: '+ntfyCnt+'개 규칙'}
+
+
+// ===== 알림규칙 서버 저장/로드 =====
+async function _saveRulesToServer(cg,rules){
+  const json=JSON.stringify(rules);
+  try{
+    await fetch(getSbUrl()+'/rest/v1/common_code?code_group=eq.'+cg,{method:'DELETE',headers:{'apikey':getSbKey(),'Authorization':'Bearer '+getSbKey()}});
+    if(rules.length){ await fetch(getSbUrl()+'/rest/v1/common_code',{method:'POST',headers:{'Content-Type':'application/json','apikey':getSbKey(),'Authorization':'Bearer '+getSbKey(),'Prefer':'return=representation'},body:JSON.stringify({code_group:cg,code_value:json,sort_order:0})}); }
+  }catch(e){console.log('서버 저장 실패('+cg+'):',e)}
+}
+async function _loadRulesFromServer(cg,lsKey,renderFn){
+  try{
+    const res=await fetch(getSbUrl()+'/rest/v1/common_code?select=*&code_group=eq.'+cg+'&limit=1',{headers:{'apikey':getSbKey(),'Authorization':'Bearer '+getSbKey()}});
+    if(res.ok){const data=await res.json();if(data&&data.length&&data[0].code_value){
+      localStorage.setItem(lsKey,data[0].code_value);if(renderFn)renderFn();
+    }}
+  }catch(e){console.log('서버 로드 실패('+cg+'):',e)}
+}
+async function _saveAllRulesToServer(){
+    await _saveRulesToServer('w_chk_ntfy',getNtfyRules());
+    await _saveRulesToServer('w_chk_tg',getTgRules());
+    await _saveRulesToServer('w_chk_dc',getDcRules());
+}
+async function _loadAllRulesFromServer(){
+    await _loadRulesFromServer('w_chk_ntfy','W_NTFY_RULES',renderNtfyRules);
+    await _loadRulesFromServer('w_chk_tg','W_TG_RULES',renderTgRules);
+    await _loadRulesFromServer('w_chk_dc','W_DC_RULES',renderDcRules);
+}
 
 </script>
 </body>
