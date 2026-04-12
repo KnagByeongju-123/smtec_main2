@@ -243,10 +243,11 @@
   <div class="card">
     <div class="card-tit">📧 메일 알림 설정</div>
     <div class="info-box blue" style="font-size:10px">GAS 웹앱 URL은 Supabase common_code 테이블에 저장됩니다 (code_group: mail_gas)<br>수신자는 code_group: mat_mail에 저장됩니다.</div>
-    <div class="fg"><label>GAS 메일 웹앱 URL</label><input type="password" id="cfgMailGas" placeholder="https://script.google.com/macros/s/.../exec"></div>
+    <div class="fg"><label>GAS 메일 웹앱 URL</label>
+      <div style="padding:10px 12px;font-size:14px;background:#eee;border:1.5px solid #ddd;border-radius:8px;color:#999;letter-spacing:2px;user-select:none;pointer-events:none">••••••••••••••••••••••••••••••••••••••••••••••••</div>
+    </div>
     <div class="btn-row">
-      <button class="btn btn-sm btn-green" onclick="saveMailGas()">💾 저장</button>
-      <button class="btn btn-sm btn-gray" onclick="testMailGas()">🔌 테스트</button>
+      <button class="btn btn-sm btn-gray" onclick="testMailGas()">🔌 연결 테스트</button>
     </div>
     <div id="mailGasStatus" style="font-size:11px;color:#888;margin-top:4px"></div>
     <hr style="border:none;border-top:1px solid #eee;margin:12px 0">
@@ -778,53 +779,31 @@ function showToast(m){
 let _mailGasUrl='';
 
 async function loadMailGasCfg(){
-  const el=document.getElementById('cfgMailGas');
-  // 서버에서 로드
   try{
     const data=await sbSelect('common_code',{code_group:'eq.mail_gas',order:'sort_order.asc'},'code_value,sort_order');
     if(data&&data.length){
       const r=data.find(x=>x.sort_order===0);
-      if(r&&r.code_value){_mailGasUrl=String(r.code_value).trim();if(el)el.value=_mailGasUrl}
+      if(r&&r.code_value)_mailGasUrl=String(r.code_value).trim();
     }
   }catch(e){console.log('메일 설정 로드 실패:',e)}
-  // 서버에 없으면 localStorage fallback
   if(!_mailGasUrl){
     const lv=localStorage.getItem('MATERIAL_MAIL_GAS_URL')||'';
-    if(lv){_mailGasUrl=lv;if(el)el.value=lv}
+    if(lv)_mailGasUrl=lv;
   }
 }
 
 async function saveMailGas(){
-  const v=document.getElementById('cfgMailGas').value.trim();
   const st=document.getElementById('mailGasStatus');
-  if(!v){st.textContent='⚠ URL 비어있음 (메일 비활성)';st.style.color='#e65100';return}
-  st.textContent='서버 저장 중...';st.style.color='#1565c0';
-  try{
-    // 기존 삭제 후 새로 INSERT (upsert 대용)
-    const SB_URL=getSbUrl(),SB_KEY=getSbKey();
-    await fetch(SB_URL+'/rest/v1/common_code?code_group=eq.mail_gas&sort_order=eq.0',{
-      method:'DELETE',headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY}
-    });
-    await sbInsert('common_code',[{code_group:'mail_gas',code_value:v,sort_order:0}]);
-    _mailGasUrl=v;
-    localStorage.setItem('MATERIAL_MAIL_GAS_URL',v); // fallback 유지
-    st.textContent='✅ 서버 저장 완료';st.style.color='#2e7d32';
-    showToast('💾 메일 설정 서버 저장');
-    updateConnStatus();
-  }catch(e){
-    st.textContent='❌ 서버 저장 실패: '+e.message;st.style.color='#c62828';
-    // fallback: localStorage
-    localStorage.setItem('MATERIAL_MAIL_GAS_URL',v);_mailGasUrl=v;
-  }
+  if(!_mailGasUrl){st.textContent='⚠ 서버에 GAS URL 미등록';st.style.color='#e65100';return}
+  st.textContent='✅ GAS URL: 서버 설정됨';st.style.color='#2e7d32';
 }
 
 async function testMailGas(){
   const st=document.getElementById('mailGasStatus');
-  const url=document.getElementById('cfgMailGas').value.trim();
-  if(!url){st.textContent='❌ URL을 입력하세요';st.style.color='#c62828';return}
+  if(!_mailGasUrl){st.textContent='❌ 서버에 GAS URL 미등록';st.style.color='#c62828';return}
   st.textContent='테스트 중...';st.style.color='#1565c0';
   try{
-    const res=await fetch(url+'?action=ping');
+    const res=await fetch(_mailGasUrl+'?action=ping');
     const data=await res.json();
     if(data.success){
       st.textContent='✅ 연결 성공 (잔여 발송: '+data.quota+'통/일)';st.style.color='#2e7d32';
@@ -846,6 +825,8 @@ async function histFetch(){
   try{const r=await fetch(url,{headers:{'apikey':getSbKey(),'Authorization':'Bearer '+getSbKey()}});if(!r.ok)throw new Error(r.status);return{ok:true,data:await r.json()}}catch(e){return{ok:false,msg:e.message}}
 }
 async function histQuery(){
+  const pw=prompt('조회 암호를 입력하세요 (현재 시간분 4자리):');
+  if(!pw||pw!==getHHMM()){showToast('❌ 암호 불일치');return}
   const st=document.getElementById('histStatus'),area=document.getElementById('histArea');
   st.textContent='조회 중...';area.innerHTML='';
   const r=await histFetch();if(!r.ok){st.textContent='❌ '+r.msg;st.style.color='#c62828';return}
