@@ -201,7 +201,7 @@ function renderFiles(files){
     const iconEmoji=getIconEmoji(f);
     const size=f.size?formatSize(f.size):'';
     const date=f.modifiedDate?formatDate(f.modifiedDate):'';
-    const meta=[size,date].filter(Boolean).join(' · ');
+    const meta=[f.path?'📁 '+f.path:'',size,date].filter(Boolean).join(' · ');
     
     a.innerHTML=`
       <div class="file-icon ${iconClass}">${iconEmoji}</div>
@@ -276,12 +276,41 @@ function renderBreadcrumb(){
 }
 
 // ===== Search =====
-function doSearch(){
-  const q=document.getElementById('searchInput').value.trim().toLowerCase();
+async function doSearch(){
+  const q=document.getElementById('searchInput').value.trim();
   if(!q){renderFiles(allFiles);document.getElementById('fileCount').textContent=allFiles.length+'건';return}
-  const filtered=allFiles.filter(f=>(f.name||'').toLowerCase().includes(q));
-  renderFiles(filtered);
-  document.getElementById('fileCount').textContent=filtered.length+'/'+allFiles.length+'건';
+  
+  // 로컬 필터 (현재 폴더)
+  const local=allFiles.filter(f=>(f.name||'').toLowerCase().includes(q.toLowerCase()));
+  
+  // GAS 서버 재귀 검색 (하위 폴더 포함)
+  const gasUrl=getGasUrl();
+  if(!gasUrl){renderFiles(local);document.getElementById('fileCount').textContent=local.length+'/'+allFiles.length+'건';return}
+  
+  const listEl=document.getElementById('fileList');
+  listEl.innerHTML='<div class="status loading">🔍 하위 폴더 포함 검색 중...</div>';
+  
+  try{
+    const rootId=getRootFolderId();
+    const url=gasUrl+'?action=search&folderId='+encodeURIComponent(rootId)+'&query='+encodeURIComponent(q);
+    const res=await fetch(url);
+    const data=await res.json();
+    
+    if(data.success){
+      const results=data.files||[];
+      renderFiles(results);
+      document.getElementById('fileCount').textContent=results.length+'건 (전체 검색)';
+      if(!results.length) listEl.innerHTML='<div class="status">검색결과 없음: "'+q+'"</div>';
+    }else{
+      // GAS 검색 실패 시 로컬 필터 fallback
+      renderFiles(local);
+      document.getElementById('fileCount').textContent=local.length+'/'+allFiles.length+'건 (로컬)';
+    }
+  }catch(e){
+    // 네트워크 오류 시 로컬 필터 fallback
+    renderFiles(local);
+    document.getElementById('fileCount').textContent=local.length+'/'+allFiles.length+'건 (로컬)';
+  }
 }
 
 // ===== GAS Guide =====
