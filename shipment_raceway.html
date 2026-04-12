@@ -210,6 +210,23 @@
 <!-- ===== 설정 ===== -->
 <div class="pnl" id="pnl3">
 <div class="form-wrap">
+  <!-- 1. 이력 관리 -->
+  <div class="card" style="border-left:3px solid #f59e0b">
+    <div class="card-title">📊 이력 관리</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+      <div class="fg" style="margin-bottom:0"><label style="font-size:11px">시작일</label><input type="date" id="stgHistFrom"></div>
+      <div class="fg" style="margin-bottom:0"><label style="font-size:11px">종료일</label><input type="date" id="stgHistTo"></div>
+    </div>
+    <div class="fg"><label style="font-size:11px">고객사</label><select id="stgHistCust" style="width:100%;padding:10px;font-size:14px;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit"><option value="">전체</option></select></div>
+    <div style="display:flex;gap:8px;margin-bottom:8px">
+      <button class="submit-btn" onclick="stgHistQuery()" style="flex:1;font-size:14px;padding:12px;background:linear-gradient(135deg,#b45309,#f59e0b)">🔍 조회</button>
+      <button class="submit-btn" onclick="stgHistExcel()" style="flex:1;font-size:14px;padding:12px;background:linear-gradient(135deg,#059669,#34d399)">📦 엑셀</button>
+    </div>
+    <button class="submit-btn" onclick="stgHistDelete()" style="width:100%;font-size:13px;padding:11px;background:rgba(239,68,68,.1);border:1.5px solid rgba(239,68,68,.3);color:#ef4444">🗑 선택범위 삭제</button>
+    <div id="stgHistStatus" style="font-size:11px;margin-top:6px;color:var(--text3)"></div>
+    <div id="stgHistResult" style="margin-top:10px;max-height:300px;overflow-y:auto"></div>
+  </div>
+
   <!-- 고객사 관리 -->
   <div class="card">
     <div class="card-title">🏢 고객사 관리 (공용)</div>
@@ -329,7 +346,7 @@ function kstTime(d){const n=d||kstNow();return String(n.getHours()).padStart(2,'
 function toast(m){const el=document.getElementById('toast');if(!el)return;el.textContent=m;el.classList.add('show');clearTimeout(window._tt);window._tt=setTimeout(()=>el.classList.remove('show'),2000)}
 
 // ===== 탭 =====
-function swTab(n){document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('on',i===n));document.querySelectorAll('.pnl').forEach((p,i)=>p.classList.toggle('on',i===n));if(n===1)initShipLotTab();if(n===2)initHistTab();if(n===3){loadStgUI();_loadAllRulesFromServer()}}
+function swTab(n){document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('on',i===n));document.querySelectorAll('.pnl').forEach((p,i)=>p.classList.toggle('on',i===n));if(n===1)initShipLotTab();if(n===2)initHistTab();if(n===3){loadStgUI();_loadAllRulesFromServer();initStgHist()}}
 
 function initShipLotTab(){
   if(!document.getElementById('shipLotDate').value)document.getElementById('shipLotDate').value=kstDate();
@@ -1231,6 +1248,12 @@ async function _saveAllRulesToServer(){await _saveRule('rw_ntfy',getNtfyRules())
 async function _loadAllRulesFromServer(){await _loadRule('rw_ntfy',NTFY_LS,renderNtfyRules);await _loadRule('rw_tg',TG_LS,renderTgRules);await _loadRule('rw_dc',DC_LS,renderDcRules)}
 async function saveAllRwSettings(){const st=document.getElementById('stgSaveStatus');st.textContent='서버 저장 중...';st.style.color='var(--text3)';try{await _saveAllRulesToServer();st.textContent='✅ 서버 저장 완료 ('+new Date().toLocaleTimeString()+')';st.style.color='#22c55e';toast('💾 서버 저장 완료')}catch(e){st.textContent='❌ '+e.message;st.style.color='#ef4444'}updateRwConnInfo()}
 function updateRwConnInfo(){const el=document.getElementById('rwConnInfo');if(!el)return;const sbOk=ok();const tgCnt=getTgRules().length;const dcCnt=getDcRules().length;const ntfyCnt=getNtfyRules().length;el.innerHTML=(sbOk?'🟢':'🔴')+' Supabase: '+(sbOk?'설정됨':'미설정')+'<br>'+(tgCnt?'🟢':'🔴')+' 텔레그램: '+tgCnt+'명<br>'+(dcCnt?'🟢':'🔴')+' 디스코드: '+dcCnt+'개<br>'+(ntfyCnt?'🟢':'🔴')+' ntfy: '+ntfyCnt+'개'}
+
+// ===== 설정탭 이력관리 =====
+function initStgHist(){const t=new Date(),m=new Date();m.setMonth(m.getMonth()-1);if(!document.getElementById('stgHistTo').value)document.getElementById('stgHistTo').value=kstDate(t);if(!document.getElementById('stgHistFrom').value)document.getElementById('stgHistFrom').value=kstDate(m);const sel=document.getElementById('stgHistCust');sel.innerHTML='<option value="">전체</option>';_customers.forEach(c=>{sel.innerHTML+='<option value="'+esc(c.name)+'">'+esc(c.name)+'</option>'})}
+async function stgHistQuery(){const from=document.getElementById('stgHistFrom').value,to=document.getElementById('stgHistTo').value;if(!from||!to){toast('날짜 선택');return}const st=document.getElementById('stgHistStatus'),area=document.getElementById('stgHistResult');st.textContent='조회 중...';area.innerHTML='';let q='move_date=gte.'+from+'&move_date=lte.'+to+'&order=move_date.desc,move_time.desc&limit=500';const cust=document.getElementById('stgHistCust').value;if(cust)q+='&customer=eq.'+encodeURIComponent(cust);try{const d=await sbSelect('move_history_tj',q);if(!d.length){st.textContent='⚠ 이력 없음';area.innerHTML='';return}st.textContent='✅ '+d.length+'건';area.innerHTML='<table style="width:100%;border-collapse:collapse;font-size:10px"><tr style="background:var(--surface2)"><th style="padding:5px 4px;border-bottom:1px solid var(--border)">일자</th><th style="padding:5px 4px;border-bottom:1px solid var(--border)">고객사</th><th style="padding:5px 4px;border-bottom:1px solid var(--border)">품번</th><th style="padding:5px 4px;border-bottom:1px solid var(--border)">수량</th></tr>'+d.slice(0,100).map(r=>'<tr style="border-bottom:1px solid rgba(255,255,255,.04)"><td style="padding:4px">'+(r.move_date||'')+'</td><td style="padding:4px">'+(r.customer||'')+'</td><td style="padding:4px;max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(r.base_part||r.lot||'-')+'</td><td style="padding:4px">'+(r.qty||'-')+'</td></tr>').join('')+'</table>'}catch(e){st.textContent='❌ '+e.message}}
+async function stgHistExcel(){const from=document.getElementById('stgHistFrom').value,to=document.getElementById('stgHistTo').value;if(!from||!to){toast('날짜 선택');return}let q='move_date=gte.'+from+'&move_date=lte.'+to+'&order=move_date.desc&limit=5000';const cust=document.getElementById('stgHistCust').value;if(cust)q+='&customer=eq.'+encodeURIComponent(cust);try{const d=await sbSelect('move_history_tj',q);if(!d.length){toast('데이터 없음');return}const hd=['일자','시간','고객사','품번','LOT','수량','출발지','도착지','작업자','비고'];const rows=d.map(r=>[r.move_date,r.move_time,r.customer,r.base_part,r.lot,r.qty,r.departure,r.destination,r.worker,r.note]);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([hd,...rows]),'출하이력');XLSX.writeFile(wb,'출하이력_'+from.replace(/-/g,'')+'_'+to.replace(/-/g,'')+'.xlsx');toast('📥 다운로드')}catch(e){toast('❌ '+e.message)}}
+async function stgHistDelete(){const from=document.getElementById('stgHistFrom').value,to=document.getElementById('stgHistTo').value;if(!from||!to){toast('날짜 선택');return}const now=new Date();const hhmm=String(now.getHours()).padStart(2,'0')+String(now.getMinutes()).padStart(2,'0');const pw=prompt('암호를 입력하세요:');if(!pw||pw!==hhmm){toast('❌ 암호 불일치');return}if(!confirm(from+' ~ '+to+' 이력 삭제?'))return;try{await fetch(sbUrl()+'/rest/v1/move_history_tj?move_date=gte.'+from+'&move_date=lte.'+to,{method:'DELETE',headers:{'apikey':sbKey(),'Authorization':'Bearer '+sbKey()}});document.getElementById('stgHistStatus').textContent='✅ 삭제 완료';document.getElementById('stgHistResult').innerHTML=''}catch(e){toast('❌ '+e.message)}}
 
 </script>
 <div style="position:fixed;bottom:70px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.85);color:#fff;padding:8px 18px;border-radius:18px;font-size:12px;font-weight:600;z-index:9999;opacity:0;transition:opacity .3s;pointer-events:none" class="toast" id="toast"></div>
