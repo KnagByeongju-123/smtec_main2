@@ -844,20 +844,31 @@ function openSearch(){
 }
 function closeSearch(){document.getElementById('searchOverlay').style.display='none'}
 async function execSearch(){
-  let q='overtime_reports?select=*&order=dept,id';
   const ds=document.getElementById('srcDateStart').value,de=document.getElementById('srcDateEnd').value;
-  if(ds)q+='&today_date=gte.'+ds;
-  if(de)q+='&today_date=lte.'+de;
   const dept=document.getElementById('srcDept').value;
-  if(dept)q+='&dept=eq.'+encodeURIComponent(dept);
   const name=document.getElementById('srcName').value.trim();
-  if(name)q+='&name=like.*'+encodeURIComponent(name)+'*';
   closeSearch();
   try{
-    const data=await sb(q)||[];
+    // 1차: today_date 기준 조회
+    let q='overtime_reports?select=*&order=dept,id';
+    if(ds)q+='&today_date=gte.'+ds;
+    if(de)q+='&today_date=lte.'+de;
+    if(dept)q+='&dept=eq.'+encodeURIComponent(dept);
+    if(name)q+='&name=like.*'+encodeURIComponent(name)+'*';
+    let data=await sb(q)||[];
+    // 2차: today_date에 없으면 holiday_date 기준으로 재조회 (특근계획)
+    if(!data.length && ds){
+      let q2='overtime_reports?select=*&order=dept,id';
+      q2+='&holiday_date=gte.'+ds;
+      if(de)q2+='&holiday_date=lte.'+de;
+      if(dept)q2+='&dept=eq.'+encodeURIComponent(dept);
+      if(name)q2+='&name=like.*'+encodeURIComponent(name)+'*';
+      data=await sb(q2)||[];
+      if(data.length)toast('특근계획 '+data.length+'건 조회');
+    }
     if(!data.length){toast('조건에 맞는 데이터가 없습니다');return}
     otRows=data.map((r,i)=>({_id:r.id,no:i+1,dept:r.dept,name:r.name,position:r.position||'',prev_date:r.prev_date||'',prev_normal:r.prev_normal??'',prev_overtime:r.prev_overtime??'',prev_note:r.prev_note||'',today_date:r.today_date||'',today_normal:r.today_normal??'',today_overtime:r.today_overtime??'',today_snack:r.today_snack??'',today_note:r.today_note||'',holiday_date:r.holiday_date||'',holiday_work:r.holiday_work??'',holiday_note:r.holiday_note||'',approval:r.approval||''}));
-    renderOtTable();toast(data.length+'건 조회 → 편집 가능');
+    renderOtTable();if(!data[0].holiday_date||data[0].today_date===ds)toast(data.length+'건 조회 → 편집 가능');
   }catch(e){toast('조회 실패: '+e.message)}
 }
 // 조회 팝업 드래그
