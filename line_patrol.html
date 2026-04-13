@@ -126,11 +126,11 @@
     .le-btn-del{background:#c62828;color:#fff}
     .le-btn-grid{background:rgba(255,255,255,.2);color:#fff;border:1px solid rgba(255,255,255,.3)}
     .le-btn-clear{background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.3)}
-    .le-canvas-wrap{flex:1;overflow:auto;background:#2a2a3e;position:relative;cursor:default}
+    .le-canvas-wrap{flex:1;overflow:auto;background:#e8eaf0;position:relative;cursor:default;-webkit-overflow-scrolling:touch}
     .le-canvas-wrap.drag-over{cursor:grabbing}
-    #leCanvas{position:relative;margin:20px auto;background:#fff;box-shadow:0 4px 20px rgba(0,0,0,.4)}
+    #leCanvas{position:relative;margin:12px auto;background:#fff;box-shadow:0 4px 20px rgba(0,0,0,.4);display:block}
     #leCanvas.show-grid{background-image:linear-gradient(rgba(100,100,200,.08) 1px,transparent 1px),linear-gradient(90deg,rgba(100,100,200,.08) 1px,transparent 1px)}
-    .le-factory{position:absolute;top:0;left:0;right:0;bottom:0;border:2px solid #333;pointer-events:none;background:rgba(240,244,255,.4)}
+    .le-factory{display:none!important}
     .le-ruler-h{position:absolute;top:0;left:0;right:0;height:16px;background:rgba(200,200,220,.4);pointer-events:none;overflow:hidden}
     .le-ruler-v{position:absolute;top:0;left:0;bottom:0;width:16px;background:rgba(200,200,220,.4);pointer-events:none;overflow:hidden}
     .le-ruler-tick{position:absolute;font-size:7px;color:#666;line-height:1}
@@ -576,31 +576,32 @@ function leInitZoneSel(){
 }
 
 function leLoadZone(zid){
-  // 해당 구역 설비를 에디터로 로드
   const z=ZONES.find(x=>x.id===zid);if(!z||z.type!=='map')return;
-  if(!z.equip.length){leState.equips=[];leRenderCanvas();return}
-  // 기존 좌표에서 공장 크기 추정
-  let mx=0,my=0;
-  z.equip.forEach(e=>{mx=Math.max(mx,(e.x||0)+(e.w||60));my=Math.max(my,(e.y||0)+(e.h||60))});
-  // 이미 공장이 설정되어있지 않으면 px 기준으로 불러오기
-  const hasFactory=(leState.factW>0&&leState.factH>0);
-  if(!hasFactory){
-    // px 좌표 그대로 사용 (m 환산 없이)
-    leState.factW=Math.round(mx/20)||30;
-    leState.factH=Math.round(my/20)||20;
+  leState.equips=[];
+  if(!z.equip.length){leRenderCanvas();return}
+  // 원본 좌표 범위 계산
+  let srcMaxX=0,srcMaxY=0;
+  z.equip.forEach(e=>{srcMaxX=Math.max(srcMaxX,(e.x||0)+(e.w||60));srcMaxY=Math.max(srcMaxY,(e.y||0)+(e.h||60))});
+  // 공장 크기 미입력시 원본 범위로 자동 설정
+  if(!leState.factW||!leState.factH){
+    leState.factW=Math.ceil(srcMaxX*1.1)||50;
+    leState.factH=Math.ceil(srcMaxY*1.1)||30;
     document.getElementById('leFactW').value=leState.factW;
     document.getElementById('leFactH').value=leState.factH;
-    leSetupCanvas();
   }
-  // 설비 로드
+  leSetupCanvas();
+  // 원본 px좌표를 캔버스 비율에 맞게 변환
+  const scaleX=leState.canvasW/(srcMaxX*1.1);
+  const scaleY=leState.canvasH/(srcMaxY*1.1);
   leState.equips=z.equip.map((e,i)=>({
     id:'eq_'+i+'_'+Date.now(),
     no:e.no, mk:e.mk||'', t:e.t||'',
-    wm:+(e.w/leState.scale).toFixed(2)||3,
-    hm:+(e.h/leState.scale).toFixed(2)||2,
-    x:Math.round((e.x||0)*leState.scale/leState.scale),
-    y:Math.round((e.y||0)*leState.scale/leState.scale),
-    w:e.w||60, h:e.h||40
+    x:Math.round((e.x||0)*scaleX),
+    y:Math.round((e.y||0)*scaleY),
+    w:Math.max(24,Math.round((e.w||60)*scaleX)),
+    h:Math.max(16,Math.round((e.h||40)*scaleY)),
+    wm:+((e.w||60)*scaleX/leState.scale).toFixed(2),
+    hm:+((e.h||40)*scaleY/leState.scale).toFixed(2)
   }));
   leRenderCanvas();
 }
@@ -609,9 +610,9 @@ function leSetupCanvas(){
   const fw=leState.factW,fh=leState.factH;
   if(!fw||!fh){alert('공장 크기를 입력하세요.');return false}
   const wrap=document.getElementById('leCanvasWrap');
-  const availW=Math.min(wrap.clientWidth-40||360, 800);
-  const availH=Math.min(400, window.innerHeight-300);
-  const sc=Math.min(availW/fw, availH/fh);
+  const availW=Math.max(200,(wrap.clientWidth||window.innerWidth)-48);
+  const availH=Math.max(200,window.innerHeight-420);
+  const sc=Math.min(availW/fw, availH/fh, 20);
   leState.scale=sc;
   leState.canvasW=Math.round(fw*sc);
   leState.canvasH=Math.round(fh*sc);
@@ -622,7 +623,7 @@ function leSetupCanvas(){
     cv.style.backgroundSize=leState.gridSize+'px '+leState.gridSize+'px';
     cv.classList.add('show-grid');
   }
-  document.getElementById('leFactory').style.display='block';
+  // leFactory 불필요 - 캔버스 자체가 공장 영역
   return true;
 }
 
