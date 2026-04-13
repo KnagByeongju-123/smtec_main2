@@ -1,1 +1,280 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>태진다이텍 품질관리 대시보드</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Malgun Gothic', sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+  
+  .header { background: linear-gradient(135deg, #1e3a5f, #0f172a); padding: 16px 24px; border-bottom: 2px solid #38bdf8; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
+  .header h1 { font-size: 20px; color: #38bdf8; }
+  .header-right { font-size: 12px; color: #94a3b8; text-align: right; }
+  .refresh-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #22c55e; margin-right: 4px; }
+  .refresh-dot.stale { background: #ef4444; }
+  
+  .stats { display: flex; gap: 10px; padding: 14px 24px; flex-wrap: wrap; }
+  .stat-card { background: #1e293b; border-radius: 8px; padding: 10px 16px; flex: 1; min-width: 120px; border-left: 4px solid #38bdf8; }
+  .stat-card.run { border-left-color: #22c55e; }
+  .stat-card.stop { border-left-color: #ef4444; }
+  .stat-card.warn { border-left-color: #eab308; }
+  .stat-card.ng { border-left-color: #f97316; }
+  .stat-label { font-size: 11px; color: #94a3b8; }
+  .stat-value { font-size: 22px; font-weight: 700; }
+  .stat-card.run .stat-value { color: #22c55e; }
+  .stat-card.stop .stat-value { color: #ef4444; }
+  .stat-card.warn .stat-value { color: #eab308; }
+  .stat-card.ng .stat-value { color: #f97316; }
+  
+  .alert-box { margin: 0 24px 12px; padding: 12px 20px; background: #422006; border: 1px solid #eab308; border-radius: 8px; display: none; }
+  .alert-box.show { display: block; }
+  .alert-box h3 { color: #eab308; font-size: 14px; margin-bottom: 6px; }
+  .alert-item { font-size: 13px; color: #fde68a; padding: 3px 0; }
+  
+  .filter-bar { padding: 0 24px 10px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .filter-btn { padding: 6px 14px; border-radius: 6px; border: 1px solid #334155; background: #1e293b; color: #94a3b8; cursor: pointer; font-size: 12px; transition: all 0.2s; }
+  .filter-btn:hover { border-color: #38bdf8; color: #38bdf8; }
+  .filter-btn.active { background: #38bdf8; color: #0f172a; border-color: #38bdf8; font-weight: 600; }
+  
+  .customer-group { margin: 0 24px 16px; background: #1e293b; border-radius: 10px; overflow: hidden; }
+  .customer-header { padding: 12px 20px; background: #334155; display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
+  .customer-header h2 { font-size: 15px; color: #38bdf8; }
+  .customer-stats { font-size: 12px; color: #94a3b8; display: flex; gap: 16px; }
+  .customer-stats .cs-run { color: #22c55e; }
+  .customer-stats .cs-stop { color: #ef4444; }
+  
+  .machine-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .machine-table th { padding: 8px 10px; text-align: left; color: #64748b; font-weight: 600; border-bottom: 1px solid #334155; font-size: 11px; }
+  .machine-table td { padding: 9px 10px; border-bottom: 1px solid #1e293b44; }
+  .machine-table tr:hover { background: #0f172a; }
+  .machine-table tr.stopped-row { opacity: 0.45; }
+  
+  .st-run { color: #22c55e; font-weight: 700; }
+  .st-stop { color: #ef4444; }
+  
+  .rem-urgent { background: #422006; color: #fbbf24; font-weight: 700; border-radius: 4px; padding: 2px 8px; animation: pulse 1.5s infinite; }
+  .rem-soon { color: #eab308; font-weight: 600; }
+  .rem-normal { color: #94a3b8; }
+  
+  .prog { width: 70px; height: 7px; background: #334155; border-radius: 4px; overflow: hidden; display: inline-block; vertical-align: middle; margin-right: 5px; }
+  .prog-fill { height: 100%; border-radius: 4px; }
+  .prog-fill.hi { background: #22c55e; }
+  .prog-fill.md { background: #eab308; }
+  .prog-fill.lo { background: #ef4444; }
+  
+  .insp-o { color: #22c55e; }
+  .insp-n { color: #ef4444; font-weight: 700; }
+  .insp-x { color: #475569; }
+  
+  .footer { padding: 12px 24px; color: #475569; font-size: 11px; text-align: center; border-top: 1px solid #1e293b; margin-top: 8px; }
+  
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.6; } }
+</style>
+</head>
+<body>
 
+<div class="header">
+  <h1>🏭 태진다이텍 품질관리 대시보드</h1>
+  <div class="header-right">
+    <span class="refresh-dot" id="dot"></span>
+    업데이트: <span id="lastUpdate">-</span><br>
+    <span id="countdown">다음 갱신: 30초</span>
+  </div>
+</div>
+
+<div class="stats">
+  <div class="stat-card"><div class="stat-label">전체 설비</div><div class="stat-value" id="sTotal">-</div></div>
+  <div class="stat-card run"><div class="stat-label">가동</div><div class="stat-value" id="sRun">-</div></div>
+  <div class="stat-card stop"><div class="stat-label">비가동</div><div class="stat-value" id="sStop">-</div></div>
+  <div class="stat-card warn"><div class="stat-label">⏰ 30분 이내</div><div class="stat-value" id="sSoon">-</div></div>
+  <div class="stat-card ng"><div class="stat-label">총 NG</div><div class="stat-value" id="sNg">-</div></div>
+</div>
+
+<div class="alert-box" id="alertBox">
+  <h3>⏰ 측정 준비 필요 (잔여 30분 이내)</h3>
+  <div id="alertList"></div>
+</div>
+
+<div class="filter-bar" id="filterBar">
+  <button class="filter-btn active" data-cust="ALL">전체</button>
+</div>
+
+<div id="groupArea"></div>
+
+<div class="footer">태진다이텍 품질관리팀 │ MES → Supabase → Dashboard (30초 자동갱신)</div>
+
+<script>
+const SB_URL = "https://omngtyewdaqpphnzeate.supabase.co";
+const SB_KEY = "sb_publishable_9j2YkkL-7ul1TrhH-NjVdQ_vWDG2-1D";
+let timer = 30;
+let currentFilter = "ALL";
+
+async function load() {
+  try {
+    const r = await fetch(`${SB_URL}/rest/v1/machine_status?select=*&order=machine_code.asc`, {
+      headers: { "apikey": SB_KEY, "Authorization": `Bearer ${SB_KEY}` }
+    });
+    if (!r.ok) throw new Error(r.status);
+    return await r.json();
+  } catch(e) { console.error(e); return null; }
+}
+
+function fmt(n) { return n != null ? Number(n).toLocaleString() : "-"; }
+
+function remStr(min) {
+  if (!min || min <= 0) return { t: "-", c: "rem-normal" };
+  const h = Math.floor(min/60), m = Math.round(min%60);
+  let t = h > 0 ? `${h}시간 ${m}분` : `${m}분`;
+  if (min <= 30) return { t: "⏰ "+t, c: "rem-urgent" };
+  if (min <= 60) return { t, c: "rem-soon" };
+  return { t, c: "rem-normal" };
+}
+
+function inspHtml(v) {
+  if (v === "O") return '<span class="insp-o">O</span>';
+  if (v === "N") return '<span class="insp-n">N</span>';
+  return '<span class="insp-x">-</span>';
+}
+
+function render(data) {
+  if (!data || !data.length) return;
+
+  const total = data.length;
+  const running = data.filter(d => d.machine_status === "N").length;
+  const stopped = total - running;
+  const soon = data.filter(d => d.machine_status === "N" && d.remaining_minutes > 0 && d.remaining_minutes <= 30);
+  const totalNg = data.reduce((s,d) => s + (d.ng_qty||0), 0);
+
+  document.getElementById("sTotal").textContent = total;
+  document.getElementById("sRun").textContent = running;
+  document.getElementById("sStop").textContent = stopped;
+  document.getElementById("sSoon").textContent = soon.length;
+  document.getElementById("sNg").textContent = fmt(totalNg);
+
+  // 업데이트 시각
+  if (data[0].updated_at) {
+    const dt = new Date(data[0].updated_at);
+    document.getElementById("lastUpdate").textContent = dt.toLocaleString("ko-KR");
+    document.getElementById("dot").className = (Date.now()-dt.getTime())/60000 > 10 ? "refresh-dot stale" : "refresh-dot";
+  }
+
+  // 경고
+  const ab = document.getElementById("alertBox");
+  const al = document.getElementById("alertList");
+  if (soon.length) {
+    ab.classList.add("show");
+    al.innerHTML = soon.map(d => {
+      const rm = remStr(d.remaining_minutes);
+      return `<div class="alert-item">🔔 [${d.machine_code}] ${d.machine_name} │ ${d.customer||'미지정'} │ ${d.current_item_code||'-'} → <b>${rm.t}</b> (잔량 ${fmt(d.remaining_qty)})</div>`;
+    }).join("");
+  } else { ab.classList.remove("show"); }
+
+  // 고객사별 그룹
+  const groups = {};
+  data.forEach(d => {
+    const c = d.customer || "미지정";
+    if (!groups[c]) groups[c] = [];
+    groups[c].push(d);
+  });
+
+  // 필터 버튼
+  const fb = document.getElementById("filterBar");
+  const custs = Object.keys(groups).sort();
+  fb.innerHTML = `<button class="filter-btn ${currentFilter==='ALL'?'active':''}" data-cust="ALL">전체 (${total})</button>` +
+    custs.map(c => {
+      const cnt = groups[c].length;
+      const act = currentFilter === c ? 'active' : '';
+      return `<button class="filter-btn ${act}" data-cust="${c}">${c} (${cnt})</button>`;
+    }).join("");
+  
+  fb.querySelectorAll(".filter-btn").forEach(btn => {
+    btn.onclick = () => { currentFilter = btn.dataset.cust; render(data); };
+  });
+
+  // 테이블
+  const area = document.getElementById("groupArea");
+  const showCusts = currentFilter === "ALL" ? custs : [currentFilter];
+  
+  area.innerHTML = showCusts.map(cust => {
+    const rows = groups[cust];
+    if (!rows) return "";
+    const gRun = rows.filter(d => d.machine_status === "N").length;
+    const gStop = rows.length - gRun;
+    const gActual = rows.reduce((s,d) => s + (d.actual_qty||0), 0);
+    const gNg = rows.reduce((s,d) => s + (d.ng_qty||0), 0);
+    
+    const tableRows = rows.map(d => {
+      const isRun = d.machine_status === "N";
+      const st = isRun ? '<span class="st-run">● 가동</span>' : '<span class="st-stop">■ 비가동</span>';
+      
+      const rate = d.target_qty > 0 ? d.actual_qty/d.target_qty*100 : 0;
+      const rateStr = d.target_qty > 0 ? `${rate.toFixed(0)}%` : "-";
+      const fc = rate >= 80 ? "hi" : rate >= 50 ? "md" : "lo";
+      const prog = d.target_qty > 0
+        ? `<div class="prog"><div class="prog-fill ${fc}" style="width:${Math.min(rate,100)}%"></div></div>${rateStr}`
+        : "-";
+      
+      const rm = remStr(d.remaining_minutes);
+      const remH = `<span class="${rm.c}">${rm.t}</span>`;
+      
+      const actCt = d.actual_ct > 0 ? d.actual_ct.toFixed(1) : "-";
+      const tgtCt = d.target_ct > 0 ? d.target_ct.toFixed(1) : "-";
+      
+      const ngH = d.ng_qty > 0 ? `<span style="color:#ef4444;font-weight:600">${d.ng_qty}</span>` : "0";
+      const ins = inspHtml(d.inspect_top) + inspHtml(d.inspect_mid) + inspHtml(d.inspect_bottom);
+      
+      return `<tr class="${isRun ? '' : 'stopped-row'}">
+        <td>${d.machine_code}</td>
+        <td>${d.machine_name||'-'}</td>
+        <td>${st}</td>
+        <td>${d.current_mold||'-'}</td>
+        <td>${d.current_item_code||'-'}</td>
+        <td>${d.item_name||'-'}</td>
+        <td style="text-align:right">${fmt(d.target_qty)}</td>
+        <td style="text-align:right">${fmt(d.actual_qty)}</td>
+        <td>${prog}</td>
+        <td style="text-align:right">${fmt(d.remaining_qty)}</td>
+        <td>${remH}</td>
+        <td>${actCt} / ${tgtCt}</td>
+        <td style="text-align:right">${ngH}</td>
+        <td>${ins}</td>
+        <td>${d.worker||'-'}</td>
+      </tr>`;
+    }).join("");
+    
+    return `<div class="customer-group">
+      <div class="customer-header">
+        <h2>🏢 ${cust}</h2>
+        <div class="customer-stats">
+          <span>${rows.length}대</span>
+          <span class="cs-run">가동 ${gRun}</span>
+          <span class="cs-stop">비가동 ${gStop}</span>
+          <span>생산 ${fmt(gActual)}</span>
+          ${gNg > 0 ? `<span style="color:#f97316">NG ${fmt(gNg)}</span>` : ''}
+        </div>
+      </div>
+      <table class="machine-table">
+        <thead><tr>
+          <th>설비</th><th>설비명</th><th>상태</th><th>금형</th><th>품번</th><th>품명</th>
+          <th>목표</th><th>실적</th><th>달성률</th><th>잔량</th><th>잔여시간</th>
+          <th>CT(실/목)</th><th>NG</th><th>검사</th><th>작업자</th>
+        </tr></thead>
+        <tbody>${tableRows}</tbody>
+      </table>
+    </div>`;
+  }).join("");
+}
+
+async function refresh() { const d = await load(); if (d) render(d); timer = 30; }
+
+setInterval(() => {
+  timer--;
+  if (timer <= 0) refresh();
+  document.getElementById("countdown").textContent = `다음 갱신: ${timer}초`;
+}, 1000);
+
+refresh();
+</script>
+</body>
+</html>
