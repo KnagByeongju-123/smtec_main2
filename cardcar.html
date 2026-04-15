@@ -137,7 +137,7 @@ input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(0.7)}
 <div class="header">
   <div class="header-row">
     <div><h1>부서차량관리</h1><div class="header-sub">외근 · 차량 · 관리주기 통합관리</div></div>
-    <button class="sync-btn" id="syncBtn" onclick="syncAll()">☁️ 동기화</button>
+    <button class="sync-btn" id="syncBtn" onclick="sbSyncAll()">☁️ 동기화</button>
   </div>
   <div class="sync-status" id="syncStatus">마지막 동기화: 없음</div>
 </div>
@@ -158,8 +158,7 @@ input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(0.7)}
 <div id="historyModal" class="history-modal hidden" onclick="if(event.target===this)closeHistory()"><div class="history-box" id="historyBox"></div></div>
 <div id="placePickerModal" class="history-modal hidden" onclick="if(event.target===this)closePlacePicker()"><div class="history-box" id="placePickerBox"></div></div>
 <script>
-const GITHUB_REPO='KnagByeongju-123/knagbyeongju-123.github.io';
-const GITHUB_TOKEN_KEY='gh_token_car';
+
 const MAINT_TYPES=[
   {id:'oil',icon:'🛢️',name:'엔진오일',unit:'km',defaultInterval:5000},
   {id:'tire',icon:'🔄',name:'타이어 교체',unit:'km',defaultInterval:40000},
@@ -201,63 +200,13 @@ function addAudit(action,type,id,detail){auditLog.push({timestamp:getNow(),actio
 let toastT;
 function showToast(m,dur=2500){const e=document.getElementById('toast');e.textContent=m;e.classList.remove('hidden');clearTimeout(toastT);toastT=setTimeout(()=>e.classList.add('hidden'),dur);}
 
-function getToken(){return localStorage.getItem(GITHUB_TOKEN_KEY)||''}
-async function githubRequest(method,path,body){
-  const token=getToken();if(!token)throw new Error('GitHub Token이 없습니다. 요약탭 → 서버 설정에서 등록해주세요.');
-  const res=await fetch(`https://api.github.com/repos/${GITHUB_REPO}/contents/${path}`,{method,headers:{'Authorization':`token ${token}`,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});
-  if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.message||`HTTP ${res.status}`);}
   return res.json();
 }
-async function githubGetFile(path){try{const data=await githubRequest('GET',path);return{content:atob(data.content.replace(/\n/g,'')),sha:data.sha};}catch(e){if(e.message?.includes('404'))return null;throw e;}}
-async function githubPutFile(path,content,sha){return githubRequest('PUT',path,{message:`부서차량관리 ${getLocalTime(getNow())}`,content:btoa(unescape(encodeURIComponent(content))),... (sha?{sha}:{})});}
 
-async function syncAll(){
-  const token=getToken();if(!token){openTokenSetting();return;}
-  const btn=document.getElementById('syncBtn');btn.textContent='⏳';btn.classList.add('syncing');
-  try{
-    const allData={version:2,exportDate:getNow(),outsideRecords,cars,maintRecords,registeredPlaces,auditLog:auditLog.slice(-200)};
-    const existing=await githubGetFile('smtec_main2/부서차량관리_데이터.json');
-    await githubPutFile('smtec_main2/부서차량관리_데이터.json',JSON.stringify(allData,null,2),existing?.sha);
-    lastSyncTime=getNow();localStorage.setItem('wl_last_sync',lastSyncTime);
-    document.getElementById('syncStatus').textContent=`마지막 동기화: ${getLocalTime(lastSyncTime)}`;
-    showToast('☁️ 서버 동기화 완료');
-  }catch(e){showToast('❌ 동기화 실패: '+e.message,3500);}
-  btn.textContent='☁️ 동기화';btn.classList.remove('syncing');
-}
-async function loadFromServer(){
-  const token=getToken();if(!token){openTokenSetting();return;}
-  showToast('⏳ 서버에서 불러오는 중...');
-  try{
-    const file=await githubGetFile('smtec_main2/부서차량관리_데이터.json');
-    if(!file){showToast('❌ 서버에 저장된 데이터가 없습니다');return;}
-    const data=JSON.parse(file.content);
-    const merge=confirm(`서버 데이터:\n외근: ${data.outsideRecords?.length||0}건\n차량: ${data.cars?.length||0}대\n관리주기: ${data.maintRecords?.length||0}건\n\n[확인] 병합  [취소] 전체 교체`);
-    const ma=(e,i)=>{const ids=new Set(e.map(r=>r.id));return[...e,...(i||[]).filter(r=>!ids.has(r.id))];};
-    if(merge){outsideRecords=ma(outsideRecords,data.outsideRecords);cars=ma(cars,data.cars);maintRecords=ma(maintRecords,data.maintRecords);if(data.registeredPlaces){data.registeredPlaces.forEach(p=>{const ex=registeredPlaces.findIndex(r=>r.name===p.name);if(ex>=0)registeredPlaces[ex]={...registeredPlaces[ex],...p};else registeredPlaces.push(p);});}}
-    else{outsideRecords=data.outsideRecords||[];cars=data.cars||[];maintRecords=data.maintRecords||[];if(data.registeredPlaces)registeredPlaces=data.registeredPlaces;if(data.auditLog)auditLog=data.auditLog;}
-    lastSyncTime=getNow();localStorage.setItem('wl_last_sync',lastSyncTime);
-    document.getElementById('syncStatus').textContent=`마지막 동기화: ${getLocalTime(lastSyncTime)}`;
-    saveAll();render();showToast('📥 서버 데이터 불러오기 완료');
-  }catch(e){showToast('❌ 실패: '+e.message,3500);}
-}
-function openTokenSetting(){
-  const sheet=document.getElementById('formSheet');const cur=getToken();
-  sheet.innerHTML=`<div class="form-title">⚙️ GitHub 서버 설정</div>
-  <div style="background:rgba(255,165,0,0.08);border:1px solid rgba(255,165,0,0.2);border-radius:12px;padding:12px;margin-bottom:16px;font-size:12px;color:#d4a054;line-height:1.8">
-    <b>📌 토큰 발급 방법</b><br>
-    GitHub → Settings → Developer settings<br>
-    → Personal access tokens → Fine-grained<br>
-    → 저장소: <b>${GITHUB_REPO}</b><br>
-    → Contents: <b>Read & Write</b> 권한 부여
-  </div>
-  <div class="ig"><label class="lb">GitHub Personal Access Token</label>
-    <input class="inp" id="f_ghToken" type="password" placeholder="ghp_xxxxxxxxxxxx" value="${cur}">
-  </div>
-  <button class="submit-btn" onclick="saveToken()">저장 후 동기화</button>
-  <button class="cancel-btn" onclick="cancelForm()">취소</button>`;
-  document.getElementById('formOverlay').classList.remove('hidden');
-}
-function saveToken(){const t=document.getElementById('f_ghToken').value.trim();if(!t){showToast('❌ 토큰을 입력하세요');return;}localStorage.setItem(GITHUB_TOKEN_KEY,t);cancelForm();showToast('✅ 토큰 저장됨');setTimeout(syncAll,300);}
+
+
+
+
 
 function switchTab(t){
   activeTab=t;
