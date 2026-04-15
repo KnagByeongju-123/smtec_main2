@@ -150,6 +150,7 @@ input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(0.7)}
   <button class="nav-item" data-tab="maint" onclick="switchTab('maint')"><span class="nav-icon">🔧</span><span>관리주기</span></button>
   <button class="nav-item" data-tab="places" onclick="switchTab('places')"><span class="nav-icon">🏢</span><span>즐겨찾기</span></button>
   <button class="nav-item" data-tab="summary" onclick="switchTab('summary')"><span class="nav-icon">📊</span><span>요약</span></button>
+  <button class="nav-item" data-tab="settings" onclick="switchTab('settings')"><span class="nav-icon">⚙️</span><span>설정</span></button>
 </div>
 <div id="formOverlay" class="overlay hidden" onclick="if(event.target===this)cancelForm()"><div class="sheet" id="formSheet"></div></div>
 <div id="delModal" class="del-modal hidden"><div class="del-box"><div style="font-size:36px;margin-bottom:12px">🗑</div><div style="font-size:16px;font-weight:700;margin-bottom:6px">삭제하시겠습니까?</div><div style="font-size:13px;color:#8888a8;margin-bottom:16px">이 작업은 되돌릴 수 없습니다</div><div style="display:flex;gap:10px"><button class="cancel-btn" style="flex:1;margin-top:0" onclick="closeDelete()">취소</button><button class="submit-btn" style="flex:1;margin-top:0;background:linear-gradient(135deg,#ef4444,#dc2626)" onclick="confirmDeleteAction()">삭제</button></div></div></div>
@@ -263,6 +264,7 @@ function switchTab(t){
   document.querySelectorAll('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));
   document.getElementById('fabBtn').classList.toggle('hidden',t!=='outside'&&t!=='cars'&&t!=='maint');
   document.getElementById('monthSelArea').classList.toggle('hidden',t!=='outside'&&t!=='summary');
+  if(t==='settings'){renderSettings();return;}
   render();
 }
 
@@ -554,13 +556,12 @@ function render(){
     h+=`<div class="sum-card"><div class="sum-val">${tod.toFixed(1)}</div><div class="sum-lbl">외근 km</div><div style="font-size:11px;color:var(--text-dim)">${fo.length}건 / ${month}</div></div>`;
     h+=`<div class="sum-card"><div class="sum-val">${cars.length}</div><div class="sum-lbl">등록 차량</div></div></div>`;
     if(dc||wc||iw)h+=`<div style="background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2);border-radius:14px;padding:14px;margin-bottom:12px">${dc?`<div style="font-size:13px;font-weight:700;color:#f87171;margin-bottom:4px">🔴 즉시 교체 필요: ${dc}건</div>`:''}${wc?`<div style="font-size:13px;color:#fb923c;margin-bottom:4px">🟠 곧 교체 필요: ${wc}건</div>`:''}${iw?`<div style="font-size:13px;color:#fbbf24">🟡 보험/검사 만기 임박: ${iw}대</div>`:''}</div>`;
-    h+=`<button class="export-btn" onclick="syncAll()">☁️ GitHub 서버 동기화</button>`;
-    h+=`<button class="export-btn" style="margin-top:6px" onclick="loadFromServer()">📥 서버에서 불러오기</button>`;
+    h+=`<button class="export-btn" onclick="sbSyncAll()">☁️ Supabase 서버 동기화</button>`;
+    h+=`<button class="export-btn" style="margin-top:6px" onclick="sbLoadAll()">📥 서버에서 불러오기</button>`;
     h+=`<button class="export-btn" onclick="exportCSV()">📊 CSV 다운로드</button>`;
     h+=`<div style="display:flex;gap:8px;margin-top:8px"><button class="export-btn" style="margin-top:0;flex:1" onclick="exportAllData()">📤 JSON 백업</button><label class="export-btn" style="margin-top:0;flex:1;cursor:pointer;justify-content:center">📥 JSON 복원<input type="file" accept=".json" style="display:none" onchange="importAllData(event)"></label></div>`;
-    h+=`<button class="export-btn" style="border-color:rgba(99,102,241,0.3);color:#a5b4fc" onclick="openTokenSetting()">⚙️ GitHub 서버 설정</button>`;
     h+=`<button class="export-btn" style="border-color:rgba(255,165,0,0.3);color:#ffb347" onclick="showHistory()">📋 감사 로그</button>`;
-    h+=`<div class="audit-info"><b>📌 안내</b><br>· ☁️ 동기화 버튼으로 GitHub 서버에 자동 백업됩니다<br>· 보험/검사 만기 60일 전부터 경고가 표시됩니다<br>· 관리주기 15% 이내 도달 시 경고 표시됩니다</div>`;
+    h+=`<div class="audit-info"><b>📌 안내</b><br>· ☁️ 동기화 버튼으로 Supabase 서버에 자동 저장됩니다<br>· 보험/검사 만기 60일 전부터 경고가 표시됩니다<br>· 관리주기 15% 이내 도달 시 경고 표시됩니다<br>· ⚙️ 설정탭에서 알림 설정을 할 수 있습니다</div>`;
     area.innerHTML=h;return;
   }
 
@@ -596,7 +597,386 @@ document.getElementById('filterMonth').value=getCurMonth();
 document.getElementById('filterMonth').addEventListener('change',render);
 loadAll();
 if(lastSyncTime)document.getElementById('syncStatus').textContent=`마지막 동기화: ${getLocalTime(lastSyncTime)}`;
+// Supabase 하드코딩
+const SB_URL='https://omngtyewdaqpphnzeate.supabase.co';
+const SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tbmd0eWV3ZGFxcHBobnplYXRlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4ODk4ODksImV4cCI6MjA5MDQ2NTg4OX0.Zxur3t02JHtOcXforCMSwO3i2mMaf5sViE0tXXUC0-s';
+const TG_BOT='8367539669:AAFzZeMULV8B4adNROtENsUc6wr0MvLpSi0';
+const NTFY_SERVER='https://ntfy.sh';
+const LS_NTFY='CAR_NTFY_RULES';
+const LS_TG='CAR_TG_RULES';
+const LS_DC='CAR_DC_RULES';
+const LS_MAIL='CAR_MAIL_RULES';
+_loadAllRulesFromServer().catch(()=>{});
 switchTab('outside');
+
+// ===== SUPABASE HELPERS =====
+async function sbReq(method,table,body,filter){
+  let url=SB_URL+'/rest/v1/'+table;
+  if(filter)url+='?'+filter;
+  const headers={'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Content-Type':'application/json'};
+  if(method==='POST')headers['Prefer']='return=representation';
+  const res=await fetch(url,{method,headers,body:body?JSON.stringify(body):undefined});
+  if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.message||`HTTP ${res.status}`);}
+  if(res.status===204)return null;
+  return res.json();
+}
+async function sbUpsert(table,rows){
+  const res=await fetch(SB_URL+'/rest/v1/'+table,{method:'POST',headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Content-Type':'application/json','Prefer':'resolution=merge-duplicates,return=minimal'},body:JSON.stringify(rows)});
+  if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.message||`HTTP ${res.status}`);}
+}
+async function sbSelect(table,filter,order,limit){
+  let url=SB_URL+'/rest/v1/'+table+'?select=*';
+  if(filter)Object.entries(filter).forEach(([k,v])=>url+='&'+k+'='+v);
+  if(order)url+='&order='+order;
+  if(limit)url+='&limit='+limit;
+  const res=await fetch(url,{headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY}});
+  if(!res.ok)throw new Error('조회 실패 '+res.status);
+  return res.json();
+}
+async function sbDelete(table,filter){
+  let url=SB_URL+'/rest/v1/'+table+'?'+filter;
+  const res=await fetch(url,{method:'DELETE',headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY}});
+  if(!res.ok&&res.status!==204)throw new Error('삭제 실패');
+}
+
+// ===== SUPABASE DATA SYNC =====
+async function sbSyncAll(){
+  const btn=document.getElementById('syncBtn');btn.textContent='⏳';btn.classList.add('syncing');
+  try{
+    // outside_records
+    if(outsideRecords.length){await sbUpsert('car_outside_records',outsideRecords.map(r=>({id:r.id,data:r,updated_at:r.lastModified||r.createdAt||getNow()})));}
+    // cars
+    if(cars.length){await sbUpsert('car_vehicles',cars.map(c=>({id:c.id,data:c,updated_at:c.lastModified||c.createdAt||getNow()})));}
+    // maint
+    if(maintRecords.length){await sbUpsert('car_maint_records',maintRecords.map(m=>({id:m.id,data:m,updated_at:m.lastModified||m.createdAt||getNow()})));}
+    // places
+    if(registeredPlaces.length){await sbUpsert('car_places',registeredPlaces.map(p=>({id:p.id||genId(),data:p})));}
+    lastSyncTime=getNow();localStorage.setItem('wl_last_sync',lastSyncTime);
+    document.getElementById('syncStatus').textContent=`마지막 동기화: ${getLocalTime(lastSyncTime)}`;
+    showToast('☁️ Supabase 동기화 완료');
+    await _saveAllRulesToServer();
+  }catch(e){showToast('❌ 동기화 실패: '+e.message,3500);}
+  btn.textContent='☁️ 동기화';btn.classList.remove('syncing');
+}
+async function sbLoadAll(){
+  showToast('⏳ 서버에서 불러오는 중...');
+  try{
+    const [or,cv,mr,pl]=await Promise.all([
+      sbSelect('car_outside_records',{},'updated_at.desc',5000),
+      sbSelect('car_vehicles',{},'updated_at.desc',200),
+      sbSelect('car_maint_records',{},'updated_at.desc',1000),
+      sbSelect('car_places',{},null,500),
+    ]);
+    const merge=confirm(`서버 데이터:
+외근: ${or?.length||0}건 / 차량: ${cv?.length||0}대
+관리주기: ${mr?.length||0}건 / 즐겨찾기: ${pl?.length||0}건
+
+[확인] 병합  [취소] 전체 교체`);
+    const ma=(e,i)=>{if(!i)return e;const ids=new Set(e.map(r=>r.id));return[...e,...i.filter(r=>!ids.has(r.id))];};
+    const ex=(arr)=>(arr||[]).map(r=>r.data||r);
+    if(merge){outsideRecords=ma(outsideRecords,ex(or));cars=ma(cars,ex(cv));maintRecords=ma(maintRecords,ex(mr));registeredPlaces=ma(registeredPlaces,ex(pl));}
+    else{outsideRecords=ex(or);cars=ex(cv);maintRecords=ex(mr);registeredPlaces=ex(pl);}
+    lastSyncTime=getNow();localStorage.setItem('wl_last_sync',lastSyncTime);
+    document.getElementById('syncStatus').textContent=`마지막 동기화: ${getLocalTime(lastSyncTime)}`;
+    saveAll();render();showToast('📥 서버 데이터 불러오기 완료');
+  }catch(e){showToast('❌ 실패: '+e.message,3500);}
+}
+
+// ===== HISTORY (이력 관리) =====
+async function histFetch(){
+  const start=document.getElementById('histStart').value;const end=document.getElementById('histEnd').value;
+  const filter=document.getElementById('histCarFilter').value;
+  if(!start||!end){showToast('❌ 날짜를 선택하세요');return null;}
+  try{
+    const data=await sbSelect('car_outside_records',{},'updated_at.desc',5000);
+    let rows=(data||[]).map(r=>r.data||r).filter(r=>r.date>=start&&r.date<=end);
+    if(filter)rows=rows.filter(r=>r.carId===filter);
+    return rows;
+  }catch(e){showToast('❌ 조회 실패: '+e.message,3500);return null;}
+}
+async function histPreview(){
+  const rows=await histFetch();if(rows===null)return;
+  const area=document.getElementById('histPreviewArea');
+  if(!rows.length){area.innerHTML='<div style="font-size:12px;color:var(--text-dim);padding:12px;text-align:center">데이터 없음</div>';document.getElementById('histStatus').textContent='0건';return;}
+  const tot=rows.reduce((s,r)=>s+Number(r.distance||0),0);
+  document.getElementById('histStatus').textContent=`✅ ${rows.length}건 / 총 ${tot.toFixed(1)}km`;
+  let h='<table style="width:100%;border-collapse:collapse;font-size:11px"><tr style="background:rgba(255,255,255,0.05)"><th style="padding:6px 4px;border-bottom:1px solid rgba(255,255,255,0.08)">날짜</th><th style="padding:6px 4px;border-bottom:1px solid rgba(255,255,255,0.08)">방문처</th><th style="padding:6px 4px;border-bottom:1px solid rgba(255,255,255,0.08)">거리</th><th style="padding:6px 4px;border-bottom:1px solid rgba(255,255,255,0.08)">차량</th></tr>';
+  rows.slice(0,100).forEach(r=>{const car=cars.find(c=>c.id===r.carId);h+=`<tr style="border-bottom:1px solid rgba(255,255,255,0.04)"><td style="padding:5px 4px">${r.date}</td><td style="padding:5px 4px">${r.visitPlace||r.endPlace||''}</td><td style="padding:5px 4px;color:#81c995">${r.distance||'-'}</td><td style="padding:5px 4px;font-size:10px">${car?car.plate:''}</td></tr>`;});
+  area.innerHTML=h+'</table>';
+}
+function histDownloadExcel(){
+  histFetch().then(rows=>{
+    if(!rows||!rows.length){showToast('❌ 데이터 없음');return;}
+    const hd=['날짜','차량','방문처','목적','출발','도착','거리(km)','등록시각','수정횟수','메모'];
+    const data=rows.map(r=>{const car=cars.find(c=>c.id===r.carId);return[r.date,car?car.plate:'',r.visitPlace||'',r.purpose||'',r.startPlace||'',r.endPlace||'',r.distance||'',getLocalTime(r.createdAt),r.editCount||0,r.memo||''];});
+    const ws=[[...hd],...data];let csv='﻿'+ws.map(row=>row.join(',')).join('
+');
+    const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;
+    const start=document.getElementById('histStart').value.replace(/-/g,'');const end=document.getElementById('histEnd').value.replace(/-/g,'');
+    a.download=`부서차량외근_${start}_${end}.csv`;a.click();URL.revokeObjectURL(url);showToast('📥 다운로드 완료');
+  });
+}
+async function histDeleteFiltered(){
+  const rows=await histFetch();if(!rows||!rows.length){showToast('❌ 데이터 없음');return;}
+  if(!confirm(`${rows.length}건을 서버에서 삭제합니까?`))return;
+  if(!confirm('한번 더 확인합니다. 되돌릴 수 없습니다.'))return;
+  try{
+    const ids=rows.map(r=>r.id);
+    for(let i=0;i<ids.length;i+=50){
+      await sbDelete('car_outside_records','id=in.('+ids.slice(i,i+50).join(',')+')');
+    }
+    outsideRecords=outsideRecords.filter(r=>!ids.includes(r.id));saveAll();
+    document.getElementById('histPreviewArea').innerHTML='';document.getElementById('histStatus').textContent='삭제 완료';
+    showToast('🗑 삭제 완료');
+  }catch(e){showToast('❌ 삭제 실패: '+e.message);}
+}
+
+// ===== 알림 규칙 =====
+function getNtfyRules(){try{return JSON.parse(localStorage.getItem(LS_NTFY)||'[]')}catch{return[]}}
+function saveNtfyRules(r){localStorage.setItem(LS_NTFY,JSON.stringify(r))}
+function getTgRules(){try{return JSON.parse(localStorage.getItem(LS_TG)||'[]')}catch{return[]}}
+function saveTgRules(r){localStorage.setItem(LS_TG,JSON.stringify(r))}
+function getDcRules(){try{return JSON.parse(localStorage.getItem(LS_DC)||'[]')}catch{return[]}}
+function saveDcRules(r){localStorage.setItem(LS_DC,JSON.stringify(r))}
+function getMailRules(){try{return JSON.parse(localStorage.getItem(LS_MAIL)||'[]')}catch{return[]}}
+function saveMailRules(r){localStorage.setItem(LS_MAIL,JSON.stringify(r))}
+const COND_LABEL={always:'저장시',ng:'NG발생시'};
+
+async function _saveRuleGroup(cg,rules){
+  try{
+    await sbDelete('car_settings','code_group=eq.'+cg);
+    if(rules.length){await sbReq('POST','car_settings',{code_group:cg,code_value:JSON.stringify(rules),sort_order:0},null);}
+  }catch(e){}
+}
+async function _loadRuleGroup(cg,lsKey){
+  try{
+    const data=await sbSelect('car_settings',{code_group:'eq.'+cg},null,1);
+    if(data&&data.length&&data[0].code_value){localStorage.setItem(lsKey,data[0].code_value);}
+  }catch(e){}
+}
+async function _saveAllRulesToServer(){
+  await _saveRuleGroup('car_ntfy',getNtfyRules());
+  await _saveRuleGroup('car_tg',getTgRules());
+  await _saveRuleGroup('car_dc',getDcRules());
+  await _saveRuleGroup('car_mail',getMailRules());
+}
+async function _loadAllRulesFromServer(){
+  await _loadRuleGroup('car_ntfy',LS_NTFY);
+  await _loadRuleGroup('car_tg',LS_TG);
+  await _loadRuleGroup('car_dc',LS_DC);
+  await _loadRuleGroup('car_mail',LS_MAIL);
+}
+
+// ===== 알림 발송 =====
+async function sendNtfy(result,data){
+  const rules=getNtfyRules().filter(r=>r.condition==='always'||(r.condition==='ng'&&result==='NG'));
+  if(!rules.length)return;
+  const lines=[`[부서차량관리] ${result==='NG'?'⚠️ NG':'✅ OK'}`,`날짜: ${data.date||''}`,`방문처: ${data.visitPlace||data.endPlace||''}`,`거리: ${data.distance||''}km`];
+  if(data.memo)lines.push(data.memo);
+  for(const r of rules){try{await fetch(NTFY_SERVER+'/'+r.topic,{method:'POST',headers:{Priority:result==='NG'?'5':'3',Tags:result==='NG'?'rotating_light':'white_check_mark'},body:lines.join('\n')});}catch(e){}}
+}
+async function sendTg(result,data){
+  const rules=getTgRules().filter(r=>r.condition==='always'||(r.condition==='ng'&&result==='NG'));
+  if(!rules.length)return;
+  const msg=`🚗 부서차량관리 ${result==='NG'?'⚠️':'✅'}\n날짜: ${data.date||''}\n방문처: ${data.visitPlace||data.endPlace||''}\n거리: ${data.distance||''}km${data.memo?'\n메모: '+data.memo:''}`;
+  for(const r of rules){try{await fetch(`https://api.telegram.org/bot${TG_BOT}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:r.chat_id,text:msg})});}catch(e){}}
+}
+async function sendDc(result,data){
+  const rules=getDcRules().filter(r=>r.condition==='always'||(r.condition==='ng'&&result==='NG'));
+  if(!rules.length)return;
+  const msg=`🚗 **부서차량관리** ${result==='NG'?'⚠️':'✅'}\n날짜: ${data.date||''} / 방문처: ${data.visitPlace||data.endPlace||''} / 거리: ${data.distance||''}km`;
+  for(const r of rules){try{await fetch(r.hook,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:msg})});}catch(e){}}
+}
+
+// ===== 설정탭 RENDER =====
+function renderSettings(){
+  const area=document.getElementById('contentArea');
+  const today=new Date().toISOString().slice(0,10);
+  const monthAgo=new Date(Date.now()-30*24*60*60*1000).toISOString().slice(0,10);
+  const carOptions=cars.map(c=>`<option value="${c.id}">${c.plate}${c.model?' ('+c.model+')':''}</option>`).join('');
+
+  // 알림규칙 HTML 생성 함수
+  function ruleListHtml(rules,delFn){
+    if(!rules.length)return'<div style="font-size:11px;color:var(--text-dimmer);padding:6px 0;text-align:center">등록된 규칙 없음</div>';
+    return rules.map((r,i)=>`<div style="display:flex;align-items:center;gap:6px;padding:6px 8px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;margin-bottom:4px;font-size:11px"><span style="color:var(--text-dimmer);min-width:18px">${i+1}</span><span style="color:#a5b4fc;min-width:48px;font-weight:700">${COND_LABEL[r.condition]||r.condition}</span><span style="flex:1;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.topic||r.chat_id||r.hook||r.email||''}</span>${r.name?`<span style="color:var(--text-dim)">${r.name}</span>`:''}<button onclick="${delFn}(${i})" style="background:rgba(239,68,68,.15);color:#f87171;border:none;border-radius:4px;padding:3px 8px;font-size:11px;font-weight:700;cursor:pointer">✕</button></div>`).join('');
+  }
+
+  let h='';
+
+  // 1. 이력 관리
+  h+=`<div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.07);border-radius:16px;padding:16px;margin-bottom:12px">
+    <div style="font-size:14px;font-weight:800;color:#a5b4fc;margin-bottom:12px;display:flex;align-items:center;gap:6px"><span style="width:3px;height:14px;background:#a5b4fc;border-radius:2px;display:inline-block"></span>📋 이력 관리</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+      <div><label style="font-size:11px;color:var(--text-dim);font-weight:700;display:block;margin-bottom:4px">시작일</label><input type="date" id="histStart" value="${monthAgo}" style="width:100%;padding:9px 10px;font-size:13px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:10px;color:var(--text);font-family:inherit"></div>
+      <div><label style="font-size:11px;color:var(--text-dim);font-weight:700;display:block;margin-bottom:4px">종료일</label><input type="date" id="histEnd" value="${today}" style="width:100%;padding:9px 10px;font-size:13px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:10px;color:var(--text);font-family:inherit"></div>
+    </div>
+    <div style="margin-bottom:8px"><label style="font-size:11px;color:var(--text-dim);font-weight:700;display:block;margin-bottom:4px">차량 필터</label>
+      <select id="histCarFilter" style="width:100%;padding:9px 10px;font-size:13px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:10px;color:var(--text);font-family:inherit"><option value="">전체</option>${carOptions}</select>
+    </div>
+    <div style="display:flex;gap:6px;margin-bottom:6px">
+      <button onclick="histPreview()" style="flex:1;padding:10px;background:linear-gradient(135deg,#6366f1,#8b5cf6);border:none;border-radius:10px;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">🔍 조회</button>
+      <button onclick="histDownloadExcel()" style="flex:1;padding:10px;background:linear-gradient(135deg,rgba(52,168,83,0.6),rgba(34,139,34,0.5));border:none;border-radius:10px;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">📥 엑셀</button>
+      <button onclick="histDeleteFiltered()" style="flex:1;padding:10px;background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.3);border-radius:10px;color:#f87171;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">🗑 DB삭제</button>
+    </div>
+    <div id="histStatus" style="font-size:11px;color:var(--text-dim);margin-bottom:6px"></div>
+    <div id="histPreviewArea" style="max-height:280px;overflow-y:auto"></div>
+  </div>`;
+
+  // 5. ntfy
+  const ntfy=getNtfyRules();
+  h+=`<div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.07);border-radius:16px;padding:16px;margin-bottom:12px">
+    <div style="font-size:14px;font-weight:800;color:#a5b4fc;margin-bottom:10px;display:flex;align-items:center;gap:6px"><span style="width:3px;height:14px;background:#a5b4fc;border-radius:2px;display:inline-block"></span>🔔 ntfy 알림</div>
+    <div style="font-size:11px;color:var(--text-dim);margin-bottom:10px;background:rgba(56,189,248,0.06);border-radius:8px;padding:8px">💡 ntfy.sh 앱 설치 후 방이름 구독. 한글 메시지는 body에만 포함됩니다.</div>
+    <div id="ntfyRuleList">${ruleListHtml(ntfy,'delNtfyRule')}</div>
+    <div style="display:flex;gap:6px;margin-top:8px">
+      <select id="ntfyNewCond" style="width:90px;flex-shrink:0;padding:8px;font-size:12px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:var(--text);font-family:inherit"><option value="always">저장시</option><option value="ng">NG발생시</option></select>
+      <input type="text" id="ntfyNewTopic" placeholder="방이름" style="flex:1;padding:8px;font-size:12px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:var(--text);font-family:inherit">
+      <button onclick="addNtfyRule()" style="padding:8px 14px;background:linear-gradient(135deg,#6366f1,#8b5cf6);border:none;border-radius:8px;color:#fff;font-size:14px;font-weight:700;cursor:pointer">+</button>
+    </div>
+    <div style="display:flex;gap:6px;margin-top:6px">
+      <input type="text" id="ntfyTestMsg" value="ntfy 테스트" style="flex:1;padding:8px;font-size:12px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:var(--text);font-family:inherit">
+      <button onclick="testNtfy()" style="padding:8px 14px;background:linear-gradient(135deg,rgba(239,68,68,0.6),rgba(220,38,38,0.5));border:none;border-radius:8px;color:#fff;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap">🔔 테스트</button>
+    </div>
+    <div id="ntfyStatus" style="font-size:11px;color:var(--text-dim);margin-top:6px"></div>
+  </div>`;
+
+  // 6. 텔레그램
+  const tg=getTgRules();
+  const tgMasked=TG_BOT.substring(0,8)+'••••••••••••••';
+  h+=`<div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.07);border-radius:16px;padding:16px;margin-bottom:12px">
+    <div style="font-size:14px;font-weight:800;color:#a5b4fc;margin-bottom:10px;display:flex;align-items:center;gap:6px"><span style="width:3px;height:14px;background:#a5b4fc;border-radius:2px;display:inline-block"></span>📨 텔레그램 알림</div>
+    <div style="margin-bottom:10px"><div style="font-size:11px;color:var(--text-dim);font-weight:700;margin-bottom:4px">Bot Token (읽기전용)</div>
+      <div style="padding:10px 12px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:8px;font-size:13px;color:var(--text-dim);letter-spacing:1px">${tgMasked}</div>
+    </div>
+    <div id="tgRuleList">${ruleListHtml(tg,'delTgRule')}</div>
+    <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
+      <select id="tgNewCond" style="width:90px;flex-shrink:0;padding:8px;font-size:12px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:var(--text);font-family:inherit"><option value="always">저장시</option><option value="ng">NG발생시</option></select>
+      <input type="text" id="tgNewName" placeholder="이름" style="width:70px;padding:8px;font-size:12px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:var(--text);font-family:inherit">
+      <input type="text" id="tgNewId" placeholder="Chat ID" style="flex:1;min-width:80px;padding:8px;font-size:12px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:var(--text);font-family:inherit">
+      <button onclick="addTgRule()" style="padding:8px 14px;background:linear-gradient(135deg,#6366f1,#8b5cf6);border:none;border-radius:8px;color:#fff;font-size:14px;font-weight:700;cursor:pointer">+</button>
+    </div>
+    <button onclick="testTg()" style="width:100%;margin-top:8px;padding:10px;background:linear-gradient(135deg,rgba(99,102,241,0.5),rgba(139,92,246,0.4));border:none;border-radius:10px;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">📨 텔레그램 테스트</button>
+    <div id="tgStatus" style="font-size:11px;color:var(--text-dim);margin-top:6px"></div>
+  </div>`;
+
+  // 7. 디스코드
+  const dc=getDcRules();
+  h+=`<div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.07);border-radius:16px;padding:16px;margin-bottom:12px">
+    <div style="font-size:14px;font-weight:800;color:#a5b4fc;margin-bottom:10px;display:flex;align-items:center;gap:6px"><span style="width:3px;height:14px;background:#a5b4fc;border-radius:2px;display:inline-block"></span>💬 디스코드 알림</div>
+    <div id="dcRuleList">${ruleListHtml(dc,'delDcRule')}</div>
+    <div style="display:flex;gap:6px;margin-top:8px">
+      <select id="dcNewCond" style="width:90px;flex-shrink:0;padding:8px;font-size:12px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:var(--text);font-family:inherit"><option value="always">저장시</option><option value="ng">NG발생시</option></select>
+      <input type="text" id="dcNewHook" placeholder="Webhook URL" style="flex:1;padding:8px;font-size:12px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:var(--text);font-family:inherit">
+      <button onclick="addDcRule()" style="padding:8px 14px;background:linear-gradient(135deg,#6366f1,#8b5cf6);border:none;border-radius:8px;color:#fff;font-size:14px;font-weight:700;cursor:pointer">+</button>
+    </div>
+    <button onclick="testDc()" style="width:100%;margin-top:8px;padding:10px;background:linear-gradient(135deg,rgba(88,101,242,0.6),rgba(114,137,218,0.5));border:none;border-radius:10px;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">💬 디스코드 테스트</button>
+    <div id="dcStatus" style="font-size:11px;color:var(--text-dim);margin-top:6px"></div>
+  </div>`;
+
+  // 8. 메일
+  const mail=getMailRules();
+  h+=`<div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.07);border-radius:16px;padding:16px;margin-bottom:12px">
+    <div style="font-size:14px;font-weight:800;color:#a5b4fc;margin-bottom:10px;display:flex;align-items:center;gap:6px"><span style="width:3px;height:14px;background:#a5b4fc;border-radius:2px;display:inline-block"></span>✉️ 메일 알림</div>
+    <div style="font-size:11px;color:var(--text-dim);margin-bottom:10px;background:rgba(255,165,0,0.06);border-radius:8px;padding:8px">💡 메일은 외부 API(EmailJS 등) 연동 또는 수동 발송 안내 용도로 사용됩니다.</div>
+    <div id="mailRuleList">${ruleListHtml(mail,'delMailRule')}</div>
+    <div style="display:flex;gap:6px;margin-top:8px">
+      <select id="mailNewCond" style="width:90px;flex-shrink:0;padding:8px;font-size:12px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:var(--text);font-family:inherit"><option value="always">저장시</option><option value="ng">NG발생시</option></select>
+      <input type="text" id="mailNewName" placeholder="이름" style="width:70px;padding:8px;font-size:12px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:var(--text);font-family:inherit">
+      <input type="email" id="mailNewEmail" placeholder="메일주소" style="flex:1;padding:8px;font-size:12px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:var(--text);font-family:inherit">
+      <button onclick="addMailRule()" style="padding:8px 14px;background:linear-gradient(135deg,#6366f1,#8b5cf6);border:none;border-radius:8px;color:#fff;font-size:14px;font-weight:700;cursor:pointer">+</button>
+    </div>
+  </div>`;
+
+  // 9. Supabase 설정
+  const sbMaskedUrl=SB_URL.replace(/([a-z0-9]{6})[a-z0-9]+/,'$1••••••••••••••');
+  const sbMaskedKey=SB_KEY.substring(0,12)+'•'.repeat(20)+'...';
+  h+=`<div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.07);border-radius:16px;padding:16px;margin-bottom:12px">
+    <div style="font-size:14px;font-weight:800;color:#a5b4fc;margin-bottom:10px;display:flex;align-items:center;gap:6px"><span style="width:3px;height:14px;background:#a5b4fc;border-radius:2px;display:inline-block"></span>🔧 Supabase 설정</div>
+    <div style="margin-bottom:10px"><div style="font-size:11px;color:var(--text-dim);font-weight:700;margin-bottom:4px">URL (읽기전용)</div>
+      <div style="padding:10px 12px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:8px;font-size:12px;color:var(--text-dim)">${sbMaskedUrl}</div>
+    </div>
+    <div><div style="font-size:11px;color:var(--text-dim);font-weight:700;margin-bottom:4px">Anon Key (읽기전용)</div>
+      <div style="padding:10px 12px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:8px;font-size:12px;color:var(--text-dim);letter-spacing:1px;word-break:break-all">${sbMaskedKey}</div>
+    </div>
+  </div>`;
+
+  // 10. SQL 테이블 생성 (아코디언)
+  const sql=`-- 외근 기록
+CREATE TABLE IF NOT EXISTS car_outside_records (
+  id text primary key,
+  data jsonb not null,
+  updated_at timestamptz default now()
+);
+-- 차량
+CREATE TABLE IF NOT EXISTS car_vehicles (
+  id text primary key,
+  data jsonb not null,
+  updated_at timestamptz default now()
+);
+-- 관리주기
+CREATE TABLE IF NOT EXISTS car_maint_records (
+  id text primary key,
+  data jsonb not null,
+  updated_at timestamptz default now()
+);
+-- 즐겨찾기
+CREATE TABLE IF NOT EXISTS car_places (
+  id text primary key,
+  data jsonb not null
+);
+-- 설정(알림규칙)
+CREATE TABLE IF NOT EXISTS car_settings (
+  id bigint generated always as identity primary key,
+  code_group text not null,
+  code_value text,
+  sort_order int default 0
+);
+-- RLS 전체 허용 (anon)
+ALTER TABLE car_outside_records ENABLE ROW LEVEL SECURITY;
+ALTER TABLE car_vehicles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE car_maint_records ENABLE ROW LEVEL SECURITY;
+ALTER TABLE car_places ENABLE ROW LEVEL SECURITY;
+ALTER TABLE car_settings ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "anon_all" ON car_outside_records FOR ALL TO anon USING (true) WITH CHECK (true);
+CREATE POLICY "anon_all" ON car_vehicles FOR ALL TO anon USING (true) WITH CHECK (true);
+CREATE POLICY "anon_all" ON car_maint_records FOR ALL TO anon USING (true) WITH CHECK (true);
+CREATE POLICY "anon_all" ON car_places FOR ALL TO anon USING (true) WITH CHECK (true);
+CREATE POLICY "anon_all" ON car_settings FOR ALL TO anon USING (true) WITH CHECK (true);`;
+  h+=`<details style="margin-bottom:12px"><summary style="cursor:pointer;font-size:12px;font-weight:700;color:#a5b4fc;padding:12px 14px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.07);border-radius:12px;list-style:none;display:flex;align-items:center;gap:6px">▶ 📋 Supabase SQL (테이블 생성)</summary><pre style="margin-top:6px;padding:12px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.08);border-radius:10px;font-size:10px;color:#86efac;overflow-x:auto;white-space:pre-wrap;line-height:1.6;font-family:monospace">${sql}</pre></details>`;
+
+  // 11. 모든 설정 서버에 저장
+  h+=`<button onclick="saveAllSettings()" style="width:100%;padding:14px;background:linear-gradient(135deg,#6366f1,#8b5cf6);border:none;border-radius:14px;color:#fff;font-size:16px;font-weight:700;cursor:pointer;font-family:inherit;margin-bottom:10px">💾 모든 설정 서버에 저장</button>`;
+  h+=`<div id="saveAllStatus" style="font-size:11px;color:var(--text-dim);text-align:center;margin-bottom:12px"></div>`;
+
+  // 12. 연결 상태
+  const ntfyCnt=getNtfyRules().length;const tgCnt=getTgRules().length;const dcCnt=getDcRules().length;const mailCnt=getMailRules().length;
+  h+=`<div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.07);border-radius:16px;padding:16px">
+    <div style="font-size:14px;font-weight:800;color:#a5b4fc;margin-bottom:10px">📡 연결 상태</div>
+    <div style="font-size:12px;color:var(--text-dim);line-height:2">
+      🟢 Supabase: 연결됨 (${SB_URL.split('.')[0].split('//')[1]})<br>
+      ${ntfyCnt?'🟢':'🔴'} ntfy: ${ntfyCnt}개 규칙<br>
+      ${tgCnt?'🟢':'🔴'} 텔레그램: ${tgCnt}명<br>
+      ${dcCnt?'🟢':'🔴'} 디스코드: ${dcCnt}개 Webhook<br>
+      ${mailCnt?'🟢':'🔴'} 메일: ${mailCnt}개 주소
+    </div>
+  </div>`;
+
+  area.innerHTML=h;
+}
+
+// ===== 알림 규칙 CRUD =====
+function addNtfyRule(){const c=document.getElementById('ntfyNewCond').value;const t=document.getElementById('ntfyNewTopic').value.trim().replace(/\s/g,'-');if(!t){showToast('❌ 방이름 입력');return;}const r=getNtfyRules();r.push({condition:c,topic:t});saveNtfyRules(r);document.getElementById('ntfyNewTopic').value='';renderSettings();_saveAllRulesToServer();}
+function delNtfyRule(i){const r=getNtfyRules();r.splice(i,1);saveNtfyRules(r);renderSettings();_saveAllRulesToServer();}
+async function testNtfy(){const r=getNtfyRules();if(!r.length){document.getElementById('ntfyStatus').textContent='⚠ 규칙 없음';return;}const msg=document.getElementById('ntfyTestMsg').value.trim()||'test';let sent=0;for(const rule of r){try{await fetch(NTFY_SERVER+'/'+rule.topic,{method:'POST',headers:{Priority:'3',Tags:'test_tube'},body:msg+' ('+new Date().toLocaleTimeString()+')'});sent++;}catch(e){}}document.getElementById('ntfyStatus').textContent=`✅ ${sent}/${r.length}개 발송`;document.getElementById('ntfyStatus').style.color='#81c995';}
+function addTgRule(){const c=document.getElementById('tgNewCond').value;const n=document.getElementById('tgNewName').value.trim();const id=document.getElementById('tgNewId').value.trim();if(!id){showToast('❌ Chat ID 입력');return;}const r=getTgRules();r.push({condition:c,name:n,chat_id:id});saveTgRules(r);document.getElementById('tgNewName').value='';document.getElementById('tgNewId').value='';renderSettings();_saveAllRulesToServer();}
+function delTgRule(i){const r=getTgRules();r.splice(i,1);saveTgRules(r);renderSettings();_saveAllRulesToServer();}
+async function testTg(){const r=getTgRules();const st=document.getElementById('tgStatus');if(!r.length){st.textContent='❌ 수신자 없음';return;}let ok=0;for(const rule of r){try{const res=await fetch(`https://api.telegram.org/bot${TG_BOT}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:rule.chat_id,text:'🚗 부서차량관리 테스트\n수신자: '+rule.name+'\n'+new Date().toLocaleString()})});const d=await res.json();if(d.ok)ok++;}catch(e){}}st.textContent=ok===r.length?`✅ ${ok}명 발송`:`⚠️ ${ok}/${r.length}명`;st.style.color=ok===r.length?'#81c995':'#fb923c';}
+function addDcRule(){const c=document.getElementById('dcNewCond').value;const h=document.getElementById('dcNewHook').value.trim();if(!h||!h.startsWith('https://')){showToast('❌ Webhook URL 입력');return;}const r=getDcRules();r.push({condition:c,hook:h});saveDcRules(r);document.getElementById('dcNewHook').value='';renderSettings();_saveAllRulesToServer();}
+function delDcRule(i){const r=getDcRules();r.splice(i,1);saveDcRules(r);renderSettings();_saveAllRulesToServer();}
+async function testDc(){const r=getDcRules();const st=document.getElementById('dcStatus');if(!r.length){st.textContent='⚠ Webhook 없음';return;}let sent=0;for(const rule of r){try{const res=await fetch(rule.hook,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:'💬 부서차량관리 테스트 ('+new Date().toLocaleTimeString()+')'})});if(res.ok||res.status===204)sent++;}catch(e){}}st.textContent=`✅ ${sent}/${r.length}개`;st.style.color='#81c995';}
+function addMailRule(){const c=document.getElementById('mailNewCond').value;const n=document.getElementById('mailNewName').value.trim();const e=document.getElementById('mailNewEmail').value.trim();if(!e||!e.includes('@')){showToast('❌ 메일주소 입력');return;}const r=getMailRules();r.push({condition:c,name:n,email:e});saveMailRules(r);document.getElementById('mailNewName').value='';document.getElementById('mailNewEmail').value='';renderSettings();_saveAllRulesToServer();}
+function delMailRule(i){const r=getMailRules();r.splice(i,1);saveMailRules(r);renderSettings();_saveAllRulesToServer();}
+async function saveAllSettings(){const st=document.getElementById('saveAllStatus');if(st)st.textContent='저장 중...';try{await _saveAllRulesToServer();if(st){st.textContent='✅ 서버 저장 완료 ('+new Date().toLocaleTimeString()+')';st.style.color='#81c995';}}catch(e){if(st){st.textContent='❌ '+e.message;st.style.color='#f87171';}}}
 </script>
 </body>
 </html>
