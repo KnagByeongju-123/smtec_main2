@@ -116,14 +116,14 @@
     </div>
     <div class="btn-row">
       <button class="btn btn-gray btn-sm" onclick="goStep(2)" style="flex:0 0 auto;width:auto">← 수정</button>
-      <button class="btn btn-green" onclick="doRegister()" id="btnRegister" style="flex:1;font-size:16px">✅ <span id="pvRegCnt">0</span>건 DB 등록</button>
+      <button class="btn btn-green" onclick="doRegister()" id="btnRegister" style="flex:1;font-size:16px">✅ <span id="pvRegCnt">0</span>건 알림 발송</button>
     </div>
     <div id="regStatus" style="display:none;margin-top:8px;padding:10px 12px;border-radius:8px;font-size:12px;font-weight:600;text-align:center"></div>
   </div>
   <div id="pnlStep4" style="display:none">
     <div class="card" style="text-align:center;padding:30px 16px">
       <div style="font-size:48px;margin-bottom:10px">✅</div>
-      <div style="font-size:18px;font-weight:700;color:#2e7d32;margin-bottom:6px" id="doneTitle">등록 완료</div>
+      <div style="font-size:18px;font-weight:700;color:#2e7d32;margin-bottom:6px" id="doneTitle">완료</div>
       <div style="font-size:13px;color:#555" id="doneSummary"></div>
     </div>
     <div class="btn-row"><button class="btn btn-blue" onclick="resetAll()">🔄 새 파일 등록</button></div>
@@ -248,7 +248,6 @@ function getSbKey(){return getSbCfg().key||SB_DEFAULT_KEY}
 
 function swMainTab(n){document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('on',i===n));document.querySelectorAll('.main-pnl').forEach((p,i)=>p.classList.toggle('on',i===n));if(n===1)loadSettingsUI()}
 
-async function sbInsert(table,rows){const SB_URL=getSbUrl(),SB_KEY=getSbKey();const res=await fetch(SB_URL+'/rest/v1/'+table,{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Prefer':'return=minimal'},body:JSON.stringify(rows)});if(!res.ok){const t=await res.text();throw new Error(t)}}
 async function sbSelect(table,filters,selectCols){const SB_URL=getSbUrl(),SB_KEY=getSbKey();let url=SB_URL+'/rest/v1/'+table+'?select='+(selectCols||'*')+'&';Object.entries(filters).forEach(([k,v])=>{url+=k+'='+encodeURIComponent(v)+'&'});const res=await fetch(url,{headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY}});if(!res.ok)return[];return await res.json()}
 
 let _tgBotToken='',_tgChatIds=[];
@@ -266,7 +265,6 @@ function renderMailRecipList(){const c=document.getElementById('mailRecipList');
 async function addMailRecip(){const inp=document.getElementById('mailNewAddr');const email=inp.value.trim();const st=document.getElementById('mailRecipStatus');if(!email||!email.includes('@')){st.textContent='⚠ 올바른 이메일 입력';st.style.color='#e65100';return}if(_mailRecipCache.find(r=>r.email===email)){st.textContent='⚠ 이미 존재';st.style.color='#e65100';return}const ns=_mailRecipCache.length?Math.max(..._mailRecipCache.map(r=>r.sort))+1:1;try{const SB_URL=getSbUrl(),SB_KEY=getSbKey();const res=await fetch(SB_URL+'/rest/v1/common_code',{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Prefer':'return=representation'},body:JSON.stringify({code_group:'mat_mail',code_value:email,sort_order:ns})});if(res.ok){const saved=await res.json();if(saved&&saved.length)_mailRecipCache.push({id:saved[0].id,email,sort:ns})}_mailRecipients=_mailRecipCache.map(r=>r.email);inp.value='';renderMailRecipList();st.textContent='✅ '+email;st.style.color='#2e7d32'}catch(e){st.textContent='❌ '+e.message;st.style.color='#c62828'}}
 async function delMailRecip(idx){const r=_mailRecipCache[idx];if(!r)return;if(!confirm(r.email+' 삭제?'))return;if(r.id){try{await fetch(getSbUrl()+'/rest/v1/common_code?id=eq.'+r.id,{method:'DELETE',headers:{'apikey':getSbKey(),'Authorization':'Bearer '+getSbKey()}})}catch(e){}}_mailRecipCache.splice(idx,1);_mailRecipients=_mailRecipCache.map(r=>r.email);renderMailRecipList()}
 
-/* ★★★ sendEmail - 전체 건수 표시 (10건 제한 제거) ★★★ */
 async function sendEmail(info){
   const gasUrl=_mailGasUrl||localStorage.getItem('MATERIAL_MAIL_GAS_URL')||'';
   if(!gasUrl)return;
@@ -331,7 +329,52 @@ function parseFile(file){const reader=new FileReader();reader.onload=function(e)
 
 function renderPreview(){const cfg={from:document.getElementById('cfgFrom').value.trim(),to:document.getElementById('cfgTo').value.trim(),worker:document.getElementById('cfgWorker').value.trim()};document.getElementById('pvTotal').textContent=_batchData.length;document.getElementById('pvCompany').textContent=_batchCompany||'-';document.getElementById('pvDate').textContent=_batchDate||'-';document.getElementById('pvRegCnt').textContent=_batchData.length;document.getElementById('pvSettings').innerHTML='출발지: <b>'+cfg.from+'</b> → 도착지: <b>'+cfg.to+'</b>'+(cfg.worker?' · 담당자: <b>'+cfg.worker+'</b>':'');const cols=Object.keys(_batchData[0]);const showRows=_batchData.slice(0,15);let html='<thead><tr>'+cols.map(c=>'<th>'+c+'</th>').join('')+'</tr></thead><tbody>';showRows.forEach(row=>{html+='<tr>'+cols.map(c=>{let v=row[c];if(v instanceof Date)v=kstDateStr(v);return'<td>'+(v||'')+'</td>'}).join('')+'</tr>'});html+='</tbody>';document.getElementById('pvTable').innerHTML=html;document.getElementById('pvMore').textContent=_batchData.length>15?'... 외 '+(_batchData.length-15)+'건':''}
 
-async function doRegister(){if(!_batchData.length){showToast('데이터 없음');return}if(!confirm(_batchData.length+'건을 DB에 등록합니다.\n계속하시겠습니까?'))return;const st=document.getElementById('regStatus');st.style.display='block';st.style.background='#e3f2fd';st.style.color='#1565c0';st.textContent='등록 준비 중...';document.getElementById('btnRegister').disabled=true;const cfg={from:document.getElementById('cfgFrom').value.trim(),to:document.getElementById('cfgTo').value.trim(),worker:document.getElementById('cfgWorker').value.trim()};const now=new Date();const todayStr=kstDateStr(now);const timeStr=kstTimeStr(now);const rows=[];const srcCols=Object.keys(_batchData[0]);const colMap={};srcCols.forEach(sc=>{const key=sc.trim().toLowerCase().replace(/\s+/g,'');if(COL_MAP[key])colMap[sc]=COL_MAP[key]});_batchData.forEach(raw=>{const row={move_date:todayStr,move_time:timeStr,process:'소재입고',departure:cfg.from,destination:cfg.to,barcode_raw:'',base_part:'',lot:'',qty:null,note:'',format:'엑셀일괄',worker:cfg.worker,equipment:'',weight:null,incoming_date:null,parent_part:null,child_type:null,model_type:'raceway',general_model:null,material_info:null};let _mType='',_mThick='',_mWidth='',_mPitch='';srcCols.forEach(sc=>{const target=colMap[sc];if(!target)return;let v=raw[sc];if(v instanceof Date)v=kstDateStr(v);v=String(v||'').trim();if(!v)return;if(target==='_material_type')_mType=v;else if(target==='_thickness')_mThick=v;else if(target==='_width')_mWidth=v;else if(target==='_pitch')_mPitch=v;else if(target.startsWith('_'))return;else if(target==='weight')row.weight=parseFloat(v)||null;else if(target==='qty')row.qty=parseInt(v)||null;else row[target]=v});const matParts=[_mType,_mThick,_mWidth,_mPitch].filter(Boolean);if(matParts.length)row.material_info=matParts.join(' // ');rows.push(row)});const CHUNK=10;let ok=0,fail=0;for(let i=0;i<rows.length;i+=CHUNK){const chunk=rows.slice(i,i+CHUNK);try{await sbInsert('move_history_tj',chunk);ok+=chunk.length}catch(e){for(const r of chunk){try{await sbInsert('move_history_tj',[r]);ok++}catch(e2){fail++}}}st.textContent='등록 중... '+ok+'/'+(ok+fail)+' (전체: '+rows.length+')'}document.getElementById('btnRegister').disabled=false;if(fail===0){document.getElementById('doneTitle').textContent='✅ '+ok+'건 등록 완료';document.getElementById('doneSummary').innerHTML='업체: <b>'+(_batchCompany||'-')+'</b> · 입고일: <b>'+(_batchDate||todayStr)+'</b><br>출발지: '+cfg.from+' → 도착지: '+cfg.to+(cfg.worker?' · 담당자: '+cfg.worker:'');const matSummary=rows.slice(0,5).map(r=>r.material_info||'-').join('\n  ');const tgMsg='📤 <b>소재입고 등록 완료</b>\n\n🏢 업체: '+(_batchCompany||'-')+'\n📅 입고일: '+(_batchDate||todayStr)+'\n📦 등록: <b>'+ok+'건</b>\n🔄 출발지→도착지: '+cfg.from+' → '+cfg.to+'\n'+(cfg.worker?'👤 작업자: '+cfg.worker+'\n':'')+'\n📋 소재정보 (상위 '+Math.min(5,rows.length)+'건):\n  '+matSummary+(rows.length>5?'\n  ... 외 '+(rows.length-5)+'건':'');sendTelegram(tgMsg);sendTgByCondition('OK',tgMsg);sendNtfyByCondition('OK','[소재입고] '+(_batchCompany||'')+' '+ok+'건 등록\n'+todayStr+' '+cfg.from+'→'+cfg.to);sendDcByCondition('OK','📤 소재입고: '+(_batchCompany||'')+' '+ok+'건 ('+todayStr+')');sendEmail({company:_batchCompany||'-',date:_batchDate||todayStr,count:ok,from:cfg.from,to:cfg.to,worker:cfg.worker,rows:rows});goStep(4)}else{st.style.background='#fff3e0';st.style.color='#e65100';st.textContent='⚠ 성공: '+ok+'건 / 실패: '+fail+'건'}}
+/* ★★★ doRegister - sbInsert(move_history_tj) DB저장 제거됨, 알림 발송만 수행 ★★★ */
+async function doRegister(){
+  if(!_batchData.length){showToast('데이터 없음');return}
+  if(!confirm(_batchData.length+'건 알림을 발송합니다.\n계속하시겠습니까?'))return;
+
+  const st=document.getElementById('regStatus');
+  st.style.display='block';st.style.background='#e3f2fd';st.style.color='#1565c0';
+  st.textContent='처리 중...';
+  document.getElementById('btnRegister').disabled=true;
+
+  const cfg={from:document.getElementById('cfgFrom').value.trim(),to:document.getElementById('cfgTo').value.trim(),worker:document.getElementById('cfgWorker').value.trim()};
+  const now=new Date();const todayStr=kstDateStr(now);const timeStr=kstTimeStr(now);
+
+  /* 알림용 rows 데이터 구성 */
+  const rows=[];
+  const srcCols=Object.keys(_batchData[0]);
+  const colMap={};
+  srcCols.forEach(sc=>{const key=sc.trim().toLowerCase().replace(/\s+/g,'');if(COL_MAP[key])colMap[sc]=COL_MAP[key]});
+
+  _batchData.forEach(raw=>{
+    const row={move_date:todayStr,move_time:timeStr,process:'소재입고',departure:cfg.from,destination:cfg.to,barcode_raw:'',base_part:'',lot:'',qty:null,note:'',format:'엑셀일괄',worker:cfg.worker,equipment:'',weight:null,incoming_date:null,parent_part:null,child_type:null,model_type:'raceway',general_model:null,material_info:null};
+    let _mType='',_mThick='',_mWidth='',_mPitch='';
+    srcCols.forEach(sc=>{const target=colMap[sc];if(!target)return;let v=raw[sc];if(v instanceof Date)v=kstDateStr(v);v=String(v||'').trim();if(!v)return;if(target==='_material_type')_mType=v;else if(target==='_thickness')_mThick=v;else if(target==='_width')_mWidth=v;else if(target==='_pitch')_mPitch=v;else if(target.startsWith('_'))return;else if(target==='weight')row.weight=parseFloat(v)||null;else if(target==='qty')row.qty=parseInt(v)||null;else row[target]=v});
+    const matParts=[_mType,_mThick,_mWidth,_mPitch].filter(Boolean);
+    if(matParts.length)row.material_info=matParts.join(' // ');
+    rows.push(row);
+  });
+
+  const ok=rows.length;
+
+  /* DB 저장 없이 알림만 발송 */
+  document.getElementById('doneTitle').textContent='✅ '+ok+'건 처리 완료';
+  document.getElementById('doneSummary').innerHTML='업체: <b>'+(_batchCompany||'-')+'</b> · 입고일: <b>'+(_batchDate||todayStr)+'</b><br>출발지: '+cfg.from+' → 도착지: '+cfg.to+(cfg.worker?' · 담당자: '+cfg.worker:'');
+
+  const matSummary=rows.slice(0,5).map(r=>r.material_info||'-').join('\n  ');
+  const tgMsg='📤 <b>소재입고 등록 완료</b>\n\n🏢 업체: '+(_batchCompany||'-')+'\n📅 입고일: '+(_batchDate||todayStr)+'\n📦 등록: <b>'+ok+'건</b>\n🔄 출발지→도착지: '+cfg.from+' → '+cfg.to+'\n'+(cfg.worker?'👤 작업자: '+cfg.worker+'\n':'')+'\n📋 소재정보 (상위 '+Math.min(5,rows.length)+'건):\n  '+matSummary+(rows.length>5?'\n  ... 외 '+(rows.length-5)+'건':'');
+
+  sendTelegram(tgMsg);
+  sendTgByCondition('OK',tgMsg);
+  sendNtfyByCondition('OK','[소재입고] '+(_batchCompany||'')+' '+ok+'건 등록\n'+todayStr+' '+cfg.from+'→'+cfg.to);
+  sendDcByCondition('OK','📤 소재입고: '+(_batchCompany||'')+' '+ok+'건 ('+todayStr+')');
+  sendEmail({company:_batchCompany||'-',date:_batchDate||todayStr,count:ok,from:cfg.from,to:cfg.to,worker:cfg.worker,rows:rows});
+
+  document.getElementById('btnRegister').disabled=false;
+  goStep(4);
+}
 
 function resetAll(){_batchData=[];_batchCompany='';_batchDate='';document.getElementById('fileInfo').style.display='none';document.getElementById('btnToStep3').disabled=true;document.getElementById('regStatus').style.display='none';document.getElementById('fileInput').value='';goStep(1)}
 
