@@ -561,7 +561,33 @@ document.addEventListener('click',function(e){if(!e.target.closest('.ly-popup')&
 // ========= 설정 =========
 function renderLyMapList(){var c=document.getElementById('lyMapList');c.innerHTML='';if(!settings.lyMapping||!settings.lyMapping.length){var p=document.createElement('p');p.style.cssText='font-size:11px;color:var(--sub);padding:4px 0';p.textContent='매핑없음(숫자자동)';c.appendChild(p);return}settings.lyMapping.forEach(function(m,i){var d=document.createElement('div');d.className='rule-item';d.innerHTML='<span class="ri-num">'+(i+1)+'</span><span class="ri-cond">'+m.mesCode+'</span><span style="color:var(--sub);font-size:11px">→['+m.zoneId+']</span><span class="ri-val">'+m.layoutNo+'</span>';var btn=document.createElement('button');btn.className='ri-del';btn.textContent='✕';(function(idx){btn.onclick=function(e){e.stopPropagation();settings.lyMapping.splice(idx,1);renderLyMapList()}})(i);d.appendChild(btn);c.appendChild(d)})}
 function addLyMap(){var mc=document.getElementById('lyMapCode').value.trim(),ln=document.getElementById('lyMapNo').value.trim(),zi=document.getElementById('lyMapZone').value.trim();if(!mc||!ln||!zi){showToast('모두입력');return}if(!settings.lyMapping)settings.lyMapping=[];settings.lyMapping.push({mesCode:mc,layoutNo:ln,zoneId:zi});document.getElementById('lyMapCode').value='';document.getElementById('lyMapNo').value='';renderLyMapList()}
-function autoMap(){if(!cachedData){showToast('데이터로드필요');return}if(!settings.lyMapping)settings.lyMapping=[];var cnt=0;ZONES.forEach(function(z){z.equip.forEach(function(e){var nn=e.no.replace(/[^0-9]/g,'');if(!nn)return;var mes=cachedData.find(function(d){return(d.machine_code||'').replace(/[^0-9]/g,'')===nn});if(mes&&!settings.lyMapping.find(function(m){return m.layoutNo===e.no&&m.zoneId===z.id})){settings.lyMapping.push({mesCode:mes.machine_code,layoutNo:e.no,zoneId:z.id});cnt++}})});renderLyMapList();showToast(cnt+'개')}
+function autoMap(){
+  if(!cachedData||!cachedData.length){showToast('MES데이터 없음 · 모니터링탭 확인');return}
+  if(!settings.lyMapping)settings.lyMapping=[];
+  var cnt=0,skip=0,nomes=0;
+  ZONES.forEach(function(z){
+    z.equip.forEach(function(e){
+      var nn=String(e.no).replace(/[^0-9]/g,'');
+      if(!nn)return;
+      var nNum=parseInt(nn,10);
+      var mes=cachedData.find(function(d){
+        var mm=String(d.machine_code||'').replace(/[^0-9]/g,'');
+        if(!mm)return false;
+        return parseInt(mm,10)===nNum;
+      });
+      if(mes){
+        var exists=settings.lyMapping.find(function(m){return m.layoutNo===e.no&&m.zoneId===z.id});
+        if(exists){skip++;return}
+        settings.lyMapping.push({mesCode:mes.machine_code,layoutNo:e.no,zoneId:z.id});
+        cnt++;
+      }else{nomes++}
+    });
+  });
+  localStorage.setItem('mes_settings',JSON.stringify(settings));
+  _saveRulesToServer('mes_work_settings',[settings]);
+  renderLyMapList();
+  showToast('✅'+cnt+'개 추가 / 기존'+skip+' / MES없음'+nomes);
+}
 
 async function checkAlerts(data){var soon=data.filter(function(d){return d.machine_status==='N'&&d.remaining_minutes>0});var ntfyRules=getNtfyRules().filter(function(r){return typeof r.cond==='number'||/^\d+$/.test(String(r.cond))});for(var i=0;i<ntfyRules.length;i++){var rule=ntfyRules[i],cond=+rule.cond,targets=soon.filter(function(d){return d.remaining_minutes<=cond});for(var j=0;j<targets.length;j++){var d=targets[j],key='ntfy_'+rule.room+'_'+d.machine_code;if(settings.lastAlerted[key]&&Date.now()-settings.lastAlerted[key]<600000)continue;try{await fetch('https://ntfy.sh/'+rule.room,{method:'POST',headers:{'Title':'MES','Priority':'high','Tags':'warning'},body:'['+d.machine_code+'] '+d.machine_name+' → '+remStr(d.remaining_minutes).t})}catch(e){}settings.lastAlerted[key]=Date.now()}}var tgRules=getTgRules().filter(function(r){return typeof r.cond==='number'||/^\d+$/.test(String(r.cond))});for(var i=0;i<tgRules.length;i++){var rule=tgRules[i],cond=+rule.cond,targets=soon.filter(function(d){return d.remaining_minutes<=cond});for(var j=0;j<targets.length;j++){var d=targets[j],key='tg_'+rule.chatId+'_'+d.machine_code;if(settings.lastAlerted[key]&&Date.now()-settings.lastAlerted[key]<600000)continue;try{await fetch('https://api.telegram.org/bot8367539669:AAFzZeMULV8B4adNROtENsUc6wr0MvLpSi0/sendMessage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:rule.chatId,text:'⏰['+d.machine_code+'] '+d.machine_name+' 잔여:'+remStr(d.remaining_minutes).t})})}catch(e){}settings.lastAlerted[key]=Date.now()}}var dcRules=getDcRules().filter(function(r){return typeof r.cond==='number'||/^\d+$/.test(String(r.cond))});for(var i=0;i<dcRules.length;i++){var rule=dcRules[i],cond=+rule.cond,targets=soon.filter(function(d){return d.remaining_minutes<=cond});for(var j=0;j<targets.length;j++){var d=targets[j],key='dc_'+d.machine_code;if(settings.lastAlerted[key]&&Date.now()-settings.lastAlerted[key]<600000)continue;try{await fetch(rule.hook,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:'⏰['+d.machine_code+'] '+d.machine_name+' → '+remStr(d.remaining_minutes).t})})}catch(e){}settings.lastAlerted[key]=Date.now()}}}
 
