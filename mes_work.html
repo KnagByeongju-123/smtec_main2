@@ -238,9 +238,7 @@ var DEFAULT_CHK_ITEMS={
   urg:[{name:'안전',type:'text'},{name:'소방',type:'text'},{name:'기타',type:'text'}]
 };
 var CHK_ITEMS_LS='MES_CHK_ITEMS';
-var CHK_ITEMS_VER_LS='MES_CHK_ITEMS_VER';
-var CHK_ITEMS_VER='v4';
-function getChkItems(){var curVer=localStorage.getItem(CHK_ITEMS_VER_LS);if(curVer!==CHK_ITEMS_VER){localStorage.setItem(CHK_ITEMS_LS,JSON.stringify(DEFAULT_CHK_ITEMS));localStorage.setItem(CHK_ITEMS_VER_LS,CHK_ITEMS_VER);return JSON.parse(JSON.stringify(DEFAULT_CHK_ITEMS))}try{var v=localStorage.getItem(CHK_ITEMS_LS);if(v){var o=JSON.parse(v);if(o&&o.dim)return o}}catch(e){}return JSON.parse(JSON.stringify(DEFAULT_CHK_ITEMS))}
+function getChkItems(){try{var v=localStorage.getItem(CHK_ITEMS_LS);if(v){var o=JSON.parse(v);if(o&&(o.dim||o.mat||o.def||o.urg))return o}}catch(e){}return JSON.parse(JSON.stringify(DEFAULT_CHK_ITEMS))}
 function saveChkItems(o){localStorage.setItem(CHK_ITEMS_LS,JSON.stringify(o));_saveRulesToServer('mes_chk_items',[o])}
 
 // ========= 점검등록 모달 상태 =========
@@ -831,7 +829,25 @@ async function testDiscord(){var rules=getDcRules();if(!rules.length)return;try{
 async function _saveRulesToServer(cg,rules){var json=JSON.stringify(rules);try{await fetch(SB_URL+'/rest/v1/common_code?code_group=eq.'+cg,{method:'DELETE',headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY}});if(rules.length){await fetch(SB_URL+'/rest/v1/common_code',{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Prefer':'return=representation'},body:JSON.stringify({code_group:cg,code_value:json,sort_order:0})})}}catch(e){console.log('서버저장실패('+cg+'):',e)}}
 async function _loadRulesFromServer(cg,lsKey){try{var res=await fetch(SB_URL+'/rest/v1/common_code?select=*&code_group=eq.'+cg+'&limit=1',{headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY}});if(res.ok){var data=await res.json();if(data&&data.length&&data[0].code_value){localStorage.setItem(lsKey,data[0].code_value);return true}}}catch(e){console.log('서버로드실패('+cg+'):',e)}return false}
 async function _saveAllRulesToServer(){await _saveRulesToServer('mes_chk_ntfy',getNtfyRules());await _saveRulesToServer('mes_chk_tg',getTgRules());await _saveRulesToServer('mes_chk_dc',getDcRules());await _saveRulesToServer('mes_work_settings',[settings]);await _saveRulesToServer('mes_chk_items',[getChkItems()])}
-async function _loadAllRulesFromServer(){await _loadRulesFromServer('mes_chk_ntfy',NTFY_LS);await _loadRulesFromServer('mes_chk_tg',TG_LS);await _loadRulesFromServer('mes_chk_dc',DC_LS);var loaded=await _loadRulesFromServer('mes_work_settings','mes_settings_json');if(loaded){try{var arr=JSON.parse(localStorage.getItem('mes_settings_json')||'[]');if(arr&&arr.length)settings=Object.assign({},settings,arr[0])}catch(e){}}else{var l=localStorage.getItem('mes_settings');if(l)try{settings=Object.assign({},settings,JSON.parse(l))}catch(e){}}var loaded2=await _loadRulesFromServer('mes_chk_items','mes_chk_items_srv');if(loaded2){try{var arr2=JSON.parse(localStorage.getItem('mes_chk_items_srv')||'[]');if(arr2&&arr2.length&&arr2[0])localStorage.setItem(CHK_ITEMS_LS,JSON.stringify(arr2[0]))}catch(e){}}renderNtfyRules();renderTgRules();renderDcRules()}
+async function _loadAllRulesFromServer(){
+  await _loadRulesFromServer('mes_chk_ntfy',NTFY_LS);
+  await _loadRulesFromServer('mes_chk_tg',TG_LS);
+  await _loadRulesFromServer('mes_chk_dc',DC_LS);
+  var loaded=await _loadRulesFromServer('mes_work_settings','mes_settings_json');
+  if(loaded){try{var arr=JSON.parse(localStorage.getItem('mes_settings_json')||'[]');if(arr&&arr.length)settings=Object.assign({},settings,arr[0])}catch(e){}}
+  else{var l=localStorage.getItem('mes_settings');if(l)try{settings=Object.assign({},settings,JSON.parse(l))}catch(e){}}
+  // 점검항목 서버→로컬 동기화
+  var loaded2=await _loadRulesFromServer('mes_chk_items','mes_chk_items_srv');
+  if(loaded2){
+    try{
+      var arr2=JSON.parse(localStorage.getItem('mes_chk_items_srv')||'[]');
+      if(arr2&&arr2.length&&arr2[0]&&(arr2[0].dim||arr2[0].mat||arr2[0].def||arr2[0].urg)){
+        localStorage.setItem(CHK_ITEMS_LS,JSON.stringify(arr2[0]));
+      }
+    }catch(e){}
+  }
+  renderNtfyRules();renderTgRules();renderDcRules();
+}
 
 var NTFY_LS='MES_NTFY_RULES',TG_LS='MES_TG_RULES',DC_LS='MES_DC_RULES';
 function getNtfyRules(){try{return JSON.parse(localStorage.getItem(NTFY_LS)||'[]')}catch(e){return[]}}
@@ -844,7 +860,7 @@ async function loadSettings(){await _loadAllRulesFromServer();renderNtfyRules();
 async function checkConnections(){var grid=document.getElementById('connGrid');var checks=[{name:'Supabase',fn:async function(){return(await sbGet('machine_status','select=id&limit=1'))!==null}},{name:'ntfy',fn:async function(){try{return(await fetch('https://ntfy.sh/health')).ok}catch(e){return false}}},{name:'로트API',fn:async function(){try{var r=await fetch('/api/health');return r.ok}catch(e){return false}}},{name:'MES DB',fn:async function(){var d=await sbGet('machine_status','select=updated_at&order=updated_at.desc&limit=1');if(!d||!d.length)return false;return(Date.now()-new Date(d[0].updated_at).getTime())/60000<15}}];var html='';checks.forEach(function(c){html+='<div class="conn-item"><div class="conn-dot wait"></div><div><div class="ci-name">'+c.name+'</div><div class="ci-status">…</div></div></div>'});grid.innerHTML=html;for(var i=0;i<checks.length;i++){try{var ok=await checks[i].fn();var dots=grid.querySelectorAll('.conn-dot'),stats=grid.querySelectorAll('.ci-status');if(ok===null){dots[i].className='conn-dot wait';stats[i].textContent='미설정'}else if(ok){dots[i].className='conn-dot ok';stats[i].textContent='연결'}else{dots[i].className='conn-dot fail';stats[i].textContent='실패'}}catch(e){grid.querySelectorAll('.conn-dot')[i].className='conn-dot fail';grid.querySelectorAll('.ci-status')[i].textContent='오류'}}}
 
 
-async function init(){await loadSettings();await loadMonitor();checkConnections()}
+async function init(){try{localStorage.removeItem('MES_CHK_ITEMS_VER')}catch(e){}await loadSettings();await loadMonitor();checkConnections()}
 setInterval(function(){timer--;if(timer<=0)loadMonitor();document.getElementById('countdown').textContent='갱신:'+Math.floor(timer/60)+':'+String(timer%60).padStart(2,'0')},1000);
 init();
 </script>
