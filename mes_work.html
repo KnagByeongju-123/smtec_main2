@@ -212,7 +212,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
   </div></div></div>
 
   <div class="set-section" onclick="toggleSet(event,this)"><div class="set-hdr"><span class="ico">🗄️</span><span class="ttl">Supabase 설정</span><span class="arrow">›</span></div><div class="set-body"><div class="set-inner"><div class="form-row"><label>URL</label><input type="text" id="sbUrl" readonly></div><div class="form-row"><label>Key</label><input type="text" id="sbKey" readonly></div></div></div></div>
-  <button class="btn btn-accent btn-block" onclick="saveAllSettings()" style="margin-top:8px;padding:14px">💾 설정 저장</button>
+  <button class="btn btn-accent btn-block" onclick="saveAllSettings()" style="margin-top:8px;padding:14px">☁️ 서버에 설정 저장</button>
   <div class="set-section open" style="margin-top:12px"><div class="set-hdr"><span class="ico">📡</span><span class="ttl">연결 상태</span></div><div class="set-body" style="max-height:2000px"><div class="set-inner"><div class="conn-grid" id="connGrid"></div><button class="btn btn-accent btn-sm" onclick="checkConnections()" style="margin-top:10px">🔄</button></div></div></div>
 </div>
 <div class="toast" id="toast"></div>
@@ -251,7 +251,7 @@ async function sbGet(t,q){var r=await fetch(SB_URL+'/rest/v1/'+t+'?'+(q||''),{he
 async function sbPost(t,d){return fetch(SB_URL+'/rest/v1/'+t,{method:'POST',headers:Object.assign({},sbH,{'Prefer':'return=minimal'}),body:JSON.stringify(d)})}
 async function sbDelete(t,q){return fetch(SB_URL+'/rest/v1/'+t+'?'+q,{method:'DELETE',headers:Object.assign({},sbH,{'Prefer':'return=minimal'})})}
 
-var toastT;function showToast(m){var t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(toastT);toastT=setTimeout(function(){t.classList.remove('show')},2500)}
+var toastT;function showToast(m,ms){var t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(toastT);toastT=setTimeout(function(){t.classList.remove('show')},ms||2500)}
 function fmt(n){return n!=null?Number(n).toLocaleString():'-'}
 function fmtKg(g){return g>0?(g/1000).toFixed(1):'-'}
 function remStr(min){if(!min||min<=0)return{t:'-',c:''};var h=Math.floor(min/60),m=Math.round(min%60);var t=h>0?(h+'h'+String(m).padStart(2,'0')+'m'):(m+'m');if(min<=30)return{t:'⏰'+t,c:'rem-urg'};if(min<=60)return{t:t,c:'rem-soon'};return{t:t,c:'rem-ok'}}
@@ -907,7 +907,17 @@ function getNtfyRules(){try{return JSON.parse(localStorage.getItem(NTFY_LS)||'[]
 function getTgRules(){try{return JSON.parse(localStorage.getItem(TG_LS)||'[]')}catch(e){return[]}}
 function getDcRules(){try{return JSON.parse(localStorage.getItem(DC_LS)||'[]')}catch(e){return[]}}
 
-async function saveAllSettings(){localStorage.setItem('mes_settings',JSON.stringify(settings));try{await _saveAllRulesToServer();showToast('✅서버 저장 완료')}catch(e){showToast('⚠️로컬만 저장됨')}}
+async function saveAllSettings(){
+  showToast('⏳ 서버 저장중...');
+  localStorage.setItem('mes_settings',JSON.stringify(settings));
+  try{
+    await _saveAllRulesToServer();
+    showToast('✅ 서버에 저장됨 (ntfy·텔레그램·디스코드·점검항목)',4000);
+  }catch(e){
+    console.log(e);
+    showToast('⚠️ 서버 저장실패 · 로컬에만 저장됨',4000);
+  }
+}
 async function loadSettings(){await _loadAllRulesFromServer();renderNtfyRules();renderTgRules();renderDcRules();renderCiTabs();renderCiList();document.getElementById('sbUrl').value=maskStr(SB_URL);document.getElementById('sbKey').value=maskStr(SB_KEY);if(settings.telegram&&settings.telegram.token)document.getElementById('tgToken').value=maskStr(settings.telegram.token)}
 
 async function checkConnections(){var grid=document.getElementById('connGrid');var checks=[{name:'Supabase',fn:async function(){return(await sbGet('machine_status','select=id&limit=1'))!==null}},{name:'ntfy',fn:async function(){try{return(await fetch('https://ntfy.sh/health')).ok}catch(e){return false}}},{name:'로트API',fn:async function(){try{var r=await fetch('/api/health');return r.ok}catch(e){return false}}},{name:'MES DB',fn:async function(){var d=await sbGet('machine_status','select=updated_at&order=updated_at.desc&limit=1');if(!d||!d.length)return false;return(Date.now()-new Date(d[0].updated_at).getTime())/60000<15}}];var html='';checks.forEach(function(c){html+='<div class="conn-item"><div class="conn-dot wait"></div><div><div class="ci-name">'+c.name+'</div><div class="ci-status">…</div></div></div>'});grid.innerHTML=html;for(var i=0;i<checks.length;i++){try{var ok=await checks[i].fn();var dots=grid.querySelectorAll('.conn-dot'),stats=grid.querySelectorAll('.ci-status');if(ok===null){dots[i].className='conn-dot wait';stats[i].textContent='미설정'}else if(ok){dots[i].className='conn-dot ok';stats[i].textContent='연결'}else{dots[i].className='conn-dot fail';stats[i].textContent='실패'}}catch(e){grid.querySelectorAll('.conn-dot')[i].className='conn-dot fail';grid.querySelectorAll('.ci-status')[i].textContent='오류'}}}
