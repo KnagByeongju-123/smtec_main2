@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>ESG 관리자 - PIN 관리</title>
+<meta name="theme-color" content="#0f172a">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&display=swap');
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Noto Sans KR',sans-serif;background:#0f1117;color:#e8eaf0;min-height:100vh;-webkit-font-smoothing:antialiased;padding-bottom:60px}
+.hdr{padding:20px;background:linear-gradient(180deg,#181b26,#0f1117);border-bottom:1px solid #2a2e3d;text-align:center;position:relative}
+.hdr-title{font-size:18px;font-weight:800;color:#ef4444}
+.hdr-sub{font-size:11px;color:#8b8fa3;margin-top:3px}
+.logout{position:absolute;top:18px;right:14px;background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.3);color:#ef4444;padding:6px 12px;border-radius:8px;font-size:11px;cursor:pointer;font-weight:600}
+
+.wrap{padding:16px;max-width:600px;margin:0 auto}
+.card{background:#1a1d27;border:1px solid #2a2e3d;border-radius:14px;padding:16px;margin-bottom:14px}
+.card-title{font-size:14px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.card-title .badge{background:rgba(79,140,255,.15);color:#4f8cff;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600}
+
+.btn-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.btn{padding:10px 16px;border-radius:10px;border:none;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:6px}
+.btn-pri{background:#e2b04a;color:#0f1117}
+.btn-pri:active{opacity:.8}
+.btn-sec{background:#2a2e3d;color:#e8eaf0}
+.btn-sec:active{background:#3a3e4d}
+.btn-dan{background:rgba(239,68,68,.15);color:#ef4444;border:1px solid rgba(239,68,68,.3)}
+.btn-sm{padding:6px 10px;font-size:11px;border-radius:8px}
+.btn-grn{background:rgba(34,197,94,.15);color:#22c55e;border:1px solid rgba(34,197,94,.3)}
+
+.inp{background:#0f1117;border:1.5px solid #2a2e3d;border-radius:10px;padding:12px 14px;color:#e8eaf0;font-size:14px;font-weight:500;outline:none;font-family:inherit;width:100%}
+.inp:focus{border-color:#4f8cff}
+.inp.pin{letter-spacing:4px;text-align:center;font-weight:700}
+
+.tbl{width:100%;border-collapse:collapse;font-size:13px}
+.tbl th{background:#222633;padding:10px 8px;text-align:left;font-size:11px;color:#8b8fa3;font-weight:600;border-bottom:1px solid #2a2e3d}
+.tbl td{padding:10px 8px;border-bottom:1px solid #222633;vertical-align:middle}
+.tbl tr:last-child td{border-bottom:none}
+.name-cell{font-weight:600}
+.pin-cell{font-family:monospace;color:#e2b04a;font-weight:700;letter-spacing:2px}
+.empty{text-align:center;padding:30px;color:#5a5e72;font-size:13px}
+.actions{display:flex;gap:4px;justify-content:flex-end}
+
+.msg{padding:10px 14px;border-radius:10px;font-size:12px;font-weight:600;margin-bottom:10px;display:none}
+.msg.show{display:block}
+.msg.ok{background:rgba(34,197,94,.12);color:#22c55e;border:1px solid rgba(34,197,94,.3)}
+.msg.err{background:rgba(239,68,68,.12);color:#ef4444;border:1px solid rgba(239,68,68,.3)}
+.msg.warn{background:rgba(245,158,11,.12);color:#f59e0b;border:1px solid rgba(245,158,11,.3)}
+
+.help{font-size:11px;color:#5a5e72;margin-top:6px;line-height:1.6}
+.help b{color:#8b8fa3}
+.divider{height:1px;background:#2a2e3d;margin:12px 0}
+
+/* 마스터 잠금 */
+.master-lock{position:fixed;inset:0;background:linear-gradient(180deg,#181b26,#0f1117);z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px}
+.ml-title{font-size:22px;font-weight:800;color:#ef4444;margin-bottom:6px}
+.ml-sub{font-size:12px;color:#8b8fa3;margin-bottom:32px}
+.ml-hint{font-size:12px;color:#8b8fa3;margin-bottom:18px;min-height:18px}
+.ml-hint.err{color:#ef4444}
+.pin-dots{display:flex;gap:12px;margin-bottom:24px}
+.pin-dot{width:14px;height:14px;border-radius:50%;background:#2a2e3d;border:2px solid #2a2e3d;transition:all .15s}
+.pin-dot.filled{background:#ef4444;border-color:#ef4444;box-shadow:0 0 10px rgba(239,68,68,.4)}
+.pin-dot.err{animation:shake .4s}
+@keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-6px)}75%{transform:translateX(6px)}}
+.keypad{display:grid;grid-template-columns:repeat(3,64px);gap:12px;justify-content:center}
+.key{width:64px;height:64px;border-radius:50%;background:#1a1d27;border:1.5px solid #2a2e3d;color:#e8eaf0;font-size:22px;font-weight:600;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.key:active{background:#2a2e3d;transform:scale(.92)}
+.key.fn{background:transparent;border:none;font-size:18px;color:#8b8fa3}
+.back-link{margin-top:20px;color:#8b8fa3;font-size:12px;text-decoration:none;padding:8px 12px}
+.lockout{color:#ef4444;font-size:12px;font-weight:600;margin-bottom:14px}
+
+body.locked{overflow:hidden}
+
+.file-area{border:2px dashed #2a2e3d;border-radius:12px;padding:24px;text-align:center;cursor:pointer;transition:border-color .2s,background .2s}
+.file-area:hover,.file-area.drag{border-color:#4f8cff;background:rgba(79,140,255,.05)}
+.file-area input{display:none}
+.file-area-text{font-size:13px;color:#8b8fa3}
+.file-area-text b{color:#4f8cff}
+
+.preview{margin-top:10px}
+.preview-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.preview-count{font-size:12px;color:#8b8fa3}
+
+/* 수정 모달 */
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9998;display:none;align-items:center;justify-content:center;padding:20px}
+.modal-bg.show{display:flex}
+.modal{background:#1a1d27;border:1px solid #2a2e3d;border-radius:16px;padding:20px;width:100%;max-width:360px}
+.modal-title{font-size:15px;font-weight:700;margin-bottom:14px}
+.modal-row{margin-bottom:10px}
+.modal-row label{font-size:12px;color:#8b8fa3;display:block;margin-bottom:4px;font-weight:600}
+.modal-actions{display:flex;gap:8px;margin-top:14px}
+</style>
+</head>
+<body class="locked">
+
+<!-- 마스터 잠금 -->
+<div class="master-lock" id="masterLock">
+  <div class="ml-title">🔐 관리자 인증</div>
+  <div class="ml-sub">마스터 PIN을 입력하세요</div>
+  <div class="ml-hint" id="mlHint">4자리 PIN</div>
+  <div class="pin-dots" id="mlDots">
+    <div class="pin-dot"></div><div class="pin-dot"></div><div class="pin-dot"></div><div class="pin-dot"></div>
+  </div>
+  <div class="lockout" id="mlLockout" style="display:none"></div>
+  <div class="keypad" id="mlKeypad"></div>
+  <a href="./index_main.html" class="back-link">← 메인으로</a>
+</div>
+
+<div class="hdr">
+  <div class="hdr-title">🔐 PIN 관리 (관리자 전용)</div>
+  <div class="hdr-sub">직원 이름 및 4자리 PIN 등록·수정·삭제</div>
+  <button class="logout" id="logoutBtn">🔒 잠금</button>
+</div>
+
+<div class="wrap">
+  <!-- 엑셀 일괄 등록 -->
+  <div class="card">
+    <div class="card-title">📥 엑셀 일괄 등록</div>
+    <div class="msg" id="uploadMsg"></div>
+    <div class="btn-row">
+      <button class="btn btn-sec" id="dlTemplateBtn">📄 빈 템플릿 다운로드</button>
+      <button class="btn btn-sec" id="dlCurrentBtn">📊 현재 목록 다운로드</button>
+    </div>
+    <div class="file-area" id="fileArea">
+      <input type="file" id="fileInput" accept=".xlsx,.xls,.csv">
+      <div class="file-area-text">📁 엑셀 파일 <b>클릭</b> 또는 <b>드래그</b><br><span style="font-size:11px">이름 | PIN (4자리 숫자)</span></div>
+    </div>
+    <div class="preview" id="preview" style="display:none">
+      <div class="preview-header">
+        <span class="preview-count" id="previewCount"></span>
+        <button class="btn btn-grn btn-sm" id="uploadConfirmBtn">✓ 업로드 실행</button>
+      </div>
+      <div id="previewTable"></div>
+    </div>
+    <div class="help">
+      • <b>이름</b> 열 + <b>PIN</b> 열 (4자리 숫자)<br>
+      • 기존 이름 → PIN 업데이트 / 신규 이름 → 추가<br>
+      • PIN 중복 시 해당 행 건너뜀
+    </div>
+  </div>
+
+  <!-- 직원 목록 -->
+  <div class="card">
+    <div class="card-title">👥 직원 목록 <span class="badge" id="empCount">0</span></div>
+    <div class="msg" id="listMsg"></div>
+    <div style="margin-bottom:10px">
+      <input type="text" class="inp" id="searchName" placeholder="🔍 이름 검색" style="padding:10px 14px">
+    </div>
+    <div id="listWrap">
+      <div class="empty">로딩중...</div>
+    </div>
+  </div>
+</div>
+
+<!-- 수정 모달 -->
+<div class="modal-bg" id="editModal">
+  <div class="modal">
+    <div class="modal-title">✏️ PIN 수정</div>
+    <div class="msg" id="editMsg"></div>
+    <div class="modal-row">
+      <label>이름</label>
+      <div style="font-size:16px;font-weight:700;color:#e2b04a" id="editName"></div>
+    </div>
+    <div class="modal-row">
+      <label>새 PIN (4자리)</label>
+      <input type="text" class="inp pin" id="editPin" maxlength="4" inputmode="numeric" pattern="[0-9]*">
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-pri" id="saveEditBtn" style="flex:1">저장</button>
+      <button class="btn btn-sec" id="cancelEditBtn" style="flex:1">취소</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   Supabase 설정 - ★ 기존 프로젝트와 동일한 URL/key 입력
+   ============================================================ */
+const SUPABASE_URL = 'https://여기에실제URL.supabase.co';
+const SUPABASE_KEY = '여기에_anon_key';
+const TBL = 'user_pin';
+
+/* 마스터 PIN 2580 → SHA-256 */
+const MASTER_PIN_HASH = '18167da210996cf3525e400870f7d4955d6b983a7b7d237586e242e59888ad86';
+
+const LK_ADMIN = 'esg_admin_auth';
+const LK_ADMIN_FAIL = 'esg_admin_fail';
+const ADMIN_TTL_MIN = 30;
+const MAX_FAIL = 5;
+const LOCKOUT_SEC = 60;
+
+let curPin = '';
+let lockTimer = null;
+let empCache = [];
+let uploadData = [];
+let editingId = null;
+
+async function sha256hex(s){
+  const b = new TextEncoder().encode(s);
+  const h = await crypto.subtle.digest('SHA-256', b);
+  return Array.from(new Uint8Array(h)).map(x => x.toString(16).padStart(2,'0')).join('');
+}
+window.sha256hex = sha256hex;
+
+/* ========== Supabase REST ========== */
+async function sbReq(method, path, body){
+  const opt = {
+    method,
+    headers: {
+      'apikey': SUPABASE_KEY,
+      'Authorization': 'Bearer ' + SUPABASE_KEY,
+      'Content-Type': 'application/json',
+      'Prefer': method === 'POST' ? 'return=representation,resolution=merge-duplicates' : 'return=representation'
+    }
+  };
+  if(body) opt.body = JSON.stringify(body);
+  const r = await fetch(SUPABASE_URL + '/rest/v1/' + path, opt);
+  if(!r.ok){
+    const txt = await r.text();
+    throw new Error(r.status + ': ' + txt);
+  }
+  const ct = r.headers.get('content-type') || '';
+  if(ct.includes('json')) return await r.json();
+  return null;
+}
+
+/* ========== 마스터 잠금 ========== */
+function getAdminAuth(){try{return JSON.parse(localStorage.getItem(LK_ADMIN)||'null')}catch(e){return null}}
+function setAdminAuth(){localStorage.setItem(LK_ADMIN, JSON.stringify({exp: Date.now()+ADMIN_TTL_MIN*60*1000}))}
+function clearAdminAuth(){localStorage.removeItem(LK_ADMIN)}
+function getAdminFail(){try{return JSON.parse(localStorage.getItem(LK_ADMIN_FAIL)||'{"count":0,"until":0}')}catch(e){return{count:0,until:0}}}
+function setAdminFail(f){localStorage.setItem(LK_ADMIN_FAIL, JSON.stringify(f))}
+function clearAdminFail(){localStorage.removeItem(LK_ADMIN_FAIL)}
+
+function initLock(){
+  const a = getAdminAuth();
+  if(a && a.exp > Date.now()){unlockAdmin();return}
+  renderKeypad();
+  checkAdminLockout();
+}
+
+function renderKeypad(){
+  const kp = document.getElementById('mlKeypad');
+  kp.innerHTML = '';
+  ['1','2','3','4','5','6','7','8','9','','0','⌫'].forEach(k => {
+    const b = document.createElement('button');
+    if(k === ''){b.className='key fn';b.style.visibility='hidden'}
+    else if(k === '⌫'){b.className='key fn';b.textContent=k;b.onclick=()=>mPinDel()}
+    else{b.className='key';b.textContent=k;b.onclick=()=>mPinPress(k)}
+    kp.appendChild(b);
+  });
+}
+
+function mUpdateDots(){
+  document.querySelectorAll('#mlDots .pin-dot').forEach((d,i)=>{
+    d.classList.remove('err');
+    if(i<curPin.length) d.classList.add('filled');
+    else d.classList.remove('filled');
+  });
+}
+
+function mShakeDots(){
+  document.querySelectorAll('#mlDots .pin-dot').forEach(d=>d.classList.add('err'));
+  setTimeout(()=>{curPin='';mUpdateDots()},400);
+}
+
+function mPinPress(n){
+  if(curPin.length>=4)return;
+  const f=getAdminFail();if(f.until>Date.now())return;
+  curPin+=n;mUpdateDots();
+  if(curPin.length===4)setTimeout(mPinDone,150);
+}
+function mPinDel(){if(!curPin)return;curPin=curPin.slice(0,-1);mUpdateDots()}
+
+async function mPinDone(){
+  const h=await sha256hex(curPin);
+  if(h===MASTER_PIN_HASH){
+    clearAdminFail();setAdminAuth();
+    document.getElementById('mlHint').textContent='인증 완료';
+    document.getElementById('mlHint').style.color='#22c55e';
+    setTimeout(unlockAdmin,300);
+  }else{
+    const f=getAdminFail();f.count=(f.count||0)+1;
+    if(f.count>=MAX_FAIL){f.until=Date.now()+LOCKOUT_SEC*1000;f.count=0;setAdminFail(f);checkAdminLockout()}
+    else{setAdminFail(f);document.getElementById('mlHint').textContent='마스터 PIN 불일치 ('+f.count+'/'+MAX_FAIL+')';document.getElementById('mlHint').classList.add('err')}
+    mShakeDots();
+  }
+}
+
+function checkAdminLockout(){
+  const f=getAdminFail(),msg=document.getElementById('mlLockout'),remain=f.until-Date.now();
+  if(remain>0){
+    msg.style.display='block';
+    const upd=()=>{const r=Math.ceil((f.until-Date.now())/1000);if(r<=0){msg.style.display='none';clearAdminFail();clearInterval(lockTimer);document.getElementById('mlHint').textContent='4자리 PIN';document.getElementById('mlHint').classList.remove('err');return};msg.textContent='🔒 '+r+'초 후 재시도'};
+    upd();clearInterval(lockTimer);lockTimer=setInterval(upd,1000);
+  }else{msg.style.display='none'}
+}
+
+function unlockAdmin(){
+  document.body.classList.remove('locked');
+  document.getElementById('masterLock').style.display='none';
+  loadList();
+}
+
+/* ========== 엑셀 템플릿 다운로드 ========== */
+function downloadTemplate(){
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.aoa_to_sheet([
+    ['이름', 'PIN'],
+    ['홍길동', '1234'],
+    ['김철수', '5678']
+  ]);
+  ws['!cols'] = [{wch:16},{wch:12}];
+  XLSX.utils.book_append_sheet(wb, ws, '직원PIN');
+  XLSX.writeFile(wb, 'PIN_템플릿.xlsx');
+}
+
+/* 현재 목록 다운로드 (PIN은 미포함, 이름만) */
+function downloadCurrent(){
+  if(empCache.length === 0){showMsg('uploadMsg','등록된 직원이 없습니다','warn');return}
+  const wb = XLSX.utils.book_new();
+  const rows = [['이름', 'PIN']];
+  empCache.forEach(e => rows.push([e.name, '']));
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws['!cols'] = [{wch:16},{wch:12}];
+  XLSX.utils.book_append_sheet(wb, ws, '직원PIN');
+  XLSX.writeFile(wb, 'PIN_현재목록.xlsx');
+  showMsg('uploadMsg','✓ 다운로드 완료 (PIN칸에 새 PIN 입력 후 업로드)','ok');
+}
+
+/* ========== 파일 업로드 & 파싱 ========== */
+function handleFile(file){
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e){
+    try{
+      const wb = XLSX.read(e.target.result, {type:'array'});
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const raw = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+
+      // 헤더 기반 컬럼 매핑
+      let startRow = 0;
+      let colMap = {name:-1, pin:-1, emp_id:-1, dept:-1, position:-1};
+      for(let i=0; i<Math.min(5, raw.length); i++){
+        const row = raw[i].map(c=>String(c).trim());
+        for(let j=0; j<row.length; j++){
+          const v = row[j].toLowerCase();
+          if(v==='성명'||v==='이름'||v==='name') colMap.name=j;
+          else if(v==='pin'||v==='비번'||v==='비밀번호'||v==='핀') colMap.pin=j;
+          else if(v==='id'||v==='사번') colMap.emp_id=j;
+          else if(v==='부서'||v==='dept') colMap.dept=j;
+          else if(v==='직위'||v==='직급'||v==='position') colMap.position=j;
+        }
+        if(colMap.name>=0 && colMap.pin>=0){startRow=i+1;break}
+      }
+      if(startRow===0){colMap={name:0,pin:1,emp_id:-1,dept:-1,position:-1};startRow=1}
+
+      uploadData = [];
+      const errors = [];
+      for(let i=startRow; i<raw.length; i++){
+        const r = raw[i];
+        const name = String(r[colMap.name]||'').trim();
+        const pin = String(r[colMap.pin]||'').trim();
+        if(!name) continue;
+        if(!/^\d{4}$/.test(pin)){errors.push((i+1)+'행: ['+name+'] PIN 4자리 아님 → "'+pin+'"');continue}
+        if(uploadData.find(x=>x.name===name)){errors.push((i+1)+'행: ['+name+'] 이름 중복');continue}
+        if(uploadData.find(x=>x.pin===pin)){errors.push((i+1)+'행: ['+name+'] PIN 중복');continue}
+        const row = {name, pin};
+        if(colMap.emp_id>=0) row.emp_id = String(r[colMap.emp_id]||'').trim();
+        if(colMap.dept>=0) row.dept = String(r[colMap.dept]||'').trim();
+        if(colMap.position>=0) row.position = String(r[colMap.position]||'').trim();
+        uploadData.push(row);
+      }
+
+      if(uploadData.length===0 && errors.length===0){
+        showMsg('uploadMsg','유효한 데이터 없음','err');return;
+      }
+
+      // 미리보기 표시
+      document.getElementById('preview').style.display='block';
+      document.getElementById('previewCount').textContent='등록 예정: '+uploadData.length+'명'+(errors.length?' / 오류: '+errors.length+'건':'');
+
+      let html = '<table class="tbl"><thead><tr><th>ID</th><th>부서</th><th>이름</th><th>직위</th><th>PIN</th><th>상태</th></tr></thead><tbody>';
+      uploadData.forEach(d=>{
+        const exist = empCache.find(x=>x.name===d.name);
+        html += '<tr><td>'+(d.emp_id||'')+'</td><td>'+(d.dept||'')+'</td><td class="name-cell">'+d.name+'</td><td>'+(d.position||'')+'</td><td class="pin-cell">'+d.pin+'</td><td style="font-size:11px;color:'+(exist?'#f59e0b':'#22c55e')+'">'+(exist?'업데이트':'신규')+'</td></tr>';
+      });
+      if(errors.length){
+        errors.forEach(e=>{
+          html += '<tr><td colspan="6" style="font-size:11px;color:#ef4444">⚠ '+e+'</td></tr>';
+        });
+      }
+      html += '</tbody></table>';
+      document.getElementById('previewTable').innerHTML = html;
+
+      if(errors.length && uploadData.length)
+        showMsg('uploadMsg','일부 오류 행은 건너뛰고 '+uploadData.length+'건 등록 가능','warn');
+      else if(errors.length)
+        showMsg('uploadMsg','모든 행에 오류','err');
+      else
+        showMsg('uploadMsg','✓ '+uploadData.length+'건 파싱 완료 → 업로드 실행 클릭','ok');
+
+    }catch(err){
+      showMsg('uploadMsg','❌ 파일 오류: '+err.message,'err');
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+async function executeUpload(){
+  if(uploadData.length===0){showMsg('uploadMsg','업로드할 데이터 없음','err');return}
+
+  const btn = document.getElementById('uploadConfirmBtn');
+  btn.disabled = true;
+  btn.textContent = '처리중...';
+  showMsg('uploadMsg','업로드 중...','ok');
+
+  let ok = 0, fail = 0, skip = 0;
+  const errors = [];
+
+  for(const d of uploadData){
+    try{
+      const pinHash = await sha256hex(d.pin);
+
+      // PIN 중복 체크 (다른 사람과 겹치는지)
+      const pinChk = await sbReq('GET', TBL+'?select=id,name&pin_hash=eq.'+pinHash);
+      if(pinChk && pinChk.length && pinChk[0].name !== d.name){
+        errors.push(d.name+': PIN이 ['+pinChk[0].name+']와 중복');
+        skip++;
+        continue;
+      }
+
+      // 기존 이름 존재 여부
+      const exist = await sbReq('GET', TBL+'?select=id&name=eq.'+encodeURIComponent(d.name));
+      const extra = {};
+      if(d.emp_id) extra.emp_id = d.emp_id;
+      if(d.dept) extra.dept = d.dept;
+      if(d.position) extra.position = d.position;
+      if(exist && exist.length){
+        await sbReq('PATCH', TBL+'?name=eq.'+encodeURIComponent(d.name), Object.assign({pin_hash: pinHash}, extra));
+      }else{
+        await sbReq('POST', TBL, Object.assign({name: d.name, pin_hash: pinHash}, extra));
+      }
+      ok++;
+    }catch(err){
+      errors.push(d.name+': '+err.message);
+      fail++;
+    }
+  }
+
+  let msg = '✓ 완료: '+ok+'건 성공';
+  if(skip) msg += ' / '+skip+'건 건너뜀(PIN중복)';
+  if(fail) msg += ' / '+fail+'건 실패';
+  showMsg('uploadMsg', msg, fail ? 'warn' : 'ok');
+
+  if(errors.length){
+    console.log('업로드 오류 상세:', errors);
+  }
+
+  btn.disabled = false;
+  btn.textContent = '✓ 업로드 실행';
+  uploadData = [];
+  document.getElementById('preview').style.display = 'none';
+  document.getElementById('fileInput').value = '';
+  loadList();
+}
+
+/* ========== 직원 목록 ========== */
+async function loadList(){
+  const wrap = document.getElementById('listWrap');
+  wrap.innerHTML = '<div class="empty">로딩중...</div>';
+  try{
+    empCache = await sbReq('GET', TBL+'?select=id,emp_id,name,dept,position,pin_hash,updated_at&order=name.asc') || [];
+    document.getElementById('empCount').textContent = empCache.length;
+    renderList();
+  }catch(err){
+    wrap.innerHTML = '<div class="empty" style="color:#ef4444">❌ '+err.message+'</div>';
+  }
+}
+
+function renderList(){
+  const wrap = document.getElementById('listWrap');
+  const kw = (document.getElementById('searchName').value||'').trim().toLowerCase();
+  const list = kw ? empCache.filter(x=>x.name.toLowerCase().includes(kw)) : empCache;
+
+  if(list.length===0){
+    wrap.innerHTML='<div class="empty">'+(empCache.length===0?'등록된 직원이 없습니다':'검색결과 없음')+'</div>';
+    return;
+  }
+
+  const tbl=document.createElement('table');tbl.className='tbl';
+  const thead=document.createElement('thead');
+  thead.innerHTML='<tr><th>ID</th><th>부서</th><th>이름</th><th>직위</th><th>PIN</th><th style="text-align:right">관리</th></tr>';
+  tbl.appendChild(thead);
+  const tbody=document.createElement('tbody');
+
+  list.forEach(emp=>{
+    const tr=document.createElement('tr');
+
+    const tdId=document.createElement('td');tdId.textContent=emp.emp_id||'';tdId.style.fontSize='11px';tdId.style.color='#8b8fa3';tr.appendChild(tdId);
+    const tdD=document.createElement('td');tdD.textContent=emp.dept||'';tdD.style.fontSize='11px';tr.appendChild(tdD);
+    const tdN=document.createElement('td');tdN.className='name-cell';tdN.textContent=emp.name;tr.appendChild(tdN);
+    const tdP=document.createElement('td');tdP.textContent=emp.position||'';tdP.style.fontSize='11px';tr.appendChild(tdP);
+    const tdPin=document.createElement('td');tdPin.className='pin-cell';tdPin.textContent='••••';tr.appendChild(tdPin);
+    const tdA=document.createElement('td');
+    const act=document.createElement('div');act.className='actions';
+
+    const eb=document.createElement('button');eb.className='btn btn-sec btn-sm';eb.textContent='수정';
+    eb.onclick=()=>openEdit(emp.id, emp.name);act.appendChild(eb);
+
+    const db=document.createElement('button');db.className='btn btn-dan btn-sm';db.textContent='삭제';
+    db.onclick=()=>delEmp(emp.id, emp.name);act.appendChild(db);
+
+    tdA.appendChild(act);tr.appendChild(tdA);
+    tbody.appendChild(tr);
+  });
+
+  tbl.appendChild(tbody);wrap.innerHTML='';wrap.appendChild(tbl);
+}
+
+/* ========== 수정 모달 ========== */
+function openEdit(id, name){
+  editingId = id;
+  document.getElementById('editName').textContent = name;
+  document.getElementById('editPin').value = '';
+  document.getElementById('editModal').classList.add('show');
+  setTimeout(()=>document.getElementById('editPin').focus(), 200);
+}
+
+function closeEdit(){
+  editingId = null;
+  document.getElementById('editModal').classList.remove('show');
+}
+
+async function saveEdit(){
+  const pin = document.getElementById('editPin').value.trim();
+  if(!/^\d{4}$/.test(pin)){showMsg('editMsg','PIN은 숫자 4자리','err');return}
+  const name = document.getElementById('editName').textContent;
+
+  try{
+    const pinHash = await sha256hex(pin);
+    const pinChk = await sbReq('GET', TBL+'?select=id,name&pin_hash=eq.'+pinHash);
+    if(pinChk && pinChk.length && pinChk[0].name !== name){
+      showMsg('editMsg','이미 사용중인 PIN (['+pinChk[0].name+'])','err');return;
+    }
+    await sbReq('PATCH', TBL+'?id=eq.'+editingId, {pin_hash: pinHash});
+    showMsg('editMsg','✓ PIN 변경 완료','ok');
+    setTimeout(()=>{closeEdit();loadList()}, 600);
+  }catch(err){
+    showMsg('editMsg','❌ '+err.message,'err');
+  }
+}
+
+async function delEmp(id, name){
+  if(!confirm('['+name+'] 삭제하시겠습니까?\nPIN도 함께 삭제됩니다.'))return;
+  try{
+    await sbReq('DELETE', TBL+'?id=eq.'+id);
+    showMsg('listMsg','✓ 삭제: '+name,'ok');
+    loadList();
+  }catch(err){
+    showMsg('listMsg','❌ '+err.message,'err');
+  }
+}
+
+/* ========== 유틸 ========== */
+function showMsg(id, text, cls){
+  const e=document.getElementById(id);
+  e.textContent=text;e.className='msg show '+(cls||'ok');
+  clearTimeout(e._t);e._t=setTimeout(()=>e.classList.remove('show'),5000);
+}
+
+/* ========== 이벤트 바인딩 ========== */
+document.getElementById('logoutBtn').onclick=()=>{if(!confirm('관리자 잠금?'))return;clearAdminAuth();location.reload()};
+document.getElementById('dlTemplateBtn').onclick = downloadTemplate;
+document.getElementById('dlCurrentBtn').onclick = downloadCurrent;
+document.getElementById('uploadConfirmBtn').onclick = executeUpload;
+document.getElementById('saveEditBtn').onclick = saveEdit;
+document.getElementById('cancelEditBtn').onclick = closeEdit;
+document.getElementById('searchName').addEventListener('input', renderList);
+
+// 파일 영역
+const fa = document.getElementById('fileArea');
+const fi = document.getElementById('fileInput');
+fa.onclick = ()=>fi.click();
+fi.onchange = (e)=>{if(e.target.files[0])handleFile(e.target.files[0])};
+fa.ondragover = (e)=>{e.preventDefault();fa.classList.add('drag')};
+fa.ondragleave = ()=>{fa.classList.remove('drag')};
+fa.ondrop = (e)=>{e.preventDefault();fa.classList.remove('drag');if(e.dataTransfer.files[0])handleFile(e.dataTransfer.files[0])};
+
+// PIN 숫자만
+document.getElementById('editPin').addEventListener('input',function(e){e.target.value=e.target.value.replace(/\D/g,'').slice(0,4)});
+
+// 마스터 PIN 키보드
+document.addEventListener('keydown',function(e){
+  if(!document.body.classList.contains('locked'))return;
+  if(e.key>='0'&&e.key<='9')mPinPress(e.key);
+  else if(e.key==='Backspace')mPinDel();
+});
+
+// 모달 외부 클릭 닫기
+document.getElementById('editModal').onclick=function(e){if(e.target===this)closeEdit()};
+
+initLock();
+</script>
+</body>
+</html>
