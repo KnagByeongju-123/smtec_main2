@@ -234,12 +234,12 @@ var CHK_CATS=[
 var DEFAULT_CHK_ITEMS={
   dim:[{name:'측정부위1',type:'text'},{name:'측정부위2',type:'text'}],
   mat:[{name:'중량',type:'text'},{name:'찍힘',type:'text'},{name:'기스',type:'text'},{name:'변형',type:'text'},{name:'발청',type:'text'},{name:'기타',type:'text'}],
-  def:[{name:'외관',type:'text'},{name:'치수',type:'text'},{name:'기타',type:'text'}],
+  def:[{name:'불량항목1',type:'text'},{name:'불량항목2',type:'text'}],
   urg:[{name:'안전',type:'text'},{name:'소방',type:'text'},{name:'기타',type:'text'}]
 };
 var CHK_ITEMS_LS='MES_CHK_ITEMS';
 var CHK_ITEMS_VER_LS='MES_CHK_ITEMS_VER';
-var CHK_ITEMS_VER='v3';
+var CHK_ITEMS_VER='v4';
 function getChkItems(){var curVer=localStorage.getItem(CHK_ITEMS_VER_LS);if(curVer!==CHK_ITEMS_VER){localStorage.setItem(CHK_ITEMS_LS,JSON.stringify(DEFAULT_CHK_ITEMS));localStorage.setItem(CHK_ITEMS_VER_LS,CHK_ITEMS_VER);return JSON.parse(JSON.stringify(DEFAULT_CHK_ITEMS))}try{var v=localStorage.getItem(CHK_ITEMS_LS);if(v){var o=JSON.parse(v);if(o&&o.dim)return o}}catch(e){}return JSON.parse(JSON.stringify(DEFAULT_CHK_ITEMS))}
 function saveChkItems(o){localStorage.setItem(CHK_ITEMS_LS,JSON.stringify(o));_saveRulesToServer('mes_chk_items',[o])}
 
@@ -318,6 +318,7 @@ function openChkModal(machine){
   chkState.category=null;
   chkState.rows=[];
   chkState.photos=[];
+  chkState.editId=null;
   document.getElementById('chkTitle').textContent='📋 점검등록 ['+machine.machine_code+'] '+(machine.machine_name||'');
   document.getElementById('chkSub').textContent=(machine.customer||'-')+' │ '+(machine.current_item_code||'-')+' │ '+(machine.item_name||'-');
   // Step1 표시
@@ -358,23 +359,38 @@ function chkBackToCards(){
 }
 function resetChkRowsForCategory(){
   var items=getChkItems()[chkState.category]||[];
-  // 각 항목당 기본 1행씩
   chkState.rows=items.map(function(it){return{itemName:it.name,itemType:it.type,value:'',remark:''}});
+  // 소재 카테고리 - 중량 자동계산
+  if(chkState.category==='mat'&&chkState.machine){
+    var m=chkState.machine;
+    var coilKg=+m.coil_weight||0;      // 코일 총중량 kg
+    var unitG=+m.unit_per_qty||0;      // 단위 소요중량 g
+    var actQty=+m.actual_qty||0;       // 실적(사용수)
+    var usedKg=actQty*unitG/1000;       // 사용한 무게 kg
+    var remainKg=coilKg-usedKg;         // 예상 잔량 kg
+    var wRow=chkState.rows.find(function(r){return r.itemName==='중량'});
+    if(wRow){
+      var parts=[];
+      if(coilKg>0)parts.push('코일'+coilKg.toFixed(1)+'kg');
+      if(actQty>0&&unitG>0){parts.push('사용'+actQty+'×'+unitG+'g='+usedKg.toFixed(2)+'kg');parts.push('잔량예상'+remainKg.toFixed(2)+'kg')}
+      if(parts.length)wRow.value=parts.join(' / ');
+    }
+  }
 }
 function renderChkContent(){
   var c=document.getElementById('chkContent');c.innerHTML='';
-  if(chkState.category==='dim'){
-    // 치수 - 2열 메모
+  if(chkState.category==='dim'||chkState.category==='def'){
+    // 치수/불량 - 2열 메모
     var grid=document.createElement('div');grid.className='chk-memos';
     chkState.rows.forEach(function(r,idx){
       var box=document.createElement('div');box.className='chk-memo';
       var hdr=document.createElement('div');hdr.className='chk-mhdr';
-      var nm=document.createElement('input');nm.type='text';nm.value=r.itemName||'';nm.placeholder='측정부위';
+      var nm=document.createElement('input');nm.type='text';nm.value=r.itemName||'';nm.placeholder=chkState.category==='dim'?'측정부위':'불량항목';
       (function(i){nm.oninput=function(e){chkState.rows[i].itemName=e.target.value}})(idx);
       var del=document.createElement('button');del.className='chk-del-memo';del.textContent='✕';del.title='삭제';
       (function(i){del.onclick=function(){chkState.rows.splice(i,1);renderChkContent()}})(idx);
       hdr.appendChild(nm);hdr.appendChild(del);
-      var ta=document.createElement('textarea');ta.placeholder='치수 / 측정값 / 메모';ta.value=r.value||'';
+      var ta=document.createElement('textarea');ta.placeholder=chkState.category==='dim'?'치수 / 측정값 / 메모':'불량내용 / 위치 / 수량 등';ta.value=r.value||'';
       (function(i){ta.oninput=function(e){chkState.rows[i].value=e.target.value}})(idx);
       box.appendChild(hdr);box.appendChild(ta);
       grid.appendChild(box);
@@ -382,6 +398,19 @@ function renderChkContent(){
     c.appendChild(grid);
   }else{
     // 그 외 - 테이블
+    if(chkState.category==='mat'&&chkState.machine){
+      var m=chkState.machine;
+      var info=document.createElement('div');
+      info.style.cssText='background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.3);border-radius:8px;padding:8px 10px;margin-bottom:8px;font-size:11px;color:#86efac;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap';
+      var coilKg=+m.coil_weight||0,unitG=+m.unit_per_qty||0,actQty=+m.actual_qty||0;
+      var usedKg=actQty*unitG/1000,remainKg=coilKg-usedKg;
+      var txt='📦 코일 '+coilKg.toFixed(1)+'kg · 소요 '+unitG+'g/ea · 실적 '+actQty+' · 예상잔량 <b>'+remainKg.toFixed(2)+'kg</b>';
+      info.innerHTML='<span>'+txt+'</span>';
+      var reBtn=document.createElement('button');reBtn.textContent='🔄 자동계산';reBtn.style.cssText='border:none;background:rgba(34,197,94,.2);color:#86efac;border-radius:4px;padding:4px 10px;font-size:11px;cursor:pointer;font-family:inherit;font-weight:700';
+      reBtn.onclick=function(){resetChkRowsForCategory();renderChkContent()};
+      info.appendChild(reBtn);
+      c.appendChild(info);
+    }
     var wrap=document.createElement('div');wrap.className='chk-items';
     chkState.rows.forEach(function(r,idx){
       var item=document.createElement('div');item.className='chk-item';
@@ -397,7 +426,7 @@ function renderChkContent(){
   }
   // 행추가 버튼
   var addBtn=document.createElement('button');addBtn.className='chk-add-btn';
-  addBtn.textContent=chkState.category==='dim'?'+ 측정부위 추가':'+ 항목 추가 (같은 카테고리)';
+  addBtn.textContent=(chkState.category==='dim'||chkState.category==='def')?'+ 항목 추가':'+ 항목 추가 (같은 카테고리)';
   addBtn.onclick=function(){addChkRowDialog()};
   c.appendChild(addBtn);
   // 사진 영역
@@ -414,12 +443,12 @@ function renderChkContent(){
   renderChkPhotos();
 }
 function addChkRowDialog(){
-  // 치수 카테고리는 메모 즉시 추가 (이름도 자유입력)
-  if(chkState.category==='dim'){
+  // 치수/불량 카테고리는 메모 즉시 추가 (이름도 자유입력)
+  if(chkState.category==='dim'||chkState.category==='def'){
+    var base=chkState.category==='dim'?'측정부위':'불량항목';
     var n=chkState.rows.length+1;
-    chkState.rows.push({itemName:'측정부위'+n,itemType:'text',value:'',remark:''});
+    chkState.rows.push({itemName:base+n,itemType:'text',value:'',remark:''});
     renderChkContent();
-    // 새로 추가한 메모의 제목칸에 포커스
     setTimeout(function(){var ins=document.querySelectorAll('.chk-mhdr input');if(ins.length)ins[ins.length-1].focus()},50);
     return;
   }
@@ -509,17 +538,26 @@ async function submitCheck(){
   };
   // 1) Supabase 저장 (mes_check_log 테이블)
   showToast('⏳ 저장중...');
+  var isEdit=!!chkState.editId;
   try{
-    await sbPost('mes_check_log',{
-      machine_code:record.machine_code,
-      machine_name:record.machine_name,
-      customer:record.customer,
-      item_code:record.item_code,
-      item_name:record.item_name,
-      category:cat,
-      payload:record,
-      created_at:record.created_at
-    });
+    if(isEdit){
+      await fetch(SB_URL+'/rest/v1/mes_check_log?id=eq.'+chkState.editId,{
+        method:'PATCH',
+        headers:Object.assign({},sbH,{'Prefer':'return=minimal'}),
+        body:JSON.stringify({
+          machine_code:record.machine_code,machine_name:record.machine_name,
+          customer:record.customer,item_code:record.item_code,
+          category:cat,payload:record
+        })
+      });
+    }else{
+      await sbPost('mes_check_log',{
+        machine_code:record.machine_code,machine_name:record.machine_name,
+        customer:record.customer,item_code:record.item_code,
+        item_name:record.item_name,category:cat,
+        payload:record,created_at:record.created_at
+      });
+    }
   }catch(e){console.log('supabase 저장실패:',e)}
   // 2) 알림 메시지 구성
   var msg='📋 ['+catInfo.icon+' '+catInfo.name+'] '+record.machine_code+' '+record.machine_name+'\n';
@@ -531,10 +569,16 @@ async function submitCheck(){
   });
   if(record.photo_count>0)msg+='📷 사진 '+record.photo_count+'장 첨부\n';
   msg+='⏱ '+now.toLocaleString('ko-KR');
-  // 3) 알림 발송
-  await sendChkAlerts(cat,msg,record);
-  showToast('✅ 저장 및 알림 발송 완료');
+  // 3) 알림 발송 (신규등록만, 수정시 스킵)
+  if(!isEdit){
+    await sendChkAlerts(cat,msg,record);
+    showToast('✅ 저장 및 알림 발송 완료');
+  }else{
+    showToast('✅ 수정 완료 (알림 미발송)');
+  }
   closeChkModal();
+  // 수정후 이력탭에 있었다면 재조회
+  if(isEdit){var r=document.getElementById('hiResult');if(r&&document.getElementById('panel-settings').classList.contains('active'))hiSearch()}
 }
 
 // 카테고리 매칭: rule.cond 에 chk_dim / chk_mat / chk_def / chk_urg / chk_all 이면 발송
@@ -669,9 +713,14 @@ async function hiSearch(){
   hiRenderTable(data);
 }
 function hiRenderTable(data){
-  var c=document.getElementById('hiResult');
+  var c=document.getElementById('hiResult');c.innerHTML='';
   if(!data.length){c.innerHTML='<div class="hi-empty">결과 없음</div>';return}
-  var h='<div style="font-size:11px;color:var(--accent);margin:6px 0">총 '+data.length+'건</div><div style="overflow-x:auto"><table class="hi-table"><thead><tr><th style="width:26px"><input type="checkbox" class="hi-checkbox" onclick="hiToggleAll(this)"></th><th>일시</th><th>설비</th><th>고객</th><th>카테</th><th>내용</th><th>📷</th></tr></thead><tbody>';
+  var info=document.createElement('div');info.style.cssText='font-size:11px;color:var(--accent);margin:6px 0';info.textContent='총 '+data.length+'건';
+  c.appendChild(info);
+  var wrap=document.createElement('div');wrap.style.overflowX='auto';
+  var tbl=document.createElement('table');tbl.className='hi-table';
+  tbl.innerHTML='<thead><tr><th style="width:26px"><input type="checkbox" class="hi-checkbox" onclick="hiToggleAll(this)"></th><th>일시</th><th>설비</th><th>고객</th><th>카테</th><th>내용</th><th>📷</th><th style="width:70px">관리</th></tr></thead>';
+  var tb=document.createElement('tbody');
   data.forEach(function(d){
     var dt=new Date(d.created_at);
     var tstr=dt.toLocaleString('ko-KR',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
@@ -680,10 +729,55 @@ function hiRenderTable(data){
     var rows=(d.payload&&d.payload.rows)||[];
     var detail=rows.map(function(r){return r.itemName+':'+(r.value||'-')+(r.remark?'('+r.remark+')':'')}).join(' / ');
     var pc=(d.payload&&d.payload.photo_count)||0;
-    h+='<tr data-id="'+d.id+'"><td><input type="checkbox" class="hi-checkbox hi-chk" value="'+d.id+'"></td><td style="white-space:nowrap">'+tstr+'</td><td><b>'+d.machine_code+'</b><br><span style="color:var(--sub);font-size:10px">'+(d.machine_name||'')+'</span></td><td style="font-size:10px">'+(d.customer||'-')+'</td><td>'+catH+'</td><td class="hi-det">'+(detail||'-')+'</td><td style="text-align:center">'+(pc>0?'📷'+pc:'')+'</td></tr>';
+    var tr=document.createElement('tr');tr.dataset.id=d.id;
+    tr.innerHTML='<td><input type="checkbox" class="hi-checkbox hi-chk" value="'+d.id+'"></td><td style="white-space:nowrap">'+tstr+'</td><td><b>'+d.machine_code+'</b><br><span style="color:var(--sub);font-size:10px">'+(d.machine_name||'')+'</span></td><td style="font-size:10px">'+(d.customer||'-')+'</td><td>'+catH+'</td><td class="hi-det">'+(detail||'-')+'</td><td style="text-align:center">'+(pc>0?'📷'+pc:'')+'</td>';
+    var tdAct=document.createElement('td');tdAct.style.cssText='white-space:nowrap;text-align:center';
+    var btnE=document.createElement('button');btnE.textContent='✏️';btnE.title='수정';btnE.style.cssText='border:none;background:rgba(56,189,248,.12);color:var(--accent);border-radius:4px;padding:3px 6px;cursor:pointer;margin-right:3px;font-size:13px';
+    var btnD=document.createElement('button');btnD.textContent='🗑';btnD.title='삭제';btnD.style.cssText='border:none;background:rgba(239,68,68,.12);color:var(--red);border-radius:4px;padding:3px 6px;cursor:pointer;font-size:13px';
+    (function(rec){btnE.onclick=function(e){e.stopPropagation();hiEditRecord(rec)};btnD.onclick=function(e){e.stopPropagation();hiDeleteOne(rec.id)}})(d);
+    tdAct.appendChild(btnE);tdAct.appendChild(btnD);
+    tr.appendChild(tdAct);
+    tb.appendChild(tr);
   });
-  h+='</tbody></table></div>';
-  c.innerHTML=h;
+  tbl.appendChild(tb);wrap.appendChild(tbl);c.appendChild(wrap);
+}
+function hiDeleteOne(id){
+  if(!confirm('이 기록을 삭제합니다. 진행?'))return;
+  (async function(){
+    try{await sbDelete('mes_check_log','id=eq.'+id);showToast('✅삭제');hiSearch()}
+    catch(e){showToast('삭제실패');console.log(e)}
+  })();
+}
+function hiEditRecord(d){
+  // 이력 수정 모드로 점검등록 모달 열기
+  var machine={
+    machine_code:d.machine_code,machine_name:d.machine_name||'',
+    customer:d.customer||'',current_item_code:d.item_code||'',
+    item_name:(d.payload&&d.payload.item_name)||'',
+    current_mold:(d.payload&&d.payload.mold)||''
+  };
+  openChkModal(machine);
+  // step2 로 바로 진입
+  chkState.editId=d.id;
+  var cid=d.category;
+  var cat=CHK_CATS.find(function(x){return x.id===cid});
+  if(!cat){showToast('카테고리 오류');return}
+  chkState.category=cid;
+  var el=document.getElementById('chkCurCat');
+  el.textContent=cat.icon+' '+cat.name+' (수정)';
+  el.style.background=cat.color+'33';el.style.color=cat.color;
+  chkState.rows=((d.payload&&d.payload.rows)||[]).map(function(r){return{itemName:r.itemName||r.name||'',itemType:r.itemType||'text',value:r.value||'',remark:r.remark||''}});
+  if(!chkState.rows.length)resetChkRowsForCategory();
+  // 사진 복원
+  chkState.photos=[];
+  if(d.payload&&d.payload.photos){
+    d.payload.photos.forEach(function(p){if(p.data)chkState.photos.push({dataUrl:p.data,size:p.size||0,name:'photo.jpg'})});
+  }
+  document.getElementById('chkStep1').style.display='none';
+  document.getElementById('chkStep2').style.display='';
+  document.getElementById('chkFoot').style.display='flex';
+  document.getElementById('chkTitle').textContent='✏️ 점검수정 ['+d.machine_code+'] '+(d.machine_name||'');
+  renderChkContent();
 }
 function hiToggleAll(el){document.querySelectorAll('.hi-chk').forEach(function(c){c.checked=el.checked;c.closest('tr').classList.toggle('sel',el.checked)})}
 function hiExportCsv(){
