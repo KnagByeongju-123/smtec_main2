@@ -234,9 +234,38 @@ CREATE POLICY "anon_all" ON move_history_tj FOR ALL TO anon USING (true) WITH CH
 <div class="toast" id="toast"></div>
 
 <script>
-function getKST(d){const utc=d.getTime()+d.getTimezoneOffset()*60000;return new Date(utc+9*3600000)}
-function kstDateStr(d){const k=getKST(d||new Date());return k.getFullYear()+'-'+String(k.getMonth()+1).padStart(2,'0')+'-'+String(k.getDate()).padStart(2,'0')}
-function kstTimeStr(d){const k=getKST(d||new Date());return String(k.getHours()).padStart(2,'0')+':'+String(k.getMinutes()).padStart(2,'0')+':'+String(k.getSeconds()).padStart(2,'0')}
+/* ===== KST(한국시간) 처리 - 수정됨 =====
+   - nowKST(): 현재 시각을 한국시간(UTC+9)으로 반환
+   - kstDateStr(): 현재시각만 KST로 변환하여 YYYY-MM-DD 반환
+   - fmtYMD(d): Date 객체를 로컬 기준 YYYY-MM-DD로 포맷 (엑셀에서 읽은 날짜용)
+   - fmtHMS(d): 현재시각을 KST 기준 HH:MM:SS로 반환
+   - excelSerialToYMD(n): 엑셀 시리얼 숫자를 타임존 영향 없이 YYYY-MM-DD로 변환
+*/
+function nowKST(){const d=new Date();return new Date(d.getTime()+(d.getTimezoneOffset()+540)*60000)}
+function pad2(n){return String(n).padStart(2,'0')}
+function kstDateStr(){const k=nowKST();return k.getFullYear()+'-'+pad2(k.getMonth()+1)+'-'+pad2(k.getDate())}
+function kstTimeStr(){const k=nowKST();return pad2(k.getHours())+':'+pad2(k.getMinutes())+':'+pad2(k.getSeconds())}
+/* Date객체의 로컬 연월일을 그대로 YYYY-MM-DD로 - 타임존 보정 없음 */
+function fmtYMD(d){if(!(d instanceof Date))return '';return d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate())}
+/* 엑셀 시리얼 → YYYY-MM-DD (타임존 영향 제거) */
+function excelSerialToYMD(serial){
+  if(typeof serial!=='number'||!isFinite(serial))return '';
+  /* 엑셀 시리얼 1 = 1900-01-01 (단, 1900년 윤년버그 보정) */
+  const o=XLSX.SSF.parse_date_code(serial);
+  if(!o)return '';
+  return o.y+'-'+pad2(o.m)+'-'+pad2(o.d);
+}
+/* 셀 값(Date | number | string) 받아서 YYYY-MM-DD 로 정규화 */
+function normalizeDateCell(v){
+  if(v==null||v==='')return '';
+  if(v instanceof Date)return fmtYMD(v);
+  if(typeof v==='number')return excelSerialToYMD(v);
+  const s=String(v).trim();
+  /* 이미 YYYY-MM-DD 형태면 그대로 */
+  const m=s.match(/^(\d{4})[-./](\d{1,2})[-./](\d{1,2})/);
+  if(m)return m[1]+'-'+pad2(m[2])+'-'+pad2(m[3]);
+  return s;
+}
 
 const SB_LS_KEY='MATERIAL_SB_CFG';
 const SB_DEFAULT_URL='https://omngtyewdaqpphnzeate.supabase.co';
@@ -325,11 +354,47 @@ document.addEventListener('DOMContentLoaded',()=>{const drop=document.getElement
 
 function handleFile(input){const f=input.files[0];if(f)parseFile(f);input.value=''}
 
-function parseFile(file){const reader=new FileReader();reader.onload=function(e){try{const wb=XLSX.read(e.target.result,{type:'array',cellDates:true});const sheetName=wb.SheetNames.find(n=>n==='입고등록')||wb.SheetNames[0];const ws=wb.Sheets[sheetName];const allRows=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});_batchCompany='';_batchDate='';if(allRows.length>=1){const r1=allRows[0];if(r1[1])_batchCompany=String(r1[1]).trim();let dv=r1[4];if(dv instanceof Date)_batchDate=kstDateStr(dv);else if(dv)_batchDate=String(dv).trim()}let raw=XLSX.utils.sheet_to_json(ws,{range:2,defval:''});raw=raw.filter(r=>Object.values(r).some(v=>v!==''));raw.forEach(r=>{if(_batchCompany&&!r['업체명'])r['업체명']=_batchCompany;if(_batchDate&&!r['입고일자'])r['입고일자']=_batchDate});if(!raw.length){showToast('데이터가 없습니다');return}_batchData=raw;document.getElementById('fileInfo').style.display='block';document.getElementById('fileInfoText').innerHTML='✅ <b>'+file.name+'</b> 읽기 완료<br>업체: <b>'+(_batchCompany||'미기입')+'</b> · 입고일: <b>'+(_batchDate||'미기입')+'</b> · <b>'+raw.length+'건</b>';document.getElementById('btnToStep3').disabled=false;showToast('✅ '+raw.length+'건 읽기 완료')}catch(err){showToast('파일 읽기 오류: '+err.message)}};reader.readAsArrayBuffer(file)}
+/* ===== 파일 파싱 - 입고일자 KST 정규화 적용 ===== */
+function parseFile(file){
+  const reader=new FileReader();
+  reader.onload=function(e){
+    try{
+      /* cellDates:false 로 읽어 엑셀 시리얼 숫자를 직접 변환 (타임존 영향 제거) */
+      const wb=XLSX.read(e.target.result,{type:'array',cellDates:false});
+      const sheetName=wb.SheetNames.find(n=>n==='입고등록')||wb.SheetNames[0];
+      const ws=wb.Sheets[sheetName];
+      const allRows=XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:true});
+      _batchCompany='';_batchDate='';
+      if(allRows.length>=1){
+        const r1=allRows[0];
+        if(r1[1])_batchCompany=String(r1[1]).trim();
+        /* 입고일자(1행 E열): 숫자/문자/Date 어떤 형태여도 YYYY-MM-DD로 정규화 */
+        if(r1[4]!==undefined&&r1[4]!=='')_batchDate=normalizeDateCell(r1[4]);
+      }
+      let raw=XLSX.utils.sheet_to_json(ws,{range:2,defval:'',raw:true});
+      raw=raw.filter(r=>Object.values(r).some(v=>v!==''));
+      /* 각 행의 입고일자 컬럼도 정규화 (타임존 영향 제거) */
+      raw.forEach(r=>{
+        if(_batchCompany&&!r['업체명'])r['업체명']=_batchCompany;
+        if(_batchDate&&!r['입고일자'])r['입고일자']=_batchDate;
+        else if(r['입고일자'])r['입고일자']=normalizeDateCell(r['입고일자']);
+      });
+      if(!raw.length){showToast('데이터가 없습니다');return}
+      _batchData=raw;
+      document.getElementById('fileInfo').style.display='block';
+      document.getElementById('fileInfoText').innerHTML='✅ <b>'+file.name+'</b> 읽기 완료<br>업체: <b>'+(_batchCompany||'미기입')+'</b> · 입고일: <b>'+(_batchDate||'미기입')+'</b> · <b>'+raw.length+'건</b>';
+      document.getElementById('btnToStep3').disabled=false;
+      showToast('✅ '+raw.length+'건 읽기 완료');
+    }catch(err){
+      showToast('파일 읽기 오류: '+err.message);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
 
-function renderPreview(){const cfg={from:document.getElementById('cfgFrom').value.trim(),to:document.getElementById('cfgTo').value.trim(),worker:document.getElementById('cfgWorker').value.trim()};document.getElementById('pvTotal').textContent=_batchData.length;document.getElementById('pvCompany').textContent=_batchCompany||'-';document.getElementById('pvDate').textContent=_batchDate||'-';document.getElementById('pvRegCnt').textContent=_batchData.length;document.getElementById('pvSettings').innerHTML='출발지: <b>'+cfg.from+'</b> → 도착지: <b>'+cfg.to+'</b>'+(cfg.worker?' · 담당자: <b>'+cfg.worker+'</b>':'');const cols=Object.keys(_batchData[0]);const showRows=_batchData.slice(0,15);let html='<thead><tr>'+cols.map(c=>'<th>'+c+'</th>').join('')+'</tr></thead><tbody>';showRows.forEach(row=>{html+='<tr>'+cols.map(c=>{let v=row[c];if(v instanceof Date)v=kstDateStr(v);return'<td>'+(v||'')+'</td>'}).join('')+'</tr>'});html+='</tbody>';document.getElementById('pvTable').innerHTML=html;document.getElementById('pvMore').textContent=_batchData.length>15?'... 외 '+(_batchData.length-15)+'건':''}
+function renderPreview(){const cfg={from:document.getElementById('cfgFrom').value.trim(),to:document.getElementById('cfgTo').value.trim(),worker:document.getElementById('cfgWorker').value.trim()};document.getElementById('pvTotal').textContent=_batchData.length;document.getElementById('pvCompany').textContent=_batchCompany||'-';document.getElementById('pvDate').textContent=_batchDate||'-';document.getElementById('pvRegCnt').textContent=_batchData.length;document.getElementById('pvSettings').innerHTML='출발지: <b>'+cfg.from+'</b> → 도착지: <b>'+cfg.to+'</b>'+(cfg.worker?' · 담당자: <b>'+cfg.worker+'</b>':'');const cols=Object.keys(_batchData[0]);const showRows=_batchData.slice(0,15);let html='<thead><tr>'+cols.map(c=>'<th>'+c+'</th>').join('')+'</tr></thead><tbody>';showRows.forEach(row=>{html+='<tr>'+cols.map(c=>{let v=row[c];if(v instanceof Date)v=fmtYMD(v);return'<td>'+(v||'')+'</td>'}).join('')+'</tr>'});html+='</tbody>';document.getElementById('pvTable').innerHTML=html;document.getElementById('pvMore').textContent=_batchData.length>15?'... 외 '+(_batchData.length-15)+'건':''}
 
-/* ★★★ doRegister - sbInsert(move_history_tj) DB저장 제거됨, 알림 발송만 수행 ★★★ */
+/* ★★★ doRegister - DB저장 제거됨, 알림 발송만 수행 ★★★ */
 async function doRegister(){
   if(!_batchData.length){showToast('데이터 없음');return}
   if(!confirm(_batchData.length+'건 알림을 발송합니다.\n계속하시겠습니까?'))return;
@@ -340,7 +405,7 @@ async function doRegister(){
   document.getElementById('btnRegister').disabled=true;
 
   const cfg={from:document.getElementById('cfgFrom').value.trim(),to:document.getElementById('cfgTo').value.trim(),worker:document.getElementById('cfgWorker').value.trim()};
-  const now=new Date();const todayStr=kstDateStr(now);const timeStr=kstTimeStr(now);
+  const todayStr=kstDateStr();const timeStr=kstTimeStr();
 
   /* 알림용 rows 데이터 구성 */
   const rows=[];
@@ -351,7 +416,23 @@ async function doRegister(){
   _batchData.forEach(raw=>{
     const row={move_date:todayStr,move_time:timeStr,process:'소재입고',departure:cfg.from,destination:cfg.to,barcode_raw:'',base_part:'',lot:'',qty:null,note:'',format:'엑셀일괄',worker:cfg.worker,equipment:'',weight:null,incoming_date:null,parent_part:null,child_type:null,model_type:'raceway',general_model:null,material_info:null};
     let _mType='',_mThick='',_mWidth='',_mPitch='';
-    srcCols.forEach(sc=>{const target=colMap[sc];if(!target)return;let v=raw[sc];if(v instanceof Date)v=kstDateStr(v);v=String(v||'').trim();if(!v)return;if(target==='_material_type')_mType=v;else if(target==='_thickness')_mThick=v;else if(target==='_width')_mWidth=v;else if(target==='_pitch')_mPitch=v;else if(target.startsWith('_'))return;else if(target==='weight')row.weight=parseFloat(v)||null;else if(target==='qty')row.qty=parseInt(v)||null;else row[target]=v});
+    srcCols.forEach(sc=>{
+      const target=colMap[sc];if(!target)return;
+      let v=raw[sc];
+      /* 날짜 컬럼은 KST 정규화 포맷 적용 */
+      if(target==='incoming_date')v=normalizeDateCell(v);
+      else if(v instanceof Date)v=fmtYMD(v);
+      v=String(v||'').trim();
+      if(!v)return;
+      if(target==='_material_type')_mType=v;
+      else if(target==='_thickness')_mThick=v;
+      else if(target==='_width')_mWidth=v;
+      else if(target==='_pitch')_mPitch=v;
+      else if(target.startsWith('_'))return;
+      else if(target==='weight')row.weight=parseFloat(v)||null;
+      else if(target==='qty')row.qty=parseInt(v)||null;
+      else row[target]=v;
+    });
     const matParts=[_mType,_mThick,_mWidth,_mPitch].filter(Boolean);
     if(matParts.length)row.material_info=matParts.join(' // ');
     rows.push(row);
@@ -385,8 +466,8 @@ async function loadMailGasCfg(){try{const data=await sbSelect('common_code',{cod
 async function saveMailGas(){const st=document.getElementById('mailGasStatus');if(!_mailGasUrl){st.textContent='⚠ 서버에 GAS URL 미등록';st.style.color='#e65100';return}st.textContent='✅ GAS URL: 서버 설정됨';st.style.color='#2e7d32'}
 async function testMailGas(){const st=document.getElementById('mailGasStatus');if(!_mailGasUrl){st.textContent='❌ 서버에 GAS URL 미등록';st.style.color='#c62828';return}st.textContent='테스트 중...';st.style.color='#1565c0';try{const res=await fetch(_mailGasUrl+'?action=ping');const data=await res.json();if(data.success){st.textContent='✅ 연결 성공 (잔여 발송: '+data.quota+'통/일)';st.style.color='#2e7d32'}else{st.textContent='❌ '+data.message;st.style.color='#c62828'}}catch(e){st.textContent='❌ 연결 실패: '+e.message;st.style.color='#c62828'}}
 
-function getHHMM(){const n=new Date();return String(n.getHours()).padStart(2,'0')+String(n.getMinutes()).padStart(2,'0')}
-function initHistDates(){const t=new Date(),m=new Date();m.setMonth(m.getMonth()-1);document.getElementById('histEnd').value=t.toISOString().split('T')[0];document.getElementById('histStart').value=m.toISOString().split('T')[0]}
+function getHHMM(){const k=nowKST();return pad2(k.getHours())+pad2(k.getMinutes())}
+function initHistDates(){const t=nowKST();const m=nowKST();m.setMonth(m.getMonth()-1);document.getElementById('histEnd').value=fmtYMD(t);document.getElementById('histStart').value=fmtYMD(m)}
 async function histFetch(){const sd=document.getElementById('histStart').value,ed=document.getElementById('histEnd').value;if(!sd||!ed)return{ok:false,msg:'날짜 선택'};let url=getSbUrl()+'/rest/v1/move_history_tj?select=*&order=move_date.desc,move_time.desc&limit=5000&move_date=gte.'+sd+'&move_date=lte.'+ed;const co=document.getElementById('histCompany').value.trim();if(co)url+='&material_info=ilike.*'+encodeURIComponent(co)+'*';try{const r=await fetch(url,{headers:{'apikey':getSbKey(),'Authorization':'Bearer '+getSbKey()}});if(!r.ok)throw new Error(r.status);return{ok:true,data:await r.json()}}catch(e){return{ok:false,msg:e.message}}}
 async function histQuery(){const pw=prompt('암호를 입력하세요:');if(!pw||pw!==getHHMM()){showToast('❌ 암호 불일치');return}const st=document.getElementById('histStatus'),area=document.getElementById('histArea');st.textContent='조회 중...';area.innerHTML='';const r=await histFetch();if(!r.ok){st.textContent='❌ '+r.msg;st.style.color='#c62828';return}if(!r.data.length){st.textContent='⚠ 이력 없음';st.style.color='#e65100';return}st.textContent='✅ '+r.data.length+'건';st.style.color='#2e7d32';let h='<table style="width:100%;border-collapse:collapse;font-size:10px"><tr style="background:#e8eaf6"><th style="padding:5px 4px;border-bottom:1px solid #c5cae9">일자</th><th style="padding:5px 4px;border-bottom:1px solid #c5cae9">소재</th><th style="padding:5px 4px;border-bottom:1px solid #c5cae9">LOT</th><th style="padding:5px 4px;border-bottom:1px solid #c5cae9">수량</th></tr>';r.data.slice(0,100).forEach(d=>{h+='<tr style="border-bottom:1px solid #eee"><td style="padding:4px">'+d.move_date+'</td><td style="padding:4px;max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(d.material_info||'-')+'</td><td style="padding:4px">'+(d.lot||'-')+'</td><td style="padding:4px">'+(d.qty||'-')+'</td></tr>'});area.innerHTML=h+'</table>'}
 async function histExcel(){const r=await histFetch();if(!r.ok||!r.data.length){showToast('데이터 없음');return}const hd=['일자','시간','공정','출발지','도착지','LOT','수량','소재정보','작업자','비고'];const rows=r.data.map(d=>[d.move_date,d.move_time,d.process,d.departure,d.destination,d.lot,d.qty,d.material_info,d.worker,d.note]);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([hd,...rows]),'소재입고');XLSX.writeFile(wb,'소재입고_'+document.getElementById('histStart').value.replace(/-/g,'')+'_'+document.getElementById('histEnd').value.replace(/-/g,'')+'.xlsx');showToast('📥 다운로드 완료')}
@@ -399,7 +480,7 @@ function renderNtfyRules(){const rules=getNtfyRules();const c=document.getElemen
 function addNtfyRule(){const cond=document.getElementById('ntfyNewCond').value;const topic=document.getElementById('ntfyNewTopic').value.trim().replace(/\s/g,'-');if(!topic){document.getElementById('ntfyStatus').textContent='⚠ 방이름 입력';return}const rules=getNtfyRules();if(rules.find(r=>r.condition===cond&&r.topic===topic)){document.getElementById('ntfyStatus').textContent='⚠ 이미 존재';return}rules.push({condition:cond,topic});saveNtfyRules(rules);document.getElementById('ntfyNewTopic').value='';document.getElementById('ntfyStatus').textContent='✅ #'+topic;document.getElementById('ntfyStatus').style.color='#2e7d32';renderNtfyRules()}
 function delNtfyRule(i){const r=getNtfyRules();r.splice(i,1);saveNtfyRules(r);renderNtfyRules()}
 async function sendNtfyByCondition(result,body){const rules=getNtfyRules();if(!rules.length)return;const hasNg=result==='NG';const matched=rules.filter(r=>r.condition==='always'||(r.condition==='ng'&&hasNg));for(const r of matched){try{await fetch(NTFY_SV+'/'+r.topic,{method:'POST',headers:{'Priority':hasNg?'5':'3','Tags':hasNg?'rotating_light':'white_check_mark'},body})}catch(e){}}}
-async function testNtfyAll(){const rules=getNtfyRules();if(!rules.length){document.getElementById('ntfyStatus').textContent='⚠ 등록된 규칙 없음';return}const msg=document.getElementById('ntfyTestMsg').value.trim()||'test';let s=0;for(const r of rules){try{await fetch(NTFY_SV+'/'+r.topic,{method:'POST',headers:{'Priority':'3','Tags':'test_tube'},body:msg+' ('+new Date().toLocaleTimeString()+')'});s++}catch(e){}}document.getElementById('ntfyStatus').textContent='✅ '+s+'/'+rules.length+'개 발송';document.getElementById('ntfyStatus').style.color='#2e7d32'}
+async function testNtfyAll(){const rules=getNtfyRules();if(!rules.length){document.getElementById('ntfyStatus').textContent='⚠ 등록된 규칙 없음';return}const msg=document.getElementById('ntfyTestMsg').value.trim()||'test';let s=0;for(const r of rules){try{await fetch(NTFY_SV+'/'+r.topic,{method:'POST',headers:{'Priority':'3','Tags':'test_tube'},body:msg+' ('+kstTimeStr()+')'});s++}catch(e){}}document.getElementById('ntfyStatus').textContent='✅ '+s+'/'+rules.length+'개 발송';document.getElementById('ntfyStatus').style.color='#2e7d32'}
 
 const TG_LS='MAT_TG_RULES';const HARDCODED_TG_BOT='8367539669:AAFzZeMULV8B4adNROtENsUc6wr0MvLpSi0';
 function getTgRules(){try{return JSON.parse(localStorage.getItem(TG_LS)||'[]')}catch(e){return[]}}
@@ -408,7 +489,7 @@ function renderTgRules(){const rules=getTgRules();const c=document.getElementByI
 function addTgRule(){const cond=document.getElementById('tgNewCond').value;const name=document.getElementById('tgNewName').value.trim();const id=document.getElementById('tgNewId').value.trim();if(!name||!id)return;const rules=getTgRules();if(rules.find(r=>r.chat_id===id&&r.condition===cond))return;rules.push({condition:cond,name,chat_id:id});saveTgRules(rules);document.getElementById('tgNewName').value='';document.getElementById('tgNewId').value='';renderTgRules()}
 function delTgRule(i){const r=getTgRules();r.splice(i,1);saveTgRules(r);renderTgRules()}
 async function sendTgByCondition(result,msg){const rules=getTgRules();if(!rules.length)return;const hasNg=result==='NG';const matched=rules.filter(r=>r.condition==='always'||(r.condition==='ng'&&hasNg));for(const r of matched){try{await fetch('https://api.telegram.org/bot'+HARDCODED_TG_BOT+'/sendMessage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:r.chat_id,text:msg,parse_mode:'HTML'})})}catch(e){}}}
-async function testTgAll(){const st=document.getElementById('tgStatus');const rules=getTgRules();if(!rules.length){st.textContent='❌ 수신자 없음';st.style.color='#c62828';return}let ok=0;for(const r of rules){try{const res=await fetch('https://api.telegram.org/bot'+HARDCODED_TG_BOT+'/sendMessage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:r.chat_id,text:'📤 소재입고 알림 테스트\n수신자: '+r.name+' ('+r.condition+')\n시간: '+new Date().toLocaleString()})});const d=await res.json();if(d.ok)ok++}catch(e){}}st.textContent=ok===rules.length?'✅ '+ok+'명 성공':'⚠ '+ok+'/'+rules.length;st.style.color=ok===rules.length?'#2e7d32':'#e65100'}
+async function testTgAll(){const st=document.getElementById('tgStatus');const rules=getTgRules();if(!rules.length){st.textContent='❌ 수신자 없음';st.style.color='#c62828';return}let ok=0;for(const r of rules){try{const res=await fetch('https://api.telegram.org/bot'+HARDCODED_TG_BOT+'/sendMessage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:r.chat_id,text:'📤 소재입고 알림 테스트\n수신자: '+r.name+' ('+r.condition+')\n시간: '+kstDateStr()+' '+kstTimeStr()})});const d=await res.json();if(d.ok)ok++}catch(e){}}st.textContent=ok===rules.length?'✅ '+ok+'명 성공':'⚠ '+ok+'/'+rules.length;st.style.color=ok===rules.length?'#2e7d32':'#e65100'}
 
 const DC_LS='MAT_DC_RULES';
 function getDcRules(){try{return JSON.parse(localStorage.getItem(DC_LS)||'[]')}catch(e){return[]}}
@@ -417,9 +498,9 @@ function renderDcRules(){const rules=getDcRules();const c=document.getElementByI
 function addDcRule(){const cond=document.getElementById('dcNewCond').value;const hook=document.getElementById('dcNewHook').value.trim();if(!hook||!hook.startsWith('https://')){document.getElementById('dcStatus').textContent='⚠ Webhook URL 입력';return}const rules=getDcRules();rules.push({condition:cond,hook});saveDcRules(rules);document.getElementById('dcNewHook').value='';renderDcRules()}
 function delDcRule(i){const r=getDcRules();r.splice(i,1);saveDcRules(r);renderDcRules()}
 async function sendDcByCondition(result,msg){const rules=getDcRules();if(!rules.length)return;const hasNg=result==='NG';const matched=rules.filter(r=>r.condition==='always'||(r.condition==='ng'&&hasNg));for(const r of matched){try{await fetch(r.hook,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:msg})})}catch(e){}}}
-async function testDcAll(){const rules=getDcRules();const st=document.getElementById('dcStatus');if(!rules.length){st.textContent='⚠ Webhook 없음';return}let s=0;for(const r of rules){try{const res=await fetch(r.hook,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:'💬 소재입고 알림 테스트 ('+new Date().toLocaleTimeString()+')'})});if(res.ok||res.status===204)s++}catch(e){}}st.textContent='✅ '+s+'/'+rules.length+'개 발송';st.style.color='#2e7d32'}
+async function testDcAll(){const rules=getDcRules();const st=document.getElementById('dcStatus');if(!rules.length){st.textContent='⚠ Webhook 없음';return}let s=0;for(const r of rules){try{const res=await fetch(r.hook,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:'💬 소재입고 알림 테스트 ('+kstTimeStr()+')'})});if(res.ok||res.status===204)s++}catch(e){}}st.textContent='✅ '+s+'/'+rules.length+'개 발송';st.style.color='#2e7d32'}
 
-async function saveAllSettings(){const st=document.getElementById('stgSaveStatus');st.textContent='서버 저장 중...';st.style.color='#1565c0';try{await _saveAllRulesToServer();st.textContent='✅ 서버 저장 완료 ('+new Date().toLocaleTimeString()+')';st.style.color='#2e7d32';showToast('💾 서버 저장 완료')}catch(e){st.textContent='❌ '+e.message;st.style.color='#c62828'}updateConnStatus()}
+async function saveAllSettings(){const st=document.getElementById('stgSaveStatus');st.textContent='서버 저장 중...';st.style.color='#1565c0';try{await _saveAllRulesToServer();st.textContent='✅ 서버 저장 완료 ('+kstTimeStr()+')';st.style.color='#2e7d32';showToast('💾 서버 저장 완료')}catch(e){st.textContent='❌ '+e.message;st.style.color='#c62828'}updateConnStatus()}
 function loadSettingsUI(){loadMailGasCfg();loadMailRecipients();initHistDates();_loadAllRulesFromServer();renderNtfyRules();renderTgRules();renderDcRules();updateConnStatus()}
 function updateConnStatus(){const c=document.getElementById('connStatusInfo');const sbOk=!!(getSbUrl()&&getSbKey());const mailOk=!!_mailGasUrl;const tgCnt=getTgRules().length;const dcCnt=getDcRules().length;const ntfyCnt=getNtfyRules().length;c.innerHTML=(sbOk?'🟢':'🔴')+' Supabase: '+(sbOk?'설정됨':'미설정')+'<br>'+(mailOk?'🟢':'🔴')+' 메일 알림: '+(mailOk?'서버 설정됨':'미설정')+'<br>'+(tgCnt?'🟢':'🔴')+' 텔레그램: '+tgCnt+'명'+'<br>'+(dcCnt?'🟢':'🔴')+' 디스코드: '+dcCnt+'개 Webhook'+'<br>'+(ntfyCnt?'🟢':'🔴')+' ntfy: '+ntfyCnt+'개 규칙'+'<br>'+(_mailRecipients.length?'🟢':'🔴')+' 메일 수신자: '+(_mailRecipients.length?_mailRecipients.length+'명 (mat_mail)':'미설정')}
 
