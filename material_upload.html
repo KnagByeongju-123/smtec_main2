@@ -210,21 +210,6 @@
     <div class="fg"><label>URL</label><div style="padding:10px 12px;font-size:14px;background:#eee;border:1.5px solid #ddd;border-radius:8px;color:#999;letter-spacing:1px;user-select:none;pointer-events:none">https://•••••••••••••••.supabase.co</div></div>
     <div class="fg"><label>Anon Key</label><div style="padding:10px 12px;font-size:14px;background:#eee;border:1.5px solid #ddd;border-radius:8px;color:#999;letter-spacing:2px;user-select:none;pointer-events:none">••••••••••••••••••••••••••••••••••••••</div></div>
   </div>
-  <details style="margin-bottom:12px"><summary style="cursor:pointer;font-size:12px;font-weight:700;color:#1565c0;padding:10px 14px;background:#fff;border:1px solid #e0e0e0;border-radius:12px;display:flex;align-items:center;gap:6px;box-shadow:0 1px 4px rgba(0,0,0,.08)">▶ 📋 Supabase SQL (테이블 생성)</summary><pre style="margin-top:6px;padding:12px;background:#f5f5f5;border:1px solid #e0e0e0;border-radius:8px;font-size:10px;color:#2e7d32;overflow-x:auto;white-space:pre-wrap;line-height:1.5;font-family:monospace">CREATE TABLE IF NOT EXISTS move_history_tj (
-  id bigint generated always as identity primary key,
-  move_date date, move_time text, process text,
-  departure text, destination text,
-  barcode_raw text, base_part text, lot text,
-  qty integer, note text, format text,
-  worker text, equipment text, weight numeric,
-  incoming_date text, parent_part text,
-  child_type text, model_type text,
-  general_model text, material_info text,
-  created_at timestamptz default now()
-);
-ALTER TABLE move_history_tj ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "anon_all" ON move_history_tj;
-CREATE POLICY "anon_all" ON move_history_tj FOR ALL TO anon USING (true) WITH CHECK (true);</pre></details>
   <button class="btn btn-blue" onclick="saveAllSettings()" style="margin-bottom:8px">💾 모든 설정 서버에 저장</button>
   <div style="text-align:center"><span id="stgSaveStatus" style="font-size:11px;color:#888"></span></div>
   <div class="card" style="margin-top:8px"><div class="card-tit">ℹ️ 연결 상태</div><div id="connStatusInfo" style="font-size:12px;color:#555;line-height:1.8"></div></div>
@@ -234,37 +219,35 @@ CREATE POLICY "anon_all" ON move_history_tj FOR ALL TO anon USING (true) WITH CH
 <div class="toast" id="toast"></div>
 
 <script>
-/* ===== KST(한국시간) 처리 - 수정됨 =====
-   - nowKST(): 현재 시각을 한국시간(UTC+9)으로 반환
-   - kstDateStr(): 현재시각만 KST로 변환하여 YYYY-MM-DD 반환
-   - fmtYMD(d): Date 객체를 로컬 기준 YYYY-MM-DD로 포맷 (엑셀에서 읽은 날짜용)
-   - fmtHMS(d): 현재시각을 KST 기준 HH:MM:SS로 반환
-   - excelSerialToYMD(n): 엑셀 시리얼 숫자를 타임존 영향 없이 YYYY-MM-DD로 변환
-*/
+/* ===== KST(한국시간) 처리 ===== */
 function nowKST(){const d=new Date();return new Date(d.getTime()+(d.getTimezoneOffset()+540)*60000)}
 function pad2(n){return String(n).padStart(2,'0')}
 function kstDateStr(){const k=nowKST();return k.getFullYear()+'-'+pad2(k.getMonth()+1)+'-'+pad2(k.getDate())}
 function kstTimeStr(){const k=nowKST();return pad2(k.getHours())+':'+pad2(k.getMinutes())+':'+pad2(k.getSeconds())}
-/* Date객체의 로컬 연월일을 그대로 YYYY-MM-DD로 - 타임존 보정 없음 */
 function fmtYMD(d){if(!(d instanceof Date))return '';return d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate())}
-/* 엑셀 시리얼 → YYYY-MM-DD (타임존 영향 제거) */
 function excelSerialToYMD(serial){
   if(typeof serial!=='number'||!isFinite(serial))return '';
-  /* 엑셀 시리얼 1 = 1900-01-01 (단, 1900년 윤년버그 보정) */
   const o=XLSX.SSF.parse_date_code(serial);
   if(!o)return '';
   return o.y+'-'+pad2(o.m)+'-'+pad2(o.d);
 }
-/* 셀 값(Date | number | string) 받아서 YYYY-MM-DD 로 정규화 */
 function normalizeDateCell(v){
   if(v==null||v==='')return '';
   if(v instanceof Date)return fmtYMD(v);
   if(typeof v==='number')return excelSerialToYMD(v);
   const s=String(v).trim();
-  /* 이미 YYYY-MM-DD 형태면 그대로 */
   const m=s.match(/^(\d{4})[-./](\d{1,2})[-./](\d{1,2})/);
   if(m)return m[1]+'-'+pad2(m[2])+'-'+pad2(m[3]);
   return s;
+}
+
+/* ArrayBuffer → Base64 변환 (MES등록용 엑셀 생성시 사용) */
+function arrayBufferToBase64(buffer){
+  const bytes=new Uint8Array(buffer);
+  let binary='';
+  const len=bytes.byteLength;
+  for(let i=0;i<len;i++)binary+=String.fromCharCode(bytes[i]);
+  return btoa(binary);
 }
 
 const SB_LS_KEY='MATERIAL_SB_CFG';
@@ -294,6 +277,7 @@ function renderMailRecipList(){const c=document.getElementById('mailRecipList');
 async function addMailRecip(){const inp=document.getElementById('mailNewAddr');const email=inp.value.trim();const st=document.getElementById('mailRecipStatus');if(!email||!email.includes('@')){st.textContent='⚠ 올바른 이메일 입력';st.style.color='#e65100';return}if(_mailRecipCache.find(r=>r.email===email)){st.textContent='⚠ 이미 존재';st.style.color='#e65100';return}const ns=_mailRecipCache.length?Math.max(..._mailRecipCache.map(r=>r.sort))+1:1;try{const SB_URL=getSbUrl(),SB_KEY=getSbKey();const res=await fetch(SB_URL+'/rest/v1/common_code',{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Prefer':'return=representation'},body:JSON.stringify({code_group:'mat_mail',code_value:email,sort_order:ns})});if(res.ok){const saved=await res.json();if(saved&&saved.length)_mailRecipCache.push({id:saved[0].id,email,sort:ns})}_mailRecipients=_mailRecipCache.map(r=>r.email);inp.value='';renderMailRecipList();st.textContent='✅ '+email;st.style.color='#2e7d32'}catch(e){st.textContent='❌ '+e.message;st.style.color='#c62828'}}
 async function delMailRecip(idx){const r=_mailRecipCache[idx];if(!r)return;if(!confirm(r.email+' 삭제?'))return;if(r.id){try{await fetch(getSbUrl()+'/rest/v1/common_code?id=eq.'+r.id,{method:'DELETE',headers:{'apikey':getSbKey(),'Authorization':'Bearer '+getSbKey()}})}catch(e){}}_mailRecipCache.splice(idx,1);_mailRecipients=_mailRecipCache.map(r=>r.email);renderMailRecipList()}
 
+/* ===== 메일 발송 (원본 + MES등록용 2개 첨부) ===== */
 async function sendEmail(info){
   const gasUrl=_mailGasUrl||localStorage.getItem('MATERIAL_MAIL_GAS_URL')||'';
   if(!gasUrl)return;
@@ -328,16 +312,65 @@ async function sendEmail(info){
     +'<th style="padding:6px 10px;border:1px solid #c5cae9;text-align:right">중량</th></tr>'
     +matRows
     +'</table>'
+    +'<div style="margin-top:12px;padding:10px;background:#fff3e0;border:1px solid #ffe0b2;border-radius:6px;font-size:11px;color:#e65100">'
+    +'📎 <b>첨부파일 2개</b><br>'
+    +'&nbsp;&nbsp;1. 원본 업로드 파일 (업체 제출본)<br>'
+    +'&nbsp;&nbsp;2. MES 등록용 파일 (ITEM_CODE 포함)</div>'
     +'<div style="margin-top:16px;font-size:11px;color:#aaa;text-align:center">Smart Factory Platform · 소재입고 자동알림</div>'
     +'</div></div>';
 
   const subject='📤 소재입고 '+info.count+'건 — '+info.company+' ('+info.date+')';
 
+  /* ── MES 등록용 엑셀 생성 (ITEM_CODE = 재질_두께X폭) ── */
+  const mesRows=[
+    ['ITEM_CODE','재질','두께(T)','폭(mm)','소재로트','중량(kg)','입고일자','협력사','출발지','도착지','담당자','비고']
+  ];
+  info.rows.forEach(r=>{
+    const mat=(r.material_info||'').split(' // ');
+    const mType=mat[0]||'',mTh=mat[1]||'',mW=mat[2]||'';
+    const itemCode=(mType&&mTh&&mW)?(mType+'_'+mTh+'X'+mW):'';
+    mesRows.push([
+      itemCode,mType,mTh,mW,
+      r.lot||'',r.weight||'',
+      info.date||'',info.company||'',
+      info.from||'',info.to||'',info.worker||'',r.note||''
+    ]);
+  });
+  const mesWb=XLSX.utils.book_new();
+  const mesWs=XLSX.utils.aoa_to_sheet(mesRows);
+  mesWs['!cols']=[{wch:22},{wch:10},{wch:8},{wch:8},{wch:18},{wch:10},{wch:12},{wch:14},{wch:14},{wch:14},{wch:10},{wch:20}];
+  XLSX.utils.book_append_sheet(mesWb,mesWs,'MES등록');
+  const mesBuffer=XLSX.write(mesWb,{bookType:'xlsx',type:'array'});
+  const mesBase64=arrayBufferToBase64(mesBuffer);
+  const mesFileName='MES등록용_'+(info.company||'소재').replace(/[\\/:*?"<>|]/g,'')+'_'+(info.date||'').replace(/-/g,'')+'.xlsx';
+
+  /* ── payload: 원본 + MES등록용 2개 첨부 ── */
+  const payload={
+    action:'sendMail',
+    subject:subject,
+    html:html,
+    text:subject,
+    recipients:info.recipients||[],
+    attachments:[]
+  };
+  if(_batchFileBase64&&_batchFileName){
+    payload.attachments.push({
+      name:'원본_'+_batchFileName,
+      mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      base64:_batchFileBase64
+    });
+  }
+  payload.attachments.push({
+    name:mesFileName,
+    mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    base64:mesBase64
+  });
+
   try{
     await fetch(gasUrl,{
       method:'POST',
       headers:{'Content-Type':'text/plain;charset=utf-8'},
-      body:JSON.stringify({action:'sendMail',subject:subject,html:html,text:subject,recipients:info.recipients||[]})
+      body:JSON.stringify(payload)
     });
   }catch(e){console.log('메일 발송 실패:',e)}
 }
@@ -345,6 +378,7 @@ async function sendEmail(info){
 const COL_MAP={'재질':'_material_type','material_type':'_material_type','두께':'_thickness','thickness':'_thickness','폭':'_width','width_mm':'_width','피치':'_pitch','pitch':'_pitch','로트':'lot','lot':'lot','로트번호':'lot','소재중량':'weight','중량':'weight','weight':'weight','입고일자':'incoming_date','소재입고일자':'incoming_date','incoming_date':'incoming_date','비고':'note','note':'note','메모':'note','업체명':'_customer','고객사':'_customer','customer':'_customer'};
 
 let _batchData=[];let _batchCompany='';let _batchDate='';
+let _batchFileBase64='';let _batchFileName='';
 
 function goStep(n){if(n===2){if(!document.getElementById('cfgFrom').value.trim()){showToast('출발지를 입력하세요');return}if(!document.getElementById('cfgTo').value.trim()){showToast('도착지를 입력하세요');return}}if(n===3){if(!_batchData.length){showToast('파일을 먼저 업로드하세요');return}renderPreview()}for(let i=1;i<=4;i++){document.getElementById('pnlStep'+i).style.display=i===n?'block':'none';const st=document.getElementById('st'+i);st.className='step-item'+(i===n?' active':i<n?' done':'')}window.scrollTo(0,0)}
 
@@ -354,12 +388,17 @@ document.addEventListener('DOMContentLoaded',()=>{const drop=document.getElement
 
 function handleFile(input){const f=input.files[0];if(f)parseFile(f);input.value=''}
 
-/* ===== 파일 파싱 - 입고일자 KST 정규화 적용 ===== */
+/* ===== 파일 파싱 - 원본을 Base64로 보관 + 엑셀 데이터 파싱 ===== */
 function parseFile(file){
+  _batchFileName=file.name;
+  /* 원본 파일을 Base64로 보관 (메일 첨부용) */
+  const b64Reader=new FileReader();
+  b64Reader.onload=function(ev){_batchFileBase64=ev.target.result.split(',')[1]||''};
+  b64Reader.readAsDataURL(file);
+
   const reader=new FileReader();
   reader.onload=function(e){
     try{
-      /* cellDates:false 로 읽어 엑셀 시리얼 숫자를 직접 변환 (타임존 영향 제거) */
       const wb=XLSX.read(e.target.result,{type:'array',cellDates:false});
       const sheetName=wb.SheetNames.find(n=>n==='입고등록')||wb.SheetNames[0];
       const ws=wb.Sheets[sheetName];
@@ -368,12 +407,10 @@ function parseFile(file){
       if(allRows.length>=1){
         const r1=allRows[0];
         if(r1[1])_batchCompany=String(r1[1]).trim();
-        /* 입고일자(1행 E열): 숫자/문자/Date 어떤 형태여도 YYYY-MM-DD로 정규화 */
         if(r1[4]!==undefined&&r1[4]!=='')_batchDate=normalizeDateCell(r1[4]);
       }
       let raw=XLSX.utils.sheet_to_json(ws,{range:2,defval:'',raw:true});
       raw=raw.filter(r=>Object.values(r).some(v=>v!==''));
-      /* 각 행의 입고일자 컬럼도 정규화 (타임존 영향 제거) */
       raw.forEach(r=>{
         if(_batchCompany&&!r['업체명'])r['업체명']=_batchCompany;
         if(_batchDate&&!r['입고일자'])r['입고일자']=_batchDate;
@@ -394,7 +431,6 @@ function parseFile(file){
 
 function renderPreview(){const cfg={from:document.getElementById('cfgFrom').value.trim(),to:document.getElementById('cfgTo').value.trim(),worker:document.getElementById('cfgWorker').value.trim()};document.getElementById('pvTotal').textContent=_batchData.length;document.getElementById('pvCompany').textContent=_batchCompany||'-';document.getElementById('pvDate').textContent=_batchDate||'-';document.getElementById('pvRegCnt').textContent=_batchData.length;document.getElementById('pvSettings').innerHTML='출발지: <b>'+cfg.from+'</b> → 도착지: <b>'+cfg.to+'</b>'+(cfg.worker?' · 담당자: <b>'+cfg.worker+'</b>':'');const cols=Object.keys(_batchData[0]);const showRows=_batchData.slice(0,15);let html='<thead><tr>'+cols.map(c=>'<th>'+c+'</th>').join('')+'</tr></thead><tbody>';showRows.forEach(row=>{html+='<tr>'+cols.map(c=>{let v=row[c];if(v instanceof Date)v=fmtYMD(v);return'<td>'+(v||'')+'</td>'}).join('')+'</tr>'});html+='</tbody>';document.getElementById('pvTable').innerHTML=html;document.getElementById('pvMore').textContent=_batchData.length>15?'... 외 '+(_batchData.length-15)+'건':''}
 
-/* ★★★ doRegister - DB저장 제거됨, 알림 발송만 수행 ★★★ */
 async function doRegister(){
   if(!_batchData.length){showToast('데이터 없음');return}
   if(!confirm(_batchData.length+'건 알림을 발송합니다.\n계속하시겠습니까?'))return;
@@ -407,7 +443,6 @@ async function doRegister(){
   const cfg={from:document.getElementById('cfgFrom').value.trim(),to:document.getElementById('cfgTo').value.trim(),worker:document.getElementById('cfgWorker').value.trim()};
   const todayStr=kstDateStr();const timeStr=kstTimeStr();
 
-  /* 알림용 rows 데이터 구성 */
   const rows=[];
   const srcCols=Object.keys(_batchData[0]);
   const colMap={};
@@ -419,7 +454,6 @@ async function doRegister(){
     srcCols.forEach(sc=>{
       const target=colMap[sc];if(!target)return;
       let v=raw[sc];
-      /* 날짜 컬럼은 KST 정규화 포맷 적용 */
       if(target==='incoming_date')v=normalizeDateCell(v);
       else if(v instanceof Date)v=fmtYMD(v);
       v=String(v||'').trim();
@@ -440,7 +474,6 @@ async function doRegister(){
 
   const ok=rows.length;
 
-  /* DB 저장 없이 알림만 발송 */
   document.getElementById('doneTitle').textContent='✅ '+ok+'건 처리 완료';
   document.getElementById('doneSummary').innerHTML='업체: <b>'+(_batchCompany||'-')+'</b> · 입고일: <b>'+(_batchDate||todayStr)+'</b><br>출발지: '+cfg.from+' → 도착지: '+cfg.to+(cfg.worker?' · 담당자: '+cfg.worker:'');
 
@@ -457,7 +490,7 @@ async function doRegister(){
   goStep(4);
 }
 
-function resetAll(){_batchData=[];_batchCompany='';_batchDate='';document.getElementById('fileInfo').style.display='none';document.getElementById('btnToStep3').disabled=true;document.getElementById('regStatus').style.display='none';document.getElementById('fileInput').value='';goStep(1)}
+function resetAll(){_batchData=[];_batchCompany='';_batchDate='';_batchFileBase64='';_batchFileName='';document.getElementById('fileInfo').style.display='none';document.getElementById('btnToStep3').disabled=true;document.getElementById('regStatus').style.display='none';document.getElementById('fileInput').value='';goStep(1)}
 
 let _tt;function showToast(m){const el=document.getElementById('toast');el.textContent=m;el.classList.add('show');clearTimeout(_tt);_tt=setTimeout(()=>el.classList.remove('show'),2000)}
 
