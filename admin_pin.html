@@ -141,6 +141,18 @@ body.locked{overflow:hidden}
     </div>
   </div>
 
+  <!-- 개별 등록 -->
+  <div class="card">
+    <div class="card-title">➕ 개별 등록</div>
+    <div class="msg" id="addMsg"></div>
+    <div class="form-row" style="display:flex;gap:8px;margin-bottom:10px">
+      <input type="text" class="inp" id="addName" placeholder="이름" maxlength="20" style="flex:1">
+      <input type="text" class="inp pin" id="addPin" placeholder="PIN" maxlength="4" inputmode="numeric" pattern="[0-9]*" style="flex:0 0 100px">
+      <button class="btn btn-pri" id="addBtn" style="flex-shrink:0">등록</button>
+    </div>
+    <div class="help">• 이름 중복 금지 · PIN 중복 금지 (4자리 숫자)</div>
+  </div>
+
   <!-- 직원 목록 -->
   <div class="card">
     <div class="card-title">👥 직원 목록 <span class="badge" id="empCount">0</span></div>
@@ -472,7 +484,7 @@ async function loadList(){
   const wrap = document.getElementById('listWrap');
   wrap.innerHTML = '<div class="empty">로딩중...</div>';
   try{
-    empCache = await sbReq('GET', TBL+'?select=*&order=name.asc') || [];
+    empCache = await sbReq('GET', TBL+'?select=id,emp_id,name,dept,position,pin_hash,updated_at&order=name.asc') || [];
     document.getElementById('empCount').textContent = empCache.length;
     renderList();
   }catch(err){
@@ -564,6 +576,29 @@ async function delEmp(id, name){
   }
 }
 
+/* ========== 개별 등록 ========== */
+async function addSingleEmp(){
+  const name = document.getElementById('addName').value.trim();
+  const pin = document.getElementById('addPin').value.trim();
+  if(!name){showMsg('addMsg','이름 입력','err');return}
+  if(name.length<2){showMsg('addMsg','이름 2자 이상','err');return}
+  if(!/^\d{4}$/.test(pin)){showMsg('addMsg','PIN은 숫자 4자리','err');return}
+  try{
+    const pinHash = await sha256hex(pin);
+    const nameChk = await sbReq('GET', TBL+'?select=id&name=eq.'+encodeURIComponent(name));
+    if(nameChk && nameChk.length){showMsg('addMsg','이미 등록된 이름','err');return}
+    const pinChk = await sbReq('GET', TBL+'?select=id,name&pin_hash=eq.'+pinHash);
+    if(pinChk && pinChk.length){showMsg('addMsg','이미 사용중인 PIN (['+pinChk[0].name+'])','err');return}
+    await sbReq('POST', TBL, {name: name, pin_hash: pinHash});
+    showMsg('addMsg','✓ 등록 완료: '+name,'ok');
+    document.getElementById('addName').value='';
+    document.getElementById('addPin').value='';
+    loadList();
+  }catch(err){
+    showMsg('addMsg','❌ '+err.message,'err');
+  }
+}
+
 /* ========== 유틸 ========== */
 function showMsg(id, text, cls){
   const e=document.getElementById(id);
@@ -579,6 +614,7 @@ document.getElementById('uploadConfirmBtn').onclick = executeUpload;
 document.getElementById('saveEditBtn').onclick = saveEdit;
 document.getElementById('cancelEditBtn').onclick = closeEdit;
 document.getElementById('searchName').addEventListener('input', renderList);
+document.getElementById('addBtn').onclick = addSingleEmp;
 
 // 파일 영역
 const fa = document.getElementById('fileArea');
@@ -590,7 +626,9 @@ fa.ondragleave = ()=>{fa.classList.remove('drag')};
 fa.ondrop = (e)=>{e.preventDefault();fa.classList.remove('drag');if(e.dataTransfer.files[0])handleFile(e.dataTransfer.files[0])};
 
 // PIN 숫자만
-document.getElementById('editPin').addEventListener('input',function(e){e.target.value=e.target.value.replace(/\D/g,'').slice(0,4)});
+['editPin','addPin'].forEach(id=>{
+  document.getElementById(id).addEventListener('input',function(e){e.target.value=e.target.value.replace(/\D/g,'').slice(0,4)});
+});
 
 // 마스터 PIN 키보드
 document.addEventListener('keydown',function(e){
