@@ -1,1 +1,575 @@
 
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>반출/반입 관리</title>
+<meta name="theme-color" content="#0f172a">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&display=swap');
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Noto Sans KR',sans-serif;background:#0f1117;color:#e8eaf0;min-height:100vh;-webkit-font-smoothing:antialiased}
+
+/* 헤더 */
+.hdr{padding:16px 20px 0;background:#0f1117;text-align:center;position:sticky;top:0;z-index:100}
+.hdr-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.hdr-title{font-size:17px;font-weight:800;color:#e8eaf0}
+.hdr-user{font-size:11px;color:#e2b04a;font-weight:600}
+.back-btn{color:#8b8fa3;text-decoration:none;font-size:13px}
+
+/* 탭 */
+.tabs{display:flex;border-bottom:2px solid #1a1d27}
+.tab{flex:1;text-align:center;padding:10px 0;font-size:14px;font-weight:700;color:#5a5e72;cursor:pointer;border-bottom:3px solid transparent;transition:all .2s;-webkit-tap-highlight-color:transparent}
+.tab.active{color:#e2b04a;border-bottom-color:#e2b04a}
+
+/* 본문 */
+.page{display:none;padding:16px;padding-bottom:80px}
+.page.active{display:block}
+
+/* 반출 탭 */
+.out-area{display:flex;flex-direction:column;align-items:center;gap:16px;padding-top:20px}
+.photo-preview{width:100%;max-width:320px;aspect-ratio:4/3;border-radius:16px;background:#1a1d27;border:2px dashed #2a2e3d;display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative}
+.photo-preview img{width:100%;height:100%;object-fit:cover}
+.photo-preview .ph-text{color:#5a5e72;font-size:13px;text-align:center;line-height:1.6}
+.photo-preview .retake{position:absolute;top:8px;right:8px;background:rgba(0,0,0,.7);color:#fff;border:none;padding:4px 10px;border-radius:8px;font-size:11px;cursor:pointer}
+
+.capture-btn{width:80px;height:80px;border-radius:50%;background:#e2b04a;border:4px solid #c49a30;color:#0f1117;font-size:28px;cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent;transition:transform .1s}
+.capture-btn:active{transform:scale(.9)}
+
+.memo-inp{width:100%;max-width:320px;background:#1a1d27;border:1.5px solid #2a2e3d;border-radius:12px;padding:12px 14px;color:#e8eaf0;font-size:14px;outline:none;font-family:inherit}
+.memo-inp:focus{border-color:#4f8cff}
+
+.submit-btn{width:100%;max-width:320px;padding:16px;border-radius:14px;border:none;background:#ef4444;color:#fff;font-size:16px;font-weight:800;cursor:pointer;font-family:inherit;letter-spacing:1px}
+.submit-btn:disabled{opacity:.4;cursor:default}
+.submit-btn:active:not(:disabled){opacity:.8}
+
+.out-msg{font-size:12px;min-height:18px;text-align:center}
+.out-msg.ok{color:#22c55e}
+.out-msg.err{color:#ef4444}
+
+/* 반입 탭 */
+.in-list{display:flex;flex-direction:column;gap:8px}
+.in-card{background:#1a1d27;border:1px solid #2a2e3d;border-radius:12px;padding:12px;display:flex;gap:12px;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:border-color .2s}
+.in-card:active{border-color:#4f8cff}
+.in-thumb{width:56px;height:56px;border-radius:8px;background:#222633;flex-shrink:0;overflow:hidden}
+.in-thumb img{width:100%;height:100%;object-fit:cover}
+.in-info{flex:1;min-width:0}
+.in-name{font-size:14px;font-weight:700}
+.in-time{font-size:11px;color:#8b8fa3;margin-top:2px}
+.in-elapsed{font-size:11px;color:#f59e0b;margin-top:2px}
+.in-empty{text-align:center;padding:40px;color:#5a5e72;font-size:13px}
+.in-status{font-size:11px;font-weight:700;color:#ef4444;flex-shrink:0;align-self:center}
+
+/* 반입 팝업 */
+.popup-bg{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9998;display:none;align-items:center;justify-content:center;padding:20px}
+.popup-bg.show{display:flex}
+.popup{background:#1a1d27;border:1px solid #2a2e3d;border-radius:16px;padding:20px;width:100%;max-width:360px;text-align:center}
+.popup-photo{width:100%;border-radius:10px;margin-bottom:12px;max-height:240px;object-fit:cover}
+.popup-name{font-size:16px;font-weight:700;margin-bottom:4px}
+.popup-time{font-size:12px;color:#8b8fa3;margin-bottom:4px}
+.popup-elapsed{font-size:13px;color:#f59e0b;font-weight:600;margin-bottom:14px}
+.popup-memo{font-size:12px;color:#8b8fa3;margin-bottom:14px}
+.popup-btn{width:100%;padding:14px;border-radius:12px;border:none;background:#22c55e;color:#fff;font-size:15px;font-weight:800;cursor:pointer;font-family:inherit;margin-bottom:8px}
+.popup-btn:active{opacity:.8}
+.popup-close{background:none;border:none;color:#8b8fa3;font-size:13px;cursor:pointer;padding:8px}
+
+/* 설정 탭 */
+.set-card{background:#1a1d27;border:1px solid #2a2e3d;border-radius:12px;padding:14px;margin-bottom:10px}
+.set-title{font-size:13px;font-weight:700;margin-bottom:10px}
+.filter-row{display:flex;gap:8px;margin-bottom:8px}
+.filter-inp{flex:1;background:#0f1117;border:1.5px solid #2a2e3d;border-radius:10px;padding:10px 12px;color:#e8eaf0;font-size:13px;outline:none;font-family:inherit}
+.filter-inp:focus{border-color:#4f8cff}
+.btn{padding:10px 14px;border-radius:10px;border:none;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit}
+.btn-sec{background:#2a2e3d;color:#e8eaf0}
+.btn-sec:active{background:#3a3e4d}
+.btn-dan{background:rgba(239,68,68,.15);color:#ef4444;border:1px solid rgba(239,68,68,.3)}
+.btn-grn{background:rgba(34,197,94,.15);color:#22c55e;border:1px solid rgba(34,197,94,.3)}
+.btn-pri{background:#e2b04a;color:#0f1117}
+
+.log-list{max-height:400px;overflow-y:auto}
+.log-item{padding:8px 0;border-bottom:1px solid #222633;font-size:12px;display:flex;gap:8px;align-items:center}
+.log-item:last-child{border-bottom:none}
+.log-thumb{width:36px;height:36px;border-radius:6px;object-fit:cover;flex-shrink:0;background:#222633}
+.log-badge{padding:2px 6px;border-radius:6px;font-size:10px;font-weight:700;flex-shrink:0}
+.log-badge.out{background:rgba(239,68,68,.15);color:#ef4444}
+.log-badge.in{background:rgba(34,197,94,.15);color:#22c55e}
+.log-name{font-weight:600;flex-shrink:0;min-width:50px}
+.log-time{color:#8b8fa3;flex:1}
+.log-memo{color:#5a5e72;font-size:11px}
+
+.msg{padding:8px 12px;border-radius:8px;font-size:12px;font-weight:600;margin-bottom:8px;display:none}
+.msg.show{display:block}
+.msg.ok{background:rgba(34,197,94,.12);color:#22c55e}
+.msg.err{background:rgba(239,68,68,.12);color:#ef4444}
+
+input[type="file"]{display:none}
+input[type="date"]{background:#0f1117;border:1.5px solid #2a2e3d;border-radius:10px;padding:10px 12px;color:#e8eaf0;font-size:13px;outline:none;font-family:inherit}
+input[type="date"]:focus{border-color:#4f8cff}
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <div class="hdr-row">
+    <a href="./index_main.html" class="back-btn">← 메인</a>
+    <div class="hdr-title">반출/반입 관리</div>
+    <div class="hdr-user" id="userName">—</div>
+  </div>
+  <div class="tabs">
+    <div class="tab active" data-tab="out">반출</div>
+    <div class="tab" data-tab="in">반입</div>
+    <div class="tab" data-tab="set">설정</div>
+  </div>
+</div>
+
+<!-- 반출 -->
+<div class="page active" id="pageOut">
+  <div class="out-area">
+    <div class="photo-preview" id="photoPreview">
+      <div class="ph-text">📷<br>사진을 촬영하세요</div>
+    </div>
+    <button class="capture-btn" id="captureBtn">📷</button>
+    <input type="file" id="cameraInput" accept="image/*" capture="environment">
+    <input type="text" class="memo-inp" id="memoInp" placeholder="메모 (선택)" maxlength="100">
+    <button class="submit-btn" id="submitBtn" disabled>반출 등록</button>
+    <div class="out-msg" id="outMsg"></div>
+  </div>
+</div>
+
+<!-- 반입 -->
+<div class="page" id="pageIn">
+  <div class="in-list" id="inList">
+    <div class="in-empty">로딩중...</div>
+  </div>
+</div>
+
+<!-- 설정 -->
+<div class="page" id="pageSet">
+  <div class="set-card">
+    <div class="set-title">🔍 이력 검색</div>
+    <div class="filter-row">
+      <input type="date" class="filter-inp" id="filterFrom">
+      <span style="color:#5a5e72;align-self:center">~</span>
+      <input type="date" class="filter-inp" id="filterTo">
+    </div>
+    <div class="filter-row">
+      <input type="text" class="filter-inp" id="filterName" placeholder="이름 검색">
+      <select class="filter-inp" id="filterStatus" style="flex:0 0 90px">
+        <option value="">전체</option>
+        <option value="out">반출중</option>
+        <option value="in">반입완료</option>
+      </select>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-pri" id="searchBtn" style="flex:1">검색</button>
+      <button class="btn btn-grn" id="downloadBtn">📥 다운로드</button>
+    </div>
+  </div>
+
+  <div class="set-card">
+    <div class="set-title">📋 이력</div>
+    <div class="msg" id="setMsg"></div>
+    <div class="log-list" id="logList">
+      <div class="in-empty">검색 버튼을 눌러주세요</div>
+    </div>
+  </div>
+
+  <div class="set-card">
+    <div class="set-title">⚠️ 관리</div>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-dan" id="delAllBtn">🗑 반입완료 이력 삭제</button>
+    </div>
+  </div>
+</div>
+
+<!-- 반입 팝업 -->
+<div class="popup-bg" id="popupBg">
+  <div class="popup">
+    <img class="popup-photo" id="popupPhoto" src="">
+    <div class="popup-name" id="popupName"></div>
+    <div class="popup-time" id="popupTime"></div>
+    <div class="popup-elapsed" id="popupElapsed"></div>
+    <div class="popup-memo" id="popupMemo"></div>
+    <button class="popup-btn" id="popupInBtn">✓ 반입 완료</button>
+    <button class="popup-close" id="popupClose">닫기</button>
+  </div>
+</div>
+
+<script>
+/* ============================================================ */
+const SUPABASE_URL = 'https://omngtyewdaqpphnzeate.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_9j2YkkL-7ul1TrhH-NjVdQ_vWDG2-1D';
+const TBL = 'checkout_log';
+const MAX_PHOTO_KB = 30;
+
+let currentUser = sessionStorage.getItem('ESG_USER') || '';
+let capturedPhoto = null;
+let popupId = null;
+
+document.getElementById('userName').textContent = currentUser || '미로그인';
+
+/* ========== Supabase ========== */
+async function sb(method, path, body){
+  const opt = {
+    method,
+    headers: {
+      'apikey': SUPABASE_KEY,
+      'Authorization': 'Bearer ' + SUPABASE_KEY,
+      'Content-Type': 'application/json',
+      'Prefer': 'return=representation'
+    }
+  };
+  if(body) opt.body = JSON.stringify(body);
+  const r = await fetch(SUPABASE_URL + '/rest/v1/' + path, opt);
+  if(!r.ok) throw new Error(r.status + ': ' + await r.text());
+  const ct = r.headers.get('content-type') || '';
+  return ct.includes('json') ? await r.json() : null;
+}
+
+/* ========== 탭 전환 ========== */
+document.querySelectorAll('.tab').forEach(t => {
+  t.onclick = () => {
+    document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+    document.querySelectorAll('.page').forEach(x => x.classList.remove('active'));
+    t.classList.add('active');
+    document.getElementById('page' + t.dataset.tab.charAt(0).toUpperCase() + t.dataset.tab.slice(1)).classList.add('active');
+    if(t.dataset.tab === 'in') loadInList();
+  };
+});
+
+/* ========== 사진 촬영 & 압축 ========== */
+document.getElementById('captureBtn').onclick = () => document.getElementById('cameraInput').click();
+
+document.getElementById('cameraInput').onchange = async (e) => {
+  const file = e.target.files[0];
+  if(!file) return;
+  try{
+    capturedPhoto = await compressImage(file, MAX_PHOTO_KB);
+    const preview = document.getElementById('photoPreview');
+    preview.innerHTML = '<img src="'+capturedPhoto+'"><button class="retake" onclick="resetPhoto(event)">다시촬영</button>';
+    document.getElementById('submitBtn').disabled = false;
+  }catch(err){
+    setOutMsg('사진 처리 오류', 'err');
+  }
+};
+
+function resetPhoto(e){
+  e.stopPropagation();
+  capturedPhoto = null;
+  document.getElementById('photoPreview').innerHTML = '<div class="ph-text">📷<br>사진을 촬영하세요</div>';
+  document.getElementById('submitBtn').disabled = true;
+  document.getElementById('cameraInput').value = '';
+}
+
+async function compressImage(file, maxKB){
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let w = img.width, h = img.height;
+        const maxDim = 640;
+        if(w > maxDim || h > maxDim){
+          if(w > h){h = Math.round(h * maxDim / w);w = maxDim}
+          else{w = Math.round(w * maxDim / h);h = maxDim}
+        }
+        canvas.width = w;
+        canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+
+        let quality = 0.7;
+        let result = canvas.toDataURL('image/jpeg', quality);
+        while(result.length > maxKB * 1370 && quality > 0.1){
+          quality -= 0.1;
+          result = canvas.toDataURL('image/jpeg', quality);
+        }
+        if(result.length > maxKB * 1370){
+          const scale = 0.6;
+          canvas.width = Math.round(w * scale);
+          canvas.height = Math.round(h * scale);
+          canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+          result = canvas.toDataURL('image/jpeg', 0.5);
+        }
+        resolve(result);
+      };
+      img.onerror = reject;
+      img.src = e.target.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+/* ========== 반출 등록 ========== */
+document.getElementById('submitBtn').onclick = async () => {
+  if(!capturedPhoto){setOutMsg('사진을 먼저 촬영하세요','err');return}
+  if(!currentUser){setOutMsg('로그인 필요 (메인에서 PIN 로그인)','err');return}
+
+  const btn = document.getElementById('submitBtn');
+  btn.disabled = true;
+  btn.textContent = '저장중...';
+
+  try{
+    await sb('POST', TBL, {
+      user_name: currentUser,
+      photo_b64: capturedPhoto,
+      memo: document.getElementById('memoInp').value.trim() || null,
+      status: 'out'
+    });
+    setOutMsg('✓ 반출 등록 완료', 'ok');
+    capturedPhoto = null;
+    document.getElementById('photoPreview').innerHTML = '<div class="ph-text">📷<br>사진을 촬영하세요</div>';
+    document.getElementById('memoInp').value = '';
+    document.getElementById('cameraInput').value = '';
+  }catch(err){
+    setOutMsg('❌ 저장 실패: ' + err.message, 'err');
+    btn.disabled = false;
+  }finally{
+    btn.textContent = '반출 등록';
+  }
+};
+
+function setOutMsg(msg, cls){
+  const e = document.getElementById('outMsg');
+  e.textContent = msg;
+  e.className = 'out-msg' + (cls ? ' ' + cls : '');
+  if(cls === 'ok') setTimeout(() => e.textContent = '', 3000);
+}
+
+/* ========== 반입 목록 ========== */
+async function loadInList(){
+  const wrap = document.getElementById('inList');
+  wrap.innerHTML = '<div class="in-empty">로딩중...</div>';
+  try{
+    const data = await sb('GET', TBL + '?select=id,user_name,photo_b64,memo,status,out_at&status=eq.out&order=out_at.desc');
+    if(!data || data.length === 0){
+      wrap.innerHTML = '<div class="in-empty">반출중인 항목이 없습니다</div>';
+      return;
+    }
+    wrap.innerHTML = '';
+    data.forEach(item => {
+      const card = document.createElement('div');
+      card.className = 'in-card';
+      card.onclick = () => openPopup(item);
+
+      const thumb = document.createElement('div');
+      thumb.className = 'in-thumb';
+      if(item.photo_b64){
+        const img = document.createElement('img');
+        img.src = item.photo_b64;
+        thumb.appendChild(img);
+      }
+      card.appendChild(thumb);
+
+      const info = document.createElement('div');
+      info.className = 'in-info';
+      const nm = document.createElement('div');
+      nm.className = 'in-name';
+      nm.textContent = item.user_name;
+      info.appendChild(nm);
+
+      const tm = document.createElement('div');
+      tm.className = 'in-time';
+      tm.textContent = fmtDate(item.out_at);
+      info.appendChild(tm);
+
+      const el = document.createElement('div');
+      el.className = 'in-elapsed';
+      el.textContent = elapsed(item.out_at);
+      info.appendChild(el);
+
+      card.appendChild(info);
+
+      const st = document.createElement('div');
+      st.className = 'in-status';
+      st.textContent = '반출중';
+      card.appendChild(st);
+
+      wrap.appendChild(card);
+    });
+  }catch(err){
+    wrap.innerHTML = '<div class="in-empty" style="color:#ef4444">❌ ' + err.message + '</div>';
+  }
+}
+
+/* ========== 반입 팝업 ========== */
+function openPopup(item){
+  popupId = item.id;
+  document.getElementById('popupPhoto').src = item.photo_b64 || '';
+  document.getElementById('popupPhoto').style.display = item.photo_b64 ? 'block' : 'none';
+  document.getElementById('popupName').textContent = item.user_name;
+  document.getElementById('popupTime').textContent = '반출: ' + fmtDate(item.out_at);
+  document.getElementById('popupElapsed').textContent = '경과: ' + elapsed(item.out_at);
+  document.getElementById('popupMemo').textContent = item.memo ? '메모: ' + item.memo : '';
+  document.getElementById('popupBg').classList.add('show');
+}
+
+document.getElementById('popupClose').onclick = () => {
+  document.getElementById('popupBg').classList.remove('show');
+  popupId = null;
+};
+document.getElementById('popupBg').onclick = (e) => {
+  if(e.target === e.currentTarget){
+    document.getElementById('popupBg').classList.remove('show');
+    popupId = null;
+  }
+};
+
+document.getElementById('popupInBtn').onclick = async () => {
+  if(!popupId) return;
+  const btn = document.getElementById('popupInBtn');
+  btn.disabled = true;
+  btn.textContent = '처리중...';
+  try{
+    await sb('PATCH', TBL + '?id=eq.' + popupId, {
+      status: 'in',
+      in_at: new Date().toISOString()
+    });
+    document.getElementById('popupBg').classList.remove('show');
+    popupId = null;
+    loadInList();
+  }catch(err){
+    alert('오류: ' + err.message);
+  }finally{
+    btn.disabled = false;
+    btn.textContent = '✓ 반입 완료';
+  }
+};
+
+/* ========== 설정: 검색 ========== */
+document.getElementById('searchBtn').onclick = loadLog;
+
+async function loadLog(){
+  const wrap = document.getElementById('logList');
+  wrap.innerHTML = '<div class="in-empty">검색중...</div>';
+
+  let q = TBL + '?select=id,user_name,status,out_at,in_at,memo,photo_b64&order=out_at.desc&limit=200';
+  const from = document.getElementById('filterFrom').value;
+  const to = document.getElementById('filterTo').value;
+  const name = document.getElementById('filterName').value.trim();
+  const status = document.getElementById('filterStatus').value;
+
+  if(from) q += '&out_at=gte.' + from + 'T00:00:00';
+  if(to) q += '&out_at=lte.' + to + 'T23:59:59';
+  if(name) q += '&user_name=like.*' + encodeURIComponent(name) + '*';
+  if(status) q += '&status=eq.' + status;
+
+  try{
+    const data = await sb('GET', q);
+    if(!data || data.length === 0){
+      wrap.innerHTML = '<div class="in-empty">검색결과 없음</div>';
+      return;
+    }
+    wrap.innerHTML = '';
+    data.forEach(item => {
+      const div = document.createElement('div');
+      div.className = 'log-item';
+
+      if(item.photo_b64){
+        const thumb = document.createElement('img');
+        thumb.className = 'log-thumb';
+        thumb.src = item.photo_b64;
+        div.appendChild(thumb);
+      }
+
+      const badge = document.createElement('span');
+      badge.className = 'log-badge ' + (item.status === 'out' ? 'out' : 'in');
+      badge.textContent = item.status === 'out' ? '반출' : '반입';
+      div.appendChild(badge);
+
+      const nm = document.createElement('span');
+      nm.className = 'log-name';
+      nm.textContent = item.user_name;
+      div.appendChild(nm);
+
+      const tm = document.createElement('span');
+      tm.className = 'log-time';
+      let timeText = fmtDate(item.out_at);
+      if(item.in_at) timeText += ' → ' + fmtDate(item.in_at);
+      tm.textContent = timeText;
+      div.appendChild(tm);
+
+      wrap.appendChild(div);
+    });
+    window._logData = data;
+  }catch(err){
+    wrap.innerHTML = '<div class="in-empty" style="color:#ef4444">❌ ' + err.message + '</div>';
+  }
+}
+
+/* ========== 설정: 다운로드 ========== */
+document.getElementById('downloadBtn').onclick = () => {
+  if(!window._logData || !window._logData.length){alert('먼저 검색하세요');return}
+  const rows = [['상태','이름','반출일시','반입일시','메모']];
+  window._logData.forEach(d => {
+    rows.push([
+      d.status === 'out' ? '반출중' : '반입완료',
+      d.user_name,
+      fmtDate(d.out_at),
+      d.in_at ? fmtDate(d.in_at) : '',
+      d.memo || ''
+    ]);
+  });
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws['!cols'] = [{wch:8},{wch:10},{wch:18},{wch:18},{wch:20}];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '반출반입');
+  XLSX.writeFile(wb, '반출반입_' + todayStr() + '.xlsx');
+};
+
+/* ========== 설정: 이력 삭제 ========== */
+document.getElementById('delAllBtn').onclick = async () => {
+  if(!confirm('반입완료된 이력을 모두 삭제합니다.\n계속하시겠습니까?')) return;
+  try{
+    await sb('DELETE', TBL + '?status=eq.in');
+    showSetMsg('✓ 반입완료 이력 삭제됨', 'ok');
+    loadLog();
+  }catch(err){
+    showSetMsg('❌ ' + err.message, 'err');
+  }
+};
+
+function showSetMsg(text, cls){
+  const e = document.getElementById('setMsg');
+  e.textContent = text;
+  e.className = 'msg show ' + (cls || 'ok');
+  setTimeout(() => e.classList.remove('show'), 4000);
+}
+
+/* ========== 유틸 ========== */
+function fmtDate(iso){
+  if(!iso) return '—';
+  const d = new Date(iso);
+  const mm = String(d.getMonth()+1).padStart(2,'0');
+  const dd = String(d.getDate()).padStart(2,'0');
+  const hh = String(d.getHours()).padStart(2,'0');
+  const mi = String(d.getMinutes()).padStart(2,'0');
+  return mm+'/'+dd+' '+hh+':'+mi;
+}
+
+function elapsed(iso){
+  if(!iso) return '';
+  const diff = Date.now() - new Date(iso).getTime();
+  const min = Math.floor(diff / 60000);
+  if(min < 60) return min + '분 경과';
+  const hr = Math.floor(min / 60);
+  if(hr < 24) return hr + '시간 ' + (min % 60) + '분 경과';
+  return Math.floor(hr / 24) + '일 ' + (hr % 24) + '시간 경과';
+}
+
+function todayStr(){
+  const d = new Date();
+  return d.getFullYear() + String(d.getMonth()+1).padStart(2,'0') + String(d.getDate()).padStart(2,'0');
+}
+
+// 기본 날짜 (오늘~오늘)
+const td = new Date();
+const tds = td.getFullYear() + '-' + String(td.getMonth()+1).padStart(2,'0') + '-' + String(td.getDate()).padStart(2,'0');
+document.getElementById('filterFrom').value = tds;
+document.getElementById('filterTo').value = tds;
+</script>
+</body>
+</html>
