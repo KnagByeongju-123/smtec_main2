@@ -82,9 +82,10 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 /* TOP5 리스트 (구버전 호환) */
 .dsum-top5{display:flex;flex-direction:column;gap:3px}
 /* 개별 이벤트 한줄 표시 */
-.dsum-ev{font-size:13px;padding:5px 8px;border-radius:5px;margin-bottom:3px;display:flex;align-items:center;gap:6px;line-height:1.35}
+.dsum-ev{font-size:13px;padding:6px 10px;border-radius:5px;margin-bottom:3px;display:flex;align-items:center;justify-content:space-between;gap:8px;line-height:1.35}
+.dsum-ev .ev-nm{flex:1;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dsum-ev .ev-tm{font-family:ui-monospace,monospace;font-size:12px;color:#cbd5e1;min-width:92px;flex-shrink:0;font-weight:600}
-.dsum-ev .ev-min{color:var(--yellow);font-weight:800;font-size:12px;flex-shrink:0}
+.dsum-ev .ev-min{color:var(--yellow);font-weight:800;font-size:13px;flex-shrink:0;font-variant-numeric:tabular-nums}
 .dsum-ev.ev-stop{background:rgba(239,68,68,.08);border-left:2px solid #ef4444}
 .dsum-ev.ev-plan{background:rgba(167,139,250,.08);border-left:2px solid #a78bfa}
 .dsum-row{display:flex;align-items:center;gap:6px;font-size:10px}
@@ -494,38 +495,62 @@ function renderEvents(data){
   if(!stopEvents.length&&!plannedEvents.length&&!useLegacy){
     b.innerHTML='<div class="dsum-empty">✅ 당일 정지 이력 없음</div>';return;
   }
+  // 항목별 합산 함수 (사유이름 기준)
+  function groupByName(events){
+    var map={};
+    events.forEach(function(ev){
+      var k=ev.name||'기타';
+      if(!map[k])map[k]={name:k,min:0,count:0,times:[]};
+      map[k].min+=(+ev.min||0);
+      map[k].count++;
+      if(ev.start&&ev.end)map[k].times.push(ev.start+'-'+ev.end+'('+fmtMinutes(ev.min)+')');
+    });
+    // 시간 많은 순으로 정렬
+    var arr=Object.keys(map).map(function(k){return map[k]});
+    arr.sort(function(a,b){return b.min-a.min});
+    return arr;
+  }
   var html='';
   if(useLegacy){
-    // 구버전 데이터 (집계된 TOP5 형식)
+    // 구버전 데이터 (이미 집계된 형식)
     var list=data.top5||[],plannedList=data.plannedList||[];
     if(list.length){
       html+='<div style="font-size:12px;color:#fca5a5;font-weight:800;margin-bottom:5px">🔴 실비가동</div>';
       list.forEach(function(it){
-        html+='<div class="dsum-ev ev-stop">'+it.name+' <span class="ev-min">('+fmtMinutes(it.min)+')</span></div>';
+        html+='<div class="dsum-ev ev-stop"><span class="ev-nm">'+it.name+'</span><span class="ev-min">'+fmtMinutes(it.min)+'</span></div>';
       });
     }
     if(plannedList.length){
       html+='<div style="font-size:12px;color:#c4b5fd;font-weight:800;margin:10px 0 5px 0;padding-top:8px;border-top:1px dashed rgba(167,139,250,.3)">🟣 계획정지</div>';
       plannedList.forEach(function(it){
-        html+='<div class="dsum-ev ev-plan">'+it.name+' <span class="ev-min">('+fmtMinutes(it.min)+')</span></div>';
+        html+='<div class="dsum-ev ev-plan"><span class="ev-nm">'+it.name+'</span><span class="ev-min">'+fmtMinutes(it.min)+'</span></div>';
       });
     }
     b.innerHTML=html;
     return;
   }
-  // 개별 이벤트 시간순 나열
-  if(stopEvents.length){
-    html+='<div style="font-size:12px;color:#fca5a5;font-weight:800;margin-bottom:5px">🔴 실비가동 ('+stopEvents.length+'건)</div>';
-    stopEvents.forEach(function(ev){
-      html+='<div class="dsum-ev ev-stop"><span class="ev-tm">'+ev.start+'-'+ev.end+'</span><span class="ev-min">('+fmtMinutes(ev.min)+')</span> '+ev.name+'</div>';
+  // 항목별로 합산
+  var stopGrouped=groupByName(stopEvents);
+  var planGrouped=groupByName(plannedEvents);
+  var stopTot=0,planTot=0;
+  stopEvents.forEach(function(e){stopTot+=(+e.min||0)});
+  plannedEvents.forEach(function(e){planTot+=(+e.min||0)});
+  if(stopGrouped.length){
+    html+='<div style="font-size:12px;color:#fca5a5;font-weight:800;margin-bottom:5px">🔴 실비가동 ('+stopGrouped.length+'항목·총'+fmtMinutes(stopTot)+')</div>';
+    stopGrouped.forEach(function(it){
+      var tip=it.times.join(' / ');
+      var cnt=it.count>1?' <span style="color:#94a3b8;font-size:11px">×'+it.count+'</span>':'';
+      html+='<div class="dsum-ev ev-stop" title="'+tip+'"><span class="ev-nm">'+it.name+cnt+'</span><span class="ev-min">'+fmtMinutes(it.min)+'</span></div>';
     });
   }else{
     html+='<div style="font-size:12px;color:var(--green);padding:6px 0;font-weight:700">✅ 실비가동 없음</div>';
   }
-  if(plannedEvents.length){
-    html+='<div style="font-size:12px;color:#c4b5fd;font-weight:800;margin:10px 0 5px 0;padding-top:8px;border-top:1px dashed rgba(167,139,250,.3)">🟣 계획정지 ('+plannedEvents.length+'건)</div>';
-    plannedEvents.forEach(function(ev){
-      html+='<div class="dsum-ev ev-plan"><span class="ev-tm">'+ev.start+'-'+ev.end+'</span><span class="ev-min">('+fmtMinutes(ev.min)+')</span> '+ev.name+'</div>';
+  if(planGrouped.length){
+    html+='<div style="font-size:12px;color:#c4b5fd;font-weight:800;margin:10px 0 5px 0;padding-top:8px;border-top:1px dashed rgba(167,139,250,.3)">🟣 계획정지 ('+planGrouped.length+'항목·총'+fmtMinutes(planTot)+')</div>';
+    planGrouped.forEach(function(it){
+      var tip=it.times.join(' / ');
+      var cnt=it.count>1?' <span style="color:#94a3b8;font-size:11px">×'+it.count+'</span>':'';
+      html+='<div class="dsum-ev ev-plan" title="'+tip+'"><span class="ev-nm">'+it.name+cnt+'</span><span class="ev-min">'+fmtMinutes(it.min)+'</span></div>';
     });
   }
   b.innerHTML=html;
