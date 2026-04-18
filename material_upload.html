@@ -540,7 +540,7 @@ async function doRegister(){
   let sbOk=0;let sbFail=0;
   if(dbRows.length){
     try{
-      st.textContent='Supabase 저장 중... ('+dbRows.length+'건)';
+      st.textContent='💾 Supabase 저장 중...';
       const SB_URL=getSbUrl(),SB_KEY=getSbKey();
       /* 100건씩 배치 저장 */
       for(let i=0;i<dbRows.length;i+=100){
@@ -564,22 +564,34 @@ async function doRegister(){
     }
   }
 
-  /* 완료 화면 */
+  /* ★ Supabase 저장 완료 → 즉시 완료 화면으로 이동 (알림은 백그라운드) ★ */
   document.getElementById('doneTitle').textContent='✅ '+ok+'건 처리 완료';
   let summary='업체: <b>'+(_batchCompany||cfg.from||'-')+' ('+cfg.fromCode+')</b> · 입고일: <b>'+(_batchDate||todayStr)+'</b><br>출발지: '+cfg.from+' → 도착지: '+cfg.to+(cfg.worker?' · 담당자: '+cfg.worker:'');
   if(sbOk>0)summary+='<br><br><span style="color:#2e7d32;font-weight:700">✅ Supabase 저장: '+sbOk+'건<br>→ 5분 이내 MES 자동 등록 예정</span>';
   if(sbFail>0)summary+='<br><span style="color:#c62828">⚠ Supabase 저장 실패: '+sbFail+'건</span>';
+  summary+='<br><br><span style="color:#888;font-size:11px">📧 알림 발송 중... (백그라운드 진행)</span>';
   document.getElementById('doneSummary').innerHTML=summary;
+  document.getElementById('btnRegister').disabled=false;
+  goStep(4);  /* 저장 완료 즉시 화면 전환 */
 
+  /* 알림은 백그라운드로 (사용자를 기다리게 하지 않음) */
   const matSummary=rows.slice(0,5).map(r=>r.material_info||'-').join('\n  ');
   const ntfyMsg='📤 소재입고 등록 완료\n\n🏢 업체: '+(_batchCompany||cfg.from||'-')+' ('+cfg.fromCode+')\n📅 입고일: '+(_batchDate||todayStr)+'\n📦 등록: '+ok+'건\n💾 Supabase: '+sbOk+'건'+(sbFail?' (실패 '+sbFail+')':'')+'\n🔄 MES 자동등록: 5분 이내\n'+(cfg.worker?'👤 작업자: '+cfg.worker+'\n':'')+'\n📋 소재정보:\n  '+matSummary+(rows.length>5?'\n  ... 외 '+(rows.length-5)+'건':'');
 
-  /* ntfy 알림 - 소재업체 파일 업로드 완료시 */
-  sendNtfyUploadComplete(ntfyMsg);
-  sendEmail({company:_batchCompany||cfg.from||'-',date:_batchDate||todayStr,count:ok,from:cfg.from,to:cfg.to,worker:cfg.worker,rows:rows});
-
-  document.getElementById('btnRegister').disabled=false;
-  goStep(4);
+  /* 비동기 실행: 알림 결과를 기다리지 않음 */
+  Promise.all([
+    sendNtfyUploadComplete(ntfyMsg).catch(e=>console.log('ntfy 실패:',e)),
+    sendEmail({company:_batchCompany||cfg.from||'-',date:_batchDate||todayStr,count:ok,from:cfg.from,to:cfg.to,worker:cfg.worker,rows:rows}).catch(e=>console.log('메일 실패:',e))
+  ]).then(()=>{
+    /* 알림 완료 시 완료 화면 메시지 업데이트 */
+    const sum=document.getElementById('doneSummary');
+    if(sum){
+      sum.innerHTML=sum.innerHTML.replace(
+        /📧 알림 발송 중\.\.\. \(백그라운드 진행\)/,
+        '<span style="color:#2e7d32">📧 알림 발송 완료</span>'
+      );
+    }
+  });
 }
 
 function resetAll(){_batchData=[];_batchCompany='';_batchDate='';document.getElementById('fileInfo').style.display='none';document.getElementById('btnToStep3').disabled=true;document.getElementById('regStatus').style.display='none';document.getElementById('fileInput').value='';goStep(1)}
