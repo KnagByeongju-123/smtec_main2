@@ -248,6 +248,7 @@ var state={
   rawMaterials:[],
   mesNg:null,
   ngMap:{},
+  todayExistId:null,
   report:{defects:{},conditions:{},note:'',productionAdj:{}}
 };
 
@@ -525,24 +526,30 @@ async function loadMachine(mcParam){
         end_time:''
       }];
     }
-    // 3. 오늘 이미 저장된 작업일보 있는지 확인 (있으면 복원)
-    // URL로 전달된 특정 레코드가 있으면 그것을 우선 사용
+    // 3. 오늘 이미 저장된 작업일보 있는지 확인
+    // ⚠️ URL에 edit_id가 명시된 경우만 자동복원, 아니면 "신규 작성" 모드
     var existRecord=null;
+    var hasExistToday=false;
     if(state.preloadEditRecord){
+      // 이력에서 [✏️] 클릭해서 명시적 수정모드 진입
       existRecord=state.preloadEditRecord;
       state.preloadEditRecord=null;
     }else{
+      // 오늘 저장된 일보가 있는지만 체크 (자동복원은 안함)
       var today=fmtYmd(new Date());
-      var existList=await sbGet('mes_check_log','select=*&machine_code=eq.'+mc+'&category=eq.report&created_at=gte.'+today+'T00:00:00&order=created_at.desc&limit=1');
-      if(existList&&existList.length)existRecord=existList[0];
+      var existList=await sbGet('mes_check_log','select=id,created_at&machine_code=eq.'+mc+'&category=eq.report&created_at=gte.'+today+'T00:00:00&order=created_at.desc&limit=1');
+      if(existList&&existList.length){
+        hasExistToday=true;
+        state.todayExistId=existList[0].id;  // 버튼 클릭시 로드 용도
+      }
     }
     initReport();
     if(existRecord&&existRecord.payload&&existRecord.payload.report_snapshot){
+      // edit_id로 들어온 경우만 복원
       var rs=existRecord.payload.report_snapshot;
       if(rs.defects)Object.keys(rs.defects).forEach(function(k){state.report.defects[k]=rs.defects[k]||''});
       if(rs.conditions)Object.keys(rs.conditions).forEach(function(k){state.report.conditions[k]=rs.conditions[k]||''});
       state.report.note=rs.note||'';
-      // 생산기종 보정값 복원
       if(rs.productionAdj)state.report.productionAdj=Object.assign({},rs.productionAdj);
       state.editId=existRecord.id;
       showToast('📋 작성된 일보 불러옴 (수정모드)',3000);
@@ -550,6 +557,8 @@ async function loadMachine(mcParam){
       state.editId=state.forceEditId||null;
     }
     renderAll();
+    // 오늘 작성된 일보가 있으면 상단에 알림 배너
+    renderExistBanner(hasExistToday);
     document.getElementById('emptyState').style.display='none';
     document.getElementById('reportBody').style.display='';
     document.getElementById('subInfo').textContent=parsePressLabel(state.machine)+' · '+(state.machine.customer||'')+' · '+(state.machine.current_item_code||'-')+(state.machine.current_mold?' · 금형'+state.machine.current_mold:'');
@@ -658,6 +667,52 @@ function renderAll(){
 }
 
 // MES 실적불량 박스 렌더
+// 오늘 작성된 일보가 있을 때 상단 배너 표시
+function renderExistBanner(has){
+  var id='existBanner';
+  var old=document.getElementById(id);
+  if(old)old.remove();
+  if(!has||!state.todayExistId)return;
+  var banner=document.createElement('div');
+  banner.id=id;
+  banner.style.cssText='background:linear-gradient(135deg,#1e3a8a,#3730a3);border:1px solid #6366f1;border-radius:10px;padding:10px 14px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap';
+  banner.innerHTML=
+    '<div style="flex:1;min-width:180px">'+
+      '<div style="font-size:12px;font-weight:800;color:#a5b4fc">📋 오늘 작성된 일보가 있습니다</div>'+
+      '<div style="font-size:10px;color:#c7d2fe;margin-top:2px">현재는 신규 작성 모드 · 기존 내용을 불러오려면 우측 버튼 클릭</div>'+
+    '</div>'+
+    '<button onclick="loadTodayExist()" style="background:#6366f1;color:#fff;border:none;padding:8px 14px;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer;font-family:inherit">📥 불러오기</button>';
+  var body=document.getElementById('reportBody');
+  if(body)body.insertBefore(banner,body.firstChild);
+}
+
+// 오늘 작성된 일보 로드 (배너 버튼)
+async function loadTodayExist(){
+  if(!state.todayExistId){showToast('불러올 일보 없음');return}
+  try{
+    var list=await sbGet('mes_check_log','select=*&id=eq.'+state.todayExistId+'&limit=1');
+    if(!list||!list.length){showToast('레코드 없음');return}
+    var rec=list[0];
+    if(!rec.payload||!rec.payload.report_snapshot){showToast('데이터 없음');return}
+    var rs=rec.payload.report_snapshot;
+    // 복원
+    initReport();
+    if(rs.defects)Object.keys(rs.defects).forEach(function(k){state.report.defects[k]=rs.defects[k]||''});
+    if(rs.conditions)Object.keys(rs.conditions).forEach(function(k){state.report.conditions[k]=rs.conditions[k]||''});
+    state.report.note=rs.note||'';
+    if(rs.productionAdj)state.report.productionAdj=Object.assign({},rs.productionAdj);
+    state.editId=rec.id;
+    renderAll();
+    // 배너 제거 (이미 로드됨)
+    var old=document.getElementById('existBanner');
+    if(old)old.remove();
+    showToast('📋 기존 일보 불러옴 (수정모드)');
+  }catch(e){
+    console.log(e);
+    showToast('❌ 불러오기 실패');
+  }
+}
+
 function renderMesNgBox(){
   var box=document.getElementById('mesNgBox');
   if(!box)return;
