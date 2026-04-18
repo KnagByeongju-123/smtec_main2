@@ -149,6 +149,14 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
     <!-- 불량유형 -->
     <div class="rpt-section">
       <div class="rpt-section-title">⚠️ 불량유형별 수량</div>
+      <div id="mesNgBox" style="display:none;margin-bottom:10px;background:linear-gradient(135deg,#450a0a,#7f1d1d);border:1px solid #dc2626;border-radius:10px;padding:10px 12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <div style="font-size:12px;font-weight:800;color:#fca5a5">🔴 MES 실적불량 (업무일)</div>
+          <div style="font-size:11px;color:#fca5a5"><span id="mesNgTotal">0</span>개 / <span id="mesNgCount">0</span>건</div>
+        </div>
+        <div id="mesNgList" style="font-size:11px;color:#fecaca;line-height:1.6"></div>
+        <div style="font-size:10px;color:#fca5a5;margin-top:6px;opacity:.8">※ MES 코드(P11, P12 등)는 현장 관리 코드입니다. 아래 분류칸에 수기 기록 필요</div>
+      </div>
       <div class="rpt-defect-grid" id="defectGrid"></div>
       <div class="rpt-def-total">불량 합계 <b id="defTotal">0</b></div>
     </div>
@@ -238,6 +246,8 @@ var state={
   downtime:null,
   productionItems:[],
   rawMaterials:[],
+  mesNg:null,
+  ngMap:{},
   report:{defects:{},conditions:{},note:'',productionAdj:{}}
 };
 
@@ -461,6 +471,44 @@ async function loadMachine(mcParam){
         if(rawData&&rawData.items)state.rawMaterials=rawData.items;
       }
     }catch(e){console.log('소재로트 조회실패(무시):',e)}
+    // 2-3. 오늘 MES 불량내역 조회 (ICOM_RECIEVE_DATA_NG)
+    state.mesNg=null;
+    // 태진다이텍 MES 불량코드 기본 매핑 (현장 확인본)
+    var NGMAP_DEFAULT={
+      'P01':'형상불량','P02':'크랙·터짐','P03':'기스',
+      'P04':'치수·각도','P05':'BURR','P06':'원자재불량',
+      'P07':'찍힘','P08':'휨·변형','P09':'수리중불량',
+      'P10':'낙하품','P11':'시타발초물','P12':'초중종검사'
+    };
+    state.ngMap=Object.assign({},NGMAP_DEFAULT);
+    try{
+      var ngRes=await fetch('/api/mes/ng_today?machine_code='+encodeURIComponent(mc));
+      if(ngRes.ok){
+        var ngData=await ngRes.json();
+        if(ngData&&!ngData.error)state.mesNg=ngData;
+      }
+    }catch(e){console.log('MES불량조회 실패(무시):',e)}
+    // 2-4. NG 매핑 설정 로드 (localStorage + Supabase, 기본값에 덮어쓰기)
+    try{
+      var local=localStorage.getItem('MES_NG_MAP');
+      if(local){
+        var userMap=JSON.parse(local);
+        state.ngMap=Object.assign({},NGMAP_DEFAULT,userMap);
+      }
+      // Supabase에서 최신 사용자 매핑 동기화
+      var mapRes=await fetch(SB_URL+'/rest/v1/common_code?select=code_value&code_group=eq.mes_ng_map&limit=1',{
+        headers:sbH
+      });
+      if(mapRes.ok){
+        var md=await mapRes.json();
+        if(md&&md.length&&md[0].code_value){
+          try{
+            var sbMap=JSON.parse(md[0].code_value);
+            state.ngMap=Object.assign({},NGMAP_DEFAULT,sbMap);
+          }catch(e){}
+        }
+      }
+    }catch(e){console.log('NG매핑 조회 실패(무시):',e)}
     // fallback: 현재 사용중인 로트만이라도
     if(!state.rawMaterials.length&&state.machine.lot_no){
       state.rawMaterials=[{
@@ -605,6 +653,90 @@ function renderAll(){
   });
   // 특기사항
   document.getElementById('noteInput').value=state.report.note||'';
+  // MES 불량내역 렌더
+  renderMesNgBox();
+}
+
+// MES 실적불량 박스 렌더
+function renderMesNgBox(){
+  var box=document.getElementById('mesNgBox');
+  if(!box)return;
+  var ng=state.mesNg;
+  if(!ng||!ng.by_code||!ng.by_code.length){
+    box.style.display='none';
+    return;
+  }
+  box.style.display='';
+  document.getElementById('mesNgTotal').textContent=(+ng.total_qty||0).toLocaleString();
+  document.getElementById('mesNgCount').textContent=ng.total_count||0;
+  // 매핑 통계 계산
+  var ngMap=state.ngMap||{};
+  var mappedQty=0,unmappedQty=0,unmappedCodes=[];
+  ng.by_code.forEach(function(c){
+    if(ngMap[c.code])mappedQty+=c.qty;
+    else{unmappedQty+=c.qty;unmappedCodes.push(c.code)}
+  });
+  // 코드별 요약 태그
+  var html=ng.by_code.map(function(c){
+    var mapped=ngMap[c.code];
+    var bg=mapped?'rgba(34,197,94,.25)':'rgba(0,0,0,.3)';
+    var mapInfo=mapped?' <span style="opacity:.8">→ '+mapped+'</span>':'';
+    return '<span style="display:inline-block;background:'+bg+';padding:3px 8px;border-radius:12px;margin:2px 3px 2px 0;font-weight:700">'+
+      c.code+' · <span style="color:#fff">'+c.qty.toLocaleString()+'</span>개'+
+      '<span style="opacity:.7;font-size:10px"> ('+c.count+'회)</span>'+
+      mapInfo+
+      '</span>';
+  }).join('');
+  document.getElementById('mesNgList').innerHTML=html;
+  // 자동채움 버튼 영역 추가
+  var actionDiv=document.getElementById('mesNgAction');
+  if(!actionDiv){
+    actionDiv=document.createElement('div');
+    actionDiv.id='mesNgAction';
+    actionDiv.style.cssText='margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center';
+    box.appendChild(actionDiv);
+  }
+  var actHtml='';
+  if(mappedQty>0){
+    actHtml+='<button onclick="applyMesNgAuto()" style="background:#16a34a;color:#fff;border:none;padding:6px 14px;border-radius:8px;font-weight:800;font-size:12px;cursor:pointer;font-family:inherit">🔄 매핑된 '+mappedQty+'개 자동채움</button>';
+  }
+  if(unmappedQty>0){
+    actHtml+='<span style="font-size:10px;color:#fca5a5;background:rgba(0,0,0,.2);padding:4px 8px;border-radius:6px">⚠️ 매핑없음: '+unmappedCodes.join(', ')+' ('+unmappedQty+'개)</span>';
+  }
+  if(!mappedQty){
+    actHtml+='<span style="font-size:10px;color:#fca5a5">💡 설정 > MES 불량코드 매핑 에서 코드 등록 시 자동채움 가능</span>';
+  }
+  actionDiv.innerHTML=actHtml;
+}
+
+// 매핑된 MES 불량 → 13종 분류 자동 채움
+function applyMesNgAuto(){
+  var ng=state.mesNg;
+  var ngMap=state.ngMap||{};
+  if(!ng||!ng.by_code)return;
+  var filled={};
+  ng.by_code.forEach(function(c){
+    var type=ngMap[c.code];
+    if(!type)return;
+    if(!DEFECT_TYPES.indexOf)return;
+    if(DEFECT_TYPES.indexOf(type)<0)return;
+    filled[type]=(filled[type]||0)+c.qty;
+  });
+  // 기존 값에 덮어쓰기 (이미 수기 입력이 있어도)
+  Object.keys(filled).forEach(function(t){
+    state.report.defects[t]=String(filled[t]);
+  });
+  // 입력 필드에 반영
+  document.querySelectorAll('#defectGrid input').forEach(function(inp){
+    var t=inp.dataset.def;
+    if(filled[t]){
+      inp.value=filled[t];
+      // 총합 갱신 트리거
+      onDefChange(inp);
+    }
+  });
+  updateDefTotal();
+  showToast('✅ '+Object.keys(filled).length+'종 · 총 '+Object.values(filled).reduce(function(a,b){return a+b},0)+'개 자동채움');
 }
 
 // ========== 입력 이벤트 ==========
@@ -769,7 +901,14 @@ async function saveReport(){
           end_time:r.end_time||'',
           heat_no:r.heat_no||r.lot_no||''
         };
-      })
+      }),
+      mesNg:state.mesNg?{
+        total_qty:state.mesNg.total_qty||0,
+        total_count:state.mesNg.total_count||0,
+        by_code:(state.mesNg.by_code||[]).map(function(c){
+          return{code:c.code,qty:+c.qty||0,count:+c.count||0};
+        })
+      }:null
     },
     downtime_snapshot:state.downtime?{
       runMin:state.downtime.run_min||0,
