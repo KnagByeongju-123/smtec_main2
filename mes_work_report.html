@@ -662,8 +662,10 @@ function renderAll(){
   });
   // 특기사항
   document.getElementById('noteInput').value=state.report.note||'';
-  // MES 불량내역 렌더
+  // MES 불량내역 렌더 + 자동 채움
   renderMesNgBox();
+  // 매핑된 불량은 즉시 분류칸에 자동 채움 (silent)
+  applyMesNgAuto(true);
 }
 
 // MES 실적불량 박스 렌더
@@ -743,7 +745,7 @@ function renderMesNgBox(){
       '</span>';
   }).join('');
   document.getElementById('mesNgList').innerHTML=html;
-  // 자동채움 버튼 영역 추가
+  // 상태 메시지 (버튼 대신)
   var actionDiv=document.getElementById('mesNgAction');
   if(!actionDiv){
     actionDiv=document.createElement('div');
@@ -753,22 +755,27 @@ function renderMesNgBox(){
   }
   var actHtml='';
   if(mappedQty>0){
-    actHtml+='<button onclick="applyMesNgAuto()" style="background:#16a34a;color:#fff;border:none;padding:6px 14px;border-radius:8px;font-weight:800;font-size:12px;cursor:pointer;font-family:inherit">🔄 매핑된 '+mappedQty+'개 자동채움</button>';
+    actHtml+='<span style="font-size:11px;color:#86efac;background:rgba(34,197,94,.15);padding:4px 10px;border-radius:6px;font-weight:700">✅ 매핑된 '+mappedQty+'개 자동채움 완료</span>';
   }
   if(unmappedQty>0){
     actHtml+='<span style="font-size:10px;color:#fca5a5;background:rgba(0,0,0,.2);padding:4px 8px;border-radius:6px">⚠️ 매핑없음: '+unmappedCodes.join(', ')+' ('+unmappedQty+'개)</span>';
   }
-  if(!mappedQty){
-    actHtml+='<span style="font-size:10px;color:#fca5a5">💡 설정 > MES 불량코드 매핑 에서 코드 등록 시 자동채움 가능</span>';
-  }
   actionDiv.innerHTML=actHtml;
 }
 
-// 매핑된 MES 불량 → 13종 분류 자동 채움
-function applyMesNgAuto(){
+// 매핑된 MES 불량 → 13종 분류 자동 채움 (페이지 로드시 자동 호출)
+function applyMesNgAuto(silent){
   var ng=state.mesNg;
   var ngMap=state.ngMap||{};
   if(!ng||!ng.by_code)return;
+  // 수정모드(editId 있음) + 이미 불량값이 수기 입력되어 있으면 덮어쓰지 않음
+  if(state.editId){
+    var hasUserInput=Object.keys(state.report.defects||{}).some(function(k){return +state.report.defects[k]>0});
+    if(hasUserInput){
+      console.log('수정모드+사용자 입력값 있음 → 자동채움 스킵');
+      return;
+    }
+  }
   var filled={};
   ng.by_code.forEach(function(c){
     var type=ngMap[c.code];
@@ -777,7 +784,7 @@ function applyMesNgAuto(){
     if(DEFECT_TYPES.indexOf(type)<0)return;
     filled[type]=(filled[type]||0)+c.qty;
   });
-  // 기존 값에 덮어쓰기 (이미 수기 입력이 있어도)
+  // 덮어쓰기
   Object.keys(filled).forEach(function(t){
     state.report.defects[t]=String(filled[t]);
   });
@@ -786,12 +793,13 @@ function applyMesNgAuto(){
     var t=inp.dataset.def;
     if(filled[t]){
       inp.value=filled[t];
-      // 총합 갱신 트리거
       onDefChange(inp);
     }
   });
   updateDefTotal();
-  showToast('✅ '+Object.keys(filled).length+'종 · 총 '+Object.values(filled).reduce(function(a,b){return a+b},0)+'개 자동채움');
+  if(!silent){
+    showToast('✅ '+Object.keys(filled).length+'종 · 총 '+Object.values(filled).reduce(function(a,b){return a+b},0)+'개 자동채움');
+  }
 }
 
 // ========== 입력 이벤트 ==========
