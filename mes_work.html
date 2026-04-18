@@ -637,6 +637,13 @@ function parsePressLabel(m){
   return parts.join(' · ');
 }
 
+// 간단히 "36호기"만 반환 (이력 테이블용)
+function parsePressShort(m){
+  var name=(m.machine_name||'').trim();
+  var mt=name.match(/^(\d{1,3})/);
+  return mt?(mt[1]+'호기'):(name||m.machine_code||'-');
+}
+
 function openChkModal(machine){
   chkState.machine=machine;
   chkState.category=null;
@@ -677,7 +684,14 @@ function goMoldRepair(e){
   if(m){
     if(m.machine_code)params.push('machine_code='+encodeURIComponent(m.machine_code));
     if(m.machine_name)params.push('machine_name='+encodeURIComponent(m.machine_name));
-    if(m.current_mold)params.push('mold='+encodeURIComponent(m.current_mold));
+    // 금형번호 (여러 파라미터명으로 보내어 페이지측 호환성 확보)
+    if(m.current_mold){
+      var mold=encodeURIComponent(m.current_mold);
+      params.push('mold='+mold);
+      params.push('mold_code='+mold);
+      params.push('mold_no='+mold);
+      params.push('mold_number='+mold);
+    }
     if(m.current_item_code)params.push('item_code='+encodeURIComponent(m.current_item_code));
     if(m.item_name)params.push('item_name='+encodeURIComponent(m.item_name));
     if(m.worker)params.push('worker='+encodeURIComponent(m.worker));
@@ -1058,7 +1072,7 @@ async function saveProductionOnly(){
       adj_memo:prodState.data.adj_memo||'',
       fallback:!!prodState.data.fallback
     },
-    downtime_snapshot:dsumState.data?{runMin:dsumState.data.runMin,stopMin:dsumState.data.stopMin,plannedMin:dsumState.data.plannedMin,stopCount:dsumState.data.stopCount,plannedCount:dsumState.data.plannedCount,rate:dsumState.data.rate}:null,
+    downtime_snapshot:dsumState.data?{runMin:dsumState.data.runMin,stopMin:dsumState.data.stopMin,plannedMin:dsumState.data.plannedMin,stopCount:dsumState.data.stopCount,plannedCount:dsumState.data.plannedCount,rate:dsumState.data.rate,stopEvents:dsumState.data.stopEvents,plannedEvents:dsumState.data.plannedEvents}:null,
     created_at:now.toISOString()
   };
   try{
@@ -1599,7 +1613,7 @@ function hiRenderTable(data){
     }
     var pc=(d.payload&&d.payload.photo_count)||0;
     var tr=document.createElement('tr');tr.dataset.id=d.id;
-    tr.innerHTML='<td><input type="checkbox" class="hi-checkbox hi-chk" value="'+d.id+'"></td><td style="white-space:nowrap">'+tstr+'</td><td><b>'+d.machine_code+'</b><br><span style="color:var(--sub);font-size:10px">'+parsePressLabel({machine_name:d.machine_name||'',machine_code:d.machine_code})+'</span></td><td style="font-size:10px">'+(d.customer||'-')+'</td><td>'+catH+'</td><td class="hi-det">'+(detail||'-')+'</td><td style="text-align:center">'+(pc>0?'📷'+pc:'')+'</td>';
+    tr.innerHTML='<td><input type="checkbox" class="hi-checkbox hi-chk" value="'+d.id+'"></td><td style="white-space:nowrap">'+tstr+'</td><td style="white-space:nowrap"><b>'+d.machine_code+'</b> '+parsePressShort({machine_name:d.machine_name||'',machine_code:d.machine_code})+'</td><td style="font-size:10px">'+(d.customer||'-')+'</td><td>'+catH+'</td><td class="hi-det">'+(detail||'-')+'</td><td style="text-align:center">'+(pc>0?'📷'+pc:'')+'</td>';
     var tdAct=document.createElement('td');tdAct.style.cssText='white-space:nowrap;text-align:center';
     var btnE=document.createElement('button');btnE.textContent='✏️';btnE.title='수정';btnE.style.cssText='border:none;background:rgba(56,189,248,.12);color:var(--accent);border-radius:4px;padding:3px 6px;cursor:pointer;margin-right:3px;font-size:13px';
     var btnD=document.createElement('button');btnD.textContent='🗑';btnD.title='삭제';btnD.style.cssText='border:none;background:rgba(239,68,68,.12);color:var(--red);border-radius:4px;padding:3px 6px;cursor:pointer;font-size:13px';
@@ -1728,13 +1742,45 @@ async function hiExportCsv(){
   if(reportData.length){
     var ws=wb.addWorksheet('📄 작업일보',{views:[{state:'frozen',ySplit:1}]});
     var defectCols=['시타발초물','초중종검사','원자재불량','기스','찍힘','휨·변형','형상불량','치수·각도','BURR','크랙·터짐','이물·발청','수리중불량','낙하품'];
-    var headers=['일시','고객사','설비코드','설비명','품번','품명','금형','작업자','MES실적','양품수량','양품차이','불량합계'].concat(defectCols).concat(['다이하이트(mm)','이송피치(mm)','SPM','가동(분)','비가동(분)','계획정지(분)','가동률(%)','특기사항']);
+    // 정지시간 세부 매핑 (A~E: 계획정지, F~K: 비가동)
+    var stopCols=[
+      {key:'A',name:'A.조회/교육',planned:true},
+      {key:'B',name:'B.3정5행',planned:true},
+      {key:'C',name:'C.Try-Out',planned:true},
+      {key:'D',name:'D.측정대기',planned:true},
+      {key:'E',name:'E.타공정지원',planned:true},
+      {key:'F',name:'F.금형세팅',planned:false},
+      {key:'G',name:'G.금형수리',planned:false},
+      {key:'H',name:'H.설비이상',planned:false},
+      {key:'I',name:'I.소재교환',planned:false},
+      {key:'J',name:'J.불량처리',planned:false},
+      {key:'K',name:'K.기타/대기',planned:false}
+    ];
+    var CODE_TO_GRID={'Z011':'A','Z002':'B','Z003':'C','Z004':'D','Z010':'E','A001':'F','A004':'G','M008':'G','A002':'H','M001':'I','Z000':'J'};
+    var stopColNames=stopCols.map(function(c){return c.name+'(분)'});
+    var headers=['일시','고객사','설비코드','설비명','품번','품명','금형','작업자','MES실적','양품수량','양품차이','불량합계'].concat(defectCols).concat(['다이하이트(mm)','이송피치(mm)','SPM']).concat(stopColNames).concat(['가동(분)','비가동(분)','계획정지(분)','가동률(%)','특기사항']);
     var colWidths=[16,12,10,14,18,22,14,10,10,10,10,10];
     defectCols.forEach(function(){colWidths.push(10)});
-    colWidths=colWidths.concat([12,12,8,10,10,10,10,30]);
+    colWidths=colWidths.concat([12,12,8]); // 조건
+    stopCols.forEach(function(){colWidths.push(10)}); // 정지 세부 11개
+    colWidths=colWidths.concat([10,10,10,10,30]); // 가동/비가동/계획정지/가동률/특기
     ws.columns=colWidths.map(function(w){return{width:w}});
-    var hdr=ws.addRow(headers);hdr.height=26;
-    hdr.eachCell(function(c){c.font={bold:true,color:{argb:'FFFFFFFF'},size:10};c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF7C3AED'}};c.alignment={vertical:'middle',horizontal:'center',wrapText:true};c.border={top:{style:'thin'},bottom:{style:'thin'},left:{style:'thin'},right:{style:'thin'}}});
+    var hdr=ws.addRow(headers);hdr.height=30;
+    hdr.eachCell(function(c,col){
+      c.font={bold:true,color:{argb:'FFFFFFFF'},size:9};
+      c.alignment={vertical:'middle',horizontal:'center',wrapText:true};
+      c.border={top:{style:'thin'},bottom:{style:'thin'},left:{style:'thin'},right:{style:'thin'}};
+      // 섹션별 색상
+      var planBaseCol=12+defectCols.length+3; // 정지 세부 시작 컬럼 (1-based)
+      var planEndCol=planBaseCol+4; // A~E
+      var unplanEndCol=planBaseCol+stopCols.length-1;
+      if(col<=12)c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF7C3AED'}};
+      else if(col<=12+defectCols.length)c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFDC2626'}};
+      else if(col<=planBaseCol-1)c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF0891B2'}};
+      else if(col<=planEndCol)c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF7E22CE'}};
+      else if(col<=unplanEndCol)c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFEA580C'}};
+      else c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF475569'}};
+    });
     reportData.forEach(function(d){
       var tstr=_fmtTs(d.created_at);
       var p=d.payload||{};
@@ -1748,10 +1794,21 @@ async function hiExportCsv(){
       var conds=rs.conditions||{};
       var actCt=+p.actual_ct||0;
       var spm=actCt>0?(60/actCt).toFixed(1):'';
+      // 정지 세부 매핑
+      var stopMap={A:0,B:0,C:0,D:0,E:0,F:0,G:0,H:0,I:0,J:0,K:0};
+      var allEvents=[].concat(ds.plannedEvents||[],ds.stopEvents||[]);
+      allEvents.forEach(function(ev){
+        var code=(ev.code||'').split('-')[1]||'';
+        var g=CODE_TO_GRID[code];
+        if(g&&stopMap.hasOwnProperty(g))stopMap[g]+=(+ev.min||0);
+        else if(ev.code)stopMap.K+=(+ev.min||0);
+      });
+      var stopVals=stopCols.map(function(c){return stopMap[c.key]||''});
       var base=[tstr,d.customer||'',d.machine_code||'',parsePressLabel({machine_name:d.machine_name||'',machine_code:d.machine_code}),d.item_code||'',p.item_name||'',p.mold||'',p.worker||'',
         mesQty||'',shipQty||'',shipDiff||'',defSum||''];
       var rowData=base.concat(defVals).concat([
-        conds.dieHeight||'',conds.feedPitch||'',spm,
+        conds.dieHeight||'',conds.feedPitch||'',spm
+      ]).concat(stopVals).concat([
         ds.runMin||'',ds.stopMin||'',ds.plannedMin||'',ds.rate?(+ds.rate).toFixed(1):'',
         rs.note||''
       ]);
@@ -1788,6 +1845,36 @@ async function hiExportCsv(){
         });
       });
       ws2.autoFilter={from:{row:1,column:1},to:{row:1,column:h2.length}};
+    }
+
+    // ========== 시트 3-1: 작업일보 정지이벤트 상세 ==========
+    var hasStopEvents=reportData.some(function(d){var ds=(d.payload||{}).downtime_snapshot||{};return (ds.stopEvents&&ds.stopEvents.length)||(ds.plannedEvents&&ds.plannedEvents.length)});
+    if(hasStopEvents){
+      var ws3=wb.addWorksheet('⏱ 정지이벤트',{views:[{state:'frozen',ySplit:1}]});
+      var h3=['작업일','설비코드','설비명','구분','코드','사유','시작','종료','시간(분)','누적횟수'];
+      ws3.columns=[{width:12},{width:10},{width:14},{width:10},{width:10},{width:22},{width:18},{width:18},{width:10},{width:10}];
+      var h3r=ws3.addRow(h3);h3r.height=22;
+      h3r.eachCell(function(c){c.font={bold:true,color:{argb:'FFFFFFFF'},size:11};c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFEA580C'}};c.alignment={vertical:'middle',horizontal:'center'};c.border={top:{style:'thin'},bottom:{style:'thin'},left:{style:'thin'},right:{style:'thin'}}});
+      reportData.forEach(function(d){
+        var tstr=_fmtTs(d.created_at).slice(0,10);
+        var ds=(d.payload||{}).downtime_snapshot||{};
+        var pressLbl=parsePressLabel({machine_name:d.machine_name||'',machine_code:d.machine_code});
+        // 계획정지 이벤트
+        (ds.plannedEvents||[]).forEach(function(ev,idx){
+          var row=ws3.addRow([tstr,d.machine_code||'',pressLbl,'계획정지',ev.code||'',ev.name||'',ev.start||'',ev.end||'',ev.min||0,idx+1]);
+          row.eachCell({includeEmpty:true},function(c){c.border={top:{style:'hair',color:{argb:'FFCCCCCC'}},bottom:{style:'hair',color:{argb:'FFCCCCCC'}},left:{style:'hair',color:{argb:'FFCCCCCC'}},right:{style:'hair',color:{argb:'FFCCCCCC'}}};c.alignment={vertical:'middle',horizontal:'center'}});
+          row.getCell(4).fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFF3E8FF'}};
+          row.getCell(4).font={color:{argb:'FF7C3AED'},bold:true};
+        });
+        // 실비가동 이벤트
+        (ds.stopEvents||[]).forEach(function(ev,idx){
+          var row=ws3.addRow([tstr,d.machine_code||'',pressLbl,'비가동',ev.code||'',ev.name||'',ev.start||'',ev.end||'',ev.min||0,idx+1]);
+          row.eachCell({includeEmpty:true},function(c){c.border={top:{style:'hair',color:{argb:'FFCCCCCC'}},bottom:{style:'hair',color:{argb:'FFCCCCCC'}},left:{style:'hair',color:{argb:'FFCCCCCC'}},right:{style:'hair',color:{argb:'FFCCCCCC'}}};c.alignment={vertical:'middle',horizontal:'center'}});
+          row.getCell(4).fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFFEE2E2'}};
+          row.getCell(4).font={color:{argb:'FFDC2626'},bold:true};
+        });
+      });
+      ws3.autoFilter={from:{row:1,column:1},to:{row:1,column:h3.length}};
     }
   }
 
