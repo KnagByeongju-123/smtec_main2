@@ -146,15 +146,6 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
       <div id="productionList" class="rpt-prod-list"></div>
     </div>
 
-    <!-- 양품수량 -->
-    <div class="rpt-section">
-      <div class="rpt-section-title">✅ 양품수량 (실제 검수)</div>
-      <div class="ship-box">
-        <input type="text" id="shipQty" placeholder="양품수량 입력" oninput="onShipChange()" readonly>
-        <div class="ship-diff" id="shipDiff"></div>
-      </div>
-    </div>
-
     <!-- 불량유형 -->
     <div class="rpt-section">
       <div class="rpt-section-title">⚠️ 불량유형별 수량</div>
@@ -246,7 +237,7 @@ var state={
   machine:null,
   downtime:null,
   productionItems:[],
-  report:{shipQty:'',defects:{},conditions:{},note:'',productionAdj:{}}
+  report:{defects:{},conditions:{},note:'',productionAdj:{}}
 };
 
 // ========== 숫자패드 ==========
@@ -378,7 +369,7 @@ function fmtYmd(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,
 
 // ========== 초기화 ==========
 function initReport(){
-  state.report={shipQty:'',defects:{},conditions:{},note:'',productionAdj:{}};
+  state.report={defects:{},conditions:{},note:'',productionAdj:{}};
   DEFECT_TYPES.forEach(function(t){state.report.defects[t]=''});
   COND_FIELDS.forEach(function(f){state.report.conditions[f.id]=''});
 }
@@ -445,7 +436,6 @@ async function loadMachine(mcParam){
     initReport();
     if(existList&&existList.length&&existList[0].payload&&existList[0].payload.report_snapshot){
       var rs=existList[0].payload.report_snapshot;
-      state.report.shipQty=rs.shipQty||'';
       if(rs.defects)Object.keys(rs.defects).forEach(function(k){state.report.defects[k]=rs.defects[k]||''});
       if(rs.conditions)Object.keys(rs.conditions).forEach(function(k){state.report.conditions[k]=rs.conditions[k]||''});
       state.report.note=rs.note||'';
@@ -531,16 +521,6 @@ function renderAll(){
       '<div><span class="rig-lb">가동률</span><span class="rig-vl" style="color:var(--accent)">'+(+ds.rate||0).toFixed(1)+'%</span></div>';
   }
   document.getElementById('mesInfoGrid').innerHTML=grid;
-  // 양품수량
-  var shipInp=document.getElementById('shipQty');
-  shipInp.value=state.report.shipQty||'';
-  onShipChange();
-  // 숫자패드 연결
-  attachNumpadTo(shipInp,{
-    label:'양품수량 입력',
-    allowDecimal:false,
-    hint:+state.machine.actual_qty||0
-  });
   // 불량유형
   var defGrid='';
   DEFECT_TYPES.forEach(function(t){
@@ -573,15 +553,6 @@ function renderAll(){
 }
 
 // ========== 입력 이벤트 ==========
-function onShipChange(){
-  var v=document.getElementById('shipQty').value;
-  state.report.shipQty=v;
-  var adj=+v||0,mes=+state.machine.actual_qty||0,diff=adj-mes;
-  var d=document.getElementById('shipDiff');
-  if(!v)d.innerHTML='';
-  else if(diff===0)d.innerHTML='<span style="color:var(--green)">✓ MES와 일치</span>';
-  else d.innerHTML='<span style="color:'+(diff>0?'#86efac':'#fca5a5')+'">MES '+mes.toLocaleString()+' 대비 '+(diff>0?'+':'')+diff+' ('+(mes>0?(diff/mes*100).toFixed(1):'0')+'%)</span>';
-}
 function onDefChange(inp){
   state.report.defects[inp.dataset.def]=inp.value;
   updateDefTotal();
@@ -687,12 +658,14 @@ function resetForm(){
 async function saveReport(){
   if(!state.machine){showToast('설비 선택 필요');return}
   var rpt=state.report;
-  var hasShip=!!rpt.shipQty;
   var hasDef=Object.keys(rpt.defects).some(function(k){return +rpt.defects[k]>0});
   var hasCond=Object.keys(rpt.conditions).some(function(k){return rpt.conditions[k]});
   var hasNote=!!(rpt.note||'').trim();
   var hasProd=Object.keys(rpt.productionAdj||{}).some(function(k){return rpt.productionAdj[k]!==''&&rpt.productionAdj[k]!=null});
-  if(!hasShip&&!hasDef&&!hasCond&&!hasNote&&!hasProd){showToast('입력내용이 없습니다');return}
+  if(!hasDef&&!hasCond&&!hasNote&&!hasProd){showToast('입력내용이 없습니다');return}
+  // 기종별 실제수량 합계를 양품수량으로 자동 계산
+  var shipTotal=0;
+  Object.keys(rpt.productionAdj||{}).forEach(function(k){shipTotal+=+rpt.productionAdj[k]||0});
   var m=state.machine;
   var now=new Date();
   var record={
@@ -706,7 +679,7 @@ async function saveReport(){
     category:'report',
     category_name:'작업일보',
     report_snapshot:{
-      shipQty:+rpt.shipQty||0,
+      shipQty:shipTotal,
       defects:Object.assign({},rpt.defects),
       conditions:Object.assign({},rpt.conditions),
       note:rpt.note||'',
@@ -879,7 +852,9 @@ async function exportExcel(){
 
   // 데이터 행
   var dr=hr+2;
-  var mesQty=+m.actual_qty||0,shipQty=+rpt.shipQty||0;
+  var shipTotal=0;
+  Object.keys(rpt.productionAdj||{}).forEach(function(k){shipTotal+=+rpt.productionAdj[k]||0});
+  var mesQty=+m.actual_qty||0,shipQty=shipTotal;
   var actCt=+m.actual_ct||0,tgtCt=+m.target_ct||0;
   var ctVal=actCt>0?actCt:tgtCt;
   var spmText='';
