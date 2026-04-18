@@ -79,8 +79,14 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 .dsum-tab{flex:1;padding:4px 6px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:4px;font-size:10px;color:var(--sub);cursor:pointer;font-family:inherit;font-weight:600;text-align:center}
 .dsum-tab.active{background:var(--accent);color:#0f172a;border-color:var(--accent)}
 .dsum-body{background:rgba(0,0,0,.25);border-radius:6px;padding:6px 8px;min-height:60px}
-/* TOP5 리스트 */
+/* TOP5 리스트 (구버전 호환) */
 .dsum-top5{display:flex;flex-direction:column;gap:3px}
+/* 개별 이벤트 한줄 표시 */
+.dsum-ev{font-size:10.5px;padding:3px 6px;border-radius:4px;margin-bottom:2px;display:flex;align-items:center;gap:5px;line-height:1.3}
+.dsum-ev .ev-tm{font-family:ui-monospace,monospace;font-size:10px;color:var(--sub);min-width:80px;flex-shrink:0}
+.dsum-ev .ev-min{color:var(--yellow);font-weight:700;font-size:10px;flex-shrink:0}
+.dsum-ev.ev-stop{background:rgba(239,68,68,.08);border-left:2px solid #ef4444}
+.dsum-ev.ev-plan{background:rgba(167,139,250,.08);border-left:2px solid #a78bfa}
 .dsum-row{display:flex;align-items:center;gap:6px;font-size:10px}
 .dsum-row .rk{color:var(--sub);font-weight:700;min-width:14px;text-align:right}
 .dsum-row .rn{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -213,7 +219,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
         </div>
         <!-- 탭 -->
         <div class="dsum-tabs">
-          <div class="dsum-tab active" id="tabTop5" onclick="dsumSwitch('top5')">📋 정지사유 TOP5</div>
+          <div class="dsum-tab active" id="tabTop5" onclick="dsumSwitch('top5')">📋 정지이력</div>
           <div class="dsum-tab" id="tabTL" onclick="dsumSwitch('tl')">⏱ 24시간 타임라인</div>
         </div>
         <!-- 바디 -->
@@ -429,7 +435,9 @@ async function loadDowntimeSummary(){
         totalMin:d.total_min||0,
         rate:d.rate||0,
         top5:d.top5||[],
+        stopEvents:d.stop_events||[],
         plannedList:d.planned_list||[],
+        plannedEvents:d.planned_events||[],
         timeline:d.timeline||[],
         updatedAt:d.updated_at
       };
@@ -460,38 +468,53 @@ function renderDowntimeSummary(data){
   document.getElementById('kpiCnt').textContent=(data.stopCount||0)+'회';
   document.getElementById('kpiRate').textContent=(data.rate||0).toFixed(1)+'%';
   // 현재 탭 렌더
-  if(dsumState.tab==='top5')renderTop5(data.top5||[],data.plannedList||[]);
+  if(dsumState.tab==='top5')renderEvents(data);
   else renderTimeline(data.timeline||[]);
 }
 
-function renderTop5(list,plannedList){
+function renderEvents(data){
   var b=document.getElementById('dsumBody');
-  plannedList=plannedList||[];
-  if(!list.length&&!plannedList.length){b.innerHTML='<div class="dsum-empty">✅ 당일 정지 이력 없음</div>';return}
-  var html='';
-  // 실비가동 TOP5
-  if(list.length){
-    var maxMin=Math.max.apply(null,list.map(function(x){return x.min}));
-    html+='<div style="font-size:9px;color:#fca5a5;font-weight:700;margin-bottom:3px">🔴 실제 비가동 TOP5</div>';
-    html+='<div class="dsum-top5">';
-    list.forEach(function(it,i){
-      var pct=maxMin>0?(it.min/maxMin*100):0;
-      html+='<div class="dsum-row"><span class="rk">'+(i+1)+'</span><span class="rn">'+it.name+(it.cnt>1?' <span style="color:#94a3b8;font-size:9px">×'+it.cnt+'</span>':'')+'</span><span class="rb"><span class="rbf" style="width:'+pct+'%"></span></span><span class="rt">'+fmtMinutes(it.min)+'</span></div>';
-    });
-    html+='</div>';
-  }else{
-    html+='<div style="font-size:10px;color:var(--green);padding:6px 0">✅ 실제 비가동 없음</div>';
+  // 개별 이벤트 리스트 우선 사용, 없으면 기존 top5/plannedList 집계에서 생성
+  var stopEvents=data.stopEvents||[];
+  var plannedEvents=data.plannedEvents||[];
+  // 구버전 호환: stop_events가 없으면 집계된 top5 형식 표시
+  var useLegacy=(!stopEvents.length&&!plannedEvents.length)&&((data.top5||[]).length||(data.plannedList||[]).length);
+  if(!stopEvents.length&&!plannedEvents.length&&!useLegacy){
+    b.innerHTML='<div class="dsum-empty">✅ 당일 정지 이력 없음</div>';return;
   }
-  // 계획정지
-  if(plannedList.length){
-    var maxP=Math.max.apply(null,plannedList.map(function(x){return x.min}));
-    html+='<div style="font-size:9px;color:#c4b5fd;font-weight:700;margin:8px 0 3px 0;padding-top:6px;border-top:1px dashed rgba(167,139,250,.3)">🟣 계획정지 (식사/휴식)</div>';
-    html+='<div class="dsum-top5">';
-    plannedList.forEach(function(it,i){
-      var pct=maxP>0?(it.min/maxP*100):0;
-      html+='<div class="dsum-row"><span class="rk">'+(i+1)+'</span><span class="rn">'+it.name+(it.cnt>1?' <span style="color:#94a3b8;font-size:9px">×'+it.cnt+'</span>':'')+'</span><span class="rb"><span class="rbf" style="width:'+pct+'%;background:linear-gradient(90deg,#a78bfa,#7c3aed)"></span></span><span class="rt" style="color:#c4b5fd">'+fmtMinutes(it.min)+'</span></div>';
+  var html='';
+  if(useLegacy){
+    // 구버전 데이터 (집계된 TOP5 형식)
+    var list=data.top5||[],plannedList=data.plannedList||[];
+    if(list.length){
+      html+='<div style="font-size:9px;color:#fca5a5;font-weight:700;margin-bottom:3px">🔴 실비가동</div>';
+      list.forEach(function(it){
+        html+='<div class="dsum-ev ev-stop">'+it.name+' <span class="ev-min">('+fmtMinutes(it.min)+')</span></div>';
+      });
+    }
+    if(plannedList.length){
+      html+='<div style="font-size:9px;color:#c4b5fd;font-weight:700;margin:8px 0 3px 0;padding-top:6px;border-top:1px dashed rgba(167,139,250,.3)">🟣 계획정지</div>';
+      plannedList.forEach(function(it){
+        html+='<div class="dsum-ev ev-plan">'+it.name+' <span class="ev-min">('+fmtMinutes(it.min)+')</span></div>';
+      });
+    }
+    b.innerHTML=html;
+    return;
+  }
+  // 개별 이벤트 시간순 나열
+  if(stopEvents.length){
+    html+='<div style="font-size:9px;color:#fca5a5;font-weight:700;margin-bottom:3px">🔴 실비가동 ('+stopEvents.length+'건)</div>';
+    stopEvents.forEach(function(ev){
+      html+='<div class="dsum-ev ev-stop"><span class="ev-tm">'+ev.start+'-'+ev.end+'</span><span class="ev-min">('+fmtMinutes(ev.min)+')</span> '+ev.name+'</div>';
     });
-    html+='</div>';
+  }else{
+    html+='<div style="font-size:10px;color:var(--green);padding:4px 0">✅ 실비가동 없음</div>';
+  }
+  if(plannedEvents.length){
+    html+='<div style="font-size:9px;color:#c4b5fd;font-weight:700;margin:8px 0 3px 0;padding-top:6px;border-top:1px dashed rgba(167,139,250,.3)">🟣 계획정지 ('+plannedEvents.length+'건)</div>';
+    plannedEvents.forEach(function(ev){
+      html+='<div class="dsum-ev ev-plan"><span class="ev-tm">'+ev.start+'-'+ev.end+'</span><span class="ev-min">('+fmtMinutes(ev.min)+')</span> '+ev.name+'</div>';
+    });
   }
   b.innerHTML=html;
 }
@@ -538,7 +561,7 @@ function dsumSwitch(tab){
   document.getElementById('tabTop5').classList.toggle('active',tab==='top5');
   document.getElementById('tabTL').classList.toggle('active',tab==='tl');
   if(!dsumState.data){loadDowntimeSummary();return}
-  if(tab==='top5')renderTop5(dsumState.data.top5||[],dsumState.data.plannedList||[]);
+  if(tab==='top5')renderEvents(dsumState.data);
   else renderTimeline(dsumState.data.timeline||[]);
 }
 
@@ -744,7 +767,7 @@ async function submitCheck(){
     photo_count:chkState.photos.length,
     photos:chkState.photos.map(function(p){return{size:p.size,data:p.dataUrl}}),
     // ★ 당일 정지요약 스냅샷 같이 저장
-    downtime_snapshot:dsumState.data?{runMin:dsumState.data.runMin,stopMin:dsumState.data.stopMin,plannedMin:dsumState.data.plannedMin,stopCount:dsumState.data.stopCount,plannedCount:dsumState.data.plannedCount,rate:dsumState.data.rate,top5:dsumState.data.top5,plannedList:dsumState.data.plannedList}:null,
+    downtime_snapshot:dsumState.data?{runMin:dsumState.data.runMin,stopMin:dsumState.data.stopMin,plannedMin:dsumState.data.plannedMin,stopCount:dsumState.data.stopCount,plannedCount:dsumState.data.plannedCount,rate:dsumState.data.rate,stopEvents:dsumState.data.stopEvents,plannedEvents:dsumState.data.plannedEvents}:null,
     created_at:now.toISOString()
   };
   showToast('⏳ 저장중...');
