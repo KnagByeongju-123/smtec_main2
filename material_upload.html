@@ -133,6 +133,9 @@
 
 <div class="main-pnl" id="mainPnl1">
 <div class="wrap">
+  <div id="settingsUserBar" style="display:none;padding:8px 12px;background:linear-gradient(135deg,#1a237e,#3f51b5);color:#fff;border-radius:10px;font-size:12px;font-weight:600;margin-bottom:12px;text-align:center">
+    🔓 <span id="settingsUserName"></span> 님 접속중 · <span style="opacity:.8;font-size:11px">10분 후 자동 잠금</span>
+  </div>
   <div class="card">
     <div class="card-tit">📊 이력 관리</div>
     <div style="display:flex;gap:8px;margin-bottom:10px">
@@ -255,6 +258,27 @@ CREATE POLICY "anon_all" ON move_history_tj FOR ALL TO anon USING (true) WITH CH
 
 <div class="toast" id="toast"></div>
 
+<!-- PIN 키패드 모달 -->
+<div id="pinLock" style="display:none;position:fixed;inset:0;background:linear-gradient(180deg,#181b26,#0f1117);z-index:99999;flex-direction:column;align-items:center;justify-content:center;padding:20px">
+  <div style="font-size:22px;font-weight:800;color:#e2b04a;margin-bottom:6px;text-align:center">🔒 설정 메뉴 접속</div>
+  <div style="font-size:12px;color:#8b8fa3;margin-bottom:32px">본인의 PIN을 입력하세요</div>
+  <div id="pinDots" style="display:flex;gap:12px;margin-bottom:24px">
+    <div class="pd"></div><div class="pd"></div><div class="pd"></div><div class="pd"></div>
+  </div>
+  <div id="pinLockoutMsg" style="display:none;color:#ef4444;font-size:13px;font-weight:600;text-align:center;margin-bottom:16px"></div>
+  <div id="pinKeypad" style="display:grid;grid-template-columns:repeat(3,72px);gap:14px;justify-content:center"></div>
+  <div style="margin-top:28px"><button onclick="closePinLock()" style="background:transparent;border:none;color:#8b8fa3;font-size:12px;padding:8px 16px;cursor:pointer;font-family:inherit">✕ 취소</button></div>
+</div>
+<style>
+#pinLock .pd{width:12px;height:12px;border-radius:50%;background:#2a2e3d;border:2px solid #2a2e3d;transition:all .15s}
+#pinLock .pd.filled{background:#e2b04a;border-color:#e2b04a;box-shadow:0 0 10px rgba(226,176,74,.4)}
+#pinLock .pd.err{background:#ef4444;border-color:#ef4444;animation:pinshake .4s}
+@keyframes pinshake{0%,100%{transform:translateX(0)}25%{transform:translateX(-6px)}75%{transform:translateX(6px)}}
+#pinLock .pk{width:72px;height:72px;border-radius:50%;background:#1a1d27;border:1.5px solid #2a2e3d;color:#e8eaf0;font-size:26px;font-weight:600;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:all .1s;display:flex;align-items:center;justify-content:center;font-family:inherit}
+#pinLock .pk:active{background:#2a2e3d;transform:scale(.92)}
+#pinLock .pk.fn{background:transparent;border:none;font-size:18px;color:#8b8fa3}
+</style>
+
 <script>
 function getKST(d){const utc=d.getTime()+d.getTimezoneOffset()*60000;return new Date(utc+9*3600000)}
 function kstDateStr(d){const k=getKST(d||new Date());return k.getFullYear()+'-'+String(k.getMonth()+1).padStart(2,'0')+'-'+String(k.getDate()).padStart(2,'0')}
@@ -269,15 +293,138 @@ function getSbUrl(){return(getSbCfg().url||SB_DEFAULT_URL).replace(/\/$/,'')}
 function getSbKey(){return getSbCfg().key||SB_DEFAULT_KEY}
 
 let _settingsUnlocked=false;
+let _settingsUnlockedBy='';
+let _pinCur='';
+let _pinBusy=false;
+let _pinLockTimer=null;
+const _PIN_MAX_FAIL=5;
+const _PIN_LOCKOUT_SEC=60;
+const _PIN_LK_FAIL='material_pin_fail';
+
+/* SHA-256 해싱 (user_pin 테이블의 pin_hash 비교용) */
+async function _sha256hex(s){
+  const b=new TextEncoder().encode(s);
+  const h=await crypto.subtle.digest('SHA-256',b);
+  return Array.from(new Uint8Array(h)).map(x=>x.toString(16).padStart(2,'0')).join('');
+}
+
+function _getPinFail(){try{return JSON.parse(localStorage.getItem(_PIN_LK_FAIL)||'{"count":0,"until":0}')}catch(e){return{count:0,until:0}}}
+function _setPinFail(f){localStorage.setItem(_PIN_LK_FAIL,JSON.stringify(f))}
+function _clearPinFail(){localStorage.removeItem(_PIN_LK_FAIL)}
+
+function _renderPinKeypad(){
+  const kp=document.getElementById('pinKeypad');
+  if(!kp)return;
+  kp.innerHTML='';
+  ['1','2','3','4','5','6','7','8','9','','0','⌫'].forEach(k=>{
+    const b=document.createElement('button');
+    if(k===''){b.className='pk fn';b.style.visibility='hidden'}
+    else if(k==='⌫'){b.className='pk fn';b.textContent=k;b.onclick=()=>_pinDel()}
+    else{b.className='pk';b.textContent=k;b.onclick=()=>_pinPress(k)}
+    kp.appendChild(b);
+  });
+}
+function _updatePinDots(){
+  document.querySelectorAll('#pinDots .pd').forEach((d,i)=>{
+    d.classList.remove('err');
+    if(i<_pinCur.length)d.classList.add('filled');
+    else d.classList.remove('filled');
+  });
+}
+function _shakePinDots(){
+  document.querySelectorAll('#pinDots .pd').forEach(d=>d.classList.add('err'));
+  setTimeout(()=>{_pinCur='';_updatePinDots()},400);
+}
+function _checkPinLockout(){
+  const f=_getPinFail(),msg=document.getElementById('pinLockoutMsg');
+  if(!msg)return;
+  const remain=f.until-Date.now();
+  if(remain>0){
+    msg.style.display='block';
+    const upd=()=>{
+      const r=Math.ceil((f.until-Date.now())/1000);
+      if(r<=0){msg.style.display='none';_clearPinFail();clearInterval(_pinLockTimer);return}
+      msg.textContent='🔒 잠금: '+r+'초 후 재시도';
+    };
+    upd();
+    clearInterval(_pinLockTimer);
+    _pinLockTimer=setInterval(upd,1000);
+  }else msg.style.display='none';
+}
+function _pinPress(n){
+  if(_pinBusy)return;
+  if(_pinCur.length>=4)return;
+  const f=_getPinFail();
+  if(f.until>Date.now())return;
+  _pinCur+=n;_updatePinDots();
+  if(_pinCur.length===4)setTimeout(_pinComplete,150);
+}
+function _pinDel(){
+  if(_pinBusy)return;
+  if(!_pinCur)return;
+  _pinCur=_pinCur.slice(0,-1);_updatePinDots();
+}
+async function _pinComplete(){
+  _pinBusy=true;
+  try{
+    const hash=await _sha256hex(_pinCur);
+    const SB_URL=getSbUrl(),SB_KEY=getSbKey();
+    const res=await fetch(SB_URL+'/rest/v1/user_pin?select=name&pin_hash=eq.'+hash,{
+      headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY}
+    });
+    if(!res.ok)throw new Error(res.status);
+    const data=await res.json();
+    if(data&&data.length>0){
+      const name=data[0].name;
+      _clearPinFail();
+      _settingsUnlocked=true;
+      _settingsUnlockedBy=name;
+      /* 10분 후 자동 잠금 */
+      setTimeout(()=>{_settingsUnlocked=false;_settingsUnlockedBy=''},600000);
+      closePinLock();
+      showToast('✅ '+name+' 님 인증 완료');
+      /* 설정 탭 활성화 */
+      document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('on',i===1));
+      document.querySelectorAll('.main-pnl').forEach((p,i)=>p.classList.toggle('on',i===1));
+      loadSettingsUI();
+    }else{
+      const f=_getPinFail();
+      f.count=(f.count||0)+1;
+      if(f.count>=_PIN_MAX_FAIL){
+        f.until=Date.now()+_PIN_LOCKOUT_SEC*1000;
+        f.count=0;
+        _setPinFail(f);
+        _checkPinLockout();
+      }else{
+        _setPinFail(f);
+      }
+      _shakePinDots();
+    }
+  }catch(e){
+    _shakePinDots();
+  }finally{
+    _pinBusy=false;
+  }
+}
+function closePinLock(){
+  _pinCur='';
+  _updatePinDots();
+  document.getElementById('pinLock').style.display='none';
+}
+function openPinLock(){
+  _pinCur='';
+  _renderPinKeypad();
+  _updatePinDots();
+  _checkPinLockout();
+  const el=document.getElementById('pinLock');
+  el.style.display='flex';
+}
+
 function swMainTab(n){
-  /* 설정 탭(1) 진입 시 암호 인증 - HHMM 방식 */
+  /* 설정 탭(1) 진입 시 PIN 키패드 표시 */
   if(n===1&&!_settingsUnlocked){
-    const pw=prompt('🔒 설정 메뉴 암호를 입력하세요\n(현재 시각 HHMM — 예: 14:25 → 1425)');
-    if(!pw){return}
-    if(pw!==getHHMM()){showToast('❌ 암호가 틀립니다');return}
-    _settingsUnlocked=true;
-    /* 10분 후 자동 잠금 */
-    setTimeout(()=>{_settingsUnlocked=false},600000);
+    openPinLock();
+    return;
   }
   document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('on',i===n));
   document.querySelectorAll('.main-pnl').forEach((p,i)=>p.classList.toggle('on',i===n));
@@ -514,7 +661,16 @@ async function sendDcByCondition(result,msg){const rules=getDcRules();if(!rules.
 async function testDcAll(){const rules=getDcRules();const st=document.getElementById('dcStatus');if(!rules.length){st.textContent='⚠ Webhook 없음';return}let s=0;for(const r of rules){try{const res=await fetch(r.hook,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:'💬 소재입고 알림 테스트 ('+new Date().toLocaleTimeString()+')'})});if(res.ok||res.status===204)s++}catch(e){}}st.textContent='✅ '+s+'/'+rules.length+'개 발송';st.style.color='#2e7d32'}
 
 async function saveAllSettings(){const st=document.getElementById('stgSaveStatus');st.textContent='서버 저장 중...';st.style.color='#1565c0';try{await _saveAllRulesToServer();st.textContent='✅ 서버 저장 완료 ('+new Date().toLocaleTimeString()+')';st.style.color='#2e7d32';showToast('💾 서버 저장 완료')}catch(e){st.textContent='❌ '+e.message;st.style.color='#c62828'}updateConnStatus()}
-function loadSettingsUI(){loadMailGasCfg();loadMailRecipients();initHistDates();_loadAllRulesFromServer();renderNtfyRules();renderTgRules();renderDcRules();loadVendorsAndRender();updateConnStatus()}
+function loadSettingsUI(){
+  /* 접속자 이름 표시 */
+  const bar=document.getElementById('settingsUserBar');
+  const un=document.getElementById('settingsUserName');
+  if(bar&&un&&_settingsUnlockedBy){
+    un.textContent=_settingsUnlockedBy;
+    bar.style.display='block';
+  }
+  loadMailGasCfg();loadMailRecipients();initHistDates();_loadAllRulesFromServer();renderNtfyRules();renderTgRules();renderDcRules();loadVendorsAndRender();updateConnStatus();
+}
 
 /* ========== 출발지(소재업체) 관리 ========== */
 let _vendorCache=[];
