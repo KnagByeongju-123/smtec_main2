@@ -66,12 +66,13 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 .dsum-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:6px}
 .dsum-title{font-size:11px;color:var(--accent);font-weight:700;display:flex;align-items:center;gap:4px}
 .dsum-refresh{background:rgba(56,189,248,.1);border:1px solid rgba(56,189,248,.3);color:var(--accent);border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer;font-family:inherit}
-.dsum-kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-bottom:8px}
-.dsum-k{background:rgba(255,255,255,.04);border-radius:6px;padding:6px 4px;text-align:center;border-left:2px solid}
+.dsum-kpi{display:grid;grid-template-columns:repeat(5,1fr);gap:3px;margin-bottom:8px}
+.dsum-k{background:rgba(255,255,255,.04);border-radius:6px;padding:6px 3px;text-align:center;border-left:2px solid}
 .dsum-k .kl{font-size:9px;color:var(--sub);line-height:1.2}
-.dsum-k .kv{font-size:13px;font-weight:800;margin-top:2px;line-height:1.1}
+.dsum-k .kv{font-size:12px;font-weight:800;margin-top:2px;line-height:1.1}
 .dsum-k.ok{border-left-color:var(--green)}.dsum-k.ok .kv{color:var(--green)}
 .dsum-k.ng{border-left-color:var(--red)}.dsum-k.ng .kv{color:var(--red)}
+.dsum-k.plan{border-left-color:#a78bfa}.dsum-k.plan .kv{color:#c4b5fd}
 .dsum-k.cnt{border-left-color:var(--yellow)}.dsum-k.cnt .kv{color:var(--yellow)}
 .dsum-k.rate{border-left-color:var(--accent)}.dsum-k.rate .kv{color:var(--accent)}
 .dsum-tabs{display:flex;gap:3px;margin-bottom:6px}
@@ -90,7 +91,8 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 .dsum-tl{position:relative;height:28px;background:#1f2937;border-radius:4px;overflow:hidden;margin-top:2px}
 .dsum-tl-seg{position:absolute;top:0;bottom:0}
 .dsum-tl-seg.sr{background:linear-gradient(180deg,#22c55e,#16a34a)}
-.dsum-tl-seg.ss{background:linear-gradient(180deg,#64748b,#475569)}
+.dsum-tl-seg.ss{background:linear-gradient(180deg,#ef4444,#b91c1c)}
+.dsum-tl-seg.sp{background:linear-gradient(180deg,#a78bfa,#7c3aed)}
 .dsum-tl-now{position:absolute;top:-2px;bottom:-2px;width:2px;background:#fbbf24;box-shadow:0 0 6px #fbbf24;z-index:5}
 .dsum-tl-axis{display:flex;justify-content:space-between;margin-top:3px;font-size:9px;color:var(--sub);padding:0 1px}
 .dsum-tl-legend{display:flex;gap:10px;margin-top:4px;font-size:9px;color:var(--sub);justify-content:flex-end}
@@ -203,8 +205,9 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
         </div>
         <!-- KPI 4칸 -->
         <div class="dsum-kpi" id="dsumKpi">
-          <div class="dsum-k ok"><div class="kl">가동시간</div><div class="kv" id="kpiRun">-</div></div>
-          <div class="dsum-k ng"><div class="kl">정지시간</div><div class="kv" id="kpiStop">-</div></div>
+          <div class="dsum-k ok"><div class="kl">가동</div><div class="kv" id="kpiRun">-</div></div>
+          <div class="dsum-k ng"><div class="kl">비가동</div><div class="kv" id="kpiStop">-</div></div>
+          <div class="dsum-k plan"><div class="kl">계획정지</div><div class="kv" id="kpiPlan">-</div></div>
           <div class="dsum-k cnt"><div class="kl">정지횟수</div><div class="kv" id="kpiCnt">-</div></div>
           <div class="dsum-k rate"><div class="kl">가동률</div><div class="kv" id="kpiRate">-</div></div>
         </div>
@@ -420,9 +423,13 @@ async function loadDowntimeSummary(){
       var summary={
         runMin:d.run_min||0,
         stopMin:d.stop_min||0,
+        plannedMin:d.planned_min||0,
         stopCount:d.stop_count||0,
+        plannedCount:d.planned_count||0,
+        totalMin:d.total_min||0,
         rate:d.rate||0,
         top5:d.top5||[],
+        plannedList:d.planned_list||[],
         timeline:d.timeline||[],
         updatedAt:d.updated_at
       };
@@ -446,26 +453,46 @@ async function loadDowntimeSummary(){
 }
 
 function renderDowntimeSummary(data){
-  // KPI 4칸
+  // KPI 5칸
   document.getElementById('kpiRun').textContent=fmtMinutes(data.runMin);
   document.getElementById('kpiStop').textContent=fmtMinutes(data.stopMin);
+  document.getElementById('kpiPlan').textContent=fmtMinutes(data.plannedMin);
   document.getElementById('kpiCnt').textContent=(data.stopCount||0)+'회';
   document.getElementById('kpiRate').textContent=(data.rate||0).toFixed(1)+'%';
   // 현재 탭 렌더
-  if(dsumState.tab==='top5')renderTop5(data.top5||[]);
+  if(dsumState.tab==='top5')renderTop5(data.top5||[],data.plannedList||[]);
   else renderTimeline(data.timeline||[]);
 }
 
-function renderTop5(list){
+function renderTop5(list,plannedList){
   var b=document.getElementById('dsumBody');
-  if(!list.length){b.innerHTML='<div class="dsum-empty">✅ 당일 정지 이력 없음</div>';return}
-  var maxMin=Math.max.apply(null,list.map(function(x){return x.min}));
-  var html='<div class="dsum-top5">';
-  list.forEach(function(it,i){
-    var pct=maxMin>0?(it.min/maxMin*100):0;
-    html+='<div class="dsum-row"><span class="rk">'+(i+1)+'</span><span class="rn">'+it.name+(it.cnt>1?' <span style="color:#94a3b8;font-size:9px">×'+it.cnt+'</span>':'')+'</span><span class="rb"><span class="rbf" style="width:'+pct+'%"></span></span><span class="rt">'+fmtMinutes(it.min)+'</span></div>';
-  });
-  html+='</div>';
+  plannedList=plannedList||[];
+  if(!list.length&&!plannedList.length){b.innerHTML='<div class="dsum-empty">✅ 당일 정지 이력 없음</div>';return}
+  var html='';
+  // 실비가동 TOP5
+  if(list.length){
+    var maxMin=Math.max.apply(null,list.map(function(x){return x.min}));
+    html+='<div style="font-size:9px;color:#fca5a5;font-weight:700;margin-bottom:3px">🔴 실제 비가동 TOP5</div>';
+    html+='<div class="dsum-top5">';
+    list.forEach(function(it,i){
+      var pct=maxMin>0?(it.min/maxMin*100):0;
+      html+='<div class="dsum-row"><span class="rk">'+(i+1)+'</span><span class="rn">'+it.name+(it.cnt>1?' <span style="color:#94a3b8;font-size:9px">×'+it.cnt+'</span>':'')+'</span><span class="rb"><span class="rbf" style="width:'+pct+'%"></span></span><span class="rt">'+fmtMinutes(it.min)+'</span></div>';
+    });
+    html+='</div>';
+  }else{
+    html+='<div style="font-size:10px;color:var(--green);padding:6px 0">✅ 실제 비가동 없음</div>';
+  }
+  // 계획정지
+  if(plannedList.length){
+    var maxP=Math.max.apply(null,plannedList.map(function(x){return x.min}));
+    html+='<div style="font-size:9px;color:#c4b5fd;font-weight:700;margin:8px 0 3px 0;padding-top:6px;border-top:1px dashed rgba(167,139,250,.3)">🟣 계획정지 (식사/휴식)</div>';
+    html+='<div class="dsum-top5">';
+    plannedList.forEach(function(it,i){
+      var pct=maxP>0?(it.min/maxP*100):0;
+      html+='<div class="dsum-row"><span class="rk">'+(i+1)+'</span><span class="rn">'+it.name+(it.cnt>1?' <span style="color:#94a3b8;font-size:9px">×'+it.cnt+'</span>':'')+'</span><span class="rb"><span class="rbf" style="width:'+pct+'%;background:linear-gradient(90deg,#a78bfa,#7c3aed)"></span></span><span class="rt" style="color:#c4b5fd">'+fmtMinutes(it.min)+'</span></div>';
+    });
+    html+='</div>';
+  }
   b.innerHTML=html;
 }
 
@@ -494,13 +521,15 @@ function renderTimeline(list){
     if(e<=s)return;
     var left=(s-dayStart)/totalMs*100;
     var width=(e-s)/totalMs*100;
-    var cls=seg.status==='N'?'sr':'ss';
-    var title=(seg.name||(seg.status==='N'?'가동':'정지'))+' '+(seg.start||'')+'~'+(seg.end||'');
+    var cls='ss';
+    if(seg.status==='N')cls='sr';
+    else if(seg.status==='P')cls='sp';
+    var title=(seg.name||'')+' '+(seg.start||'')+'~'+(seg.end||'');
     segs+='<div class="dsum-tl-seg '+cls+'" style="left:'+left.toFixed(2)+'%;width:'+width.toFixed(2)+'%" title="'+title+'"></div>';
   });
   var html='<div class="dsum-tl">'+segs+'<div class="dsum-tl-now" style="left:'+nowOffset.toFixed(2)+'%"></div></div>';
   html+='<div class="dsum-tl-axis"><span>0시</span><span>6시</span><span>12시</span><span>18시</span><span>24시</span></div>';
-  html+='<div class="dsum-tl-legend"><span class="dsum-tl-lgi"><span class="dsum-tl-lgd" style="background:#22c55e"></span>가동</span><span class="dsum-tl-lgi"><span class="dsum-tl-lgd" style="background:#64748b"></span>정지</span><span class="dsum-tl-lgi"><span class="dsum-tl-lgd" style="background:#fbbf24;width:2px"></span>현재</span></div>';
+  html+='<div class="dsum-tl-legend"><span class="dsum-tl-lgi"><span class="dsum-tl-lgd" style="background:#22c55e"></span>가동</span><span class="dsum-tl-lgi"><span class="dsum-tl-lgd" style="background:#ef4444"></span>비가동</span><span class="dsum-tl-lgi"><span class="dsum-tl-lgd" style="background:#a78bfa"></span>계획정지</span><span class="dsum-tl-lgi"><span class="dsum-tl-lgd" style="background:#fbbf24;width:2px"></span>현재</span></div>';
   b.innerHTML=html;
 }
 
@@ -509,7 +538,7 @@ function dsumSwitch(tab){
   document.getElementById('tabTop5').classList.toggle('active',tab==='top5');
   document.getElementById('tabTL').classList.toggle('active',tab==='tl');
   if(!dsumState.data){loadDowntimeSummary();return}
-  if(tab==='top5')renderTop5(dsumState.data.top5||[]);
+  if(tab==='top5')renderTop5(dsumState.data.top5||[],dsumState.data.plannedList||[]);
   else renderTimeline(dsumState.data.timeline||[]);
 }
 
@@ -715,7 +744,7 @@ async function submitCheck(){
     photo_count:chkState.photos.length,
     photos:chkState.photos.map(function(p){return{size:p.size,data:p.dataUrl}}),
     // ★ 당일 정지요약 스냅샷 같이 저장
-    downtime_snapshot:dsumState.data?{runMin:dsumState.data.runMin,stopMin:dsumState.data.stopMin,stopCount:dsumState.data.stopCount,rate:dsumState.data.rate,top5:dsumState.data.top5}:null,
+    downtime_snapshot:dsumState.data?{runMin:dsumState.data.runMin,stopMin:dsumState.data.stopMin,plannedMin:dsumState.data.plannedMin,stopCount:dsumState.data.stopCount,plannedCount:dsumState.data.plannedCount,rate:dsumState.data.rate,top5:dsumState.data.top5,plannedList:dsumState.data.plannedList}:null,
     created_at:now.toISOString()
   };
   showToast('⏳ 저장중...');
@@ -749,7 +778,9 @@ async function submitCheck(){
   });
   if(record.downtime_snapshot){
     var ds=record.downtime_snapshot;
-    msg+='📊 당일: 가동'+fmtMinutes(ds.runMin)+' / 정지'+fmtMinutes(ds.stopMin)+' ('+ds.stopCount+'회, 가동률'+(ds.rate||0).toFixed(1)+'%)\n';
+    msg+='📊 당일: 가동'+fmtMinutes(ds.runMin)+' / 비가동'+fmtMinutes(ds.stopMin)+'('+ds.stopCount+'회)';
+    if(ds.plannedMin>0)msg+=' / 계획정지'+fmtMinutes(ds.plannedMin);
+    msg+=' · 가동률'+(ds.rate||0).toFixed(1)+'%\n';
   }
   if(record.photo_count>0)msg+='📷 사진 '+record.photo_count+'장 첨부\n';
   msg+='⏱ '+now.toLocaleString('ko-KR');
