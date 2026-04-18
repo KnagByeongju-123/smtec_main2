@@ -411,11 +411,23 @@ function openChkModal(machine){
 function closeChkModal(){document.getElementById('chkModal').classList.remove('show')}
 
 // ★★★ 당일 정지시간 요약 ★★★
+// 업무일 기준 날짜 (오전 8시 이전이면 전일로 처리)
+var WORK_DAY_START_HOUR=8;
+function getWorkDate(){
+  var now=new Date();
+  if(now.getHours()<WORK_DAY_START_HOUR){
+    now.setDate(now.getDate()-1);
+  }
+  return now;
+}
+function fmtYmd(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
+
 async function loadDowntimeSummary(){
   var m=chkState.machine;if(!m)return;
-  var today=new Date();
-  var ymd=today.getFullYear()+'-'+String(today.getMonth()+1).padStart(2,'0')+'-'+String(today.getDate()).padStart(2,'0');
-  document.getElementById('dsumTitle').textContent='당일 요약 ('+(today.getMonth()+1)+'/'+today.getDate()+')';
+  var workDate=getWorkDate();
+  var ymd=fmtYmd(workDate);
+  var titleBase='업무일 요약 ('+(workDate.getMonth()+1)+'/'+workDate.getDate()+' 08시~)';
+  document.getElementById('dsumTitle').textContent=titleBase;
   var body=document.getElementById('dsumBody');
   body.innerHTML='<div class="dsum-loading">⏳ Supabase 조회중...</div>';
   dsumState.loading=true;
@@ -447,10 +459,10 @@ async function loadDowntimeSummary(){
       if(summary.updatedAt){
         var dt=new Date(summary.updatedAt);
         var hm=String(dt.getHours()).padStart(2,'0')+':'+String(dt.getMinutes()).padStart(2,'0');
-        document.getElementById('dsumTitle').textContent='당일 요약 ('+(today.getMonth()+1)+'/'+today.getDate()+') · 갱신 '+hm;
+        document.getElementById('dsumTitle').textContent=titleBase+' · 갱신 '+hm;
       }
     }else{
-      body.innerHTML='<div class="dsum-empty">📭 당일 집계 데이터 없음<br><span style="font-size:9px">Python 워커 동작 확인 · 5분주기 집계</span></div>';
+      body.innerHTML='<div class="dsum-empty">📭 업무일 집계 데이터 없음<br><span style="font-size:9px">Python 워커 동작 확인 · 5분주기 집계</span></div>';
     }
   }catch(e){
     console.log('비가동요약 조회실패:',e);
@@ -523,15 +535,20 @@ function renderTimeline(list){
   var b=document.getElementById('dsumBody');
   if(!list.length){b.innerHTML='<div class="dsum-empty">이력 없음</div>';return}
   var now=new Date();
-  var dayStart=new Date(now.getFullYear(),now.getMonth(),now.getDate()).getTime();
+  // 업무일 08:00 ~ 익일 08:00 을 타임라인의 0% ~ 100%에 매핑
+  var workDate=getWorkDate();
+  var dayStart=new Date(workDate.getFullYear(),workDate.getMonth(),workDate.getDate(),WORK_DAY_START_HOUR,0,0).getTime();
   var totalMs=24*3600*1000;
-  var nowOffset=(now.getTime()-dayStart)/totalMs*100;
-  // HH:MM 문자열을 당일 ms로 변환
+  var nowOffset=Math.min(100,Math.max(0,(now.getTime()-dayStart)/totalMs*100));
+  // HH:MM 문자열을 업무일 ms로 변환 (08시 미만은 익일로 해석)
   function parseTime(v){
     if(!v)return dayStart;
     if(typeof v==='string'&&/^\d{1,2}:\d{2}$/.test(v)){
       var p=v.split(':');
-      return dayStart+(parseInt(p[0],10)*60+parseInt(p[1],10))*60000;
+      var hh=parseInt(p[0],10),mm=parseInt(p[1],10);
+      // 00:00~07:59 는 다음날로 해석
+      var dayOffset=(hh<WORK_DAY_START_HOUR)?24*3600000:0;
+      return dayStart+((hh-WORK_DAY_START_HOUR)*60+mm)*60000+dayOffset;
     }
     var t=new Date(v).getTime();
     return isNaN(t)?dayStart:t;
@@ -551,7 +568,8 @@ function renderTimeline(list){
     segs+='<div class="dsum-tl-seg '+cls+'" style="left:'+left.toFixed(2)+'%;width:'+width.toFixed(2)+'%" title="'+title+'"></div>';
   });
   var html='<div class="dsum-tl">'+segs+'<div class="dsum-tl-now" style="left:'+nowOffset.toFixed(2)+'%"></div></div>';
-  html+='<div class="dsum-tl-axis"><span>0시</span><span>6시</span><span>12시</span><span>18시</span><span>24시</span></div>';
+  // 축: 08시 -> 14시 -> 20시 -> 익일02시 -> 08시
+  html+='<div class="dsum-tl-axis"><span>08시</span><span>14시</span><span>20시</span><span>02시</span><span>08시</span></div>';
   html+='<div class="dsum-tl-legend"><span class="dsum-tl-lgi"><span class="dsum-tl-lgd" style="background:#22c55e"></span>가동</span><span class="dsum-tl-lgi"><span class="dsum-tl-lgd" style="background:#ef4444"></span>비가동</span><span class="dsum-tl-lgi"><span class="dsum-tl-lgd" style="background:#a78bfa"></span>계획정지</span><span class="dsum-tl-lgi"><span class="dsum-tl-lgd" style="background:#fbbf24;width:2px"></span>현재</span></div>';
   b.innerHTML=html;
 }
