@@ -244,6 +244,21 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 .hi-filter input,.hi-filter select{padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:#0f1117;color:var(--txt);font-size:12px;font-family:inherit}
 .hi-btns{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
 .hi-btns .btn{flex:1;min-width:70px;padding:9px 10px;font-size:12px}
+/* 이력 카드 리스트 (모바일 최적화 - 간결) */
+.hi-list{display:flex;flex-direction:column;gap:5px;margin-top:4px}
+.hi-card{background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;transition:background .12s}
+.hi-card.sel{background:rgba(56,189,248,.1);border-color:var(--accent)}
+.hi-card .hc-top{display:flex;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap}
+.hi-card .hc-chk{flex-shrink:0;margin:0;width:15px;height:15px;cursor:pointer}
+.hi-card .hc-time{font-size:10px;color:var(--sub);font-weight:600;white-space:nowrap}
+.hi-card .hc-eq{font-size:11px;font-weight:800;color:var(--accent);background:rgba(56,189,248,.1);padding:2px 6px;border-radius:4px;white-space:nowrap}
+.hi-card .hc-cat-icon{line-height:1}
+.hi-card .hc-actions-inline{margin-left:auto;display:flex;gap:3px}
+.hi-card .hc-actions-inline button{border:none;border-radius:4px;padding:3px 6px;cursor:pointer;font-size:12px}
+.hi-card .hc-photo{font-size:10px;color:var(--accent);background:rgba(56,189,248,.08);padding:1px 5px;border-radius:3px}
+.hi-card .hc-body{margin-left:22px;display:flex;flex-direction:column;gap:2px}
+.hi-card .hc-item{font-size:12px;font-weight:700;color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hi-card .hc-qty{font-size:11px;color:#86efac;font-weight:600}
 .hi-table{width:100%;border-collapse:collapse;font-size:11px;margin-top:4px}
 .hi-table th{padding:7px 6px;color:var(--sub);border-bottom:2px solid var(--border);font-size:10px;text-align:left;white-space:nowrap;font-weight:600}
 .hi-table td{padding:7px 6px;border-bottom:1px solid rgba(71,85,105,.25);vertical-align:top;font-size:11px}
@@ -642,6 +657,12 @@ function parsePressShort(m){
   var name=(m.machine_name||'').trim();
   var mt=name.match(/^(\d{1,3})/);
   return mt?(mt[1]+'호기'):(name||m.machine_code||'-');
+}
+
+// HTML 이스케이프
+function _esc(s){
+  if(s==null)return'';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 function openChkModal(machine){
@@ -1569,60 +1590,64 @@ function hiRenderTable(data){
   if(!data.length){c.innerHTML='<div class="hi-empty">결과 없음</div>';return}
   var info=document.createElement('div');info.style.cssText='font-size:11px;color:var(--accent);margin:6px 0';info.textContent='총 '+data.length+'건';
   c.appendChild(info);
-  var wrap=document.createElement('div');wrap.style.overflowX='auto';
-  var tbl=document.createElement('table');tbl.className='hi-table';
-  tbl.innerHTML='<thead><tr><th style="width:26px"><input type="checkbox" class="hi-checkbox" onclick="hiToggleAll(this)"></th><th>일시</th><th>설비</th><th>고객</th><th>카테</th><th>내용</th><th>📷</th><th style="width:70px">관리</th></tr></thead>';
-  var tb=document.createElement('tbody');
+  // 전체선택 체크박스
+  var selAll=document.createElement('div');selAll.style.cssText='font-size:11px;color:var(--sub);padding:4px 10px;margin-bottom:4px;display:flex;align-items:center;gap:6px';
+  selAll.innerHTML='<input type="checkbox" class="hi-checkbox" onclick="hiToggleAll(this)" style="margin:0;width:15px;height:15px;cursor:pointer"><span>전체선택</span>';
+  c.appendChild(selAll);
+  var list=document.createElement('div');list.className='hi-list';
   data.forEach(function(d){
     var dt=new Date(d.created_at);
     var tstr=dt.toLocaleString('ko-KR',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
-    var cat=CHK_CATS.find(function(x){return x.id===d.category});
-    var catH;
-    if(cat){catH='<span class="hi-cat-'+d.category+'">'+cat.icon+' '+cat.name+'</span>'}
-    else if(d.category==='prod'){catH='<span style="color:#4ade80;font-weight:700">🏭 생산실적</span>'}
-    else{catH=d.category||'-'}
-    var rows=(d.payload&&d.payload.rows)||[];
-    var detail=rows.map(function(r){return r.itemName+':'+(r.value||'-')+(r.remark?'('+r.remark+')':'')}).join(' / ');
-    // 생산실적 카테고리는 production_snapshot에서 요약
-    if(d.category==='prod'&&d.payload&&d.payload.production_snapshot){
-      var ps=d.payload.production_snapshot;
-      var det=[];
-      (ps.items||[]).forEach(function(it){
-        if(it.adj_qty==null)return;
-        var mes=it.actual_qty||0,diff=it.adj_qty-mes;
-        var dt2=diff===0?'':(' ('+(diff>0?'+':'')+diff+')');
-        det.push((it.item_code||'')+(it.mold?'['+it.mold+']':'')+' '+mes+'→'+it.adj_qty+dt2);
-      });
-      if(ps.adj_memo)det.push('📝'+ps.adj_memo);
-      detail=det.join(' / ');
-    }
-    // 작업일보 카테고리는 report_snapshot에서 요약
-    if(d.category==='report'&&d.payload&&d.payload.report_snapshot){
-      var rs=d.payload.report_snapshot;
-      var det=[];
-      if(rs.shipQty)det.push('양품 '+(+rs.shipQty).toLocaleString());
+    // 카테고리 아이콘만
+    var catIcon='';
+    if(d.category==='mat')catIcon='🔩';
+    else if(d.category==='report')catIcon='📄';
+    else if(d.category==='prod')catIcon='🏭';
+    else catIcon='📋';
+    // 생산수 추출 (카테고리별)
+    var prodQty='';
+    var p=d.payload||{};
+    if(d.category==='report'&&p.report_snapshot){
+      var rs=p.report_snapshot;
+      if(rs.shipQty)prodQty='양품 '+(+rs.shipQty).toLocaleString();
       var defSum=0;
       Object.keys(rs.defects||{}).forEach(function(k){defSum+=+rs.defects[k]||0});
-      if(defSum>0)det.push('불량 '+defSum.toLocaleString());
-      if(rs.conditions){
-        if(rs.conditions.dieHeight)det.push('다이'+rs.conditions.dieHeight);
-        if(rs.conditions.feedPitch)det.push('피치'+rs.conditions.feedPitch);
-      }
-      if(rs.note)det.push('📝'+rs.note);
-      detail=det.join(' / ');
+      if(defSum>0)prodQty+=(prodQty?' · ':'')+'<span style="color:#fca5a5">불량 '+defSum.toLocaleString()+'</span>';
+    }else if(d.category==='prod'&&p.production_snapshot){
+      var ps=p.production_snapshot;
+      var tot=0;
+      (ps.items||[]).forEach(function(it){if(it.adj_qty!=null)tot+=+it.adj_qty||0});
+      if(tot>0)prodQty='실제 '+tot.toLocaleString();
+    }else if(d.category==='mat'){
+      var rows=(p.rows||[]).filter(function(r){return r.value||r.remark});
+      if(rows.length)prodQty=rows.length+'건';
     }
-    var pc=(d.payload&&d.payload.photo_count)||0;
-    var tr=document.createElement('tr');tr.dataset.id=d.id;
-    tr.innerHTML='<td><input type="checkbox" class="hi-checkbox hi-chk" value="'+d.id+'"></td><td style="white-space:nowrap">'+tstr+'</td><td style="white-space:nowrap"><b>'+d.machine_code+'</b> '+parsePressShort({machine_name:d.machine_name||'',machine_code:d.machine_code})+'</td><td style="font-size:10px">'+(d.customer||'-')+'</td><td>'+catH+'</td><td class="hi-det">'+(detail||'-')+'</td><td style="text-align:center">'+(pc>0?'📷'+pc:'')+'</td>';
-    var tdAct=document.createElement('td');tdAct.style.cssText='white-space:nowrap;text-align:center';
-    var btnE=document.createElement('button');btnE.textContent='✏️';btnE.title='수정';btnE.style.cssText='border:none;background:rgba(56,189,248,.12);color:var(--accent);border-radius:4px;padding:3px 6px;cursor:pointer;margin-right:3px;font-size:13px';
-    var btnD=document.createElement('button');btnD.textContent='🗑';btnD.title='삭제';btnD.style.cssText='border:none;background:rgba(239,68,68,.12);color:var(--red);border-radius:4px;padding:3px 6px;cursor:pointer;font-size:13px';
-    (function(rec){btnE.onclick=function(e){e.stopPropagation();hiEditRecord(rec)};btnD.onclick=function(e){e.stopPropagation();hiDeleteOne(rec.id)}})(d);
-    tdAct.appendChild(btnE);tdAct.appendChild(btnD);
-    tr.appendChild(tdAct);
-    tb.appendChild(tr);
+    // 기종명 (품명 우선, 없으면 품번)
+    var itemName=p.item_name||d.item_code||p.current_item_code||'-';
+    var pc=p.photo_count||0;
+    var card=document.createElement('div');card.className='hi-card';card.dataset.id=d.id;
+    card.innerHTML='<div class="hc-top">'+
+      '<input type="checkbox" class="hi-checkbox hi-chk hc-chk" value="'+d.id+'">'+
+      '<span class="hc-time">'+tstr+'</span>'+
+      '<span class="hc-eq">'+parsePressShort({machine_name:d.machine_name||'',machine_code:d.machine_code})+'</span>'+
+      '<span class="hc-cat-icon" style="font-size:14px">'+catIcon+'</span>'+
+      (pc>0?'<span class="hc-photo">📷'+pc+'</span>':'')+
+      '<div class="hc-actions-inline">'+
+        '<button class="hc-edit" style="background:rgba(56,189,248,.12);color:var(--accent)" title="수정">✏️</button>'+
+        '<button class="hc-del" style="background:rgba(239,68,68,.12);color:var(--red)" title="삭제">🗑</button>'+
+      '</div>'+
+      '</div>'+
+      '<div class="hc-body">'+
+        '<div class="hc-item">'+_esc(itemName)+'</div>'+
+        (prodQty?'<div class="hc-qty">'+prodQty+'</div>':'')+
+      '</div>';
+    (function(rec){
+      card.querySelector('.hc-edit').onclick=function(e){e.stopPropagation();hiEditRecord(rec)};
+      card.querySelector('.hc-del').onclick=function(e){e.stopPropagation();hiDeleteOne(rec.id)};
+    })(d);
+    list.appendChild(card);
   });
-  tbl.appendChild(tb);wrap.appendChild(tbl);c.appendChild(wrap);
+  c.appendChild(list);
 }
 function hiDeleteOne(id){
   if(!confirm('이 기록을 삭제합니다. 진행?'))return;
@@ -1682,7 +1707,8 @@ function hiEditRecord(d){
   document.getElementById('chkTitle').textContent='✏️ 점검수정 '+parsePressLabel({machine_name:d.machine_name||'',machine_code:d.machine_code});
   renderChkContent();
 }
-function hiToggleAll(el){document.querySelectorAll('.hi-chk').forEach(function(c){c.checked=el.checked;c.closest('tr').classList.toggle('sel',el.checked)})}
+function hiToggleAll(el){document.querySelectorAll('.hi-chk').forEach(function(c){c.checked=el.checked;var card=c.closest('.hi-card');if(card)card.classList.toggle('sel',el.checked)})}
+
 async function hiExportCsv(){
   if(!hiData.length){showToast('먼저 조회');return}
   if(typeof ExcelJS==='undefined'||typeof saveAs==='undefined'){showToast('엑셀 라이브러리 로딩중 · 잠시후 재시도');return}
@@ -1690,230 +1716,191 @@ async function hiExportCsv(){
   var wb=new ExcelJS.Workbook();
   wb.creator='MES 점검시스템';wb.created=new Date();
 
-  // 카테고리별 데이터 분류
-  var matData=[],reportData=[],prodData=[],otherData=[];
-  hiData.forEach(function(d){
-    if(d.category==='mat')matData.push(d);
-    else if(d.category==='report')reportData.push(d);
-    else if(d.category==='prod')prodData.push(d);
-    else otherData.push(d);
+  var defectCols=['시타발초물','초중종검사','원자재불량','기스','찍힘','휨·변형','형상불량','치수·각도','BURR','크랙·터짐','이물·발청','수리중불량','낙하품'];
+  var stopCols=[
+    {key:'A',name:'A.조회/교육'},{key:'B',name:'B.3정5행'},{key:'C',name:'C.Try-Out'},
+    {key:'D',name:'D.측정대기'},{key:'E',name:'E.타공정지원'},
+    {key:'F',name:'F.금형세팅'},{key:'G',name:'G.금형수리'},{key:'H',name:'H.설비이상'},
+    {key:'I',name:'I.소재교환'},{key:'J',name:'J.불량처리'},{key:'K',name:'K.기타/대기'}
+  ];
+  var CODE_TO_GRID={'Z011':'A','Z002':'B','Z003':'C','Z004':'D','Z010':'E','A001':'F','A004':'G','M008':'G','A002':'H','M001':'I','Z000':'J'};
+
+  var ws=wb.addWorksheet('점검이력',{views:[{state:'frozen',ySplit:2,xSplit:4}]});
+
+  // 헤더 구성 (모든 컬럼 통합)
+  var headers=[
+    '일시','카테고리','설비코드','설비명','고객사','품번','품명','금형','작업자',
+    // 생산실적
+    'MES실적','양품수량','양품차이','불량합계',
+    // 불량 세부
+    ...defectCols,
+    // 조건관리
+    '다이하이트(mm)','이송피치(mm)','SPM','CT(s)',
+    // 정지 세부
+    ...stopCols.map(function(c){return c.name+'(분)'}),
+    // 정지 합계
+    '가동(분)','비가동(분)','계획정지(분)','가동률(%)','정지횟수',
+    // 소재불량 상세
+    '소재코드','로트','코일(kg)','단위(g)','잔량(kg)',
+    // 기종별 실적 (요약)
+    '기종별실적',
+    // 텍스트
+    '특기사항','보정사유','점검내용','사진수'
+  ];
+  ws.columns=headers.map(function(h){
+    if(h==='일시')return{width:16};
+    if(h==='특기사항'||h==='기종별실적'||h==='보정사유'||h==='점검내용')return{width:28};
+    if(h==='설비명'||h==='품명')return{width:18};
+    if(h==='품번')return{width:16};
+    return{width:10};
   });
 
-  // ========== 시트 1: 소재불량 ==========
-  if(matData.length){
-    var ws=wb.addWorksheet('🔩 소재불량',{views:[{state:'frozen',ySplit:1}]});
-    var headers=['일시','고객사','설비코드','설비명','품번','품명','금형','소재코드','로트','코일kg','소요g','실적','잔량kg','불량항목','값','비고','작업자','사진1','사진2','사진3','사진4'];
-    ws.columns=headers.map(function(h,i){return{width:i<2?14:(i<7?12:10)}});
-    var hdr=ws.addRow(headers);hdr.height=22;
-    hdr.eachCell(function(c){c.font={bold:true,color:{argb:'FFFFFFFF'},size:11};c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF16A34A'}};c.alignment={vertical:'middle',horizontal:'center'};c.border={top:{style:'thin'},bottom:{style:'thin'},left:{style:'thin'},right:{style:'thin'}}});
-    matData.forEach(function(d){
-      var tstr=_fmtTs(d.created_at);
-      var p=d.payload||{};
-      var rows=(p.rows&&p.rows.length)?p.rows.filter(function(r){return r.value||r.remark}):[];
-      if(!rows.length)rows=[{itemName:'-',value:'',remark:''}];
-      var coilKg=+p.coil_weight||0,unitG=+p.unit_per_qty||0,actQty=+p.actual_qty||0;
-      var remainKg=(coilKg>0)?Math.round((coilKg-actQty*unitG/1000)*100)/100:'';
-      var firstRowNum=null;
-      rows.forEach(function(r,j){
-        var base=(j===0)?[tstr,d.customer||'',d.machine_code||'',parsePressLabel({machine_name:d.machine_name||'',machine_code:d.machine_code}),d.item_code||'',p.item_name||'',p.mold||'',p.raw_item_code||'',p.lot_no||'',p.coil_weight||'',p.unit_per_qty||'',p.actual_qty||'',remainKg]:['','','','','','','','','','','','',''];
-        var rowData=base.concat([r.itemName||'',r.value||'',r.remark||'',(j===0?(p.worker||''):'')]);
-        for(var k=0;k<4;k++)rowData.push('');
-        var row=ws.addRow(rowData);
-        if(j===0)firstRowNum=row.number;
-        row.eachCell({includeEmpty:true},function(c){c.border={top:{style:'hair',color:{argb:'FFCCCCCC'}},bottom:{style:'hair',color:{argb:'FFCCCCCC'}},left:{style:'hair',color:{argb:'FFCCCCCC'}},right:{style:'hair',color:{argb:'FFCCCCCC'}}};c.alignment={vertical:'middle',wrapText:true}});
-        // 사진
-        if(j===0&&p.photos&&p.photos.length){
-          row.height=90;
-          for(var k=0;k<Math.min(4,p.photos.length);k++){
-            try{
-              var ph=p.photos[k];if(!ph||!ph.data)continue;
-              var b64=ph.data.split(',')[1]||ph.data;
-              var imgId=wb.addImage({base64:b64,extension:'jpeg'});
-              ws.addImage(imgId,{tl:{col:17+k+0.05,row:firstRowNum-1+0.05},ext:{width:100,height:85}});
-            }catch(e){}
-          }
-        }
-      });
-    });
-    ws.autoFilter={from:{row:1,column:1},to:{row:1,column:headers.length}};
-  }
+  // 2줄 헤더: 그룹 헤더
+  var grp1=['기본정보','기본정보','기본정보','기본정보','기본정보','기본정보','기본정보','기본정보','기본정보',
+    '생산실적','생산실적','생산실적','생산실적'];
+  for(var i=0;i<defectCols.length;i++)grp1.push('불량유형별');
+  grp1.push('조건관리','조건관리','조건관리','조건관리');
+  for(var i=0;i<stopCols.length;i++)grp1.push('정지세부');
+  grp1.push('정지합계','정지합계','정지합계','정지합계','정지합계');
+  grp1.push('소재정보','소재정보','소재정보','소재정보','소재정보');
+  grp1.push('기종별','기타','기타','기타','기타');
 
-  // ========== 시트 2: 작업일보 ==========
-  if(reportData.length){
-    var ws=wb.addWorksheet('📄 작업일보',{views:[{state:'frozen',ySplit:1}]});
-    var defectCols=['시타발초물','초중종검사','원자재불량','기스','찍힘','휨·변형','형상불량','치수·각도','BURR','크랙·터짐','이물·발청','수리중불량','낙하품'];
-    // 정지시간 세부 매핑 (A~E: 계획정지, F~K: 비가동)
-    var stopCols=[
-      {key:'A',name:'A.조회/교육',planned:true},
-      {key:'B',name:'B.3정5행',planned:true},
-      {key:'C',name:'C.Try-Out',planned:true},
-      {key:'D',name:'D.측정대기',planned:true},
-      {key:'E',name:'E.타공정지원',planned:true},
-      {key:'F',name:'F.금형세팅',planned:false},
-      {key:'G',name:'G.금형수리',planned:false},
-      {key:'H',name:'H.설비이상',planned:false},
-      {key:'I',name:'I.소재교환',planned:false},
-      {key:'J',name:'J.불량처리',planned:false},
-      {key:'K',name:'K.기타/대기',planned:false}
-    ];
-    var CODE_TO_GRID={'Z011':'A','Z002':'B','Z003':'C','Z004':'D','Z010':'E','A001':'F','A004':'G','M008':'G','A002':'H','M001':'I','Z000':'J'};
-    var stopColNames=stopCols.map(function(c){return c.name+'(분)'});
-    var headers=['일시','고객사','설비코드','설비명','품번','품명','금형','작업자','MES실적','양품수량','양품차이','불량합계'].concat(defectCols).concat(['다이하이트(mm)','이송피치(mm)','SPM']).concat(stopColNames).concat(['가동(분)','비가동(분)','계획정지(분)','가동률(%)','특기사항']);
-    var colWidths=[16,12,10,14,18,22,14,10,10,10,10,10];
-    defectCols.forEach(function(){colWidths.push(10)});
-    colWidths=colWidths.concat([12,12,8]); // 조건
-    stopCols.forEach(function(){colWidths.push(10)}); // 정지 세부 11개
-    colWidths=colWidths.concat([10,10,10,10,30]); // 가동/비가동/계획정지/가동률/특기
-    ws.columns=colWidths.map(function(w){return{width:w}});
-    var hdr=ws.addRow(headers);hdr.height=30;
-    hdr.eachCell(function(c,col){
-      c.font={bold:true,color:{argb:'FFFFFFFF'},size:9};
-      c.alignment={vertical:'middle',horizontal:'center',wrapText:true};
-      c.border={top:{style:'thin'},bottom:{style:'thin'},left:{style:'thin'},right:{style:'thin'}};
-      // 섹션별 색상
-      var planBaseCol=12+defectCols.length+3; // 정지 세부 시작 컬럼 (1-based)
-      var planEndCol=planBaseCol+4; // A~E
-      var unplanEndCol=planBaseCol+stopCols.length-1;
-      if(col<=12)c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF7C3AED'}};
-      else if(col<=12+defectCols.length)c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFDC2626'}};
-      else if(col<=planBaseCol-1)c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF0891B2'}};
-      else if(col<=planEndCol)c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF7E22CE'}};
-      else if(col<=unplanEndCol)c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFEA580C'}};
-      else c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF475569'}};
-    });
-    reportData.forEach(function(d){
-      var tstr=_fmtTs(d.created_at);
-      var p=d.payload||{};
-      var rs=p.report_snapshot||{};
-      var ds=p.downtime_snapshot||{};
-      var mesQty=+p.actual_qty||0;
-      var shipQty=+rs.shipQty||0;
-      var shipDiff=shipQty-mesQty;
-      var defects=rs.defects||{},defSum=0;
-      var defVals=defectCols.map(function(t){var v=+defects[t]||0;defSum+=v;return v||''});
-      var conds=rs.conditions||{};
-      var actCt=+p.actual_ct||0;
-      var spm=actCt>0?(60/actCt).toFixed(1):'';
-      // 정지 세부 매핑
-      var stopMap={A:0,B:0,C:0,D:0,E:0,F:0,G:0,H:0,I:0,J:0,K:0};
-      var allEvents=[].concat(ds.plannedEvents||[],ds.stopEvents||[]);
-      allEvents.forEach(function(ev){
-        var code=(ev.code||'').split('-')[1]||'';
-        var g=CODE_TO_GRID[code];
-        if(g&&stopMap.hasOwnProperty(g))stopMap[g]+=(+ev.min||0);
-        else if(ev.code)stopMap.K+=(+ev.min||0);
-      });
-      var stopVals=stopCols.map(function(c){return stopMap[c.key]||''});
-      var base=[tstr,d.customer||'',d.machine_code||'',parsePressLabel({machine_name:d.machine_name||'',machine_code:d.machine_code}),d.item_code||'',p.item_name||'',p.mold||'',p.worker||'',
-        mesQty||'',shipQty||'',shipDiff||'',defSum||''];
-      var rowData=base.concat(defVals).concat([
-        conds.dieHeight||'',conds.feedPitch||'',spm
-      ]).concat(stopVals).concat([
-        ds.runMin||'',ds.stopMin||'',ds.plannedMin||'',ds.rate?(+ds.rate).toFixed(1):'',
-        rs.note||''
-      ]);
-      var row=ws.addRow(rowData);
-      row.eachCell({includeEmpty:true},function(c){c.border={top:{style:'hair',color:{argb:'FFCCCCCC'}},bottom:{style:'hair',color:{argb:'FFCCCCCC'}},left:{style:'hair',color:{argb:'FFCCCCCC'}},right:{style:'hair',color:{argb:'FFCCCCCC'}}};c.alignment={vertical:'middle',wrapText:true,horizontal:'center'}});
-      // 양품차이 색상
-      if(shipDiff!==0){
-        var diffCell=row.getCell(11);
-        diffCell.font={color:{argb:shipDiff>0?'FF16A34A':'FFDC2626'},bold:true};
-      }
-      // 불량합계 색상
-      if(defSum>0){row.getCell(12).font={color:{argb:'FFDC2626'},bold:true}}
-      // 특기사항은 왼쪽정렬
-      row.getCell(headers.length).alignment={vertical:'middle',wrapText:true,horizontal:'left'};
-    });
-    ws.autoFilter={from:{row:1,column:1},to:{row:1,column:headers.length}};
-
-    // ========== 시트 3: 작업일보 기종별 실적 ==========
-    var hasProdItems=reportData.some(function(d){var p=d.payload||{};var rs=p.report_snapshot||{};return rs.productionItems&&rs.productionItems.length});
-    if(hasProdItems){
-      var ws2=wb.addWorksheet('📄 작업일보-기종별',{views:[{state:'frozen',ySplit:1}]});
-      var h2=['일시','설비코드','설비명','작업지시','품번','품명','금형','MES수량','실제수량','차이','가동시간','현재작업'];
-      ws2.columns=[{width:16},{width:10},{width:14},{width:16},{width:18},{width:22},{width:14},{width:10},{width:10},{width:10},{width:10},{width:10}];
-      var h2r=ws2.addRow(h2);h2r.height=22;
-      h2r.eachCell(function(c){c.font={bold:true,color:{argb:'FFFFFFFF'},size:11};c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF7C3AED'}};c.alignment={vertical:'middle',horizontal:'center'};c.border={top:{style:'thin'},bottom:{style:'thin'},left:{style:'thin'},right:{style:'thin'}}});
-      reportData.forEach(function(d){
-        var tstr=_fmtTs(d.created_at);
-        var rs=(d.payload||{}).report_snapshot||{};
-        (rs.productionItems||[]).forEach(function(it){
-          var di=(it.adj_qty!=null)?(it.adj_qty-it.mes_qty):'';
-          var row=ws2.addRow([tstr,d.machine_code||'',parsePressLabel({machine_name:d.machine_name||'',machine_code:d.machine_code}),it.work_order||'',it.item_code||'',it.item_name||'',it.mold||'',it.mes_qty||'',it.adj_qty!=null?it.adj_qty:'',di,it.run_min?fmtMinutes(it.run_min):'',it.is_current?'✅':'']);
-          row.eachCell({includeEmpty:true},function(c){c.border={top:{style:'hair',color:{argb:'FFCCCCCC'}},bottom:{style:'hair',color:{argb:'FFCCCCCC'}},left:{style:'hair',color:{argb:'FFCCCCCC'}},right:{style:'hair',color:{argb:'FFCCCCCC'}}};c.alignment={vertical:'middle',horizontal:'center'}});
-          if(typeof di==='number'&&di!==0)row.getCell(10).font={color:{argb:di>0?'FF16A34A':'FFDC2626'},bold:true};
-        });
-      });
-      ws2.autoFilter={from:{row:1,column:1},to:{row:1,column:h2.length}};
-    }
-
-    // ========== 시트 3-1: 작업일보 정지이벤트 상세 ==========
-    var hasStopEvents=reportData.some(function(d){var ds=(d.payload||{}).downtime_snapshot||{};return (ds.stopEvents&&ds.stopEvents.length)||(ds.plannedEvents&&ds.plannedEvents.length)});
-    if(hasStopEvents){
-      var ws3=wb.addWorksheet('⏱ 정지이벤트',{views:[{state:'frozen',ySplit:1}]});
-      var h3=['작업일','설비코드','설비명','구분','코드','사유','시작','종료','시간(분)','누적횟수'];
-      ws3.columns=[{width:12},{width:10},{width:14},{width:10},{width:10},{width:22},{width:18},{width:18},{width:10},{width:10}];
-      var h3r=ws3.addRow(h3);h3r.height=22;
-      h3r.eachCell(function(c){c.font={bold:true,color:{argb:'FFFFFFFF'},size:11};c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFEA580C'}};c.alignment={vertical:'middle',horizontal:'center'};c.border={top:{style:'thin'},bottom:{style:'thin'},left:{style:'thin'},right:{style:'thin'}}});
-      reportData.forEach(function(d){
-        var tstr=_fmtTs(d.created_at).slice(0,10);
-        var ds=(d.payload||{}).downtime_snapshot||{};
-        var pressLbl=parsePressLabel({machine_name:d.machine_name||'',machine_code:d.machine_code});
-        // 계획정지 이벤트
-        (ds.plannedEvents||[]).forEach(function(ev,idx){
-          var row=ws3.addRow([tstr,d.machine_code||'',pressLbl,'계획정지',ev.code||'',ev.name||'',ev.start||'',ev.end||'',ev.min||0,idx+1]);
-          row.eachCell({includeEmpty:true},function(c){c.border={top:{style:'hair',color:{argb:'FFCCCCCC'}},bottom:{style:'hair',color:{argb:'FFCCCCCC'}},left:{style:'hair',color:{argb:'FFCCCCCC'}},right:{style:'hair',color:{argb:'FFCCCCCC'}}};c.alignment={vertical:'middle',horizontal:'center'}});
-          row.getCell(4).fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFF3E8FF'}};
-          row.getCell(4).font={color:{argb:'FF7C3AED'},bold:true};
-        });
-        // 실비가동 이벤트
-        (ds.stopEvents||[]).forEach(function(ev,idx){
-          var row=ws3.addRow([tstr,d.machine_code||'',pressLbl,'비가동',ev.code||'',ev.name||'',ev.start||'',ev.end||'',ev.min||0,idx+1]);
-          row.eachCell({includeEmpty:true},function(c){c.border={top:{style:'hair',color:{argb:'FFCCCCCC'}},bottom:{style:'hair',color:{argb:'FFCCCCCC'}},left:{style:'hair',color:{argb:'FFCCCCCC'}},right:{style:'hair',color:{argb:'FFCCCCCC'}}};c.alignment={vertical:'middle',horizontal:'center'}});
-          row.getCell(4).fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFFEE2E2'}};
-          row.getCell(4).font={color:{argb:'FFDC2626'},bold:true};
-        });
-      });
-      ws3.autoFilter={from:{row:1,column:1},to:{row:1,column:h3.length}};
+  var grpRow=ws.addRow(grp1);grpRow.height=22;
+  // 그룹별로 셀 병합
+  var curGrp='',startCol=1;
+  for(var i=0;i<grp1.length;i++){
+    if(grp1[i]!==curGrp){
+      if(curGrp&&i>startCol){ws.mergeCells(1,startCol,1,i)}
+      curGrp=grp1[i];startCol=i+1;
     }
   }
+  if(curGrp&&grp1.length>=startCol){ws.mergeCells(1,startCol,1,grp1.length)}
+  // 그룹 색상
+  var GRP_COLOR={
+    '기본정보':'FF1E40AF','생산실적':'FF16A34A','불량유형별':'FFDC2626',
+    '조건관리':'FF0891B2','정지세부':'FF7E22CE','정지합계':'FF475569',
+    '소재정보':'FFCA8A04','기종별':'FF7C3AED','기타':'FF6B7280'
+  };
+  grpRow.eachCell({includeEmpty:true},function(c){
+    c.font={bold:true,color:{argb:'FFFFFFFF'},size:11};
+    c.alignment={vertical:'middle',horizontal:'center'};
+    c.fill={type:'pattern',pattern:'solid',fgColor:{argb:GRP_COLOR[c.value]||'FF475569'}};
+    c.border={top:{style:'thin'},bottom:{style:'thin'},left:{style:'thin'},right:{style:'thin'}};
+  });
 
-  // ========== 시트 4: 생산실적 ==========
-  if(prodData.length){
-    var ws=wb.addWorksheet('🏭 생산실적',{views:[{state:'frozen',ySplit:1}]});
-    var headers=['일시','설비코드','설비명','작업지시','품번','품명','금형','MES수량','실제수량','차이','가동시간','보정사유','작업자'];
-    ws.columns=[{width:16},{width:10},{width:14},{width:16},{width:18},{width:22},{width:14},{width:10},{width:10},{width:10},{width:10},{width:24},{width:10}];
-    var hdr=ws.addRow(headers);hdr.height=22;
-    hdr.eachCell(function(c){c.font={bold:true,color:{argb:'FFFFFFFF'},size:11};c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFF97316'}};c.alignment={vertical:'middle',horizontal:'center'};c.border={top:{style:'thin'},bottom:{style:'thin'},left:{style:'thin'},right:{style:'thin'}}});
-    prodData.forEach(function(d){
-      var tstr=_fmtTs(d.created_at);
-      var p=d.payload||{};
-      var ps=p.production_snapshot||{};
-      var memo=ps.adj_memo||'';
+  // 세부 헤더
+  var hdr=ws.addRow(headers);hdr.height=32;
+  hdr.eachCell({includeEmpty:true},function(c,col){
+    c.font={bold:true,color:{argb:'FFFFFFFF'},size:9};
+    c.alignment={vertical:'middle',horizontal:'center',wrapText:true};
+    c.border={top:{style:'thin'},bottom:{style:'thin'},left:{style:'thin'},right:{style:'thin'}};
+    var grp=grp1[col-1];
+    var fg=GRP_COLOR[grp]||'FF475569';
+    // 세부 헤더는 그룹색의 약간 밝은 톤
+    c.fill={type:'pattern',pattern:'solid',fgColor:{argb:fg}};
+  });
+
+  // 데이터 행 추가
+  hiData.forEach(function(d){
+    var p=d.payload||{};
+    var rs=p.report_snapshot||{};
+    var ps=p.production_snapshot||{};
+    var ds=p.downtime_snapshot||{};
+    var tstr=_fmtTs(d.created_at);
+    var catN=d.category==='mat'?'🔩 소재불량':(d.category==='report'?'📄 작업일보':(d.category==='prod'?'🏭 생산실적':(d.category||'-')));
+
+    // 생산실적
+    var mesQty=+p.actual_qty||0;
+    var shipQty=+rs.shipQty||0;
+    // 생산실적 카테고리는 보정합계
+    if(d.category==='prod'&&ps.items){
+      shipQty=0;(ps.items||[]).forEach(function(it){if(it.adj_qty!=null)shipQty+=+it.adj_qty||0});
+    }
+    var shipDiff=shipQty-mesQty;
+    var defSum=0,defVals=defectCols.map(function(t){var v=+(rs.defects||{})[t]||0;defSum+=v;return v||''});
+
+    // 조건
+    var conds=rs.conditions||{};
+    var actCt=+p.actual_ct||0;
+    var spm=actCt>0?(60/actCt).toFixed(1):'';
+    var ctStr=actCt>0?actCt.toFixed(2):'';
+
+    // 정지 세부
+    var stopMap={A:0,B:0,C:0,D:0,E:0,F:0,G:0,H:0,I:0,J:0,K:0};
+    var allEvents=[].concat(ds.plannedEvents||[],ds.stopEvents||[]);
+    allEvents.forEach(function(ev){
+      var code=(ev.code||'').split('-')[1]||'';
+      var g=CODE_TO_GRID[code];
+      if(g&&stopMap.hasOwnProperty(g))stopMap[g]+=(+ev.min||0);
+      else if(ev.code)stopMap.K+=(+ev.min||0);
+    });
+    var stopVals=stopCols.map(function(c){return stopMap[c.key]||''});
+
+    // 기종별 실적 (요약 문자열)
+    var prodList=[];
+    if(d.category==='report'&&rs.productionItems){
+      (rs.productionItems||[]).forEach(function(it){
+        if(it.adj_qty==null)return;
+        var di=it.adj_qty-(it.mes_qty||0);
+        prodList.push((it.item_code||'-')+(it.mold?'['+it.mold+']':'')+' MES'+(it.mes_qty||0)+'→실제'+it.adj_qty+(di?' ('+(di>0?'+':'')+di+')':''));
+      });
+    }else if(d.category==='prod'&&ps.items){
       (ps.items||[]).forEach(function(it){
-        var di=(it.adj_qty!=null)?(it.adj_qty-(it.actual_qty||0)):'';
-        var row=ws.addRow([tstr,d.machine_code||'',parsePressLabel({machine_name:d.machine_name||'',machine_code:d.machine_code}),it.work_order||'',it.item_code||'',it.item_name||'',it.mold||'',it.actual_qty||0,it.adj_qty!=null?it.adj_qty:'',di,it.run_min?fmtMinutes(it.run_min):'',memo,p.worker||'']);
-        row.eachCell({includeEmpty:true},function(c){c.border={top:{style:'hair',color:{argb:'FFCCCCCC'}},bottom:{style:'hair',color:{argb:'FFCCCCCC'}},left:{style:'hair',color:{argb:'FFCCCCCC'}},right:{style:'hair',color:{argb:'FFCCCCCC'}}};c.alignment={vertical:'middle',horizontal:'center'}});
-        if(typeof di==='number'&&di!==0)row.getCell(10).font={color:{argb:di>0?'FF16A34A':'FFDC2626'},bold:true};
+        if(it.adj_qty==null)return;
+        var di=it.adj_qty-(it.actual_qty||0);
+        prodList.push((it.item_code||'-')+(it.mold?'['+it.mold+']':'')+' MES'+(it.actual_qty||0)+'→실제'+it.adj_qty+(di?' ('+(di>0?'+':'')+di+')':''));
       });
-    });
-    ws.autoFilter={from:{row:1,column:1},to:{row:1,column:headers.length}};
-  }
+    }
 
-  // ========== 시트 5: 기타/전체요약 ==========
-  if(otherData.length){
-    var ws=wb.addWorksheet('기타',{views:[{state:'frozen',ySplit:1}]});
-    var headers=['일시','카테고리','설비코드','설비명','품번','내용'];
-    ws.columns=[{width:16},{width:12},{width:10},{width:14},{width:18},{width:60}];
-    var hdr=ws.addRow(headers);hdr.height=22;
-    hdr.eachCell(function(c){c.font={bold:true,color:{argb:'FFFFFFFF'}};c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF6B7280'}};c.alignment={vertical:'middle',horizontal:'center'};c.border={top:{style:'thin'},bottom:{style:'thin'},left:{style:'thin'},right:{style:'thin'}}});
-    otherData.forEach(function(d){
-      var tstr=_fmtTs(d.created_at);
-      var p=d.payload||{};
-      var det=(p.rows||[]).filter(function(r){return r.value||r.remark}).map(function(r){return r.itemName+':'+(r.value||'-')+(r.remark?'('+r.remark+')':'')}).join(' / ');
-      ws.addRow([tstr,d.category||'',d.machine_code||'',parsePressLabel({machine_name:d.machine_name||'',machine_code:d.machine_code}),d.item_code||'',det]);
+    // 점검내용 (일반 rows)
+    var rowsText=(p.rows||[]).filter(function(r){return r.value||r.remark}).map(function(r){return r.itemName+':'+(r.value||'-')+(r.remark?'('+r.remark+')':'')}).join(' / ');
+
+    // 소재
+    var coilKg=+p.coil_weight||0,unitG=+p.unit_per_qty||0,actQty=+p.actual_qty||0;
+    var remainKg=(coilKg>0)?Math.round((coilKg-actQty*unitG/1000)*100)/100:'';
+
+    var pc=+p.photo_count||0;
+
+    var rowData=[
+      tstr,catN,d.machine_code||'',parsePressLabel({machine_name:d.machine_name||'',machine_code:d.machine_code}),d.customer||'',
+      d.item_code||'',p.item_name||'',p.mold||'',p.worker||'',
+      mesQty||'',shipQty||'',shipDiff||'',defSum||''
+    ];
+    rowData=rowData.concat(defVals);
+    rowData=rowData.concat([conds.dieHeight||'',conds.feedPitch||'',spm,ctStr]);
+    rowData=rowData.concat(stopVals);
+    rowData=rowData.concat([ds.runMin||'',ds.stopMin||'',ds.plannedMin||'',ds.rate?(+ds.rate).toFixed(1):'',ds.stopCount||'']);
+    rowData=rowData.concat([p.raw_item_code||'',p.lot_no||'',p.coil_weight||'',p.unit_per_qty||'',remainKg]);
+    rowData=rowData.concat([prodList.join(' · '),rs.note||'',ps.adj_memo||'',rowsText,pc||'']);
+
+    var row=ws.addRow(rowData);
+    row.eachCell({includeEmpty:true},function(c,col){
+      c.border={top:{style:'hair',color:{argb:'FFCCCCCC'}},bottom:{style:'hair',color:{argb:'FFCCCCCC'}},left:{style:'hair',color:{argb:'FFCCCCCC'}},right:{style:'hair',color:{argb:'FFCCCCCC'}}};
+      c.alignment={vertical:'middle',horizontal:'center',wrapText:true};
+      c.font={size:9};
     });
-  }
+    // 카테고리 색상
+    var catCol=row.getCell(2);
+    if(d.category==='mat')catCol.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFDCFCE7'}};
+    else if(d.category==='report')catCol.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFF3E8FF'}};
+    else if(d.category==='prod')catCol.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFFFEDD5'}};
+    catCol.font={bold:true,size:9};
+    // 양품차이 색상
+    if(shipDiff!==0&&shipQty){
+      row.getCell(12).font={color:{argb:shipDiff>0?'FF16A34A':'FFDC2626'},bold:true,size:9};
+    }
+    // 불량합계 색상
+    if(defSum>0)row.getCell(13).font={color:{argb:'FFDC2626'},bold:true,size:9};
+    // 특기사항/기종별 왼쪽정렬
+    var totalCols=headers.length;
+    row.getCell(totalCols-4).alignment={vertical:'middle',horizontal:'left',wrapText:true}; // 기종별실적
+    row.getCell(totalCols-3).alignment={vertical:'middle',horizontal:'left',wrapText:true}; // 특기사항
+    row.getCell(totalCols-2).alignment={vertical:'middle',horizontal:'left',wrapText:true}; // 보정사유
+    row.getCell(totalCols-1).alignment={vertical:'middle',horizontal:'left',wrapText:true}; // 점검내용
+  });
+
+  // 자동필터 (2번째 행 기준)
+  ws.autoFilter={from:{row:2,column:1},to:{row:2,column:headers.length}};
 
   try{
     var buf=await wb.xlsx.writeBuffer();
