@@ -810,12 +810,40 @@ function openChkModal(machine){
 function closeChkModal(){document.getElementById('chkModal').classList.remove('show')}
 
 // 작업일보 페이지 이동 (가상설비면 전용 페이지, 실설비면 기존 페이지)
+// 현재 로그인 사용자 (ESG 메인 인증 > sessionStorage > URL 파라미터 > localStorage)
+function getCurrentUser(){
+  try{
+    // 1. ESG 메인 잠금해제 (동일 도메인 localStorage)
+    var esgAuth=JSON.parse(localStorage.getItem('esg_pin_auth')||'null');
+    if(esgAuth && esgAuth.exp>Date.now() && esgAuth.name){
+      try{sessionStorage.setItem('ESG_USER',esgAuth.name)}catch(e){}
+      return esgAuth.name;
+    }
+    // 2. 세션
+    var s=sessionStorage.getItem('ESG_USER');
+    if(s)return s;
+    // 3. URL 파라미터
+    var p=new URLSearchParams(location.search);
+    var u=p.get('user')||p.get('worker')||p.get('name');
+    if(u){
+      try{sessionStorage.setItem('ESG_USER',u)}catch(e){}
+      return u;
+    }
+    // 4. 이전 사용자
+    return localStorage.getItem('mes_last_worker')||'';
+  }catch(e){return ''}
+}
+
 function goWorkReport(e){
   e.preventDefault();
   var m=chkState.machine;
   var isVirt=m&&(m.machine_status==='M'||m.is_virtual===true);
   var url=isVirt?'mes_virtual_work.html':'mes_work_report.html';
-  if(m&&m.machine_code)url+='?machine_code='+encodeURIComponent(m.machine_code);
+  var params=[];
+  if(m&&m.machine_code)params.push('machine_code='+encodeURIComponent(m.machine_code));
+  var u=getCurrentUser();
+  if(u)params.push('user='+encodeURIComponent(u));
+  if(params.length)url+='?'+params.join('&');
   location.href=url;
 }
 
@@ -1797,6 +1825,8 @@ function hiEditRecord(d){
     var params=[];
     if(d.machine_code)params.push('machine_code='+encodeURIComponent(d.machine_code));
     params.push('edit_id='+encodeURIComponent(d.id));
+    var u=getCurrentUser();
+    if(u)params.push('user='+encodeURIComponent(u));
     url+='?'+params.join('&');
     location.href=url;
     return;
@@ -2381,7 +2411,24 @@ async function loadSettings(){await _loadAllRulesFromServer();renderNtfyRules();
 async function checkConnections(){var grid=document.getElementById('connGrid');var checks=[{name:'Supabase',fn:async function(){return(await sbGet('machine_status','select=id&limit=1'))!==null}},{name:'ntfy',fn:async function(){try{return(await fetch('https://ntfy.sh/health')).ok}catch(e){return false}}},{name:'비가동집계',fn:async function(){var t=new Date();var ymd=t.getFullYear()+'-'+String(t.getMonth()+1).padStart(2,'0')+'-'+String(t.getDate()).padStart(2,'0');var d=await sbGet('daily_downtime','select=updated_at&ymd=eq.'+ymd+'&order=updated_at.desc&limit=1');if(!d||!d.length)return false;return(Date.now()-new Date(d[0].updated_at).getTime())/60000<15}},{name:'MES DB',fn:async function(){var d=await sbGet('machine_status','select=updated_at&order=updated_at.desc&limit=1');if(!d||!d.length)return false;return(Date.now()-new Date(d[0].updated_at).getTime())/60000<15}}];var html='';checks.forEach(function(c){html+='<div class="conn-item"><div class="conn-dot wait"></div><div><div class="ci-name">'+c.name+'</div><div class="ci-status">…</div></div></div>'});grid.innerHTML=html;for(var i=0;i<checks.length;i++){try{var ok=await checks[i].fn();var dots=grid.querySelectorAll('.conn-dot'),stats=grid.querySelectorAll('.ci-status');if(ok===null){dots[i].className='conn-dot wait';stats[i].textContent='미설정'}else if(ok){dots[i].className='conn-dot ok';stats[i].textContent='연결'}else{dots[i].className='conn-dot fail';stats[i].textContent='실패'}}catch(e){grid.querySelectorAll('.conn-dot')[i].className='conn-dot fail';grid.querySelectorAll('.ci-status')[i].textContent='오류'}}}
 
 
-async function init(){try{localStorage.removeItem('MES_CHK_ITEMS_VER')}catch(e){}await loadSettings();await loadMonitor();checkConnections()}
+async function init(){
+  try{localStorage.removeItem('MES_CHK_ITEMS_VER')}catch(e){}
+  // 헤더에 현재 사용자 표시 (ESG 인증 자동 감지)
+  var cu=getCurrentUser();
+  if(cu){
+    var hdrSub=document.querySelector('.hdr .sub');
+    if(hdrSub && !document.getElementById('currentUserBadge')){
+      var badge=document.createElement('span');
+      badge.id='currentUserBadge';
+      badge.style.cssText='margin-left:8px;background:rgba(74,222,128,.15);color:#4ade80;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700';
+      badge.textContent='👤 '+cu;
+      hdrSub.appendChild(badge);
+    }
+  }
+  await loadSettings();
+  await loadMonitor();
+  checkConnections();
+}
 setInterval(function(){timer--;if(timer<=0)loadMonitor();document.getElementById('countdown').textContent='갱신:'+Math.floor(timer/60)+':'+String(timer%60).padStart(2,'0')},1000);
 init();
 </script>
