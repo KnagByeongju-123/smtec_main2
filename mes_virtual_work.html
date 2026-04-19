@@ -138,6 +138,16 @@ body{padding:0;font-size:13px}
 .mini-modal{max-width:340px;width:90%;padding:16px;border-radius:14px;background:#0f172a;border:2px solid var(--yellow)}
 .mini-modal .modal-hdr-sm{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
 .mini-modal .mini-t{font-size:14px;font-weight:800;color:var(--yellow)}
+
+/* PIN 입력 도트 */
+.pin-dot{width:14px;height:14px;border-radius:50%;background:#2a2e3d;border:2px solid #2a2e3d;transition:all .15s}
+.pin-dot.filled{background:var(--purple);border-color:var(--purple);box-shadow:0 0 10px rgba(167,139,250,.4)}
+.pin-dot.ok{background:var(--green);border-color:var(--green)}
+.pin-dot.err{background:var(--red);border-color:var(--red);animation:pinshake .4s}
+@keyframes pinshake{0%,100%{transform:translateX(0)}25%{transform:translateX(-6px)}75%{transform:translateX(6px)}}
+.pin-key{padding:16px;background:#1e293b;border:1px solid var(--border);color:#fff;font-size:18px;font-weight:700;border-radius:8px;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent}
+.pin-key:active{background:var(--purple);color:#0f172a;transform:scale(.95)}
+.pin-key.pin-fn{background:#334155;font-size:13px;font-weight:600}
 </style>
 </head>
 <body>
@@ -250,8 +260,12 @@ body{padding:0;font-size:13px}
       <div class="sect-body">
         <div class="input-row">
           <div class="input-cell">
-            <label>작업자</label>
-            <input type="text" id="vdWorker" placeholder="이름" oninput="onVirtField('worker',this.value)">
+            <label>작업자 <span id="vdWorkerHint" style="font-size:9px;color:var(--green);font-weight:400"></span></label>
+            <button type="button" id="vdWorkerBtn" onclick="showWorkerPicker()"
+              style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:#0f172a;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;text-align:left;display:flex;justify-content:space-between;align-items:center">
+              <span id="vdWorker" style="flex:1">-</span>
+              <span style="font-size:10px;color:#a78bfa">변경</span>
+            </button>
           </div>
           <div class="input-cell">
             <label>SPM</label>
@@ -393,6 +407,41 @@ body{padding:0;font-size:13px}
   </div>
 </div>
 
+<!-- 작업자 선택 모달 -->
+<div class="modal-bg" id="workerPickerModal">
+  <div class="mini-modal" style="max-width:340px">
+    <div class="modal-hdr-sm">
+      <div class="mini-t">🔐 작업자 PIN 입력</div>
+      <button class="modal-x" onclick="closeWorkerPicker()">✕</button>
+    </div>
+    <div id="workerPinStatus" style="font-size:11px;color:#a5b4fc;background:rgba(167,139,250,.1);padding:8px;border-radius:6px;margin-bottom:12px;text-align:center">
+      💡 등록된 4자리 PIN을 입력하세요
+    </div>
+    <!-- PIN 도트 4개 -->
+    <div id="workerPinDots" style="display:flex;justify-content:center;gap:14px;margin-bottom:20px">
+      <div class="pin-dot"></div><div class="pin-dot"></div><div class="pin-dot"></div><div class="pin-dot"></div>
+    </div>
+    <!-- 숫자패드 -->
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
+      <button class="pin-key" onclick="wPinPress('1')">1</button>
+      <button class="pin-key" onclick="wPinPress('2')">2</button>
+      <button class="pin-key" onclick="wPinPress('3')">3</button>
+      <button class="pin-key" onclick="wPinPress('4')">4</button>
+      <button class="pin-key" onclick="wPinPress('5')">5</button>
+      <button class="pin-key" onclick="wPinPress('6')">6</button>
+      <button class="pin-key" onclick="wPinPress('7')">7</button>
+      <button class="pin-key" onclick="wPinPress('8')">8</button>
+      <button class="pin-key" onclick="wPinPress('9')">9</button>
+      <button class="pin-key pin-fn" onclick="wPinClear()">초기화</button>
+      <button class="pin-key" onclick="wPinPress('0')">0</button>
+      <button class="pin-key pin-fn" onclick="wPinDel()">⌫</button>
+    </div>
+    <div style="margin-top:12px;text-align:center">
+      <button onclick="closeWorkerPicker()" style="padding:8px 20px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--sub);font-size:12px;cursor:pointer;font-family:inherit">취소</button>
+    </div>
+  </div>
+</div>
+
 <!-- 정지시간 수기입력 모달 -->
 <div class="modal-bg" id="dtManualModal" style="align-items:center">
   <div class="mini-modal" style="max-width:380px">
@@ -508,6 +557,32 @@ async function autoLoadFromUrl(){
   var p=new URLSearchParams(location.search);
   var mc=p.get('machine_code');
   var editId=p.get('edit_id');
+  
+  // ========== 사용자 이름 자동 수신 ==========
+  // 우선순위: ESG 메인 인증 > sessionStorage > URL 파라미터 > localStorage
+  var currentUser='';
+  try{
+    // 1. ESG 메인 잠금해제 정보 (가장 우선)
+    var esgAuth=JSON.parse(localStorage.getItem('esg_pin_auth')||'null');
+    if(esgAuth && esgAuth.exp>Date.now() && esgAuth.name){
+      currentUser=esgAuth.name;
+    }
+    // 2. sessionStorage
+    if(!currentUser) currentUser=sessionStorage.getItem('ESG_USER')||'';
+    // 3. URL 파라미터
+    if(!currentUser) currentUser=p.get('user')||p.get('worker')||p.get('name')||'';
+    // 4. 이전 사용자
+    if(!currentUser) currentUser=localStorage.getItem('mes_last_worker')||'';
+  }catch(e){}
+  
+  if(currentUser){
+    state.virtManual.worker=currentUser;
+    try{
+      sessionStorage.setItem('ESG_USER',currentUser);
+      localStorage.setItem('mes_last_worker',currentUser);
+    }catch(e){}
+  }
+  
   if(!mc){
     document.getElementById('emptyState').innerHTML='<div class="empty-ic">⚠️</div><div>설비코드가 없습니다. 모니터링에서 진입해주세요.</div>';
     return;
@@ -580,7 +655,11 @@ function restoreFromRecord(rec){
   state.editId=rec.id;
   // UI 반영
   var wkInp=document.getElementById('vdWorker');
-  if(wkInp)wkInp.value=state.virtManual.worker||'';
+  if(wkInp){
+    var _wn=state.virtManual.worker||'-';
+    wkInp.textContent=_wn;
+    wkInp.style.color=(state.virtManual.worker?'#fff':'var(--sub)');
+  }
   var note=document.getElementById('vdNote');
   if(note)note.value=state.virtManual.note||'';
   showToast('📋 작성된 일보 불러옴 (수정모드)',3000);
@@ -589,18 +668,50 @@ function restoreFromRecord(rec){
 // 최근 작성에서 반복항목만 복원 (신규 모드)
 async function applyLastTemplate(mc){
   try{
+    // 1순위: 해당 설비의 최근 작성
     var list=await sbGet('mes_check_log',
       'select=payload&machine_code=eq.'+encodeURIComponent(mc)+
       '&category=eq.report&order=created_at.desc&limit=1');
-    if(!list||!list.length)return;
-    var rs=list[0].payload&&list[0].payload.report_snapshot;
-    if(!rs||!rs.virtManual)return;
-    var REPEAT=['item_code','item_name','mold_code','worker','spm','ct','work_time','raw_item_code'];
-    REPEAT.forEach(function(k){
-      if(rs.virtManual[k]!=null&&String(rs.virtManual[k]).trim()!=='')state.virtManual[k]=rs.virtManual[k];
-    });
+    if(list&&list.length){
+      var rs=list[0].payload&&list[0].payload.report_snapshot;
+      if(rs&&rs.virtManual){
+        var REPEAT=['item_code','item_name','mold_code','worker','spm','ct','work_time','raw_item_code'];
+        REPEAT.forEach(function(k){
+          if(rs.virtManual[k]!=null&&String(rs.virtManual[k]).trim()!=='')state.virtManual[k]=rs.virtManual[k];
+        });
+      }
+    }
+    // 2순위: 작업자가 비었으면 localStorage에서 최근 사용자 가져오기
+    if(!state.virtManual.worker){
+      var lastWorker=localStorage.getItem('mes_last_worker')||'';
+      if(lastWorker)state.virtManual.worker=lastWorker;
+    }
+    // 3순위: localStorage도 비었으면 가상설비 전체 이력에서 마지막 작업자
+    if(!state.virtManual.worker){
+      var anyList=await sbGet('mes_check_log',
+        'select=payload&category=eq.report&order=created_at.desc&limit=5');
+      if(anyList&&anyList.length){
+        for(var i=0;i<anyList.length;i++){
+          var rs2=anyList[i].payload&&anyList[i].payload.report_snapshot;
+          var w=rs2&&rs2.virtManual&&rs2.virtManual.worker;
+          if(w&&String(w).trim()){
+            state.virtManual.worker=w;
+            break;
+          }
+        }
+      }
+    }
     var wkInp=document.getElementById('vdWorker');
-    if(wkInp)wkInp.value=state.virtManual.worker||'';
+    if(wkInp){
+      var _wn=state.virtManual.worker||'-';
+      wkInp.textContent=_wn;
+      wkInp.style.color=(state.virtManual.worker?'#fff':'var(--sub)');
+    }
+    // 작업자 자동 채움 힌트 표시
+    if(state.virtManual.worker){
+      var hint=document.getElementById('vdWorkerHint');
+      if(hint)hint.textContent=' ✓ 자동입력';
+    }
   }catch(e){}
 }
 
@@ -732,7 +843,151 @@ function updateNumpadDisplay(){
 }
 
 // ========== 작업자 입력 ==========
-function onVirtField(key,val){state.virtManual[key]=val}
+function onVirtField(key,val){
+  state.virtManual[key]=val;
+  // 작업자 이름은 localStorage에 기억 (다음 방문시 자동 채움)
+  if(key==='worker'&&val&&String(val).trim()){
+    try{localStorage.setItem('mes_last_worker',String(val).trim())}catch(e){}
+  }
+}
+
+// 작업자 선택 모달 (최근 사용자 리스트)
+// ========== 작업자 PIN 입력 ==========
+var _workerPin='';
+var _workerPinBusy=false;
+
+async function _sha256hex(s){
+  var b=new TextEncoder().encode(s);
+  var h=await crypto.subtle.digest('SHA-256',b);
+  return Array.from(new Uint8Array(h)).map(function(x){return x.toString(16).padStart(2,'0')}).join('');
+}
+
+function showWorkerPicker(){
+  _workerPin='';
+  _workerPinBusy=false;
+  updateWorkerPinDots();
+  var stat=document.getElementById('workerPinStatus');
+  // 마지막 로그인 이름 표시
+  var lastName=localStorage.getItem('mes_last_worker')||'';
+  if(lastName){
+    stat.innerHTML='💡 최근: <b style="color:#fff">'+_esc(lastName)+'</b> · 다른 사람은 PIN 입력';
+  }else{
+    stat.innerHTML='💡 등록된 4자리 PIN을 입력하세요';
+  }
+  stat.style.color='#a5b4fc';
+  stat.style.background='rgba(167,139,250,.1)';
+  document.getElementById('workerPickerModal').classList.add('show');
+}
+
+function closeWorkerPicker(){
+  document.getElementById('workerPickerModal').classList.remove('show');
+  _workerPin='';
+}
+
+function updateWorkerPinDots(){
+  var dots=document.querySelectorAll('#workerPinDots .pin-dot');
+  dots.forEach(function(d,i){
+    d.classList.remove('err','ok');
+    if(i<_workerPin.length)d.classList.add('filled');
+    else d.classList.remove('filled');
+  });
+}
+
+function wPinPress(n){
+  if(_workerPinBusy)return;
+  if(_workerPin.length>=4)return;
+  _workerPin+=n;
+  updateWorkerPinDots();
+  if(_workerPin.length===4){
+    setTimeout(verifyWorkerPin,150);
+  }
+}
+
+function wPinDel(){
+  if(_workerPinBusy)return;
+  if(!_workerPin)return;
+  _workerPin=_workerPin.slice(0,-1);
+  updateWorkerPinDots();
+}
+
+function wPinClear(){
+  if(_workerPinBusy)return;
+  _workerPin='';
+  updateWorkerPinDots();
+}
+
+async function verifyWorkerPin(){
+  _workerPinBusy=true;
+  var stat=document.getElementById('workerPinStatus');
+  stat.innerHTML='⏳ 확인중...';
+  try{
+    var hash=await _sha256hex(_workerPin);
+    // user_pin 테이블 조회 (pin_hash로 검색)
+    var res=await fetch(SB_URL+'/rest/v1/user_pin?select=name&pin_hash=eq.'+hash,{headers:sbH});
+    if(!res.ok){
+      stat.innerHTML='❌ 조회 실패 (HTTP '+res.status+')';
+      stat.style.color='#fca5a5';
+      stat.style.background='rgba(239,68,68,.1)';
+      _pinShake();
+      return;
+    }
+    var data=await res.json();
+    if(!data || !data.length){
+      stat.innerHTML='❌ 등록되지 않은 PIN';
+      stat.style.color='#fca5a5';
+      stat.style.background='rgba(239,68,68,.1)';
+      _pinShake();
+      return;
+    }
+    var name=data[0].name;
+    // 성공
+    stat.innerHTML='✅ '+_esc(name)+' 님 인증 완료';
+    stat.style.color='#4ade80';
+    stat.style.background='rgba(74,222,128,.1)';
+    document.querySelectorAll('#workerPinDots .pin-dot').forEach(function(d){
+      d.classList.remove('filled');
+      d.classList.add('ok');
+    });
+    // 작업자 설정
+    state.virtManual.worker=name;
+    var wkInp=document.getElementById('vdWorker');
+    if(wkInp){
+      wkInp.textContent=name;
+      wkInp.style.color='#fff';
+    }
+    try{localStorage.setItem('mes_last_worker',name)}catch(e){}
+    var hint=document.getElementById('vdWorkerHint');
+    if(hint)hint.textContent=' ✓ 인증';
+    // 1초 후 모달 닫기
+    setTimeout(function(){
+      closeWorkerPicker();
+      showToast('✅ 작업자: '+name);
+    },800);
+  }catch(e){
+    stat.innerHTML='❌ 오류: '+e.message;
+    stat.style.color='#fca5a5';
+    _pinShake();
+  }
+}
+
+function _pinShake(){
+  var dots=document.querySelectorAll('#workerPinDots .pin-dot');
+  dots.forEach(function(d){d.classList.remove('filled');d.classList.add('err')});
+  setTimeout(function(){
+    _workerPin='';
+    _workerPinBusy=false;
+    updateWorkerPinDots();
+  },500);
+}
+
+// 키보드 입력 지원 (태블릿 외 PC 테스트 용이)
+document.addEventListener('keydown',function(e){
+  var modal=document.getElementById('workerPickerModal');
+  if(!modal || !modal.classList.contains('show'))return;
+  if(e.key>='0'&&e.key<='9')wPinPress(e.key);
+  else if(e.key==='Backspace')wPinDel();
+  else if(e.key==='Escape')closeWorkerPicker();
+});
 
 // ========== 대시보드 렌더 ==========
 function renderVirtDashboard(){
@@ -813,6 +1068,25 @@ function renderVirtDashboard(){
   if(spmBtn)spmBtn.textContent=v.spm?(v.spm+' /min'):'-';
   var wtBtn=document.getElementById('vdWorkTimeBtn');
   if(wtBtn)wtBtn.textContent=v.work_time?(v.work_time+' 분'):'480';
+  
+  // 작업자 span 업데이트 (ESG 자동 로그인)
+  var wkSpan=document.getElementById('vdWorker');
+  if(wkSpan){
+    wkSpan.textContent=v.worker||'로그인 필요';
+    wkSpan.style.color=v.worker?'#fff':'var(--red)';
+  }
+  // 자동로그인 뱃지
+  var hint=document.getElementById('vdWorkerHint');
+  if(hint && v.worker){
+    try{
+      var esgAuth=JSON.parse(localStorage.getItem('esg_pin_auth')||'null');
+      if(esgAuth && esgAuth.name===v.worker){
+        hint.textContent='✓ ESG 자동로그인';
+      }else{
+        hint.textContent='✓ 저장됨';
+      }
+    }catch(e){hint.textContent='✓ 저장됨';}
+  }
   
   renderDowntimeList();
   updateDowntimeStat();
