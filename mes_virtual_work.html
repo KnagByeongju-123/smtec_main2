@@ -587,6 +587,72 @@ function parsePressLabel(m){
   return parts.join(' · ');
 }
 
+// ========== 가상설비 목록 선택 화면 ==========
+async function showVirtMachineList(){
+  var empty=document.getElementById('emptyState');
+  empty.innerHTML='<div class="empty-ic">⏳</div><div>가상설비 목록 조회중...</div>';
+  empty.style.display='';
+  document.getElementById('mainBody').style.display='none';
+  document.getElementById('botBar').style.display='none';
+  // 헤더 정리
+  document.getElementById('hdrMachine').textContent='설비를 선택하세요';
+  document.getElementById('hdrWorkDay').textContent='-';
+  try{
+    var list=await sbGet('machine_virtual','select=*&active=eq.true&order=sort_order.asc,machine_code.asc');
+    if(!list||!list.length){
+      empty.innerHTML='<div class="empty-ic">📭</div>'+
+        '<div style="margin-top:10px;font-size:14px">등록된 가상설비가 없습니다</div>'+
+        '<div style="margin-top:8px;font-size:11px;color:var(--sub)">MES 모니터링 &gt; 설정 &gt; 가상설비 관리에서 등록하세요</div>'+
+        '<a href="mes_work.html" style="display:inline-block;margin-top:16px;padding:10px 20px;background:var(--purple);color:#0f172a;border-radius:8px;font-weight:800;text-decoration:none;font-size:13px">‹ MES 모니터링으로</a>';
+      return;
+    }
+    var html='<div style="padding:8px 4px 20px">'+
+      '<div style="text-align:center;font-size:15px;font-weight:800;color:#c4b5fd;margin-bottom:6px">🖊️ 가상설비 선택</div>'+
+      '<div style="text-align:center;font-size:11px;color:var(--sub);margin-bottom:16px">작업일보를 작성할 설비를 터치하세요 ('+list.length+'대)</div>'+
+      '<div style="display:grid;grid-template-columns:1fr;gap:10px;max-width:520px;margin:0 auto;padding:0 12px">';
+    list.forEach(function(v){
+      var ton=v.tonnage?v.tonnage+'톤':'';
+      var maker=v.press_maker||'';
+      var nm=(v.machine_name||'').trim();
+      var hoCode='';
+      var mt=nm.match(/^(\d{1,3})/);
+      if(mt)hoCode=mt[1]+'호기';
+      var parts=[];
+      if(hoCode)parts.push(hoCode);
+      if(maker)parts.push(maker);
+      if(ton)parts.push(ton);
+      var label=parts.length?parts.join(' · '):nm;
+      html+='<button onclick="pickVirtMachine(\''+v.machine_code+'\')" '+
+        'style="display:flex;align-items:center;gap:14px;padding:16px 18px;background:linear-gradient(135deg,#1e1b4b,#0f172a);border:1.5px solid var(--purple);border-radius:12px;color:#fff;cursor:pointer;font-family:inherit;text-align:left;transition:transform .1s;width:100%">'+
+        '<span style="font-size:28px;flex-shrink:0">🖊️</span>'+
+        '<div style="flex:1;min-width:0">'+
+          '<div style="font-size:16px;font-weight:800;color:#c4b5fd">'+_esc(v.machine_code)+'</div>'+
+          '<div style="font-size:14px;font-weight:700;color:#fff;margin-top:3px">'+_esc(label)+'</div>'+
+          '<div style="font-size:10px;color:var(--sub);margin-top:2px">MES 미설치 · 수동입력 설비</div>'+
+        '</div>'+
+        '<span style="font-size:22px;color:#a78bfa;flex-shrink:0">›</span>'+
+      '</button>';
+    });
+    html+='</div>'+
+      '<div style="text-align:center;margin-top:18px">'+
+        '<a href="mes_work.html" style="color:var(--sub);font-size:12px;text-decoration:none">‹ MES 모니터링으로 돌아가기</a>'+
+      '</div>'+
+      '</div>';
+    empty.innerHTML=html;
+    empty.style.textAlign='left';
+    empty.style.padding='20px 0';
+  }catch(e){
+    empty.innerHTML='<div class="empty-ic">⚠️</div><div>조회 실패: '+_esc(e.message||e)+'</div>';
+  }
+}
+
+function pickVirtMachine(mc){
+  // URL에 machine_code 추가해서 다시 로드 (현재 URL의 user 파라미터는 유지)
+  var p=new URLSearchParams(location.search);
+  p.set('machine_code',mc);
+  location.href=location.pathname+'?'+p.toString();
+}
+
 // ========== 자동 로드 ==========
 async function autoLoadFromUrl(){
   var p=new URLSearchParams(location.search);
@@ -619,7 +685,7 @@ async function autoLoadFromUrl(){
   }
   
   if(!mc){
-    document.getElementById('emptyState').innerHTML='<div class="empty-ic">⚠️</div><div>설비코드가 없습니다. 모니터링에서 진입해주세요.</div>';
+    await showVirtMachineList();
     return;
   }
   // 설비 정보 조회
@@ -1351,14 +1417,22 @@ function saveDowntimeManual(){
   showToast('✅ 정지 추가: '+d.stop_code+' '+d.duration_min+'분');
 }
 
-// ========== W/O 선택 ==========
+// ========== W/O 선택 (가상설비 전용) ==========
 var woListCache=null;
 async function openWorkOrderPicker(){
   document.getElementById('woPickerModal').classList.add('show');
   document.getElementById('woPickerSearch').value='';
   document.getElementById('woPickerList').innerHTML='<div style="text-align:center;color:var(--sub);padding:20px">⏳ W/O 로딩중...</div>';
+  var mc=state.machine&&state.machine.machine_code;
+  if(!mc){
+    document.getElementById('woPickerList').innerHTML='<div style="text-align:center;color:var(--red);padding:20px">설비 코드가 없습니다</div>';
+    return;
+  }
   try{
-    var res=await fetch(SB_URL+'/rest/v1/work_order_cache?select=*&order=work_order_date.desc,work_order_no.desc&limit=300',{headers:sbH});
+    // virtual_work_order 테이블에서 해당 가상설비의 active=true W/O만
+    var qs='select=*&active=eq.true&machine_code=eq.'+encodeURIComponent(mc)+
+           '&order=work_order_date.desc,id.desc&limit=200';
+    var res=await fetch(SB_URL+'/rest/v1/virtual_work_order?'+qs,{headers:sbH});
     woListCache=res.ok?(await res.json()):[];
   }catch(e){woListCache=[]}
   renderWOList(woListCache);
@@ -1377,10 +1451,20 @@ function filterWOList(){
 function renderWOList(list){
   var c=document.getElementById('woPickerList');
   if(!list||!list.length){
-    c.innerHTML='<div style="text-align:center;color:var(--sub);padding:20px">📭 W/O 없음</div>';
+    var mc=state.machine&&state.machine.machine_code||'';
+    c.innerHTML='<div style="text-align:center;color:var(--sub);padding:30px 20px">'+
+      '<div style="font-size:40px;margin-bottom:10px">📭</div>'+
+      '<div style="font-size:13px;margin-bottom:6px">등록된 W/O 없음</div>'+
+      '<div style="font-size:11px;color:var(--sub);margin-bottom:12px">'+
+        '<b style="color:#c4b5fd">'+_esc(mc)+'</b>에 등록된 작업지시가 없습니다'+
+      '</div>'+
+      '<div style="font-size:10px;color:var(--sub);background:rgba(167,139,250,.08);padding:8px 12px;border-radius:6px;display:inline-block">'+
+        '💡 관리자가 <b>MES 모니터링 &gt; 설정 &gt; 가상설비 작업지시 관리</b>에서 등록'+
+      '</div></div>';
     return;
   }
-  var html='<div style="padding:6px 10px;background:rgba(59,130,246,.1);border-radius:6px;margin-bottom:6px;font-size:11px;color:#93c5fd">📋 최근 30일 W/O <b>'+list.length+'</b>건</div>';
+  var mc=state.machine&&state.machine.machine_code||'';
+  var html='<div style="padding:6px 10px;background:rgba(167,139,250,.1);border-radius:6px;margin-bottom:6px;font-size:11px;color:#c4b5fd">🖊️ '+_esc(mc)+' 전용 W/O <b>'+list.length+'</b>건</div>';
   list.slice(0,150).forEach(function(w,idx){
     var statusLabel='대기',statusColor='#64748b';
     if(w.status==='1'){statusLabel='진행중';statusColor='var(--green)'}
@@ -1394,13 +1478,15 @@ function renderWOList(list){
             ' <span style="font-size:10px;color:'+statusColor+';background:rgba(255,255,255,.08);padding:1px 6px;border-radius:10px;margin-left:4px">'+statusLabel+'</span></div>'+
           '<div style="font-size:11px;color:var(--accent);font-weight:700;margin-top:2px">'+_esc(w.item_code)+'</div>'+
           '<div style="font-size:11px;color:#fff;margin-top:1px">'+_esc(w.item_name||'-')+'</div>'+
-          '<div style="font-size:10px;color:var(--sub);margin-top:1px">'+_esc(w.item_spec||'')+'</div>'+
+          (w.item_spec?'<div style="font-size:10px;color:var(--sub);margin-top:1px">'+_esc(w.item_spec)+'</div>':'')+
+          (w.memo?'<div style="font-size:10px;color:#fbbf24;margin-top:2px">📝 '+_esc(w.memo)+'</div>':'')+
         '</div>'+
         '<div style="text-align:right;font-size:10px;white-space:nowrap">'+
-          '<div style="color:var(--sub)">'+_esc(dt)+' ('+(w.work_shift||'1')+'조)</div>'+
+          '<div style="color:var(--sub)">'+_esc(dt)+'</div>'+
           '<div style="color:var(--yellow);font-weight:800;font-size:12px;margin-top:2px">계획 '+(w.plan_qty||0).toLocaleString()+'</div>'+
           (w.st_value?'<div style="color:#c4b5fd;font-size:10px">SPM '+w.st_value+'</div>':'')+
           (w.mold_code?'<div style="color:var(--sub);font-size:10px">금형 '+_esc(w.mold_code)+'</div>':'')+
+          (w.cust_name?'<div style="color:var(--sub);font-size:10px">'+_esc(w.cust_name)+'</div>':'')+
         '</div>'+
       '</div></div>';
   });
