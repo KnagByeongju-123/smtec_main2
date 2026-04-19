@@ -566,7 +566,32 @@ document.addEventListener('DOMContentLoaded',function(){document.querySelectorAl
 function maskStr(s){if(!s||s.length<10)return'****';return s.slice(0,8)+'••••'+s.slice(-4)}
 function switchTab(name){document.querySelectorAll('.tab').forEach(function(t){t.classList.toggle('active',t.dataset.tab===name)});document.querySelectorAll('.panel').forEach(function(p){p.classList.toggle('active',p.id==='panel-'+name)});if(name==='settings'){renderNtfyRules();renderTgRules();renderDcRules();renderNgMap();renderVirtMachines();renderCiTabs();renderCiList();hiInit()}}
 
-async function loadMonitor(){var data=await sbGet('machine_status','select=*&order=machine_code.asc');if(!data)return;cachedData=data;renderMonitor(data);checkAlerts(data);timer=30}
+async function loadMonitor(){
+  var data=await sbGet('machine_status','select=*&order=machine_code.asc');
+  if(!data)return;
+  // 가상설비 정보(press_maker, tonnage)를 machine_virtual 테이블에서 조회해 병합
+  try{
+    var virtList=await sbGet('machine_virtual','select=machine_code,press_maker,tonnage,machine_name&active=eq.true');
+    if(virtList&&virtList.length){
+      var virtMap={};
+      virtList.forEach(function(v){virtMap[v.machine_code]=v});
+      data.forEach(function(d){
+        if(d.machine_status==='M'||d.is_virtual){
+          var v=virtMap[d.machine_code];
+          if(v){
+            d.press_maker=v.press_maker||'';
+            d.tonnage=v.tonnage||0;
+            if(v.machine_name&&!d.machine_name)d.machine_name=v.machine_name;
+          }
+        }
+      });
+    }
+  }catch(e){console.log('가상설비 정보 병합 실패:',e)}
+  cachedData=data;
+  renderMonitor(data);
+  checkAlerts(data);
+  timer=30;
+}
 var _stopMap={'Z001':'작업대기','M001':'금형교체','M002':'금형예열','M003':'금형세척','M004':'금형점검','M005':'금형대기','M006':'금형수리','M007':'금형시험','M008':'금형조정','A001':'자재대기','A002':'자재교체','A003':'자재불량','A004':'모델교체','A005':'작업지시대기','E001':'설비고장','E002':'설비점검','E003':'설비수리','Q001':'품질이상','Q002':'검사대기','R001':'휴식','R002':'식사','P001':'전원이상','P002':'기타'};
 function stopName(code){if(!code||code==='N')return'가동';var sub=code.indexOf('-')>=0?code.split('-')[1]:'';return _stopMap[sub]||sub||'비가동'}
 
@@ -612,7 +637,7 @@ function renderMonitor(data){
       var tr=document.createElement('tr');
       if(isVirtual)tr.className='virt';
       else if(!isR)tr.className='dim';
-      tr.innerHTML='<td class="c-eq">'+d.machine_code+'</td><td class="c-nm">'+parsePressLabel({machine_name:d.machine_name||'',machine_code:d.machine_code})+'</td><td class="c-st">'+st+'</td><td class="c-mold">'+(d.current_mold||'-')+'</td><td class="c-item">'+(d.current_item_code||'-')+'</td><td class="c-pname">'+(d.item_name||'-')+'</td><td class="c-num">'+fmt(d.target_qty)+'</td><td class="c-num">'+fmt(d.actual_qty)+'</td><td class="c-prog">'+prog+'</td><td class="c-num">'+fmt(d.remaining_qty)+'</td><td class="c-rem"><span class="'+rm.c+'">'+rm.t+'</span></td><td class="c-lot" style="color:var(--sub)">'+(d.lot_no||'-')+'</td><td class="c-coil" style="color:var(--accent)">'+(d.coil_weight>0?d.coil_weight.toFixed(0):'-')+'</td><td class="c-unit" style="color:var(--sub)">'+(d.unit_per_qty>0?d.unit_per_qty.toFixed(1):'-')+'</td><td class="c-ct">'+(d.actual_ct>0?d.actual_ct.toFixed(1):'-')+'/'+(d.target_ct>0?d.target_ct.toFixed(1):'-')+'</td><td class="c-ng">'+(d.ng_qty>0?'<span style="color:var(--red);font-weight:600">'+d.ng_qty+'</span>':'0')+'</td><td class="c-insp">'+inspH(d.inspect_top)+inspH(d.inspect_mid)+inspH(d.inspect_bottom)+'</td><td class="c-wk">'+(d.worker||'-')+'</td>';
+      tr.innerHTML='<td class="c-eq">'+d.machine_code+'</td><td class="c-nm">'+parsePressLabel(d)+'</td><td class="c-st">'+st+'</td><td class="c-mold">'+(d.current_mold||'-')+'</td><td class="c-item">'+(d.current_item_code||'-')+'</td><td class="c-pname">'+(d.item_name||'-')+'</td><td class="c-num">'+fmt(d.target_qty)+'</td><td class="c-num">'+fmt(d.actual_qty)+'</td><td class="c-prog">'+prog+'</td><td class="c-num">'+fmt(d.remaining_qty)+'</td><td class="c-rem"><span class="'+rm.c+'">'+rm.t+'</span></td><td class="c-lot" style="color:var(--sub)">'+(d.lot_no||'-')+'</td><td class="c-coil" style="color:var(--accent)">'+(d.coil_weight>0?d.coil_weight.toFixed(0):'-')+'</td><td class="c-unit" style="color:var(--sub)">'+(d.unit_per_qty>0?d.unit_per_qty.toFixed(1):'-')+'</td><td class="c-ct">'+(d.actual_ct>0?d.actual_ct.toFixed(1):'-')+'/'+(d.target_ct>0?d.target_ct.toFixed(1):'-')+'</td><td class="c-ng">'+(d.ng_qty>0?'<span style="color:var(--red);font-weight:600">'+d.ng_qty+'</span>':'0')+'</td><td class="c-insp">'+inspH(d.inspect_top)+inspH(d.inspect_mid)+inspH(d.inspect_bottom)+'</td><td class="c-wk">'+(d.worker||'-')+'</td>';
       (function(row){tr.onclick=function(){openChkModal(row)}})(d);
       tb.appendChild(tr);
     });
