@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>소재입고 오류 관리</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap');
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Noto Sans KR',sans-serif;background:#f0f2f5;color:#212121;padding:16px}
+.wrap{max-width:1200px;margin:0 auto}
+h1{font-size:20px;color:#1a237e;margin-bottom:4px}
+.sub{font-size:12px;color:#888;margin-bottom:16px}
+.toolbar{display:flex;gap:8px;margin-bottom:12px;align-items:center}
+.btn{padding:8px 14px;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}
+.btn-blue{background:#1565c0;color:#fff}
+.btn-green{background:#2e7d32;color:#fff}
+.btn-gray{background:#eee;color:#555}
+.btn-red{background:#c62828;color:#fff}
+.btn-sm{padding:4px 10px;font-size:11px}
+.stat{display:flex;gap:12px;margin-bottom:14px}
+.stat-card{flex:1;padding:12px 16px;background:#fff;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.05);text-align:center}
+.stat-card .v{font-size:22px;font-weight:700;color:#1a237e}
+.stat-card .l{font-size:11px;color:#888;margin-top:2px}
+table{width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden;font-size:12px}
+th{background:#1a237e;color:#fff;padding:8px 10px;text-align:left;font-weight:600}
+td{padding:8px 10px;border-bottom:1px solid #eee;vertical-align:top}
+tr:hover{background:#fafafa}
+.err{color:#c62828;font-size:11px;line-height:1.5}
+.hint{color:#1565c0;font-size:11px;background:#e3f2fd;padding:4px 8px;border-radius:4px;margin-top:4px;display:inline-block}
+.edit-form{display:none;background:#fff3e0;padding:10px;border-radius:6px;margin-top:6px}
+.edit-form.on{display:block}
+.edit-form input{padding:5px 8px;font-size:12px;border:1px solid #ccc;border-radius:4px;width:120px;margin-right:4px}
+.status-msg{padding:10px;border-radius:6px;font-size:12px;margin-bottom:12px;display:none}
+.status-msg.show{display:block}
+.status-msg.ok{background:#e8f5e9;color:#2e7d32;border:1px solid #a5d6a7}
+.status-msg.err{background:#ffebee;color:#c62828;border:1px solid #ef9a9a}
+.empty{text-align:center;padding:40px;color:#999;background:#fff;border-radius:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>🔧 소재입고 오류 관리</h1>
+<div class="sub">MES 매칭 실패 레코드 확인 및 수정 재시도</div>
+
+<div class="toolbar">
+  <button class="btn btn-blue" onclick="loadErrors()">🔄 새로고침</button>
+  <button class="btn btn-green" onclick="syncNow()">▶ 전체 동기화 실행</button>
+  <span id="lastUpdate" style="margin-left:auto;color:#888;font-size:11px"></span>
+</div>
+
+<div class="stat">
+  <div class="stat-card"><div class="v" id="cntErr">-</div><div class="l">오류</div></div>
+  <div class="stat-card"><div class="v" id="cntPending">-</div><div class="l">대기</div></div>
+  <div class="stat-card"><div class="v" id="cntSynced">-</div><div class="l">완료</div></div>
+  <div class="stat-card"><div class="v" id="cntDup">-</div><div class="l">중복</div></div>
+</div>
+
+<div id="statusMsg" class="status-msg"></div>
+
+<div id="errorList"></div>
+</div>
+
+<script>
+const API_BASE='http://localhost:5100/api';
+const SB_URL='https://omngtyewdaqpphnzeate.supabase.co';
+const SB_KEY='sb_publishable_9j2YkkL-7ul1TrhH-NjVdQ_vWDG2-1D';
+
+function showMsg(t,ok=true){
+  const el=document.getElementById('statusMsg');
+  el.className='status-msg show '+(ok?'ok':'err');
+  el.textContent=t;
+  setTimeout(()=>el.classList.remove('show'),4000);
+}
+
+async function loadErrors(){
+  // 통계
+  try{
+    for(const st of ['error','pending','synced','duplicate']){
+      const r=await fetch(`${SB_URL}/rest/v1/raw_material_receipt?select=id&status=eq.${st}&uploaded_at=gte.${new Date(Date.now()-86400000*7).toISOString()}`,
+        {headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Prefer':'count=exact'}});
+      const cnt=r.headers.get('content-range');
+      const c=cnt?cnt.split('/')[1]:'?';
+      document.getElementById('cnt'+st[0].toUpperCase()+st.slice(1).replace('err','Err').replace('icate','')).textContent=c;
+    }
+  }catch(e){console.log('통계 로드 실패:',e)}
+
+  // error 레코드
+  const area=document.getElementById('errorList');
+  area.innerHTML='<div class="empty">로딩 중...</div>';
+  try{
+    const r=await fetch(`${SB_URL}/rest/v1/raw_material_receipt?select=*&status=eq.error&order=id.desc&limit=100`,
+      {headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY}});
+    const data=await r.json();
+    if(!data.length){
+      area.innerHTML='<div class="empty">✅ 오류 레코드 없음</div>';
+      document.getElementById('lastUpdate').textContent='업데이트: '+new Date().toLocaleTimeString();
+      return;
+    }
+    let h=`<table>
+      <tr><th>ID</th><th>업체</th><th>HTML 품번</th><th>재질/두께/폭</th><th>LOT</th><th>중량</th><th>오류 메시지</th><th>작업</th></tr>`;
+    data.forEach(r=>{
+      const err=r.error_msg||'';
+      const hintMatch=err.match(/MES 유사품번: (.+)$/);
+      const hint=hintMatch?hintMatch[1]:'';
+      const mainErr=hintMatch?err.substring(0,err.indexOf('/ MES 유사품번:')):err;
+      h+=`<tr>
+        <td>${r.id}</td>
+        <td>${r.vendor_site_id||'-'}</td>
+        <td><b>${r.item_code||'-'}</b></td>
+        <td>${r.material_type||''} ${r.thickness||''}t x ${r.width_mm||''}W</td>
+        <td>${r.heat_no||'-'}</td>
+        <td>${r.net_weight||0}kg</td>
+        <td class="err">${mainErr}
+          ${hint?`<div class="hint">💡 ${hint.split(',').map(x=>`<span onclick="applyHint(${r.id},'${x.trim()}')" style="cursor:pointer;text-decoration:underline;margin-right:4px">${x.trim()}</span>`).join('')}</div>`:''}
+          <div class="edit-form" id="ef${r.id}">
+            <input type="text" id="nc${r.id}" placeholder="MES 실제 ITEM_CODE" value="${r.item_code||''}">
+            <button class="btn btn-sm btn-green" onclick="retry(${r.id})">✅ 재시도</button>
+            <button class="btn btn-sm btn-gray" onclick="toggleEdit(${r.id})">취소</button>
+          </div>
+        </td>
+        <td>
+          <button class="btn btn-sm btn-blue" onclick="toggleEdit(${r.id})">✏ 수정</button>
+          <button class="btn btn-sm btn-red" onclick="deleteRec(${r.id})" style="margin-top:2px">🗑 삭제</button>
+        </td>
+      </tr>`;
+    });
+    area.innerHTML=h+'</table>';
+    document.getElementById('lastUpdate').textContent='업데이트: '+new Date().toLocaleTimeString()+` (${data.length}건)`;
+  }catch(e){
+    area.innerHTML='<div class="empty err">오류 로드 실패: '+e.message+'</div>';
+  }
+}
+
+function toggleEdit(id){
+  const el=document.getElementById('ef'+id);
+  if(el)el.classList.toggle('on');
+}
+
+function applyHint(id,itemCode){
+  const inp=document.getElementById('nc'+id);
+  if(inp)inp.value=itemCode;
+  const ef=document.getElementById('ef'+id);
+  if(ef)ef.classList.add('on');
+}
+
+async function retry(id){
+  const newCode=document.getElementById('nc'+id).value.trim();
+  if(!newCode){showMsg('ITEM_CODE를 입력하세요',false);return}
+  try{
+    const r=await fetch(`${SB_URL}/rest/v1/raw_material_receipt?id=eq.${id}`,{
+      method:'PATCH',
+      headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Content-Type':'application/json','Prefer':'return=minimal'},
+      body:JSON.stringify({status:'pending',item_code:newCode,error_msg:null})
+    });
+    if(r.ok){
+      showMsg(`✅ ID ${id} → pending (code: ${newCode})`);
+      setTimeout(loadErrors,600);
+    }else{
+      showMsg('❌ 재시도 실패: '+r.status,false);
+    }
+  }catch(e){
+    showMsg('❌ '+e.message,false);
+  }
+}
+
+async function deleteRec(id){
+  if(!confirm(`ID ${id} 레코드를 삭제하시겠습니까?`))return;
+  try{
+    const r=await fetch(`${SB_URL}/rest/v1/raw_material_receipt?id=eq.${id}`,{
+      method:'DELETE',
+      headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY}
+    });
+    if(r.ok){
+      showMsg(`🗑 ID ${id} 삭제 완료`);
+      setTimeout(loadErrors,600);
+    }else{
+      showMsg('❌ 삭제 실패: '+r.status,false);
+    }
+  }catch(e){
+    showMsg('❌ '+e.message,false);
+  }
+}
+
+async function syncNow(){
+  if(!confirm('전체 pending 레코드를 즉시 동기화 실행하시겠습니까?'))return;
+  showMsg('⏳ 동기화 실행 중... (Python 콘솔 확인)');
+  try{
+    const r=await fetch(`${API_BASE}/sync_material_now`);
+    const d=await r.json();
+    if(d.success){
+      showMsg(`✅ ${d.message}`);
+      setTimeout(loadErrors,1500);
+    }else{
+      showMsg('❌ '+d.error,false);
+    }
+  }catch(e){
+    showMsg('❌ Python 서버 연결 실패: '+e.message+' (mes_monitor.py 실행 확인)',false);
+  }
+}
+
+loadErrors();
+setInterval(loadErrors,60000);  // 1분마다 자동 새로고침
+</script>
+</body>
+</html>
