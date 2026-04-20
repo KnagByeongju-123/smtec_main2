@@ -49,13 +49,20 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:#212121;pa
   <div class="card-tit">🔍 조회 조건</div>
   <div class="filter-row">
     <select id="rptCustomer" style="flex:1;min-width:100px"><option value="">전체 고객사</option></select>
-    <input type="number" id="rptWeeks" value="12" min="4" max="52" style="width:55px;text-align:center" title="주">
-    <span style="font-size:11px;color:#888">주</span>
+    <select id="rptInspLine" style="flex:1;min-width:100px"><option value="">전체 검사라인</option></select>
   </div>
   <div class="filter-row">
-    <select id="rptInspLine" style="flex:1;min-width:100px"><option value="">전체 검사라인</option></select>
-    <input type="number" id="rptTargetPpm" value="2000" min="0" style="width:70px;text-align:center" title="목표PPM">
-    <span style="font-size:11px;color:#888">목표PPM</span>
+    <input type="date" id="rptDateFrom" style="flex:1;min-width:110px">
+    <span style="font-size:12px;color:#888">~</span>
+    <input type="date" id="rptDateTo" style="flex:1;min-width:110px">
+    <input type="number" id="rptTargetPpm" value="2000" min="0" style="width:65px;text-align:center" title="목표PPM">
+    <span style="font-size:10px;color:#888">목표</span>
+  </div>
+  <div style="display:flex;gap:4px;margin-bottom:8px;flex-wrap:wrap">
+    <button class="btn btn-sm btn-gray" onclick="setRange('4w')" style="padding:5px 10px;font-size:11px">4주</button>
+    <button class="btn btn-sm btn-gray" onclick="setRange('12w')" style="padding:5px 10px;font-size:11px">12주</button>
+    <button class="btn btn-sm btn-gray" onclick="setRange('6m')" style="padding:5px 10px;font-size:11px">6개월</button>
+    <button class="btn btn-sm btn-gray" onclick="setRange('1y')" style="padding:5px 10px;font-size:11px">1년</button>
   </div>
   <div style="display:flex;gap:6px">
     <button class="btn btn-blue" onclick="loadReport()" style="flex:1">📊 조회</button>
@@ -91,6 +98,17 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:#212121;pa
   <div class="card-tit"><span>📋 주간 고객사별 PPM 추이</span><span style="font-size:10px;color:var(--gray)" id="dailyChartRange"></span></div>
   <div style="overflow-x:auto;-webkit-overflow-scrolling:touch"><canvas id="dailyChart" style="width:100%;min-width:700px;height:320px"></canvas></div>
   <div style="overflow-x:auto;margin-top:12px" id="dailyTableWrap"></div>
+</div>
+
+<!-- MES 불량 -->
+<div class="card" id="mesCard" style="display:none">
+  <div class="card-tit"><span>🏭 MES 불량</span><span style="font-size:10px;color:var(--gray)" id="mesRange"></span></div>
+  <div class="filter-row" style="margin-bottom:8px">
+    <input type="text" id="mesApiUrl" value="http://localhost:5100" placeholder="MES API URL" style="flex:1;min-width:140px;padding:8px;border:1.5px solid #ddd;border-radius:8px;font-size:12px">
+    <button class="btn btn-sm" onclick="loadMesData()" style="background:linear-gradient(135deg,#e65100,#ff9800);color:#fff;flex:0">🏭 MES 조회</button>
+  </div>
+  <div id="mesSummaryWrap"></div>
+  <div style="overflow-x:auto;margin-top:8px" id="mesTableWrap"></div>
 </div>
 
 <div class="loading hide" id="loadingOverlay"><div class="spinner"></div><p id="loadingText">로딩 중...</p></div>
@@ -141,16 +159,26 @@ function modelToCust(mn){
   return'미지정';
 }
 
+/* ===== 날짜 범위 단축 버튼 ===== */
+function setRange(preset){
+  const today=new Date();const fmt=d=>d.toISOString().split('T')[0];
+  const to=document.getElementById('rptDateTo'),from=document.getElementById('rptDateFrom');
+  to.value=fmt(today);
+  if(preset==='4w'){const d=new Date(today);d.setDate(d.getDate()-28);from.value=fmt(d)}
+  else if(preset==='12w'){const d=new Date(today);d.setDate(d.getDate()-84);from.value=fmt(d)}
+  else if(preset==='6m'){const d=new Date(today);d.setMonth(d.getMonth()-6);from.value=fmt(d)}
+  else if(preset==='1y'){const d=new Date(today);d.setFullYear(d.getFullYear()-1);from.value=fmt(d)}
+}
+
 /* ===== 주간보고서 로드 ===== */
 async function loadReport(){
-  const weeks=parseInt(document.getElementById('rptWeeks').value)||12;
   const custF=document.getElementById('rptCustomer').value;
   const inspF=document.getElementById('rptInspLine').value;
   const target=parseInt(document.getElementById('rptTargetPpm').value)||2000;
 
-  const today=new Date();
-  const from=new Date(today);from.setDate(from.getDate()-weeks*7);
-  const fromS=from.toISOString().split('T')[0],toS=today.toISOString().split('T')[0];
+  const fromS=document.getElementById('rptDateFrom').value;
+  const toS=document.getElementById('rptDateTo').value;
+  if(!fromS||!toS){showToast('날짜 범위를 선택하세요');return}
 
   showLoading('주간보고서 조회 중...');
   try{
@@ -237,7 +265,7 @@ async function loadReport(){
     renderDefectTop(tTop);
     renderDailyTable(daily,target);
 
-    ['summaryCard','processSummaryCard','defectTopCard','dailyCard'].forEach(id=>document.getElementById(id).style.display='block');
+    ['summaryCard','processSummaryCard','defectTopCard','dailyCard','mesCard'].forEach(id=>document.getElementById(id).style.display='block');
     showToast('📊 조회 완료');
   }catch(e){showToast('오류: '+e.message)}
   hideLoading();
@@ -470,24 +498,39 @@ function renderDailyTable(daily,target){
   sortedW.forEach(wk=>{h+='<th style="min-width:50px">'+wk+'</th>'});
   h+='</tr></thead><tbody>';
 
+  // 셀 표시: 검사수 있으면 PPM 표시(0 포함), 검사수 없으면 빈칸
+  function ppmCell(v,thr){
+    if(!v||v.i===0)return'<td></td>';
+    const p=Math.round(v.d/v.i*1e6);
+    return'<td style="font-weight:600;color:'+ppmColor(p,thr)+'">'+p.toLocaleString()+'</td>';
+  }
+
   custs.forEach(c=>{
     h+='<tr><td style="text-align:left;font-weight:700">'+c+'</td>';
     const ct=getCustTarget(c)||target;
     sortedW.forEach(wk=>{
-      const v=(wMap[wk]&&wMap[wk][c])?wMap[wk][c]:{i:0,d:0};
-      const p=v.i>0?Math.round(v.d/v.i*1e6):0;
-      h+='<td style="font-weight:600;color:'+ppmColor(p,ct)+'">'+p.toLocaleString()+'</td>';
+      const v=(wMap[wk]&&wMap[wk][c])?wMap[wk][c]:null;
+      h+=ppmCell(v,ct);
     });h+='</tr>';
   });
 
   // 크랙 행
   h+='<tr style="background:#f1f8e9"><td style="text-align:left;font-weight:700;color:#558b2f">크랙(ea)</td>';
-  sortedW.forEach(wk=>{const v=crackByWeek[wk]||0;h+='<td style="font-weight:700;color:'+(v>0?'#c62828':'#2e7d32')+'">'+v+'</td>'});
+  sortedW.forEach(wk=>{
+    const v=crackByWeek[wk];
+    if(v===undefined||v===null){h+='<td></td>'}
+    else{h+='<td style="font-weight:700;color:'+(v>0?'#c62828':'#2e7d32')+'">'+v+'</td>'}
+  });
   h+='</tr>';
 
   // 합계 행
   h+='<tr class="st-total"><td style="text-align:left">합계</td>';
-  sortedW.forEach(wk=>{let ti=0,td=0;custs.forEach(c=>{const v=(wMap[wk]&&wMap[wk][c])?wMap[wk][c]:{i:0,d:0};ti+=v.i;td+=v.d});const p=ti>0?Math.round(td/ti*1e6):0;h+='<td style="font-weight:800;color:'+ppmColor(p,target)+'">'+p.toLocaleString()+'</td>'});
+  sortedW.forEach(wk=>{
+    let ti=0,td=0,hasData=false;
+    custs.forEach(c=>{const v=(wMap[wk]&&wMap[wk][c]);if(v){ti+=v.i;td+=v.d;hasData=true}});
+    if(!hasData){h+='<td></td>'}
+    else{const p=ti>0?Math.round(td/ti*1e6):0;h+='<td style="font-weight:800;color:'+ppmColor(p,target)+'">'+p.toLocaleString()+'</td>'}
+  });
   h+='</tr></tbody></table>';
   el.innerHTML=h;
 }
@@ -536,8 +579,78 @@ function exportReport(){
   showToast('📥 엑셀 다운로드');
 }
 
+/* ===== MES 불량 조회 ===== */
+async function loadMesData(){
+  const fromS=document.getElementById('rptDateFrom').value;
+  const toS=document.getElementById('rptDateTo').value;
+  const apiBase=document.getElementById('mesApiUrl').value.replace(/\/$/,'');
+  if(!fromS||!toS){showToast('날짜 범위를 선택하세요');return}
+  if(!apiBase){showToast('MES API URL을 입력하세요');return}
+
+  showLoading('MES 불량 조회 중...');
+  document.getElementById('mesCard').style.display='block';
+  document.getElementById('mesRange').textContent=fromS+' ~ '+toS;
+
+  try{
+    const url=apiBase+'/api/lot_search?start='+fromS+'&end='+toS;
+    const res=await fetch(url);
+    if(!res.ok)throw new Error('MES API 오류: '+res.status);
+    const data=await res.json();
+    const rows=data.data||[];
+
+    // 집계: 생산수, 불량수(abnormal_shot), PPM
+    let totalShot=0,totalNormal=0,totalAbnormal=0;
+    const byItem={};
+    rows.forEach(r=>{
+      totalShot+=(r.shot_qty||0);
+      totalNormal+=(r.normal_shot||0);
+      totalAbnormal+=(r.abnormal_shot||0);
+      const key=(r.item_code||'')+'|'+(r.item_name||'');
+      if(!byItem[key])byItem[key]={code:r.item_code||'',name:r.item_name||'',shot:0,normal:0,abnormal:0};
+      byItem[key].shot+=(r.shot_qty||0);
+      byItem[key].normal+=(r.normal_shot||0);
+      byItem[key].abnormal+=(r.abnormal_shot||0);
+    });
+    const mesPpm=totalShot>0?Math.round(totalAbnormal/totalShot*1e6):0;
+
+    // 요약 카드
+    const sw=document.getElementById('mesSummaryWrap');
+    sw.innerHTML='<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:0;border:1.5px solid #ddd;border-radius:10px;overflow:hidden">'+
+      '<div style="padding:12px 6px;text-align:center;border-right:1px solid #eee"><div style="font-size:18px;font-weight:800;color:var(--primary)">'+totalShot.toLocaleString()+'</div><div style="font-size:9px;color:#888;margin-top:2px">생산수</div></div>'+
+      '<div style="padding:12px 6px;text-align:center;border-right:1px solid #eee"><div style="font-size:18px;font-weight:800;color:var(--ok)">'+totalNormal.toLocaleString()+'</div><div style="font-size:9px;color:#888;margin-top:2px">정상</div></div>'+
+      '<div style="padding:12px 6px;text-align:center;border-right:1px solid #eee"><div style="font-size:18px;font-weight:800;color:var(--red)">'+totalAbnormal.toLocaleString()+'</div><div style="font-size:9px;color:#888;margin-top:2px">불량수</div></div>'+
+      '<div style="padding:12px 6px;text-align:center;background:'+(mesPpm>600?'var(--red-light)':'var(--ok-light)')+'"><div style="font-size:18px;font-weight:800;color:'+(mesPpm>600?'var(--red)':'var(--ok)')+'">'+mesPpm.toLocaleString()+'</div><div style="font-size:9px;color:#888;margin-top:2px">PPM</div></div>'+
+      '</div>';
+
+    // 품목별 테이블
+    const items=Object.values(byItem).sort((a,b)=>b.abnormal-a.abnormal);
+    const tw=document.getElementById('mesTableWrap');
+    if(!items.length){tw.innerHTML='<div class="empty">MES 불량 데이터 없음</div>'}
+    else{
+      let h='<table class="stat-table"><thead><tr><th style="text-align:left">품목코드</th><th style="text-align:left">품명</th><th>생산수</th><th>불량수</th><th>PPM</th></tr></thead><tbody>';
+      items.forEach(it=>{
+        const p=it.shot>0?Math.round(it.abnormal/it.shot*1e6):0;
+        h+='<tr><td style="text-align:left;font-size:10px;font-family:monospace">'+it.code+'</td><td style="text-align:left;font-size:10px">'+it.name+'</td><td>'+it.shot.toLocaleString()+'</td><td style="color:var(--red);font-weight:700">'+(it.abnormal||'-')+'</td><td style="font-weight:700;color:'+ppmColor(p,600)+'">'+p.toLocaleString()+'</td></tr>';
+      });
+      h+='</tbody></table>';
+      tw.innerHTML=h;
+    }
+    showToast('🏭 MES '+rows.length+'건 조회');
+  }catch(e){
+    document.getElementById('mesSummaryWrap').innerHTML='<div class="empty" style="color:var(--red)">❌ '+e.message+'<br><span style="font-size:10px;color:#888">qc_monitor.exe 실행 중인지 확인하세요</span></div>';
+    document.getElementById('mesTableWrap').innerHTML='';
+  }
+  hideLoading();
+}
+
 /* ===== 초기화 ===== */
 async function init(){
+  // 날짜 기본값: 12주 전 ~ 오늘
+  const today=new Date();const fmt=d=>d.toISOString().split('T')[0];
+  document.getElementById('rptDateTo').value=fmt(today);
+  const from12=new Date(today);from12.setDate(from12.getDate()-84);
+  document.getElementById('rptDateFrom').value=fmt(from12);
+
   showLoading('마스터 로딩...');
   try{await loadMaster()}catch(e){console.log('마스터 로드 실패:',e)}
   hideLoading();
