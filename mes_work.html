@@ -327,7 +327,7 @@ tr.virt{background:rgba(167,139,250,.05)}tr.virt:hover{background:rgba(167,139,2
         <!-- 탭 -->
         <div class="dsum-tabs">
           <div class="dsum-tab active" id="tabTop5" onclick="dsumSwitch('top5')">📋 정지이력</div>
-          <div class="dsum-tab" id="tabTL" onclick="dsumSwitch('tl')">⏱ 24시간 타임라인</div>
+          <div class="dsum-tab" id="tabTL" onclick="dsumSwitch('tl')">⏱ 10시간 타임라인</div>
         </div>
         <!-- 바디 -->
         <div class="dsum-body" id="dsumBody">
@@ -1198,18 +1198,21 @@ function renderTimeline(list){
   var b=document.getElementById('dsumBody');
   if(!list.length){b.innerHTML='<div class="dsum-empty">이력 없음</div>';return}
   var now=new Date();
-  // 업무일 08:00 ~ 익일 08:00 을 타임라인의 0% ~ 100%에 매핑
+  var TL_HOURS=10; // 현재 시각 기준 과거 10시간
+  var totalMs=TL_HOURS*3600*1000;
+  // 업무일 기준 (HH:MM 파싱용)
   var workDate=getWorkDate();
   var dayStart=new Date(workDate.getFullYear(),workDate.getMonth(),workDate.getDate(),WORK_DAY_START_HOUR,0,0).getTime();
-  var totalMs=24*3600*1000;
-  var nowOffset=Math.min(100,Math.max(0,(now.getTime()-dayStart)/totalMs*100));
+  // 타임라인 윈도우: 현재 시각에서 과거 10시간
+  var winEnd=now.getTime();
+  var winStart=winEnd-totalMs;
+  var nowOffset=100; // 현재 시각은 맨 오른쪽
   // HH:MM 문자열을 업무일 ms로 변환 (08시 미만은 익일로 해석)
   function parseTime(v){
     if(!v)return dayStart;
     if(typeof v==='string'&&/^\d{1,2}:\d{2}$/.test(v)){
       var p=v.split(':');
       var hh=parseInt(p[0],10),mm=parseInt(p[1],10);
-      // 00:00~07:59 는 다음날로 해석
       var dayOffset=(hh<WORK_DAY_START_HOUR)?24*3600000:0;
       return dayStart+((hh-WORK_DAY_START_HOUR)*60+mm)*60000+dayOffset;
     }
@@ -1219,10 +1222,12 @@ function renderTimeline(list){
   var segs='';
   list.forEach(function(seg){
     var s=parseTime(seg.start),e=parseTime(seg.end);
-    if(s<dayStart)s=dayStart;
-    if(e>dayStart+totalMs)e=dayStart+totalMs;
+    // 윈도우로 클립
+    if(e<=winStart||s>=winEnd)return;
+    if(s<winStart)s=winStart;
+    if(e>winEnd)e=winEnd;
     if(e<=s)return;
-    var left=(s-dayStart)/totalMs*100;
+    var left=(s-winStart)/totalMs*100;
     var width=(e-s)/totalMs*100;
     var cls='ss';
     if(seg.status==='N')cls='sr';
@@ -1231,8 +1236,16 @@ function renderTimeline(list){
     segs+='<div class="dsum-tl-seg '+cls+'" style="left:'+left.toFixed(2)+'%;width:'+width.toFixed(2)+'%" title="'+title+'"></div>';
   });
   var html='<div class="dsum-tl">'+segs+'<div class="dsum-tl-now" style="left:'+nowOffset.toFixed(2)+'%"></div></div>';
-  // 축: 08시 -> 14시 -> 20시 -> 익일02시 -> 08시
-  html+='<div class="dsum-tl-axis"><span>08시</span><span>14시</span><span>20시</span><span>02시</span><span>08시</span></div>';
+  // 축: 10시간을 5구간으로 균등분할 (0, -7.5h, -5h, -2.5h, 현재)
+  function hmLabel(t){
+    var dt=new Date(t);
+    return String(dt.getHours()).padStart(2,'0')+':'+String(dt.getMinutes()).padStart(2,'0');
+  }
+  var axisLabels=[];
+  for(var i=0;i<=4;i++){
+    axisLabels.push(hmLabel(winStart+(totalMs*i/4)));
+  }
+  html+='<div class="dsum-tl-axis">'+axisLabels.map(function(l){return '<span>'+l+'</span>'}).join('')+'</div>';
   html+='<div class="dsum-tl-legend"><span class="dsum-tl-lgi"><span class="dsum-tl-lgd" style="background:#22c55e"></span>가동</span><span class="dsum-tl-lgi"><span class="dsum-tl-lgd" style="background:#ef4444"></span>비가동</span><span class="dsum-tl-lgi"><span class="dsum-tl-lgd" style="background:#a78bfa"></span>계획정지</span><span class="dsum-tl-lgi"><span class="dsum-tl-lgd" style="background:#fbbf24;width:2px"></span>현재</span></div>';
   b.innerHTML=html;
 }
