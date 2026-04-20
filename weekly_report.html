@@ -93,11 +93,13 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:#212121;pa
   <div id="defectTopWrap"></div>
 </div>
 
-<!-- 일별 상세 (차트 + 테이블) -->
+<!-- 일별 상세 (차트 + 테이블 동일 스크롤) -->
 <div class="card" id="dailyCard" style="display:none">
   <div class="card-tit"><span>📋 주간 고객사별 PPM 추이</span><span style="font-size:10px;color:var(--gray)" id="dailyChartRange"></span></div>
-  <div style="overflow-x:auto;-webkit-overflow-scrolling:touch"><canvas id="dailyChart" style="width:100%;min-width:700px;height:320px"></canvas></div>
-  <div style="overflow-x:auto;margin-top:12px" id="dailyTableWrap"></div>
+  <div style="overflow-x:auto;-webkit-overflow-scrolling:touch" id="dailyScrollWrap">
+    <div id="dailyChartWrap"><canvas id="dailyChart" style="height:320px"></canvas></div>
+    <div style="margin-top:12px" id="dailyTableWrap"></div>
+  </div>
 </div>
 
 <!-- MES 불량 -->
@@ -428,18 +430,44 @@ function renderDailyTable(daily,target){
     Object.values(d.custs||{}).forEach(cv=>{crackByWeek[wk]+=cv.crack||0});
   });
 
-  // --- 차트 (좌: PPM 라인, 우: 크랙 막대) ---
-  // 테이블과 동일한 폭: 구분열(80px) + 주차수 × 열폭(50px) + 여유
-  const colW=50,headW=80,extraW=20;
-  const tableW=headW+sortedW.length*colW+extraW;
-  const canvas=document.getElementById('dailyChart'),ctx=canvas.getContext('2d');
-  const dpr=window.devicePixelRatio||1;
-  const W=Math.max(700,tableW),H=320;
-  canvas.style.minWidth=W+'px';
-  canvas.width=W*dpr;canvas.height=H*dpr;canvas.style.width=W+'px';canvas.style.height=H+'px';ctx.scale(dpr,dpr);
+  // --- 테이블 먼저 렌더링 (실제 너비 측정용) ---
+  // 셀 표시: 검사수 있으면 PPM 표시(0 포함), 검사수 없으면 빈칸
+  function ppmCell(v,thr){
+    if(!v||v.i===0)return'<td></td>';
+    const p=Math.round(v.d/v.i*1e6);
+    return'<td style="font-weight:600;color:'+ppmColor(p,thr)+'">'+p.toLocaleString()+'</td>';
+  }
 
-  const colors=['#1565c0','#c62828','#2e7d32','#7b1fa2','#e65100','#00838f','#4e342e','#283593','#ad1457','#558b2f'];
-  const cCol={};custs.forEach((c,i)=>{cCol[c]=colors[i%colors.length]});
+  let h='<table class="stat-table" id="dailyPpmTable"><thead><tr><th style="text-align:left;min-width:80px">구분</th>';
+  sortedW.forEach(wk=>{h+='<th style="min-width:50px">'+wk+'</th>'});
+  h+='</tr></thead><tbody>';
+  custs.forEach(c=>{
+    h+='<tr><td style="text-align:left;font-weight:700">'+c+'</td>';
+    const ct=getCustTarget(c)||target;
+    sortedW.forEach(wk=>{const v=(wMap[wk]&&wMap[wk][c])?wMap[wk][c]:null;h+=ppmCell(v,ct)});
+    h+='</tr>';
+  });
+  h+='<tr style="background:#f1f8e9"><td style="text-align:left;font-weight:700;color:#558b2f">크랙(ea)</td>';
+  sortedW.forEach(wk=>{const v=crackByWeek[wk];if(v===undefined||v===null){h+='<td></td>'}else{h+='<td style="font-weight:700;color:'+(v>0?'#c62828':'#2e7d32')+'">'+v+'</td>'}});
+  h+='</tr>';
+  h+='<tr class="st-total"><td style="text-align:left">합계</td>';
+  sortedW.forEach(wk=>{let ti=0,td=0,hasData=false;custs.forEach(c=>{const v=(wMap[wk]&&wMap[wk][c]);if(v){ti+=v.i;td+=v.d;hasData=true}});if(!hasData){h+='<td></td>'}else{const p=ti>0?Math.round(td/ti*1e6):0;h+='<td style="font-weight:800;color:'+ppmColor(p,target)+'">'+p.toLocaleString()+'</td>'}});
+  h+='</tr></tbody></table>';
+  el.innerHTML=h;
+
+  // --- 테이블 실제 너비 측정 후 차트 그리기 ---
+  requestAnimationFrame(()=>{
+    const tbl=document.getElementById('dailyPpmTable');
+    const W=tbl?tbl.offsetWidth:Math.max(700,sortedW.length*55+100);
+    const H=320;
+    const canvas=document.getElementById('dailyChart'),ctx=canvas.getContext('2d');
+    const wrap=document.getElementById('dailyChartWrap');
+    if(wrap)wrap.style.width=W+'px';
+    const dpr=window.devicePixelRatio||1;
+    canvas.width=W*dpr;canvas.height=H*dpr;canvas.style.width=W+'px';canvas.style.height=H+'px';ctx.scale(dpr,dpr);
+
+    const colors=['#1565c0','#c62828','#2e7d32','#7b1fa2','#e65100','#00838f','#4e342e','#283593','#ad1457','#558b2f'];
+    const cCol={};custs.forEach((c,i)=>{cCol[c]=colors[i%colors.length]});
 
   // PPM 데이터
   const pD={};custs.forEach(c=>{pD[c]=[]});
@@ -505,47 +533,7 @@ function renderDailyTable(daily,target){
   // 크랙 범례
   ctx.fillStyle='#8bc34a';ctx.fillRect(lx,6,10,10);ctx.fillStyle='#333';ctx.fillText('크랙(우축)',lx+13,15);
 
-  // --- 하단 테이블: 주차별 고객사 PPM + 크랙 ---
-  if(!sortedW.length){el.innerHTML='<div class="empty">없음</div>';return}
-  let h='<table class="stat-table"><thead><tr><th style="text-align:left;min-width:80px">구분</th>';
-  sortedW.forEach(wk=>{h+='<th style="min-width:50px">'+wk+'</th>'});
-  h+='</tr></thead><tbody>';
-
-  // 셀 표시: 검사수 있으면 PPM 표시(0 포함), 검사수 없으면 빈칸
-  function ppmCell(v,thr){
-    if(!v||v.i===0)return'<td></td>';
-    const p=Math.round(v.d/v.i*1e6);
-    return'<td style="font-weight:600;color:'+ppmColor(p,thr)+'">'+p.toLocaleString()+'</td>';
-  }
-
-  custs.forEach(c=>{
-    h+='<tr><td style="text-align:left;font-weight:700">'+c+'</td>';
-    const ct=getCustTarget(c)||target;
-    sortedW.forEach(wk=>{
-      const v=(wMap[wk]&&wMap[wk][c])?wMap[wk][c]:null;
-      h+=ppmCell(v,ct);
-    });h+='</tr>';
-  });
-
-  // 크랙 행
-  h+='<tr style="background:#f1f8e9"><td style="text-align:left;font-weight:700;color:#558b2f">크랙(ea)</td>';
-  sortedW.forEach(wk=>{
-    const v=crackByWeek[wk];
-    if(v===undefined||v===null){h+='<td></td>'}
-    else{h+='<td style="font-weight:700;color:'+(v>0?'#c62828':'#2e7d32')+'">'+v+'</td>'}
-  });
-  h+='</tr>';
-
-  // 합계 행
-  h+='<tr class="st-total"><td style="text-align:left">합계</td>';
-  sortedW.forEach(wk=>{
-    let ti=0,td=0,hasData=false;
-    custs.forEach(c=>{const v=(wMap[wk]&&wMap[wk][c]);if(v){ti+=v.i;td+=v.d;hasData=true}});
-    if(!hasData){h+='<td></td>'}
-    else{const p=ti>0?Math.round(td/ti*1e6):0;h+='<td style="font-weight:800;color:'+ppmColor(p,target)+'">'+p.toLocaleString()+'</td>'}
-  });
-  h+='</tr></tbody></table>';
-  el.innerHTML=h;
+  }); // requestAnimationFrame 닫기
 }
 
 /* ===== 엑셀 ===== */
