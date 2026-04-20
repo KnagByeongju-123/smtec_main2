@@ -80,15 +80,11 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:#212121;pa
   <div style="overflow-x:auto;-webkit-overflow-scrolling:touch"><canvas id="ppmChart" style="width:100%;min-width:600px;height:280px"></canvas></div>
 </div>
 
-<!-- PPM 테이블 -->
-<div class="card" id="ppmTableCard" style="display:none">
-  <div class="card-tit">📋 주간 고객사별 PPM</div>
-  <div style="overflow-x:auto;-webkit-overflow-scrolling:touch" id="ppmTableWrap"></div>
-</div>
-
-<!-- 공정불량 요약 -->
+<!-- 공정불량 요약 (고객사별 PPM 테이블 포함) -->
 <div class="card" id="processSummaryCard" style="display:none">
   <div class="card-tit"><span>🏭 주간 공정불량 요약</span><span style="font-size:10px;color:var(--gray)" id="processRange"></span></div>
+  <div id="ppmTableWrap" style="margin-bottom:16px"></div>
+  <div style="height:1px;background:#ccc;margin:12px 0"></div>
   <div id="processSummaryWrap"></div>
 </div>
 
@@ -98,10 +94,11 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:#212121;pa
   <div id="defectTopWrap"></div>
 </div>
 
-<!-- 일별 상세 -->
+<!-- 일별 상세 (차트 + 테이블) -->
 <div class="card" id="dailyCard" style="display:none">
-  <div class="card-tit">📋 일별 추이</div>
-  <div style="overflow-x:auto" id="dailyTableWrap"></div>
+  <div class="card-tit"><span>📋 주간 고객사별 PPM 추이</span><span style="font-size:10px;color:var(--gray)" id="dailyChartRange"></span></div>
+  <div style="overflow-x:auto;-webkit-overflow-scrolling:touch"><canvas id="dailyChart" style="width:100%;min-width:700px;height:320px"></canvas></div>
+  <div style="overflow-x:auto;margin-top:12px" id="dailyTableWrap"></div>
 </div>
 
 <div class="loading hide" id="loadingOverlay"><div class="spinner"></div><p id="loadingText">로딩 중...</p></div>
@@ -208,9 +205,16 @@ async function loadReport(){
     const daily={};
     rows.forEach(r=>{
       const dt=r.defect_date;if(!dt)return;
-      if(!daily[dt])daily[dt]={i:0,d:0,types:{}};
+      if(!daily[dt])daily[dt]={i:0,d:0,types:{},custs:{}};
+      const c=modelToCust(r.model_name);
+      if(!daily[dt].custs[c])daily[dt].custs[c]={i:0,d:0,crack:0};
+      daily[dt].custs[c].i+=(r.inspect_qty||0);
       daily[dt].i+=(r.inspect_qty||0);
-      if(r.defect_type&&r.defect_type!=='양품'){daily[dt].d+=(r.qty||0);const t=r.defect_type;daily[dt].types[t]=(daily[dt].types[t]||0)+(r.qty||0)}
+      if(r.defect_type&&r.defect_type!=='양품'){
+        daily[dt].d+=(r.qty||0);daily[dt].custs[c].d+=(r.qty||0);
+        const t=r.defect_type;daily[dt].types[t]=(daily[dt].types[t]||0)+(r.qty||0);
+        if(/크랙|crack/i.test(t))daily[dt].custs[c].crack+=(r.qty||0);
+      }
     });
 
     reportData={wMap,sortedW,custs,mSum,tTop,rows,thisWk,fromS,toS,target,daily};
@@ -230,7 +234,7 @@ async function loadReport(){
     renderDefectTop(tTop);
     renderDailyTable(daily,target);
 
-    ['summaryCard','chartCard','ppmTableCard','processSummaryCard','defectTopCard','dailyCard'].forEach(id=>document.getElementById(id).style.display='block');
+    ['summaryCard','chartCard','processSummaryCard','defectTopCard','dailyCard'].forEach(id=>document.getElementById(id).style.display='block');
     showToast('📊 조회 완료');
   }catch(e){showToast('오류: '+e.message)}
   hideLoading();
@@ -294,23 +298,40 @@ function renderChart(wMap,weeks,custs,target){
 }
 
 /* ===== PPM 테이블 ===== */
+// 고객사별 목표PPM
+const CUST_TARGET_PPM={
+  '세동산업':300,'세풍':300,
+  '일진글로벌':1000,'일진':1000,
+  'SKF씰':600,'SKF':600,
+  'SBC':2000,'태진레이스웨이':2000,'태진':2000,
+  '진양오일씰':1000,'진양':1000
+};
+function getCustTarget(c){
+  if(CUST_TARGET_PPM[c])return CUST_TARGET_PPM[c];
+  for(const[k,v]of Object.entries(CUST_TARGET_PPM)){if(c.includes(k)||k.includes(c))return v}
+  return null;
+}
+
 function renderPpmTable(wMap,weeks,custs,target){
   const el=document.getElementById('ppmTableWrap');
   if(!weeks.length){el.innerHTML='<div class="empty">없음</div>';return}
-  let h='<table class="stat-table"><thead><tr><th style="text-align:left;min-width:70px">구분</th>';
+  let h='<table class="stat-table"><thead><tr><th style="text-align:left;min-width:70px">구분</th><th style="min-width:55px;background:#fff3e0">목표</th>';
   weeks.forEach(wk=>{h+='<th style="min-width:50px">'+wk+'</th>'});
   h+='</tr></thead><tbody>';
 
   custs.forEach(c=>{
+    const ct=getCustTarget(c);
     h+='<tr><td style="text-align:left;font-weight:700">'+c+'</td>';
+    h+='<td style="font-weight:700;color:var(--warn);background:#fff8f0">'+(ct?ct.toLocaleString():'-')+'</td>';
     weeks.forEach(wk=>{
       const v=(wMap[wk]&&wMap[wk][c])?wMap[wk][c]:{i:0,d:0};
       const p=v.i>0?Math.round(v.d/v.i*1e6):0;
-      h+='<td style="font-weight:600;color:'+ppmColor(p,target)+'">'+p.toLocaleString()+'</td>';
+      const thr=ct||target;
+      h+='<td style="font-weight:600;color:'+ppmColor(p,thr)+'">'+p.toLocaleString()+'</td>';
     });h+='</tr>';
   });
 
-  h+='<tr class="st-total"><td style="text-align:left">합계</td>';
+  h+='<tr class="st-total"><td style="text-align:left">합계</td><td style="background:#fff8f0">-</td>';
   weeks.forEach(wk=>{let ti=0,td=0;custs.forEach(c=>{const v=(wMap[wk]&&wMap[wk][c])?wMap[wk][c]:{i:0,d:0};ti+=v.i;td+=v.d});const p=ti>0?Math.round(td/ti*1e6):0;h+='<td style="font-weight:800;color:'+ppmColor(p,target)+'">'+p.toLocaleString()+'</td>'});
   h+='</tr></tbody></table>';
   el.innerHTML=h;
@@ -424,19 +445,120 @@ function renderDefectTop(tTop){
   }).join('');
 }
 
-/* ===== 일별 추이 ===== */
+/* ===== 일별 추이 = 주차별 고객사 PPM 차트 + 데이터 테이블 ===== */
 function renderDailyTable(daily,target){
+  if(!reportData)return;
+  const{wMap,sortedW,custs}=reportData;
   const el=document.getElementById('dailyTableWrap');
-  const dates=Object.keys(daily).sort().reverse().slice(0,30);
-  if(!dates.length){el.innerHTML='<div class="empty">없음</div>';return}
-  let h='<table class="stat-table"><thead><tr><th>일자</th><th>검사수</th><th>불량수</th><th>PPM</th><th>주요 불량</th></tr></thead><tbody>';
-  dates.forEach(dt=>{
-    const d=daily[dt],p=d.i>0?Math.round(d.d/d.i*1e6):0;
-    const top=Object.entries(d.types).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([n,q])=>n+':'+q).join(', ');
-    h+='<tr><td style="font-weight:600;white-space:nowrap">'+dt+'</td><td>'+d.i.toLocaleString()+'</td><td style="color:var(--red);font-weight:700">'+d.d.toLocaleString()+'</td><td style="font-weight:700;color:'+ppmColor(p,target)+'">'+p.toLocaleString()+'</td><td style="font-size:10px;color:#555">'+(top||'-')+'</td></tr>';
+  const rangeEl=document.getElementById('dailyChartRange');
+  if(sortedW.length)rangeEl.textContent=sortedW[0]+' ~ '+sortedW[sortedW.length-1];
+
+  // --- 주차별 크랙 수량 집계 ---
+  const crackByWeek={};
+  Object.entries(daily).forEach(([dt,d])=>{
+    const wk=weekKey(dt);
+    if(!crackByWeek[wk])crackByWeek[wk]=0;
+    Object.values(d.custs||{}).forEach(cv=>{crackByWeek[wk]+=cv.crack||0});
   });
-  h+='</tbody></table>';
-  if(Object.keys(daily).length>30)h+='<div style="text-align:center;font-size:10px;color:#888;margin-top:4px">최근 30일 (전체 '+Object.keys(daily).length+'일)</div>';
+
+  // --- 차트 (좌: PPM 라인, 우: 크랙 막대) ---
+  const canvas=document.getElementById('dailyChart'),ctx=canvas.getContext('2d');
+  const dpr=window.devicePixelRatio||1;
+  const W=Math.max(700,canvas.parentElement.offsetWidth-10),H=320;
+  canvas.width=W*dpr;canvas.height=H*dpr;canvas.style.width=W+'px';canvas.style.height=H+'px';ctx.scale(dpr,dpr);
+
+  const colors=['#1565c0','#c62828','#2e7d32','#7b1fa2','#e65100','#00838f','#4e342e','#283593','#ad1457','#558b2f'];
+  const cCol={};custs.forEach((c,i)=>{cCol[c]=colors[i%colors.length]});
+
+  // PPM 데이터
+  const pD={};custs.forEach(c=>{pD[c]=[]});
+  let mxP=0;
+  sortedW.forEach(wk=>{custs.forEach(c=>{const v=(wMap[wk]&&wMap[wk][c])?wMap[wk][c]:{i:0,d:0};const p=v.i>0?Math.round(v.d/v.i*1e6):0;pD[c].push(p);if(p>mxP)mxP=p})});
+  mxP=Math.max(mxP,2000);const yML=Math.ceil(mxP/1000)*1000;
+
+  // 크랙 데이터
+  const crackData=sortedW.map(wk=>crackByWeek[wk]||0);
+  let mxC=Math.max(...crackData,1);const yMR=Math.ceil(mxC/1)*1+1;
+
+  // 레이아웃
+  const pad={t:35,r:50,b:55,l:55},pw=W-pad.l-pad.r,ph=H-pad.t-pad.b;
+  ctx.clearRect(0,0,W,H);ctx.fillStyle='#fff';ctx.fillRect(0,0,W,H);
+
+  // 목표선 (최대 목표)
+  const maxTarget=Math.max(...custs.map(c=>getCustTarget(c)||target));
+  const tgtY=pad.t+ph-(maxTarget/yML)*ph;
+  ctx.strokeStyle='#ef5350';ctx.lineWidth=1;ctx.setLineDash([6,4]);
+  ctx.beginPath();ctx.moveTo(pad.l,tgtY);ctx.lineTo(pad.l+pw,tgtY);ctx.stroke();ctx.setLineDash([]);
+  ctx.fillStyle='#ef5350';ctx.font='9px "Noto Sans KR"';ctx.textAlign='left';ctx.fillText('목표 '+maxTarget.toLocaleString(),pad.l+2,tgtY-4);
+
+  // Y좌축 그리드 (PPM)
+  ctx.strokeStyle='#e0e0e0';ctx.lineWidth=.5;ctx.font='10px "Noto Sans KR"';ctx.fillStyle='#888';ctx.textAlign='right';
+  for(let i=0;i<=5;i++){const y=pad.t+ph-(i/5)*ph,v=Math.round(i/5*yML);ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(pad.l+pw,y);ctx.stroke();ctx.fillText(v.toLocaleString(),pad.l-6,y+3)}
+  ctx.save();ctx.translate(12,pad.t+ph/2);ctx.rotate(-Math.PI/2);ctx.fillStyle='#1565c0';ctx.font='bold 11px "Noto Sans KR"';ctx.textAlign='center';ctx.fillText('공정불량률(PPM)',0,0);ctx.restore();
+
+  // Y우축 (크랙)
+  ctx.textAlign='left';ctx.fillStyle='#666';ctx.font='10px "Noto Sans KR"';
+  for(let i=0;i<=yMR;i++){const y=pad.t+ph-(i/yMR)*ph;ctx.fillText(i,pad.l+pw+6,y+3)}
+  ctx.save();ctx.translate(W-8,pad.t+ph/2);ctx.rotate(Math.PI/2);ctx.fillStyle='#666';ctx.font='bold 11px "Noto Sans KR"';ctx.textAlign='center';ctx.fillText('크랙불량수(ea)',0,0);ctx.restore();
+
+  // X축
+  ctx.textAlign='center';ctx.fillStyle='#555';ctx.font='10px "Noto Sans KR"';
+  const xS=sortedW.length>1?pw/(sortedW.length-1):pw;
+  const barW=Math.min(xS*0.3,20);
+  sortedW.forEach((wk,i)=>{const x=pad.l+(sortedW.length>1?i*xS:pw/2);ctx.save();ctx.translate(x,pad.t+ph+14);ctx.rotate(-Math.PI/6);ctx.fillText(wk,0,0);ctx.restore()});
+
+  // 크랙 막대 (먼저 그려서 라인 뒤에 깔림)
+  ctx.globalAlpha=0.6;
+  sortedW.forEach((wk,i)=>{
+    const x=pad.l+(sortedW.length>1?i*xS:pw/2);
+    const v=crackData[i];
+    const bh=(v/yMR)*ph;
+    ctx.fillStyle='#8bc34a';
+    ctx.fillRect(x-barW/2,pad.t+ph-bh,barW,bh);
+    // 막대 위 숫자
+    if(v>0){ctx.fillStyle='#555';ctx.font='bold 10px "Noto Sans KR"';ctx.textAlign='center';ctx.fillText(v,x,pad.t+ph-bh-4)}
+  });
+  ctx.globalAlpha=1;
+
+  // PPM 라인
+  custs.forEach(c=>{
+    ctx.strokeStyle=cCol[c];ctx.lineWidth=2;ctx.beginPath();
+    pD[c].forEach((p,i)=>{const x=pad.l+(sortedW.length>1?i*xS:pw/2),y=pad.t+ph-(p/yML)*ph;i===0?ctx.moveTo(x,y):ctx.lineTo(x,y)});
+    ctx.stroke();
+    pD[c].forEach((p,i)=>{if(p>0){const x=pad.l+(sortedW.length>1?i*xS:pw/2),y=pad.t+ph-(p/yML)*ph;ctx.fillStyle=cCol[c];ctx.beginPath();ctx.arc(x,y,3.5,0,Math.PI*2);ctx.fill()}});
+  });
+
+  // 범례
+  let lx=pad.l;ctx.font='10px "Noto Sans KR"';
+  custs.forEach(c=>{ctx.fillStyle=cCol[c];ctx.fillRect(lx,6,10,10);ctx.fillStyle='#333';ctx.textAlign='left';ctx.fillText(c,lx+13,15);lx+=ctx.measureText(c).width+24});
+  // 크랙 범례
+  ctx.fillStyle='#8bc34a';ctx.fillRect(lx,6,10,10);ctx.fillStyle='#333';ctx.fillText('크랙(우축)',lx+13,15);
+
+  // --- 하단 테이블: 주차별 고객사 PPM + 크랙 ---
+  if(!sortedW.length){el.innerHTML='<div class="empty">없음</div>';return}
+  let h='<table class="stat-table"><thead><tr><th style="text-align:left;min-width:80px">구분</th>';
+  sortedW.forEach(wk=>{h+='<th style="min-width:50px">'+wk+'</th>'});
+  h+='</tr></thead><tbody>';
+
+  custs.forEach(c=>{
+    h+='<tr><td style="text-align:left;font-weight:700">'+c+'</td>';
+    const ct=getCustTarget(c)||target;
+    sortedW.forEach(wk=>{
+      const v=(wMap[wk]&&wMap[wk][c])?wMap[wk][c]:{i:0,d:0};
+      const p=v.i>0?Math.round(v.d/v.i*1e6):0;
+      h+='<td style="font-weight:600;color:'+ppmColor(p,ct)+'">'+p.toLocaleString()+'</td>';
+    });h+='</tr>';
+  });
+
+  // 크랙 행
+  h+='<tr style="background:#f1f8e9"><td style="text-align:left;font-weight:700;color:#558b2f">크랙(ea)</td>';
+  sortedW.forEach(wk=>{const v=crackByWeek[wk]||0;h+='<td style="font-weight:700;color:'+(v>0?'#c62828':'#2e7d32')+'">'+v+'</td>'});
+  h+='</tr>';
+
+  // 합계 행
+  h+='<tr class="st-total"><td style="text-align:left">합계</td>';
+  sortedW.forEach(wk=>{let ti=0,td=0;custs.forEach(c=>{const v=(wMap[wk]&&wMap[wk][c])?wMap[wk][c]:{i:0,d:0};ti+=v.i;td+=v.d});const p=ti>0?Math.round(td/ti*1e6):0;h+='<td style="font-weight:800;color:'+ppmColor(p,target)+'">'+p.toLocaleString()+'</td>'});
+  h+='</tr></tbody></table>';
   el.innerHTML=h;
 }
 
