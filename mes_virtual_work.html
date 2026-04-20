@@ -1517,8 +1517,122 @@ function pickWorkOrder(idx){
     }
   }
   renderVirtDashboard();
-  document.getElementById('statusBar').innerHTML='✅ W/O <b>'+_esc(w.work_order_no)+'</b> 적용 · '+_esc(w.item_name||'');
+  document.getElementById('statusBar').innerHTML='✅ W/O <b>'+_esc(w.work_order_no)+'</b> 적용 · '+_esc(w.item_name||'')+' · ⏳ 소재 조회중...';
   showToast('✅ 작업지시서 적용: '+w.work_order_no);
+  // 품번으로 사용 가능한 소재 로트 자동 매칭
+  autoMatchLotByItem(w.item_code);
+}
+
+// 품번으로 사용가능 소재 로트 자동 조회/매칭
+async function autoMatchLotByItem(itemCode){
+  if(!itemCode)return;
+  try{
+    // 1) 전체 입고로트 조회 (캐시 활용)
+    if(!lotListCache){
+      try{
+        var r=await fetch('/api/mes/available_lots');
+        lotListCache=r.ok?(await r.json()).lots:[];
+      }catch(e){lotListCache=[]}
+    }
+    if(!lotListCache||!lotListCache.length){
+      document.getElementById('statusBar').innerHTML+=' · ⚠️ 소재 없음';
+      return;
+    }
+    // 2) 품번→BOM 역조회하여 해당 품번에 사용되는 소재코드 리스트 확보
+    var matchedRawCodes=[];
+    try{
+      var r2=await fetch('/api/mes/raws_by_item?item_code='+encodeURIComponent(itemCode));
+      if(r2.ok){
+        var d=await r2.json();
+        if(d.raw_codes)matchedRawCodes=d.raw_codes;
+      }
+    }catch(e){}
+    // 3) 역조회 API가 없으면 전체 로트를 순회하며 BOM으로 매칭 (fallback)
+    var candidates=[];
+    if(matchedRawCodes.length){
+      candidates=lotListCache.filter(function(l){
+        return matchedRawCodes.indexOf(l.raw_code)>=0 && l.remain_weight>0;
+      });
+    }else{
+      // fallback: 각 소재코드별로 BOM 체크 (최대 50개까지만)
+      var rawCodeSet={};
+      lotListCache.forEach(function(l){if(l.remain_weight>0)rawCodeSet[l.raw_code]=1});
+      var rawCodes=Object.keys(rawCodeSet).slice(0,50);
+      var bomChecks=await Promise.all(rawCodes.map(function(rc){
+        return fetch('/api/mes/bom_by_raw?raw_code='+encodeURIComponent(rc))
+          .then(function(x){return x.ok?x.json():null})
+          .then(function(d){
+            if(!d||!d.items)return null;
+            var hit=d.items.some(function(it){return it.item_code===itemCode});
+            return hit?rc:null;
+          })
+          .catch(function(){return null});
+      }));
+      var hitCodes=bomChecks.filter(function(x){return x});
+      candidates=lotListCache.filter(function(l){
+        return hitCodes.indexOf(l.raw_code)>=0 && l.remain_weight>0;
+      });
+    }
+    if(!candidates.length){
+      document.getElementById('statusBar').innerHTML=document.getElementById('statusBar').innerHTML.replace(' · ⏳ 소재 조회중...','')+' · ⚠️ 매칭 소재 없음';
+      showToast('⚠️ 품번에 매칭되는 소재 없음 - 수동 선택');
+      return;
+    }
+    // 4) 후보가 1개면 자동 적용, 여러개면 선택 모달
+    if(candidates.length===1){
+      applyLotAutomatically(candidates[0]);
+    }else{
+      // 잔량 많은 순 정렬
+      candidates.sort(function(a,b){return b.remain_weight-a.remain_weight});
+      openLotCandidatesPicker(candidates,itemCode);
+    }
+  }catch(e){
+    console.error('소재 자동매칭 실패:',e);
+    document.getElementById('statusBar').innerHTML=document.getElementById('statusBar').innerHTML.replace(' · ⏳ 소재 조회중...','');
+  }
+}
+
+function applyLotAutomatically(lot){
+  var v=state.virtManual;
+  v.raw_item_code=lot.raw_code;
+  v.lot_no=lot.heat_no;
+  state.virtLotInfo={
+    receipt_no:lot.receipt_no, receipt_seq:lot.receipt_seq, receipt_date:lot.receipt_date,
+    vendor:lot.vendor, net_weight:lot.net_weight, used_weight:lot.used_weight,
+    remain_weight:lot.remain_weight, raw_spec:lot.raw_spec, heat_no:lot.heat_no
+  };
+  // BOM 정보도 함께 가져와서 virtBomInfo 업데이트
+  fetch('/api/mes/bom_by_raw?raw_code='+encodeURIComponent(lot.raw_code))
+    .then(function(r){return r.ok?r.json():null})
+    .then(function(d){
+      if(d&&d.items){
+        var match=d.items.filter(function(it){return it.item_code===v.item_code})[0]||d.items[0];
+        if(match){
+          if(match.molds&&match.molds.length&&!v.mold_code)v.mold_code=match.molds[0].mold_code||'';
+          if(match.spm&&!v.spm){v.spm=String(match.spm);v.ct=(60/match.spm).toFixed(2)}
+          state.virtBomInfo=Object.assign(state.virtBomInfo||{},{
+            unit_per_qty:match.unit_per_qty, cavity_qty:match.cavity_qty,
+            packing_qty:match.packing_qty, thickness:match.thickness,
+            width:match.width, material_type:match.material_type
+          });
+        }
+      }
+      renderVirtDashboard();
+      var l1='✅ <b>'+_esc(v.item_code)+'</b> · '+_esc(v.item_name||'');
+      var l2='<div style="font-size:10px;color:#a5b4fc;margin-top:2px">🔖 '+_esc(lot.heat_no||'')+(lot.vendor?' · '+_esc(lot.vendor):'')+' · 잔량 '+lot.remain_weight.toFixed(1)+'kg</div>';
+      document.getElementById('statusBar').innerHTML=l1+l2;
+      showToast('✅ W/O·소재 자동연결: '+lot.heat_no);
+    });
+}
+
+function openLotCandidatesPicker(candidates,itemCode){
+  // 기존 rawPicker 모달 재사용
+  document.getElementById('rawPickerModal').classList.add('show');
+  document.getElementById('rawPickerSearch').value='';
+  var sb=document.getElementById('statusBar');
+  sb.innerHTML=sb.innerHTML.replace(' · ⏳ 소재 조회중...','')+' · 🎯 <b>'+candidates.length+'</b>개 소재 후보';
+  renderRawList(candidates);
+  showToast('🎯 '+itemCode+' 매칭 소재 '+candidates.length+'건');
 }
 
 // ========== 입고로트 선택 ==========
