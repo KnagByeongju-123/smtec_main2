@@ -132,6 +132,11 @@
 
     /* Check items */
     .check-list { display: flex; flex-direction: column; gap: 6px; }
+
+    /* 설비 메이커 그룹 펼침 메뉴 */
+    details.machine-group > summary { list-style: none; }
+    details.machine-group > summary::-webkit-details-marker { display: none; }
+    details.machine-group > summary::marker { display: none; content: ''; }
     .check-item {
       display: flex;
       align-items: center;
@@ -732,6 +737,17 @@
 ALTER TABLE p_machine_check ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "anon_all" ON p_machine_check;
 CREATE POLICY "anon_all" ON p_machine_check
+  FOR ALL TO anon USING (true) WITH CHECK (true);
+
+-- 설비 메이커별 펼침/접힘 상태 저장 테이블
+CREATE TABLE IF NOT EXISTS p_machine_group_state (
+  maker text primary key,
+  is_open boolean default false,
+  updated_at timestamptz default now()
+);
+ALTER TABLE p_machine_group_state ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "anon_all" ON p_machine_group_state;
+CREATE POLICY "anon_all" ON p_machine_group_state
   FOR ALL TO anon USING (true) WITH CHECK (true);</pre></details>
 
   <!-- 10. 서버에 저장 -->
@@ -1222,6 +1238,7 @@ async function loadListFromServer(codeGroup) {
     } else if (codeGroup === 'p_machine') {
       _machineCache = list;
       if (!list.length) await initMachinesOnServer();
+      await loadMachineGroupStateFromServer();
     }
   } catch(e) { console.log(codeGroup + ' 로드 실패:', e); }
   renderInspectorSelect();
@@ -1343,14 +1360,23 @@ function renderMachineListUI() {
     byMaker[k].push(x);
   });
 
+  // 검색 중이면 무조건 펼침, 아니면 저장된 상태 사용
+  const isSearching = !!search;
+  const groupState = _machineGroupState || {};
+
   let html = '';
   Object.keys(byMaker).sort().forEach(maker => {
     const items = byMaker[maker].sort((a,b) => (parseInt(a.ho)||0) - (parseInt(b.ho)||0));
-    html += `<div style="margin-bottom:8px">
-      <div style="display:flex;align-items:center;gap:6px;padding:6px 10px;background:rgba(56,189,248,.1);border-radius:6px;margin-bottom:4px">
+    // 저장된 상태: true=펼침, false=접힘, undefined=기본(접힘)
+    const isOpen = isSearching ? true : (groupState[maker] === true);
+    const openAttr = isOpen ? ' open' : '';
+    html += `<details class="machine-group"${openAttr} data-maker="${escapeHtml(maker)}" style="margin-bottom:8px">
+      <summary style="cursor:pointer;list-style:none;display:flex;align-items:center;gap:6px;padding:8px 10px;background:rgba(56,189,248,.1);border-radius:6px;user-select:none">
+        <span class="machine-group-arrow" style="font-size:11px;color:var(--accent);transition:transform .2s;display:inline-block;width:12px;text-align:center">▶</span>
         <span style="font-size:13px;font-weight:700;color:var(--accent)">🏭 ${escapeHtml(maker)}</span>
         <span style="font-size:11px;color:var(--text3);font-weight:400">(${items.length}대)</span>
-      </div>`;
+      </summary>
+      <div style="margin-top:4px">`;
     items.forEach(x => {
       const origIdx = x.origIdx;
       html += `<div class="stg-list-item" style="padding:7px 10px">
@@ -1361,9 +1387,60 @@ function renderMachineListUI() {
         <button class="stg-del" onclick="removeItem('p_machine',${origIdx})" title="삭제">✕</button>
       </div>`;
     });
-    html += '</div>';
+    html += '</div></details>';
   });
   c.innerHTML = html;
+
+  // details 토글 이벤트 바인딩 (검색중이 아닐때만 서버 저장)
+  c.querySelectorAll('details.machine-group').forEach(det => {
+    det.addEventListener('toggle', function() {
+      const arrow = this.querySelector('.machine-group-arrow');
+      if (arrow) arrow.style.transform = this.open ? 'rotate(90deg)' : 'rotate(0deg)';
+      if (isSearching) return; // 검색중에는 상태 저장 안함
+      const maker = this.dataset.maker;
+      _machineGroupState = _machineGroupState || {};
+      _machineGroupState[maker] = this.open;
+      saveMachineGroupStateToServer(maker, this.open);
+    });
+    // 초기 화살표 상태
+    const arrow = det.querySelector('.machine-group-arrow');
+    if (arrow) arrow.style.transform = det.open ? 'rotate(90deg)' : 'rotate(0deg)';
+  });
+}
+
+// ===== 메이커별 펼침상태 서버 저장/로드 (별도 테이블: p_machine_group_state) =====
+let _machineGroupState = {};
+
+async function loadMachineGroupStateFromServer() {
+  if (!isConfigured()) { _machineGroupState = {}; return; }
+  try {
+    const res = await fetch(getSbUrl() + '/rest/v1/p_machine_group_state?select=*', {
+      headers: {'apikey': getSbKey(), 'Authorization': 'Bearer ' + getSbKey()}
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const state = {};
+      (data || []).forEach(r => { state[r.maker] = !!r.is_open; });
+      _machineGroupState = state;
+    }
+  } catch(e) { console.log('그룹상태 로드 실패:', e); _machineGroupState = {}; }
+}
+
+async function saveMachineGroupStateToServer(maker, isOpen) {
+  if (!isConfigured()) return;
+  try {
+    // UPSERT (on_conflict로 maker 기준 중복 시 업데이트)
+    await fetch(getSbUrl() + '/rest/v1/p_machine_group_state?on_conflict=maker', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': getSbKey(),
+        'Authorization': 'Bearer ' + getSbKey(),
+        'Prefer': 'resolution=merge-duplicates,return=minimal'
+      },
+      body: JSON.stringify({maker: maker, is_open: !!isOpen, updated_at: new Date().toISOString()})
+    });
+  } catch(e) { console.log('그룹상태 저장 실패:', e); }
 }
 
 function escapeHtml(s) {
