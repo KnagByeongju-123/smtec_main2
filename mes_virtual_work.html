@@ -486,13 +486,6 @@ var SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI
 var sbH={'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Content-Type':'application/json'};
 var WORK_DAY_START_HOUR=8;
 
-// MES Python 중계서버 주소 (localStorage에서 읽음 - 실설비 파일과 공유)
-var MES_API_BASE=(function(){
-  var v=localStorage.getItem('MES_API_BASE');
-  if(v&&v.trim())return v.trim().replace(/\/+$/,'');
-  return '/api/mes';
-})();
-
 var DEFECT_TYPES=['시타발초물','초중종검사','원자재불량','기스','찍힘','휨·변형','형상불량','치수·각도','BURR','크랙·터짐','이물·발청','수리중불량','낙하품'];
 var COND_FIELDS=[{id:'dieHeight',name:'다이하이트',unit:'mm'},{id:'feedPitch',name:'이송피치',unit:'mm'}];
 
@@ -1536,32 +1529,65 @@ var _weightFilter=null;
 async function openRawPicker(){
   document.getElementById('rawPickerModal').classList.add('show');
   document.getElementById('rawPickerSearch').value='';
-  document.getElementById('rawPickerList').innerHTML='<div style="text-align:center;color:var(--sub);padding:20px">⏳ 로트 조회중...<br><span style="font-size:10px">'+MES_API_BASE+'</span></div>';
-  // 매번 새로 조회 (캐시 제거)
+  document.getElementById('rawPickerList').innerHTML='<div style="text-align:center;color:var(--sub);padding:20px">⏳ 소재 조회중...</div>';
   try{
-    var res=await fetch(MES_API_BASE+'/available_lots');
+    // Supabase raw_material_receipt 에서 직접 조회 (HTTPS, Python 서버 불필요)
+    // - 최근 180일, 잔량 있을 가능성 있는 것만
+    var since=new Date();since.setDate(since.getDate()-180);
+    var sinceStr=since.toISOString().slice(0,10);
+    var qs='select=id,item_code,material_type,thickness,width_mm,vendor_site_id,vendor_name,receipt_date,net_weight,heat_no,charger,status,mes_receipt_no'+
+           '&receipt_date=gte.'+sinceStr+
+           '&order=receipt_date.desc,id.desc&limit=500';
+    var res=await fetch(SB_URL+'/rest/v1/raw_material_receipt?'+qs,{headers:sbH});
     if(!res.ok){
-      document.getElementById('rawPickerList').innerHTML='<div style="text-align:center;color:var(--red);padding:20px">❌ 서버응답 '+res.status+'<br><span style="font-size:10px;color:var(--sub)">'+MES_API_BASE+'/available_lots</span><br><br><button onclick="promptMesApiBase()" style="margin-top:8px;padding:8px 16px;background:var(--purple);color:#000;border:none;border-radius:6px;font-weight:700;cursor:pointer">⚙️ MES 서버주소 설정</button></div>';
+      var err=await res.text();
+      document.getElementById('rawPickerList').innerHTML='<div style="text-align:center;color:var(--red);padding:20px">❌ Supabase 조회실패<br><span style="font-size:10px;color:var(--sub)">'+_esc(err.slice(0,200))+'</span></div>';
       return;
     }
-    var data=await res.json();
-    lotListCache=data.lots||[];
+    var rows=await res.json();
+    // 가상설비 사용량(Supabase)과 합산해 잔량 계산
+    var usageMap={};
+    try{
+      var u=await fetch(SB_URL+'/rest/v1/virtual_raw_usage?select=heat_no,used_weight',{headers:sbH});
+      if(u.ok){
+        (await u.json()).forEach(function(x){
+          var k=x.heat_no||'';
+          usageMap[k]=(usageMap[k]||0)+(+x.used_weight||0);
+        });
+      }
+    }catch(e){}
+    // 매핑
+    lotListCache=rows.map(function(r){
+      var net=+r.net_weight||0;
+      var used=+(usageMap[r.heat_no]||0);
+      var remain=net-used;
+      var rate=net>0?(remain/net*100):0;
+      var spec=(r.material_type||'')+' '+(r.thickness||'')+'*'+(r.width_mm||'');
+      return {
+        receipt_no: r.mes_receipt_no||('SB'+r.id),
+        receipt_seq: 1,
+        raw_code: r.item_code||'',
+        heat_no: r.heat_no||'',
+        vendor: r.vendor_name||r.vendor_site_id||'',
+        net_weight: Math.round(net*10)/10,
+        used_weight: Math.round(used*10)/10,
+        remain_weight: Math.round(remain*10)/10,
+        remain_rate: Math.round(rate*10)/10,
+        is_new: used===0,
+        receipt_date: r.receipt_date||'',
+        raw_name: spec,
+        raw_spec: spec,
+        material_type: r.material_type||'',
+        thickness: +r.thickness||null,
+        width: +r.width_mm||null,
+        status: r.status||'',
+      };
+    }).filter(function(l){return l.remain_weight>0});
   }catch(e){
-    document.getElementById('rawPickerList').innerHTML='<div style="text-align:center;color:var(--red);padding:20px">❌ 연결실패<br><span style="font-size:10px;color:var(--sub)">'+_esc(e.message)+'</span><br><span style="font-size:10px;color:var(--sub)">'+MES_API_BASE+'</span><br><br><button onclick="promptMesApiBase()" style="margin-top:8px;padding:8px 16px;background:var(--purple);color:#000;border:none;border-radius:6px;font-weight:700;cursor:pointer">⚙️ MES 서버주소 설정</button></div>';
+    document.getElementById('rawPickerList').innerHTML='<div style="text-align:center;color:var(--red);padding:20px">❌ 연결실패<br><span style="font-size:10px;color:var(--sub)">'+_esc(e.message)+'</span></div>';
     return;
   }
   renderRawList(lotListCache);
-}
-
-function promptMesApiBase(){
-  var cur=localStorage.getItem('MES_API_BASE')||MES_API_BASE;
-  var v=prompt('MES Python 중계서버 주소 입력\n\n예: http://192.168.1.100:5100/api/mes',cur);
-  if(v===null)return;
-  v=v.trim().replace(/\/+$/,'');
-  if(!v){localStorage.removeItem('MES_API_BASE');MES_API_BASE='/api/mes'}
-  else{localStorage.setItem('MES_API_BASE',v);MES_API_BASE=v}
-  showToast('✅ 저장: '+MES_API_BASE);
-  openRawPicker();
 }
 function closeRawPicker(){document.getElementById('rawPickerModal').classList.remove('show')}
 
@@ -1629,19 +1655,18 @@ async function pickLot(idx){
     vendor:lot.vendor, net_weight:lot.net_weight, used_weight:lot.used_weight,
     remain_weight:lot.remain_weight, raw_spec:lot.raw_spec, heat_no:lot.heat_no
   };
-  document.getElementById('statusBar').innerHTML='⏳ BOM 조회중...';
-  try{
-    var res=await fetch(MES_API_BASE+'/bom_by_raw?raw_code='+encodeURIComponent(lot.raw_code));
-    if(!res.ok){renderVirtDashboard();return}
-    var data=await res.json();
-    if(!data.items||!data.items.length){
-      renderVirtDashboard();
-      document.getElementById('statusBar').innerHTML='⚠️ BOM 연결 없음 · 소재/로트만 채움';
-      return;
-    }
-    if(data.items.length===1){applyItemToVirt(lot.raw_code,data.items[0])}
-    else{openItemPicker(lot.raw_code,data.items)}
-  }catch(e){showToast('❌ '+e.message);renderVirtDashboard()}
+  // 재질/두께/폭을 virtBomInfo에도 기록 (소재 정보가 대시보드에 반영되도록)
+  if(!state.virtBomInfo)state.virtBomInfo={};
+  if(lot.material_type)state.virtBomInfo.material_type=lot.material_type;
+  if(lot.thickness)state.virtBomInfo.thickness=lot.thickness;
+  if(lot.width)state.virtBomInfo.width=lot.width;
+  renderVirtDashboard();
+  var parts=['✅ <b>'+_esc(lot.raw_code)+'</b>'];
+  if(lot.heat_no)parts.push('🔖 '+_esc(lot.heat_no));
+  if(lot.vendor)parts.push(_esc(lot.vendor));
+  parts.push('잔량 '+lot.remain_weight.toFixed(1)+'kg');
+  document.getElementById('statusBar').innerHTML=parts.join(' · ');
+  showToast('✅ 소재 적용: '+lot.heat_no);
 }
 
 function openItemPicker(rawCode,items){
