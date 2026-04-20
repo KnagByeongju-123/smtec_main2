@@ -1280,6 +1280,57 @@ function renderInspectorSelect() {
     sel.innerHTML += `<option value="${name}">${name}</option>`;
   });
   if (prev) sel.value = prev;
+  // 접속 사용자 자동선택 (NFC 무관)
+  autoSelectInspector();
+}
+
+// 접속된 사용자 이름 가져오기 (ESG 인증 시스템 연동)
+function getCurrentUserName() {
+  try {
+    // 1. ESG PIN 인증
+    var esgAuth = JSON.parse(localStorage.getItem('esg_pin_auth') || 'null');
+    if (esgAuth && esgAuth.exp > Date.now() && esgAuth.name) {
+      try { sessionStorage.setItem('ESG_USER', esgAuth.name); } catch(e){}
+      return esgAuth.name;
+    }
+    // 2. 세션
+    var s = sessionStorage.getItem('ESG_USER');
+    if (s) return s;
+    // 3. URL 파라미터
+    var p = new URLSearchParams(location.search);
+    var u = p.get('user') || p.get('worker') || p.get('name') || p.get('inspector');
+    if (u) { try { sessionStorage.setItem('ESG_USER', u); } catch(e){} return u; }
+    // 4. mes_work.html 이 기록한 마지막 작업자
+    var last = localStorage.getItem('mes_last_worker');
+    if (last) return last;
+    // 5. 이전 점검자
+    return localStorage.getItem('P_LAST_INSPECTOR') || '';
+  } catch(e) { return ''; }
+}
+
+// 점검자 select에 현재 사용자 자동 선택 (없으면 추가)
+function autoSelectInspector() {
+  var userName = getCurrentUserName();
+  if (!userName) return;
+  var sel = document.getElementById('inspector');
+  if (!sel) return;
+  // 이미 다른 값이 사용자에 의해 선택되어 있으면 덮어쓰지 않음
+  if (sel.value && sel.value !== userName) return;
+  // 일치 옵션 찾기
+  var matched = false;
+  for (var i = 0; i < sel.options.length; i++) {
+    if (sel.options[i].value === userName) { sel.value = userName; matched = true; break; }
+  }
+  // 없으면 추가
+  if (!matched) {
+    var opt = document.createElement('option');
+    opt.value = userName;
+    opt.textContent = userName + ' (자동)';
+    sel.appendChild(opt);
+    sel.value = userName;
+  }
+  try { sel.dispatchEvent(new Event('change')); } catch(e){}
+  try { localStorage.setItem('P_LAST_INSPECTOR', userName); } catch(e){}
 }
 
 function renderMachineSelect() {
