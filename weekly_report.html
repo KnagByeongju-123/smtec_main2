@@ -192,8 +192,8 @@ async function loadReport(){
     lwRows.forEach(r=>{
       const mn=r.model_name||'?';
       if(!mSum[mn])mSum[mn]={inner:{i:0,d:0},outer:{i:0,d:0},total:{i:0,d:0}};
-      const line=(r.inspect_line||'').toLowerCase();
-      const isO=line.includes('outer')||line.includes('검사기')||line.includes('자동');
+      // Inner/Outer: 기종명에 "Outer" 포함 시 Outer, 아니면 Inner
+      const isO=/outer/i.test(mn);
       const bk=isO?'outer':'inner';
       mSum[mn][bk].i+=(r.inspect_qty||0);
       mSum[mn].total.i+=(r.inspect_qty||0);
@@ -337,38 +337,55 @@ function renderProcessSummary(mSum,thisWk,target){
     html+='<div style="font-size:12px;font-weight:800;color:var(--primary);margin:14px 0 6px;padding:4px 8px;background:var(--primary-light);border-radius:6px">'+cust+'</div>';
 
     if(isSBC(cust)){
-      /* ===== SBC: Inner/Outer × 기종별 테이블 ===== */
-      html+='<table class="stat-table"><thead><tr><th style="text-align:left;min-width:80px">구분</th>';
+      /* ===== SBC: 동일 기종번호 합산 → Inner/Outer 구분 ===== */
+      // 기종명에서 숫자 4~5자리 추출하여 그룹키 생성
+      function getModelKey(mn){ const m=mn.match(/\d{3,5}/); return m?m[0]:mn; }
+      // 기종별 그룹 합산
+      const grpKeys=[...new Set(gm.map(mn=>getModelKey(mn)))].sort();
+      const grpData={}; // { '1106': {inner:{i,d}, outer:{i,d}, total:{i,d}} }
+      grpKeys.forEach(k=>{grpData[k]={inner:{i:0,d:0},outer:{i:0,d:0},total:{i:0,d:0}}});
       gm.forEach(mn=>{
-        const short=mn.match(/\d{3,5}/)?mn.match(/\d{3,5}/)[0]:(mn.length>10?mn.substring(0,10):mn);
-        html+='<th style="min-width:55px">'+short+'</th>';
+        const k=getModelKey(mn);
+        const isO=/outer/i.test(mn);
+        const bk=isO?'outer':'inner';
+        grpData[k][bk].i+=mSum[mn][bk].i;
+        grpData[k][bk].d+=mSum[mn][bk].d;
+        // 반대 버킷도 합산 (혹시 있으면)
+        const obk=isO?'inner':'outer';
+        grpData[k][obk].i+=mSum[mn][obk].i;
+        grpData[k][obk].d+=mSum[mn][obk].d;
+        grpData[k].total.i+=mSum[mn].total.i;
+        grpData[k].total.d+=mSum[mn].total.d;
       });
+
+      html+='<table class="stat-table"><thead><tr><th style="text-align:left;min-width:80px">구분</th>';
+      grpKeys.forEach(k=>{html+='<th style="min-width:55px">'+k+'</th>'});
       html+='<th style="min-width:55px;background:var(--primary-light)">합계</th></tr></thead><tbody>';
 
       ['inner','outer'].forEach(bk=>{
         const lb=bk==='inner'?'Inner':'Outer';
         const bgR=bk==='inner'?'#f8fbff':'#fff9f8';
         html+='<tr style="background:'+bgR+'"><td style="font-size:10px;font-weight:600;color:var(--primary);text-align:left">'+lb+' 검사수</td>';
-        let si=0;gm.forEach(mn=>{const v=mSum[mn][bk].i;si+=v;html+='<td>'+(v?v.toLocaleString():'-')+'</td>'});
+        let si=0;grpKeys.forEach(k=>{const v=grpData[k][bk].i;si+=v;html+='<td>'+(v?v.toLocaleString():'-')+'</td>'});
         html+='<td style="font-weight:700">'+si.toLocaleString()+'</td></tr>';
         html+='<tr style="background:'+bgR+'"><td style="font-size:10px;font-weight:600;color:var(--red);text-align:left">'+lb+' 불량수</td>';
-        let sd=0;gm.forEach(mn=>{const v=mSum[mn][bk].d;sd+=v;html+='<td style="color:var(--red)">'+(v?v.toLocaleString():'-')+'</td>'});
+        let sd=0;grpKeys.forEach(k=>{const v=grpData[k][bk].d;sd+=v;html+='<td style="color:var(--red)">'+(v?v.toLocaleString():'-')+'</td>'});
         html+='<td style="font-weight:700;color:var(--red)">'+sd.toLocaleString()+'</td></tr>';
         html+='<tr style="background:#fff8f0"><td style="font-size:10px;font-weight:700;color:var(--warn);text-align:left">'+lb+' PPM</td>';
-        let gi=0,gd=0;gm.forEach(mn=>{const s=mSum[mn][bk],p=s.i>0?Math.round(s.d/s.i*1e6):0;gi+=s.i;gd+=s.d;html+='<td style="font-weight:800;color:'+ppmColor(p,target)+'">'+(p?p.toLocaleString():'-')+'</td>'});
+        let gi=0,gd=0;grpKeys.forEach(k=>{const s=grpData[k][bk],p=s.i>0?Math.round(s.d/s.i*1e6):0;gi+=s.i;gd+=s.d;html+='<td style="font-weight:800;color:'+ppmColor(p,target)+'">'+(p?p.toLocaleString():'-')+'</td>'});
         const gp=gi>0?Math.round(gd/gi*1e6):0;
         html+='<td style="font-weight:800;color:'+ppmColor(gp,target)+'">'+gp.toLocaleString()+'</td></tr>';
       });
 
       // SBC 합계
       html+='<tr class="st-total"><td style="text-align:left">합계 검사수</td>';
-      let ai=0;gm.forEach(mn=>{const v=mSum[mn].total.i;ai+=v;html+='<td>'+(v?v.toLocaleString():'-')+'</td>'});
+      let ai=0;grpKeys.forEach(k=>{const v=grpData[k].total.i;ai+=v;html+='<td>'+(v?v.toLocaleString():'-')+'</td>'});
       html+='<td style="font-weight:800">'+ai.toLocaleString()+'</td></tr>';
       html+='<tr class="st-total"><td style="text-align:left;color:var(--red)">합계 불량수</td>';
-      let ad=0;gm.forEach(mn=>{const v=mSum[mn].total.d;ad+=v;html+='<td style="color:var(--red)">'+(v?v.toLocaleString():'-')+'</td>'});
+      let ad=0;grpKeys.forEach(k=>{const v=grpData[k].total.d;ad+=v;html+='<td style="color:var(--red)">'+(v?v.toLocaleString():'-')+'</td>'});
       html+='<td style="font-weight:800;color:var(--red)">'+ad.toLocaleString()+'</td></tr>';
       html+='<tr class="st-total" style="background:var(--warn-light)"><td style="text-align:left;font-weight:800;color:var(--warn)">합계 PPM</td>';
-      let ati=0,atd=0;gm.forEach(mn=>{const s=mSum[mn].total,p=s.i>0?Math.round(s.d/s.i*1e6):0;ati+=s.i;atd+=s.d;html+='<td style="font-weight:800;color:'+ppmColor(p,target)+'">'+(p?p.toLocaleString():'-')+'</td>'});
+      let ati=0,atd=0;grpKeys.forEach(k=>{const s=grpData[k].total,p=s.i>0?Math.round(s.d/s.i*1e6):0;ati+=s.i;atd+=s.d;html+='<td style="font-weight:800;color:'+ppmColor(p,target)+'">'+(p?p.toLocaleString():'-')+'</td>'});
       const tp=ati>0?Math.round(atd/ati*1e6):0;
       html+='<td style="font-weight:900;font-size:13px;color:'+ppmColor(tp,target)+'">'+tp.toLocaleString()+'</td></tr>';
       html+='</tbody></table>';
