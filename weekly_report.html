@@ -592,50 +592,68 @@ async function loadMesData(){
   document.getElementById('mesRange').textContent=fromS+' ~ '+toS;
 
   try{
-    const url=apiBase+'/api/lot_search?start='+fromS+'&end='+toS;
+    const url=apiBase+'/api/mes_defect?start='+fromS+'&end='+toS;
     const res=await fetch(url);
     if(!res.ok)throw new Error('MES API 오류: '+res.status);
     const data=await res.json();
-    const rows=data.data||[];
+    if(data.error)throw new Error(data.error);
 
-    // 집계: 생산수, 불량수(abnormal_shot), PPM
-    let totalShot=0,totalNormal=0,totalAbnormal=0;
-    const byItem={};
-    rows.forEach(r=>{
-      totalShot+=(r.shot_qty||0);
-      totalNormal+=(r.normal_shot||0);
-      totalAbnormal+=(r.abnormal_shot||0);
-      const key=(r.item_code||'')+'|'+(r.item_name||'');
-      if(!byItem[key])byItem[key]={code:r.item_code||'',name:r.item_name||'',shot:0,normal:0,abnormal:0};
-      byItem[key].shot+=(r.shot_qty||0);
-      byItem[key].normal+=(r.normal_shot||0);
-      byItem[key].abnormal+=(r.abnormal_shot||0);
-    });
-    const mesPpm=totalShot>0?Math.round(totalAbnormal/totalShot*1e6):0;
+    const rows=data.data||[];
+    const ngCodes=data.ng_codes||[];
+    const codeNames=data.code_names||{};
+    const totalShot=data.total_shot||0;
+    const totalNg=data.total_ng||0;
+    const ngTotals=data.ng_totals||{};
+    const mesPpm=totalShot>0?Math.round(totalNg/totalShot*1e6):0;
 
     // 요약 카드
     const sw=document.getElementById('mesSummaryWrap');
     sw.innerHTML='<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:0;border:1.5px solid #ddd;border-radius:10px;overflow:hidden">'+
       '<div style="padding:12px 6px;text-align:center;border-right:1px solid #eee"><div style="font-size:18px;font-weight:800;color:var(--primary)">'+totalShot.toLocaleString()+'</div><div style="font-size:9px;color:#888;margin-top:2px">생산수</div></div>'+
-      '<div style="padding:12px 6px;text-align:center;border-right:1px solid #eee"><div style="font-size:18px;font-weight:800;color:var(--ok)">'+totalNormal.toLocaleString()+'</div><div style="font-size:9px;color:#888;margin-top:2px">정상</div></div>'+
-      '<div style="padding:12px 6px;text-align:center;border-right:1px solid #eee"><div style="font-size:18px;font-weight:800;color:var(--red)">'+totalAbnormal.toLocaleString()+'</div><div style="font-size:9px;color:#888;margin-top:2px">불량수</div></div>'+
-      '<div style="padding:12px 6px;text-align:center;background:'+(mesPpm>600?'var(--red-light)':'var(--ok-light)')+'"><div style="font-size:18px;font-weight:800;color:'+(mesPpm>600?'var(--red)':'var(--ok)')+'">'+mesPpm.toLocaleString()+'</div><div style="font-size:9px;color:#888;margin-top:2px">PPM</div></div>'+
+      '<div style="padding:12px 6px;text-align:center;border-right:1px solid #eee"><div style="font-size:18px;font-weight:800;color:var(--red)">'+totalNg.toLocaleString()+'</div><div style="font-size:9px;color:#888;margin-top:2px">불량수</div></div>'+
+      '<div style="padding:12px 6px;text-align:center;border-right:1px solid #eee;background:'+(mesPpm>600?'var(--red-light)':'var(--ok-light)')+'"><div style="font-size:18px;font-weight:800;color:'+(mesPpm>600?'var(--red)':'var(--ok)')+'">'+mesPpm.toLocaleString()+'</div><div style="font-size:9px;color:#888;margin-top:2px">PPM</div></div>'+
+      '<div style="padding:12px 6px;text-align:center"><div style="font-size:18px;font-weight:800;color:var(--warn)">목표 600</div><div style="font-size:9px;color:#888;margin-top:2px">PPM</div></div>'+
       '</div>';
 
-    // 품목별 테이블
-    const items=Object.values(byItem).sort((a,b)=>b.abnormal-a.abnormal);
+    // MES 형태 테이블: 품목코드 | 실적수량 | 불량유형1 | 불량유형2 | ... | 총계
     const tw=document.getElementById('mesTableWrap');
-    if(!items.length){tw.innerHTML='<div class="empty">MES 불량 데이터 없음</div>'}
-    else{
-      let h='<table class="stat-table"><thead><tr><th style="text-align:left">품목코드</th><th style="text-align:left">품명</th><th>생산수</th><th>불량수</th><th>PPM</th></tr></thead><tbody>';
-      items.forEach(it=>{
-        const p=it.shot>0?Math.round(it.abnormal/it.shot*1e6):0;
-        h+='<tr><td style="text-align:left;font-size:10px;font-family:monospace">'+it.code+'</td><td style="text-align:left;font-size:10px">'+it.name+'</td><td>'+it.shot.toLocaleString()+'</td><td style="color:var(--red);font-weight:700">'+(it.abnormal||'-')+'</td><td style="font-weight:700;color:'+ppmColor(p,600)+'">'+p.toLocaleString()+'</td></tr>';
+    if(!rows.length){tw.innerHTML='<div class="empty">MES 불량 데이터 없음</div>';hideLoading();return}
+
+    // 데이터가 있는 NG코드만 필터
+    const activeNg=ngCodes.filter(c=>ngTotals[c]>0);
+
+    let h='<table class="stat-table"><thead><tr>';
+    h+='<th style="text-align:left;min-width:70px;background:#ffffcc">품목코드</th>';
+    h+='<th style="min-width:60px;background:#ffffcc">실적수량</th>';
+    activeNg.forEach(c=>{h+='<th style="min-width:50px;background:#ffffcc">'+(codeNames[c]||c)+'</th>'});
+    h+='<th style="min-width:50px;background:#ffffcc;font-weight:800">총계</th>';
+    h+='</tr></thead><tbody>';
+
+    // 불량 총계 기준 내림차순
+    const sorted=rows.filter(r=>r.ng_total>0).sort((a,b)=>b.ng_total-a.ng_total);
+
+    sorted.forEach(r=>{
+      const ppm=r.shot>0?Math.round(r.ng_total/r.shot*1e6):0;
+      h+='<tr>';
+      h+='<td style="text-align:left;font-size:10px;font-weight:600">'+r.item_code+'</td>';
+      h+='<td>'+r.shot.toLocaleString()+'</td>';
+      activeNg.forEach(c=>{
+        const v=r.ng_types[c]||0;
+        h+='<td style="'+(v>0?'color:var(--red);font-weight:700':'')+'">'+(v||'')+'</td>';
       });
-      h+='</tbody></table>';
-      tw.innerHTML=h;
-    }
-    showToast('🏭 MES '+rows.length+'건 조회');
+      h+='<td style="font-weight:800;color:var(--red)">'+r.ng_total.toLocaleString()+'</td>';
+      h+='</tr>';
+    });
+
+    // 합계 행
+    h+='<tr class="st-total"><td style="text-align:left;font-weight:800">Grand Total</td>';
+    h+='<td style="font-weight:800">'+totalShot.toLocaleString()+'</td>';
+    activeNg.forEach(c=>{h+='<td style="font-weight:800;color:var(--red)">'+(ngTotals[c]||0).toLocaleString()+'</td>'});
+    h+='<td style="font-weight:900;color:var(--red);font-size:13px">'+totalNg.toLocaleString()+'</td>';
+    h+='</tr></tbody></table>';
+
+    tw.innerHTML=h;
+    showToast('🏭 MES '+sorted.length+'품목 조회');
   }catch(e){
     document.getElementById('mesSummaryWrap').innerHTML='<div class="empty" style="color:var(--red)">❌ '+e.message+'<br><span style="font-size:10px;color:#888">qc_monitor.exe 실행 중인지 확인하세요</span></div>';
     document.getElementById('mesTableWrap').innerHTML='';
