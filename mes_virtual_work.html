@@ -406,6 +406,7 @@ body{padding:0;font-size:13px}
     <div class="modal-srch">
       <input type="text" id="rawPickerSearch" placeholder="🔍 HEAT번호 검색 (터치)" readonly onclick="openSearchPopup()" style="cursor:pointer">
       <button onclick="openSearchPopup()">🔍 검색</button>
+      <button onclick="diagUsage()" style="background:#64748b;color:#fff;padding:10px 10px;font-size:11px" title="사용이력 진단">🔧</button>
     </div>
     <div id="weightFilterBar" style="display:none;padding:6px 10px;background:rgba(167,139,250,.15);font-size:11px;color:#c4b5fd;display:none;align-items:center;justify-content:space-between">
       <span id="weightFilterLabel"></span>
@@ -1623,16 +1624,34 @@ async function openRawPicker(){
     // 가상설비 사용량(Supabase)과 합산해 잔량 계산 + 완료여부
     var usageMap={};
     var completedSet={};
+    var usageLoaded=false;
     try{
-      var u=await fetch(SB_URL+'/rest/v1/virtual_raw_usage?select=heat_no,used_weight,is_completed',{headers:sbH});
+      var u=await fetch(SB_URL+'/rest/v1/virtual_raw_usage?select=heat_no,used_weight,is_completed&limit=5000',{headers:sbH});
       if(u.ok){
-        (await u.json()).forEach(function(x){
+        var uData=await u.json();
+        uData.forEach(function(x){
           var k=x.heat_no||'';
+          if(!k)return;
           usageMap[k]=(usageMap[k]||0)+(+x.used_weight||0);
-          if(x.is_completed)completedSet[k]=true;
+          if(x.is_completed===true||x.is_completed==='true'||x.is_completed===1){
+            completedSet[k]=true;
+          }
         });
+        usageLoaded=true;
+        console.log('[소재사용이력] 로드됨:',uData.length,'건 / 완료:',Object.keys(completedSet).length);
+      }else{
+        var uErrText=await u.text();
+        console.error('[소재사용이력] 조회실패:',u.status,uErrText);
+        if(u.status===404){
+          document.getElementById('rawPickerList').innerHTML=
+            '<div style="text-align:center;color:var(--red);padding:20px;background:rgba(239,68,68,.1);border-radius:8px;margin:10px">'+
+            '❌ virtual_raw_usage 테이블 없음<br>'+
+            '<span style="font-size:11px;color:var(--yellow)">Supabase SQL Editor에서 테이블 생성 필요</span>'+
+            '</div>';
+          return;
+        }
       }
-    }catch(e){}
+    }catch(e){console.error('[소재사용이력] 예외:',e)}
     // 매핑
     lotListCache=rows.map(function(r){
       var net=+r.net_weight||0;
@@ -1903,6 +1922,41 @@ function toggleLotComplete(){
   }
 }
 
+// ========== 소재사용이력 진단 ==========
+async function diagUsage(){
+  var msg='[소재사용이력 진단]\n\n';
+  try{
+    var r=await fetch(SB_URL+'/rest/v1/virtual_raw_usage?select=heat_no,used_weight,is_completed,created_at&order=created_at.desc&limit=50',{headers:sbH});
+    if(!r.ok){
+      var err=await r.text();
+      if(r.status===404){
+        msg+='❌ 테이블 없음 (404)\n\nSupabase SQL Editor에서\nvirtual_raw_usage_table.sql 실행 필요';
+      }else if(r.status===401||r.status===403){
+        msg+='❌ 권한부족 ('+r.status+')\n\nRLS DISABLE + GRANT 필요';
+      }else{
+        msg+='❌ 에러 '+r.status+'\n'+err.slice(0,300);
+      }
+      alert(msg);return;
+    }
+    var data=await r.json();
+    msg+='✅ 테이블 OK · 레코드: '+data.length+'건\n\n';
+    var completed=data.filter(function(x){return x.is_completed===true});
+    msg+='📦 사용완료: '+completed.length+'건\n';
+    if(completed.length>0){
+      msg+='\n[최근 사용완료 5건]\n';
+      completed.slice(0,5).forEach(function(x){
+        var dt=x.created_at?x.created_at.substring(0,16).replace('T',' '):'';
+        msg+='• '+x.heat_no+' ('+(+x.used_weight||0).toFixed(1)+'kg) '+dt+'\n';
+      });
+    }else{
+      msg+='\n⚠️ 사용완료된 레코드가 0건입니다.\n체크박스를 체크하고 저장했는지 확인하세요.';
+    }
+    alert(msg);
+  }catch(e){
+    alert('❌ 예외: '+e.message);
+  }
+}
+
 // ========== 저장 ==========
 async function saveReport(){
   if(!state.machine){showToast('설비 선택 필요');return}
@@ -1990,12 +2044,29 @@ async function saveReport(){
           note:state.lotCompleted?'수동 사용완료 처리':'',
           created_at:record.created_at
         };
-        await fetch(SB_URL+'/rest/v1/virtual_raw_usage',{
+        var uRes=await fetch(SB_URL+'/rest/v1/virtual_raw_usage',{
           method:'POST',
           headers:Object.assign({},sbH,{'Prefer':'return=minimal'}),
           body:JSON.stringify(usageRec)
         });
-      }catch(e){/* 실패해도 작업일보는 저장됨 */}
+        if(!uRes.ok){
+          var uErr=await uRes.text();
+          console.error('소재사용이력 저장실패:',uRes.status,uErr);
+          if(state.lotCompleted){
+            // 사용완료 체크했는데 실패 → 사용자에게 알림
+            alert('⚠️ 작업일보는 저장되었으나\n소재 사용완료 처리 실패!\n\n원인: '+(uRes.status===404?'virtual_raw_usage 테이블이 없습니다.\nSQL 스크립트를 먼저 실행하세요.':uRes.status===401||uRes.status===403?'권한 부족 (RLS/GRANT 확인)':uErr.slice(0,200)));
+            showToast('❌ 사용완료 기록 실패 - '+uRes.status);
+            return;
+          }
+        }else{
+          if(state.lotCompleted)showToast('✅ 저장 + 사용완료 처리',3000);
+        }
+      }catch(e){
+        console.error('소재사용이력 저장 예외:',e);
+        if(state.lotCompleted){
+          alert('⚠️ 사용완료 처리 실패: '+e.message);
+        }
+      }
     }
     
     showToast('✅ 저장 완료',3000);
