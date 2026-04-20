@@ -385,14 +385,35 @@ body{padding:0;font-size:13px}
       <button class="modal-x" onclick="closeRawPicker()">✕ 닫기</button>
     </div>
     <div class="modal-srch">
-      <input type="text" id="rawPickerSearch" placeholder="🔍 소재코드 / HEAT / 업체" oninput="filterRawList()">
-      <button onclick="openWeightSearch()">⚖️ 중량</button>
+      <input type="text" id="rawPickerSearch" placeholder="🔍 소재코드 / HEAT / 업체 (부분검색)" oninput="filterRawList()">
+      <button onclick="openSearchPopup()">🔍 검색</button>
     </div>
     <div id="weightFilterBar" style="display:none;padding:6px 10px;background:rgba(167,139,250,.15);font-size:11px;color:#c4b5fd;display:none;align-items:center;justify-content:space-between">
       <span id="weightFilterLabel"></span>
-      <button onclick="clearWeightFilter()" style="background:rgba(239,68,68,.2);color:#fca5a5;border:none;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:10px;font-family:inherit">✕ 해제</button>
+      <button onclick="clearSearchFilter()" style="background:rgba(239,68,68,.2);color:#fca5a5;border:none;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:10px;font-family:inherit">✕ 해제</button>
     </div>
     <div class="modal-body" id="rawPickerList"></div>
+  </div>
+</div>
+
+<!-- 검색 입력 팝업 (큰 화면) -->
+<div class="modal-bg" id="searchPopup" style="z-index:10500">
+  <div class="modal-box" style="max-width:420px">
+    <div class="modal-hdr">
+      <div class="modal-t">🔍 소재 검색</div>
+      <button class="modal-x" onclick="closeSearchPopup()">✕</button>
+    </div>
+    <div style="padding:16px">
+      <input type="text" id="searchPopupInput" placeholder="소재코드 / HEAT번호 / 업체명 (부분검색 가능)"
+        style="width:100%;padding:16px;font-size:18px;border:2px solid var(--purple);border-radius:10px;background:#0a0f1f;color:#fff;font-family:inherit;text-align:center"
+        oninput="onSearchPopupInput()">
+      <div style="font-size:11px;color:var(--sub);margin-top:8px;text-align:center">💡 입력한 글자가 포함된 모든 로트가 표시됩니다</div>
+      <div id="searchPopupResult" style="margin-top:10px;padding:8px 10px;background:rgba(167,139,250,.1);border-radius:6px;font-size:12px;color:#c4b5fd;text-align:center">전체 로트 표시중</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px">
+        <button onclick="clearSearchInputOnly()" style="padding:12px;background:#475569;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">🗑 지우기</button>
+        <button onclick="closeSearchPopup()" style="padding:12px;background:var(--green);color:#000;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">✅ 확인</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -1597,14 +1618,15 @@ function filterRawList(){
   var f=lotListCache;
   if(q){
     f=f.filter(function(lot){
-      var s=((lot.raw_code||'')+' '+(lot.heat_no||'')+' '+(lot.vendor||'')+' '+(lot.raw_spec||'')+' '+(lot.receipt_no||'')).toLowerCase();
+      var s=((lot.raw_code||'')+' '+(lot.heat_no||'')+' '+(lot.vendor||'')+' '+(lot.raw_spec||'')+' '+(lot.receipt_no||'')+' '+(lot.material_type||'')).toLowerCase();
       return s.indexOf(q)>=0;
     });
   }
-  if(_weightFilter){
-    f=f.filter(function(lot){var w=+lot.net_weight||0;return w>=_weightFilter.min&&w<=_weightFilter.max});
-  }
   renderRawList(f);
+  // 팝업이 열려있으면 결과 카운트 갱신
+  if(document.getElementById('searchPopup')?.classList.contains('show')){
+    setTimeout(updateSearchPopupResult,0);
+  }
 }
 
 function renderRawList(list){
@@ -1727,31 +1749,61 @@ function applyItemToVirt(rawCode,item){
   showToast('✅ 소재→품번 자동채움');
 }
 
-// ========== 중량검색 ==========
-function openWeightSearch(){
-  numpadState.targetInput=null;
-  numpadState.value=_weightFilter?String(_weightFilter.target):'';
-  numpadState.label='⚖️ 입고중량 검색 (kg) ±5%';
-  numpadState.allowDecimal=false;
-  numpadState.onConfirm=function(val){
-    var w=+val||0;
-    if(w<=0){clearWeightFilter();return}
-    _weightFilter={target:w,min:w*0.95,max:w*1.05};
-    var bar=document.getElementById('weightFilterBar');
-    if(bar){
-      bar.style.display='flex';
-      document.getElementById('weightFilterLabel').innerHTML='⚖️ 중량 <b>'+w.toLocaleString()+' kg</b> ±5% ('+_weightFilter.min.toFixed(0)+'~'+_weightFilter.max.toFixed(0)+'kg)';
-    }
-    filterRawList();
-  };
-  openNumpad_();
+// ========== 소재 검색 팝업 (큰 입력창) ==========
+function openSearchPopup(){
+  var pop=document.getElementById('searchPopup');
+  if(!pop)return;
+  var inp=document.getElementById('searchPopupInput');
+  // 현재 검색창 값을 팝업으로 옮김
+  inp.value=(document.getElementById('rawPickerSearch').value||'');
+  pop.classList.add('show');
+  // 포커스 & 전체선택
+  setTimeout(function(){inp.focus();inp.select();updateSearchPopupResult()},100);
 }
-function clearWeightFilter(){
-  _weightFilter=null;
+function closeSearchPopup(){
+  document.getElementById('searchPopup').classList.remove('show');
+}
+function clearSearchInputOnly(){
+  document.getElementById('searchPopupInput').value='';
+  onSearchPopupInput();
+  document.getElementById('searchPopupInput').focus();
+}
+function onSearchPopupInput(){
+  // 팝업 입력 → 원래 검색창에 반영 → filterRawList 실행
+  var v=document.getElementById('searchPopupInput').value;
+  document.getElementById('rawPickerSearch').value=v;
+  filterRawList();
+  updateSearchPopupResult();
+  // 필터바 업데이트
+  var bar=document.getElementById('weightFilterBar');
+  if(bar){
+    if(v&&v.trim()){
+      bar.style.display='flex';
+      document.getElementById('weightFilterLabel').innerHTML='🔍 검색: <b>'+_esc(v)+'</b>';
+    }else{
+      bar.style.display='none';
+    }
+  }
+}
+function updateSearchPopupResult(){
+  var c=document.getElementById('searchPopupResult');
+  if(!c)return;
+  var list=window._lotListFiltered;
+  if(!list){c.textContent='전체 로트 표시중';return}
+  var v=document.getElementById('searchPopupInput').value.trim();
+  if(!v)c.innerHTML='📦 전체 <b>'+list.length+'</b>개 로트';
+  else c.innerHTML='🔍 <b>'+list.length+'</b>개 검색됨 "'+_esc(v)+'"';
+}
+function clearSearchFilter(){
+  document.getElementById('rawPickerSearch').value='';
+  var pi=document.getElementById('searchPopupInput');if(pi)pi.value='';
   var bar=document.getElementById('weightFilterBar');
   if(bar)bar.style.display='none';
   filterRawList();
 }
+// 하위호환 - 혹시 어디서 호출될 경우
+function openWeightSearch(){openSearchPopup()}
+function clearWeightFilter(){clearSearchFilter()}
 
 // ========== 저장 ==========
 async function saveReport(){
