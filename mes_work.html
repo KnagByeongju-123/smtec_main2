@@ -1961,7 +1961,28 @@ function getDcRules(){try{return JSON.parse(localStorage.getItem(DC_LS)||'[]')}c
 
 
 
+
+// ==== DEBUG: 에러 전체 캐치 ====
+window.addEventListener('error',function(e){
+  var msg='❌ 에러: '+e.message+' @'+(e.filename||'').split('/').pop()+':'+e.lineno;
+  var ga=document.getElementById('groupArea');
+  if(ga)ga.innerHTML='<div style="padding:20px;color:#fca5a5;background:#422;border-radius:8px;font-size:12px;white-space:pre-wrap">'+msg+'\n\nstack: '+(e.error&&e.error.stack?e.error.stack:'-')+'</div>';
+  console.error(e);
+});
+window.addEventListener('unhandledrejection',function(e){
+  var msg='❌ Promise에러: '+(e.reason&&e.reason.message?e.reason.message:String(e.reason));
+  var ga=document.getElementById('groupArea');
+  if(ga)ga.innerHTML='<div style="padding:20px;color:#fca5a5;background:#422;border-radius:8px;font-size:12px;white-space:pre-wrap">'+msg+'\n\nstack: '+(e.reason&&e.reason.stack?e.reason.stack:'-')+'</div>';
+  console.error('unhandled:',e);
+});
+// 로딩 단계 표시
+function _dbgStep(s){
+  var ga=document.getElementById('groupArea');
+  if(ga)ga.innerHTML='<div style="padding:20px;color:#fbbf24;font-size:13px">⏳ '+s+'</div>';
+  console.log('[step]',s);
+}
 async function init(){
+  _dbgStep('init 시작');
   try{localStorage.removeItem('MES_CHK_ITEMS_VER')}catch(e){}
   var cu=getCurrentUser();
   if(cu){
@@ -1974,9 +1995,26 @@ async function init(){
       hdrSub.appendChild(badge);
     }
   }
-  // 서버에서 설정 불러오기 (알림규칙/불량매핑 등 점검모달 제출시 필요)
-  await _loadAllRulesFromServer();
-  await loadMonitor();
+  _dbgStep('서버 설정 로딩...');
+  try{await _loadAllRulesFromServer();}catch(e){console.error('loadRules 실패:',e)}
+  _dbgStep('Supabase machine_status 조회...');
+  try{
+    var data=await sbGet('machine_status','select=*&order=machine_code.asc');
+    _dbgStep('데이터 수신: '+(data?data.length+'건':'null'));
+    if(!data||!data.length){
+      var ga=document.getElementById('groupArea');
+      if(ga)ga.innerHTML='<div style="padding:20px;color:#fbbf24">⚠️ Supabase에서 데이터를 못 받음 (null 또는 빈 배열)</div>';
+      return;
+    }
+    cachedData=data;
+    _dbgStep('렌더링 중...');
+    renderMonitor(data);
+    _dbgStep('완료');
+  }catch(e){
+    var ga=document.getElementById('groupArea');
+    if(ga)ga.innerHTML='<div style="padding:20px;color:#fca5a5;background:#422;border-radius:8px;font-size:12px;white-space:pre-wrap">❌ '+e.message+'\n\n'+(e.stack||'')+'</div>';
+    console.error(e);
+  }
 }
 setInterval(function(){timer--;if(timer<=0)loadMonitor();document.getElementById('countdown').textContent='갱신:'+Math.floor(timer/60)+':'+String(timer%60).padStart(2,'0')},1000);
 init();
