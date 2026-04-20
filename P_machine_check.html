@@ -1238,11 +1238,19 @@ async function loadListFromServer(codeGroup) {
     } else if (codeGroup === 'p_machine') {
       _machineCache = list;
       if (!list.length) await initMachinesOnServer();
-      await loadMachineGroupStateFromServer();
+      // 그룹 펼침상태 로드 (실패해도 본 로직엔 영향 없음)
+      try { await loadMachineGroupStateFromServer(); } catch(e) { console.log('그룹상태 로드 스킵:', e); }
     }
   } catch(e) { console.log(codeGroup + ' 로드 실패:', e); }
   renderInspectorSelect();
   renderMachineSelect();
+  // 로드 후 UI도 즉시 갱신 (설정탭 미진입 상태여도 캐시 반영)
+  if (codeGroup === 'p_machine' && document.getElementById('machineList')) {
+    try { renderMachineListUI(); } catch(e) {}
+  }
+  if (codeGroup === 'p_inspector' && document.getElementById('inspectorList')) {
+    try { renderInspectorListUI(); } catch(e) {}
+  }
 }
 
 async function initMachinesOnServer() {
@@ -1410,9 +1418,11 @@ function renderMachineListUI() {
 
 // ===== 메이커별 펼침상태 서버 저장/로드 (별도 테이블: p_machine_group_state) =====
 let _machineGroupState = {};
+let _machineGroupStateTableReady = true; // 실패 시 false로 내려서 재시도 억제
 
 async function loadMachineGroupStateFromServer() {
   if (!isConfigured()) { _machineGroupState = {}; return; }
+  if (!_machineGroupStateTableReady) return;
   try {
     const res = await fetch(getSbUrl() + '/rest/v1/p_machine_group_state?select=*', {
       headers: {'apikey': getSbKey(), 'Authorization': 'Bearer ' + getSbKey()}
@@ -1422,15 +1432,19 @@ async function loadMachineGroupStateFromServer() {
       const state = {};
       (data || []).forEach(r => { state[r.maker] = !!r.is_open; });
       _machineGroupState = state;
+    } else if (res.status === 404 || res.status === 400) {
+      // 테이블 없음 - 이후 호출 스킵
+      _machineGroupStateTableReady = false;
+      console.log('p_machine_group_state 테이블 없음 - 펼침상태 저장 비활성');
     }
-  } catch(e) { console.log('그룹상태 로드 실패:', e); _machineGroupState = {}; }
+  } catch(e) { console.log('그룹상태 로드 실패:', e); }
 }
 
 async function saveMachineGroupStateToServer(maker, isOpen) {
   if (!isConfigured()) return;
+  if (!_machineGroupStateTableReady) return;
   try {
-    // UPSERT (on_conflict로 maker 기준 중복 시 업데이트)
-    await fetch(getSbUrl() + '/rest/v1/p_machine_group_state?on_conflict=maker', {
+    const res = await fetch(getSbUrl() + '/rest/v1/p_machine_group_state?on_conflict=maker', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1440,6 +1454,9 @@ async function saveMachineGroupStateToServer(maker, isOpen) {
       },
       body: JSON.stringify({maker: maker, is_open: !!isOpen, updated_at: new Date().toISOString()})
     });
+    if (!res.ok && (res.status === 404 || res.status === 400)) {
+      _machineGroupStateTableReady = false;
+    }
   } catch(e) { console.log('그룹상태 저장 실패:', e); }
 }
 
@@ -2070,7 +2087,19 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   if (isConfigured()) {
     loadListFromServer('p_inspector');
-    loadListFromServer('p_machine');
+    loadListFromServer('p_machine').then(() => {
+      // 설정탭/히스토리탭 select 갱신
+      const histSel = document.getElementById('histMachine');
+      if (histSel) {
+        const curVal = histSel.value;
+        histSel.innerHTML = '<option value="">전체</option>';
+        getMachines().forEach(item => {
+          const name = typeof item === 'string' ? item : item.name;
+          histSel.innerHTML += `<option value="${name}">${name}</option>`;
+        });
+        if (curVal) histSel.value = curVal;
+      }
+    });
     // 서버에서 기준사진 로드 → 점검탭 📸 버튼 상태 반영
     await loadRefPhotosFromServer();
     renderRefPhotoList();
