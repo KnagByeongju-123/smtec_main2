@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>주간보고서</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&display=swap');
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#f0f2f5;--card:#fff;--primary:#1565c0;--primary-light:#e3f2fd;--red:#c62828;--red-light:#ffebee;--ok:#2e7d32;--ok-light:#e8f5e9;--warn:#e65100;--warn-light:#fff3e0;--gray:#888;--border:#e0e0e0;--shadow:0 2px 8px rgba(0,0,0,.06);--radius:12px}
+body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:#212121;padding-bottom:40px;-webkit-tap-highlight-color:transparent}
+.hdr{background:linear-gradient(135deg,#0d47a1,#1565c0);color:#fff;padding:14px 16px;display:flex;align-items:center;gap:10px}
+.hdr .home-btn{background:rgba(255,255,255,.15);border:none;color:#fff;width:32px;height:32px;border-radius:8px;font-size:16px;cursor:pointer}
+.hdr h1{font-size:17px;font-weight:800;flex:1}.hdr p{font-size:10px;opacity:.7}
+.card{background:var(--card);border-radius:var(--radius);padding:14px;margin:12px;box-shadow:var(--shadow)}
+.card-tit{font-size:14px;font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:6px;justify-content:space-between}
+.btn{padding:10px 14px;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;transition:transform .1s}.btn:active{transform:scale(.97)}
+.btn-blue{background:linear-gradient(135deg,#1565c0,#42a5f5);color:#fff}
+.btn-green{background:linear-gradient(135deg,#2e7d32,#66bb6a);color:#fff}
+.btn-gray{background:#f5f5f5;color:#555;border:1px solid #ddd}
+.btn-sm{padding:8px 12px;font-size:12px}
+.stat-table{width:100%;border-collapse:collapse;font-size:11px}
+.stat-table th{background:#f5f5f5;padding:6px 4px;text-align:center;font-weight:700;border-bottom:2px solid var(--border);white-space:nowrap;font-size:10px;position:sticky;top:0}
+.stat-table td{padding:5px 4px;border-bottom:1px solid #f0f0f0;text-align:center;font-size:11px}
+.stat-table tr:hover{background:#fafafa}
+.stat-table .st-total{background:#f5f5f5;font-weight:700}
+.chip{display:inline-block;padding:2px 7px;border-radius:5px;font-size:10px;font-weight:700}
+.empty{text-align:center;padding:24px;color:#bbb;font-size:13px}
+.toast{position:fixed;bottom:30px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.85);color:#fff;padding:8px 18px;border-radius:18px;font-size:12px;font-weight:600;z-index:9999;opacity:0;transition:opacity .3s;pointer-events:none}.toast.show{opacity:1}
+.loading{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(255,255,255,.8);display:flex;align-items:center;justify-content:center;z-index:9999;flex-direction:column;gap:12px}
+.loading .spinner{width:36px;height:36px;border:4px solid #e0e0e0;border-top-color:var(--primary);border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}.loading p{font-size:13px;color:#555;font-weight:600}.loading.hide{display:none}
+.filter-row{display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap;align-items:center}
+.filter-row select,.filter-row input{padding:8px;border:1.5px solid #ddd;border-radius:8px;font-size:12px;font-family:inherit;background:#fff}
+.summary-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
+.summary-card{border-radius:10px;padding:12px 8px;text-align:center}
+.summary-card .sv{font-size:20px;font-weight:800}.summary-card .sl{font-size:9px;margin-top:2px}
+</style>
+</head>
+<body>
+<div class="hdr">
+  <button class="home-btn" onclick="history.back()">←</button>
+  <div><h1>📊 주간보고서</h1><p>고객사별 PPM 추이 · 기종별 불량 분석</p></div>
+</div>
+
+<!-- 필터 -->
+<div class="card">
+  <div class="card-tit">🔍 조회 조건</div>
+  <div class="filter-row">
+    <select id="rptCustomer" style="flex:1;min-width:100px"><option value="">전체 고객사</option></select>
+    <input type="number" id="rptWeeks" value="12" min="4" max="52" style="width:55px;text-align:center" title="주">
+    <span style="font-size:11px;color:#888">주</span>
+  </div>
+  <div class="filter-row">
+    <select id="rptInspLine" style="flex:1;min-width:100px"><option value="">전체 검사라인</option></select>
+    <input type="number" id="rptTargetPpm" value="2000" min="0" style="width:70px;text-align:center" title="목표PPM">
+    <span style="font-size:11px;color:#888">목표PPM</span>
+  </div>
+  <div style="display:flex;gap:6px">
+    <button class="btn btn-blue" onclick="loadReport()" style="flex:1">📊 조회</button>
+    <button class="btn btn-green" onclick="exportReport()" style="flex:0">📥 엑셀</button>
+  </div>
+</div>
+
+<!-- 전체 요약 -->
+<div class="card" id="summaryCard" style="display:none">
+  <div class="card-tit"><span>🔢 이번 주 요약</span><span style="font-size:10px;color:var(--gray)" id="thisWeekLabel"></span></div>
+  <div class="summary-grid">
+    <div class="summary-card" style="background:var(--primary-light)"><div class="sv" style="color:var(--primary)" id="smInspect">0</div><div class="sl" style="color:#555">검사수</div></div>
+    <div class="summary-card" style="background:var(--red-light)"><div class="sv" style="color:var(--red)" id="smDefect">0</div><div class="sl" style="color:#555">불량수</div></div>
+    <div class="summary-card" style="background:var(--warn-light)"><div class="sv" style="color:var(--warn)" id="smPpm">0</div><div class="sl" style="color:#555">PPM</div></div>
+    <div class="summary-card" style="background:#f3e5f5"><div class="sv" style="color:#7b1fa2" id="smRate">0%</div><div class="sl" style="color:#555">불량률</div></div>
+  </div>
+</div>
+
+<!-- 차트 -->
+<div class="card" id="chartCard" style="display:none">
+  <div class="card-tit"><span>📈 주간 공정불량 추이 (PPM)</span><span style="font-size:10px;color:var(--gray)" id="chartRange"></span></div>
+  <div style="overflow-x:auto;-webkit-overflow-scrolling:touch"><canvas id="ppmChart" style="width:100%;min-width:600px;height:280px"></canvas></div>
+</div>
+
+<!-- PPM 테이블 -->
+<div class="card" id="ppmTableCard" style="display:none">
+  <div class="card-tit">📋 주간 고객사별 PPM</div>
+  <div style="overflow-x:auto;-webkit-overflow-scrolling:touch" id="ppmTableWrap"></div>
+</div>
+
+<!-- 공정불량 요약 -->
+<div class="card" id="processSummaryCard" style="display:none">
+  <div class="card-tit"><span>🏭 주간 공정불량 요약 (Inner / Outer)</span><span style="font-size:10px;color:var(--gray)" id="processRange"></span></div>
+  <div id="processSummaryWrap"></div>
+</div>
+
+<!-- 불량유형 Top -->
+<div class="card" id="defectTopCard" style="display:none">
+  <div class="card-tit">🏷 이번 주 불량유형 Top 10</div>
+  <div id="defectTopWrap"></div>
+</div>
+
+<!-- 일별 상세 -->
+<div class="card" id="dailyCard" style="display:none">
+  <div class="card-tit">📋 일별 추이</div>
+  <div style="overflow-x:auto" id="dailyTableWrap"></div>
+</div>
+
+<div class="loading hide" id="loadingOverlay"><div class="spinner"></div><p id="loadingText">로딩 중...</p></div>
+<div class="toast" id="toast"></div>
+
+<script>
+/* ===== Supabase 설정 (불량관리와 동일) ===== */
+const SB_URL='https://omngtyewdaqpphnzeate.supabase.co';
+const SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tbmd0eWV3ZGFxcHBobnplYXRlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4ODk4ODksImV4cCI6MjA5MDQ2NTg4OX0.Zxur3t02JHtOcXforCMSwO3i2mMaf5sViE0tXXUC0-s';
+function sbH(){return{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Content-Type':'application/json','Prefer':'return=representation'}}
+async function sbGet(t,f,o,l){const p=new URLSearchParams();if(f)Object.entries(f).forEach(([k,v])=>{if(v!==undefined&&v!==null&&v!=='')p.append(k,v)});if(o)p.append('order',o);if(l)p.append('limit',l);p.append('select','*');const r=await fetch(SB_URL+'/rest/v1/'+t+'?'+p.toString(),{headers:sbH()});if(!r.ok)throw new Error(r.status);return r.json()}
+
+/* ===== 유틸 ===== */
+let _tt;
+function showToast(m){const e=document.getElementById('toast');e.textContent=m;e.classList.add('show');clearTimeout(_tt);_tt=setTimeout(()=>e.classList.remove('show'),2500)}
+function showLoading(t){document.getElementById('loadingText').textContent=t||'로딩...';document.getElementById('loadingOverlay').classList.remove('hide')}
+function hideLoading(){document.getElementById('loadingOverlay').classList.add('hide')}
+
+function getMonday(ds){const d=new Date(ds+'T00:00:00');const day=d.getDay();const diff=d.getDate()-day+(day===0?-6:1);return new Date(d.setDate(diff))}
+function fmtMD(d){return(d.getMonth()+1)+'/'+d.getDate()}
+function weekKey(ds){return fmtMD(getMonday(ds))}
+function ppmColor(v,target){return v>target?'#c62828':v>target/2?'#e65100':'#2e7d32'}
+
+/* ===== 데이터 ===== */
+let models=[],customers=[],generalModels=[],inspLines=[],reportData=null;
+
+async function loadMaster(){
+  const [m,gm,cc,il]=await Promise.all([
+    sbGet('defect_model',{},'id.asc',500),
+    sbGet('general_model_tj',{},'id.asc',2000).catch(()=>[]),
+    sbGet('common_code',{},'id.asc',500),
+    sbGet('common_code',{code_group:'eq.d_inspect_line'},'id.asc',100).catch(()=>[])
+  ]);
+  models=m.map(r=>({name:r.model_name||'',customer:r.customer||'',cat1:r.category1||'',cat2:r.category2||''}));
+  generalModels=(gm||[]).map(r=>({name:r.model_name||'',customer:r.customer||''}));
+  customers=[...new Set([...models.map(x=>x.customer),...generalModels.map(x=>x.customer)].filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ko'));
+  inspLines=il.map(r=>r.code_value||'').filter(Boolean);
+
+  document.getElementById('rptCustomer').innerHTML='<option value="">전체 고객사</option>'+customers.map(c=>'<option value="'+c+'">'+c+'</option>').join('');
+  document.getElementById('rptInspLine').innerHTML='<option value="">전체 검사라인</option>'+inspLines.map(c=>'<option value="'+c+'">'+c+'</option>').join('');
+}
+
+function modelToCust(mn){
+  const m=models.find(x=>x.name===mn);
+  if(m)return m.customer||'미지정';
+  const gm=generalModels.find(x=>x.name===mn);
+  if(gm)return gm.customer||'미지정';
+  return'미지정';
+}
+
+/* ===== 주간보고서 로드 ===== */
+async function loadReport(){
+  const weeks=parseInt(document.getElementById('rptWeeks').value)||12;
+  const custF=document.getElementById('rptCustomer').value;
+  const inspF=document.getElementById('rptInspLine').value;
+  const target=parseInt(document.getElementById('rptTargetPpm').value)||2000;
+
+  const today=new Date();
+  const from=new Date(today);from.setDate(from.getDate()-weeks*7);
+  const fromS=from.toISOString().split('T')[0],toS=today.toISOString().split('T')[0];
+
+  showLoading('주간보고서 조회 중...');
+  try{
+    let rows=await sbGet('defect_history',{defect_date:'gte.'+fromS},'defect_date.asc',10000);
+    rows=rows.filter(r=>r.defect_date<=toS);
+
+    if(custF){const cm=new Set();models.filter(m=>m.customer===custF).forEach(m=>cm.add(m.name));generalModels.filter(m=>m.customer===custF).forEach(m=>cm.add(m.name));rows=rows.filter(r=>cm.has(r.model_name))}
+    if(inspF)rows=rows.filter(r=>(r.inspect_line||'')===inspF);
+
+    // 주차별 고객사별 집계
+    const wMap={},custSet=new Set(),wKeys=[],wkSet=new Set();
+    rows.forEach(r=>{
+      const wk=weekKey(r.defect_date),c=modelToCust(r.model_name);
+      if(!wkSet.has(wk)){wkSet.add(wk);wKeys.push({k:wk,d:r.defect_date})}
+      custSet.add(c);
+      if(!wMap[wk])wMap[wk]={};
+      if(!wMap[wk][c])wMap[wk][c]={i:0,d:0};
+      wMap[wk][c].i+=(r.inspect_qty||0);
+      if(r.defect_type&&r.defect_type!=='양품')wMap[wk][c].d+=(r.qty||0);
+    });
+    wKeys.sort((a,b)=>a.d.localeCompare(b.d));
+    const sortedW=wKeys.map(w=>w.k),custs=[...custSet].sort((a,b)=>a.localeCompare(b,'ko'));
+
+    // 이번주 기종별 Inner/Outer
+    const thisWk=sortedW.length?sortedW[sortedW.length-1]:null;
+    const lwRows=thisWk?rows.filter(r=>weekKey(r.defect_date)===thisWk):[];
+    const mSum={};
+    lwRows.forEach(r=>{
+      const mn=r.model_name||'?';
+      if(!mSum[mn])mSum[mn]={inner:{i:0,d:0},outer:{i:0,d:0},total:{i:0,d:0}};
+      const line=(r.inspect_line||'').toLowerCase();
+      const isO=line.includes('outer')||line.includes('검사기')||line.includes('자동');
+      const bk=isO?'outer':'inner';
+      mSum[mn][bk].i+=(r.inspect_qty||0);
+      mSum[mn].total.i+=(r.inspect_qty||0);
+      if(r.defect_type&&r.defect_type!=='양품'){mSum[mn][bk].d+=(r.qty||0);mSum[mn].total.d+=(r.qty||0)}
+    });
+
+    // 불량유형 Top
+    const tTop={};
+    lwRows.forEach(r=>{if(r.defect_type&&r.defect_type!=='양품'&&(r.qty||0)>0)tTop[r.defect_type]=(tTop[r.defect_type]||0)+(r.qty||0)});
+
+    // 일별 집계
+    const daily={};
+    rows.forEach(r=>{
+      const dt=r.defect_date;if(!dt)return;
+      if(!daily[dt])daily[dt]={i:0,d:0,types:{}};
+      daily[dt].i+=(r.inspect_qty||0);
+      if(r.defect_type&&r.defect_type!=='양품'){daily[dt].d+=(r.qty||0);const t=r.defect_type;daily[dt].types[t]=(daily[dt].types[t]||0)+(r.qty||0)}
+    });
+
+    reportData={wMap,sortedW,custs,mSum,tTop,rows,thisWk,fromS,toS,target,daily};
+
+    // 이번주 요약
+    let twI=0,twD=0;
+    if(thisWk&&wMap[thisWk])Object.values(wMap[thisWk]).forEach(v=>{twI+=v.i;twD+=v.d});
+    document.getElementById('smInspect').textContent=twI.toLocaleString();
+    document.getElementById('smDefect').textContent=twD.toLocaleString();
+    document.getElementById('smPpm').textContent=(twI>0?Math.round(twD/twI*1e6):0).toLocaleString();
+    document.getElementById('smRate').textContent=(twI>0?(twD/twI*100).toFixed(2):0)+'%';
+    document.getElementById('thisWeekLabel').textContent=thisWk?thisWk+'~':'';
+
+    renderChart(wMap,sortedW,custs,target);
+    renderPpmTable(wMap,sortedW,custs,target);
+    renderProcessSummary(mSum,thisWk,target);
+    renderDefectTop(tTop);
+    renderDailyTable(daily,target);
+
+    ['summaryCard','chartCard','ppmTableCard','processSummaryCard','defectTopCard','dailyCard'].forEach(id=>document.getElementById(id).style.display='block');
+    showToast('📊 조회 완료');
+  }catch(e){showToast('오류: '+e.message)}
+  hideLoading();
+}
+
+/* ===== 차트 ===== */
+function renderChart(wMap,weeks,custs,target){
+  const canvas=document.getElementById('ppmChart'),ctx=canvas.getContext('2d');
+  const dpr=window.devicePixelRatio||1;
+  const W=Math.max(600,canvas.parentElement.offsetWidth-10),H=280;
+  canvas.width=W*dpr;canvas.height=H*dpr;canvas.style.width=W+'px';canvas.style.height=H+'px';ctx.scale(dpr,dpr);
+
+  if(weeks.length>1)document.getElementById('chartRange').textContent=weeks[0]+' ~ '+weeks[weeks.length-1];
+
+  const colors=['#1565c0','#c62828','#2e7d32','#7b1fa2','#e65100','#00838f','#4e342e','#283593','#ad1457','#558b2f'];
+  const cCol={};custs.forEach((c,i)=>{cCol[c]=colors[i%colors.length]});
+
+  // PPM 데이터
+  const pD={};custs.forEach(c=>{pD[c]=[]});
+  let mx=0;
+  weeks.forEach(wk=>{custs.forEach(c=>{const v=(wMap[wk]&&wMap[wk][c])?wMap[wk][c]:{i:0,d:0};const p=v.i>0?Math.round(v.d/v.i*1e6):0;pD[c].push(p);if(p>mx)mx=p})});
+  mx=Math.max(mx,target*1.2);const yM=Math.ceil(mx/1000)*1000;
+
+  const pad={t:30,r:20,b:50,l:55},pw=W-pad.l-pad.r,ph=H-pad.t-pad.b;
+  ctx.clearRect(0,0,W,H);ctx.fillStyle='#fff';ctx.fillRect(0,0,W,H);
+
+  // 목표선
+  const targetY=pad.t+ph-(target/yM)*ph;
+  ctx.strokeStyle='#ef5350';ctx.lineWidth=1;ctx.setLineDash([6,4]);
+  ctx.beginPath();ctx.moveTo(pad.l,targetY);ctx.lineTo(pad.l+pw,targetY);ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle='#ef5350';ctx.font='9px "Noto Sans KR"';ctx.textAlign='left';
+  ctx.fillText('목표 '+target.toLocaleString(),pad.l+2,targetY-4);
+
+  // Y그리드
+  ctx.strokeStyle='#e0e0e0';ctx.lineWidth=.5;ctx.font='10px "Noto Sans KR"';ctx.fillStyle='#888';ctx.textAlign='right';
+  for(let i=0;i<=5;i++){const y=pad.t+ph-(i/5)*ph,v=Math.round(i/5*yM);ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(pad.l+pw,y);ctx.stroke();ctx.fillText(v.toLocaleString(),pad.l-6,y+3)}
+
+  // Y라벨
+  ctx.save();ctx.translate(12,pad.t+ph/2);ctx.rotate(-Math.PI/2);ctx.fillStyle='#555';ctx.font='11px "Noto Sans KR"';ctx.textAlign='center';ctx.fillText('PPM',0,0);ctx.restore();
+
+  // X라벨
+  ctx.textAlign='center';ctx.fillStyle='#555';ctx.font='10px "Noto Sans KR"';
+  const xS=weeks.length>1?pw/(weeks.length-1):pw;
+  weeks.forEach((wk,i)=>{const x=pad.l+(weeks.length>1?i*xS:pw/2);ctx.save();ctx.translate(x,pad.t+ph+14);ctx.rotate(-Math.PI/6);ctx.fillText(wk,0,0);ctx.restore()});
+
+  // 라인
+  custs.forEach(c=>{
+    ctx.strokeStyle=cCol[c];ctx.lineWidth=2;ctx.beginPath();
+    pD[c].forEach((p,i)=>{const x=pad.l+(weeks.length>1?i*xS:pw/2),y=pad.t+ph-(p/yM)*ph;i===0?ctx.moveTo(x,y):ctx.lineTo(x,y)});
+    ctx.stroke();
+    // 점+값
+    pD[c].forEach((p,i)=>{if(p>0){const x=pad.l+(weeks.length>1?i*xS:pw/2),y=pad.t+ph-(p/yM)*ph;ctx.fillStyle=cCol[c];ctx.beginPath();ctx.arc(x,y,3,0,Math.PI*2);ctx.fill();
+    // 마지막 점에만 값 표시
+    if(i===weeks.length-1){ctx.font='bold 9px "Noto Sans KR"';ctx.textAlign='center';ctx.fillText(p.toLocaleString(),x,y-8)}}});
+  });
+
+  // 범례
+  let lx=pad.l;ctx.font='10px "Noto Sans KR"';
+  custs.forEach(c=>{ctx.fillStyle=cCol[c];ctx.fillRect(lx,6,10,10);ctx.fillStyle='#333';ctx.textAlign='left';ctx.fillText(c,lx+13,15);lx+=ctx.measureText(c).width+28});
+}
+
+/* ===== PPM 테이블 ===== */
+function renderPpmTable(wMap,weeks,custs,target){
+  const el=document.getElementById('ppmTableWrap');
+  if(!weeks.length){el.innerHTML='<div class="empty">없음</div>';return}
+  let h='<table class="stat-table"><thead><tr><th style="text-align:left;min-width:70px">구분</th>';
+  weeks.forEach(wk=>{h+='<th style="min-width:50px">'+wk+'</th>'});
+  h+='</tr></thead><tbody>';
+
+  custs.forEach(c=>{
+    h+='<tr><td style="text-align:left;font-weight:700">'+c+'</td>';
+    weeks.forEach(wk=>{
+      const v=(wMap[wk]&&wMap[wk][c])?wMap[wk][c]:{i:0,d:0};
+      const p=v.i>0?Math.round(v.d/v.i*1e6):0;
+      h+='<td style="font-weight:600;color:'+ppmColor(p,target)+'">'+p.toLocaleString()+'</td>';
+    });h+='</tr>';
+  });
+
+  h+='<tr class="st-total"><td style="text-align:left">합계</td>';
+  weeks.forEach(wk=>{let ti=0,td=0;custs.forEach(c=>{const v=(wMap[wk]&&wMap[wk][c])?wMap[wk][c]:{i:0,d:0};ti+=v.i;td+=v.d});const p=ti>0?Math.round(td/ti*1e6):0;h+='<td style="font-weight:800;color:'+ppmColor(p,target)+'">'+p.toLocaleString()+'</td>'});
+  h+='</tr></tbody></table>';
+  el.innerHTML=h;
+}
+
+/* ===== 공정불량 요약 ===== */
+function renderProcessSummary(mSum,thisWk,target){
+  const el=document.getElementById('processSummaryWrap');
+  document.getElementById('processRange').textContent=thisWk?thisWk+'~':'';
+
+  const mdls=Object.keys(mSum).sort((a,b)=>a.localeCompare(b,'ko'));
+  if(!mdls.length){el.innerHTML='<div class="empty">이번 주 데이터 없음</div>';return}
+
+  // 고객사별 그룹
+  const cg={};mdls.forEach(mn=>{const c=modelToCust(mn);if(!cg[c])cg[c]=[];cg[c].push(mn)});
+  const cNames=Object.keys(cg).sort((a,b)=>a.localeCompare(b,'ko'));
+
+  let html='';
+  cNames.forEach(cust=>{
+    const gm=cg[cust];
+    html+='<div style="font-size:12px;font-weight:800;color:var(--primary);margin:14px 0 6px;padding:4px 8px;background:var(--primary-light);border-radius:6px">'+cust+'</div>';
+    html+='<table class="stat-table"><thead><tr><th style="text-align:left;min-width:80px">구분</th>';
+    gm.forEach(mn=>{
+      const short=mn.match(/\d{3,5}/)?mn.match(/\d{3,5}/)[0]:(mn.length>10?mn.substring(0,10):mn);
+      html+='<th style="min-width:55px">'+short+'</th>';
+    });
+    html+='<th style="min-width:55px;background:var(--primary-light)">합계</th></tr></thead><tbody>';
+
+    ['inner','outer'].forEach(bk=>{
+      const lb=bk==='inner'?'Inner':'Outer';
+      const bgR=bk==='inner'?'#f8fbff':'#fff9f8';
+      // 검사수
+      html+='<tr style="background:'+bgR+'"><td style="font-size:10px;font-weight:600;color:var(--primary);text-align:left">'+lb+' 검사수</td>';
+      let si=0;gm.forEach(mn=>{const v=mSum[mn][bk].i;si+=v;html+='<td>'+(v?v.toLocaleString():'-')+'</td>'});
+      html+='<td style="font-weight:700">'+si.toLocaleString()+'</td></tr>';
+      // 불량수
+      html+='<tr style="background:'+bgR+'"><td style="font-size:10px;font-weight:600;color:var(--red);text-align:left">'+lb+' 불량수</td>';
+      let sd=0;gm.forEach(mn=>{const v=mSum[mn][bk].d;sd+=v;html+='<td style="color:var(--red)">'+(v?v.toLocaleString():'-')+'</td>'});
+      html+='<td style="font-weight:700;color:var(--red)">'+sd.toLocaleString()+'</td></tr>';
+      // PPM
+      html+='<tr style="background:#fff8f0"><td style="font-size:10px;font-weight:700;color:var(--warn);text-align:left">'+lb+' PPM</td>';
+      let gi=0,gd=0;gm.forEach(mn=>{const s=mSum[mn][bk],p=s.i>0?Math.round(s.d/s.i*1e6):0;gi+=s.i;gd+=s.d;html+='<td style="font-weight:800;color:'+ppmColor(p,target)+'">'+(p?p.toLocaleString():'-')+'</td>'});
+      const gp=gi>0?Math.round(gd/gi*1e6):0;
+      html+='<td style="font-weight:800;color:'+ppmColor(gp,target)+'">'+gp.toLocaleString()+'</td></tr>';
+    });
+
+    // 합계
+    html+='<tr class="st-total"><td style="text-align:left">합계 검사수</td>';
+    let ai=0;gm.forEach(mn=>{const v=mSum[mn].total.i;ai+=v;html+='<td>'+(v?v.toLocaleString():'-')+'</td>'});
+    html+='<td style="font-weight:800">'+ai.toLocaleString()+'</td></tr>';
+
+    html+='<tr class="st-total"><td style="text-align:left;color:var(--red)">합계 불량수</td>';
+    let ad=0;gm.forEach(mn=>{const v=mSum[mn].total.d;ad+=v;html+='<td style="color:var(--red)">'+(v?v.toLocaleString():'-')+'</td>'});
+    html+='<td style="font-weight:800;color:var(--red)">'+ad.toLocaleString()+'</td></tr>';
+
+    html+='<tr class="st-total" style="background:var(--warn-light)"><td style="text-align:left;font-weight:800;color:var(--warn)">합계 PPM</td>';
+    let ati=0,atd=0;gm.forEach(mn=>{const s=mSum[mn].total,p=s.i>0?Math.round(s.d/s.i*1e6):0;ati+=s.i;atd+=s.d;html+='<td style="font-weight:800;color:'+ppmColor(p,target)+'">'+(p?p.toLocaleString():'-')+'</td>'});
+    const tp=ati>0?Math.round(atd/ati*1e6):0;
+    html+='<td style="font-weight:900;font-size:13px;color:'+ppmColor(tp,target)+'">'+tp.toLocaleString()+'</td></tr>';
+    html+='</tbody></table>';
+  });
+  el.innerHTML=html;
+}
+
+/* ===== 불량유형 Top ===== */
+function renderDefectTop(tTop){
+  const el=document.getElementById('defectTopWrap');
+  const sorted=Object.entries(tTop).sort((a,b)=>b[1]-a[1]).slice(0,10);
+  if(!sorted.length){el.innerHTML='<div class="empty">이번 주 불량 없음</div>';return}
+  const mx=sorted[0][1];
+  el.innerHTML=sorted.map(([n,q],i)=>{
+    const pct=(q/mx*100).toFixed(1);
+    const bc=i===0?'#c62828':i<3?'#e65100':'#1565c0';
+    return'<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">'+
+      '<span style="font-size:11px;font-weight:700;width:16px;text-align:right;color:#888">'+(i+1)+'</span>'+
+      '<span style="font-size:12px;font-weight:600;width:80px;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+n+'</span>'+
+      '<div style="flex:1;background:#f5f5f5;border-radius:4px;height:20px;overflow:hidden"><div style="width:'+pct+'%;background:'+bc+';height:100%;border-radius:4px"></div></div>'+
+      '<span style="font-size:13px;font-weight:800;color:'+bc+';width:40px;text-align:right">'+q+'</span></div>'
+  }).join('');
+}
+
+/* ===== 일별 추이 ===== */
+function renderDailyTable(daily,target){
+  const el=document.getElementById('dailyTableWrap');
+  const dates=Object.keys(daily).sort().reverse().slice(0,30);
+  if(!dates.length){el.innerHTML='<div class="empty">없음</div>';return}
+  let h='<table class="stat-table"><thead><tr><th>일자</th><th>검사수</th><th>불량수</th><th>PPM</th><th>주요 불량</th></tr></thead><tbody>';
+  dates.forEach(dt=>{
+    const d=daily[dt],p=d.i>0?Math.round(d.d/d.i*1e6):0;
+    const top=Object.entries(d.types).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([n,q])=>n+':'+q).join(', ');
+    h+='<tr><td style="font-weight:600;white-space:nowrap">'+dt+'</td><td>'+d.i.toLocaleString()+'</td><td style="color:var(--red);font-weight:700">'+d.d.toLocaleString()+'</td><td style="font-weight:700;color:'+ppmColor(p,target)+'">'+p.toLocaleString()+'</td><td style="font-size:10px;color:#555">'+(top||'-')+'</td></tr>';
+  });
+  h+='</tbody></table>';
+  if(Object.keys(daily).length>30)h+='<div style="text-align:center;font-size:10px;color:#888;margin-top:4px">최근 30일 (전체 '+Object.keys(daily).length+'일)</div>';
+  el.innerHTML=h;
+}
+
+/* ===== 엑셀 ===== */
+function exportReport(){
+  if(!reportData){showToast('먼저 조회하세요');return}
+  const{wMap,sortedW,custs,mSum,rows,target}=reportData;
+  const wb=XLSX.utils.book_new();
+
+  // S1: 주간PPM
+  const h1=['구분',...sortedW];
+  const r1=custs.map(c=>{const row=[c];sortedW.forEach(wk=>{const v=(wMap[wk]&&wMap[wk][c])?wMap[wk][c]:{i:0,d:0};row.push(v.i>0?Math.round(v.d/v.i*1e6):0)});return row});
+  const tot1=['합계'];sortedW.forEach(wk=>{let ti=0,td=0;custs.forEach(c=>{const v=(wMap[wk]&&wMap[wk][c])?wMap[wk][c]:{i:0,d:0};ti+=v.i;td+=v.d});tot1.push(ti>0?Math.round(td/ti*1e6):0)});
+  r1.push(tot1);
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([h1,...r1]),'주간PPM추이');
+
+  // S2: 공정불량
+  const mdls=Object.keys(mSum).sort();
+  if(mdls.length){
+    const h2=['구분',...mdls,'합계'];const r2=[];
+    ['inner','outer'].forEach(bk=>{
+      const lb=bk==='inner'?'Inner':'Outer';
+      const ir=[lb+' 검사수'],dr=[lb+' 불량수'],pr=[lb+' PPM'];
+      let si=0,sd=0;
+      mdls.forEach(mn=>{const s=mSum[mn][bk];ir.push(s.i);dr.push(s.d);pr.push(s.i>0?Math.round(s.d/s.i*1e6):0);si+=s.i;sd+=s.d});
+      ir.push(si);dr.push(sd);pr.push(si>0?Math.round(sd/si*1e6):0);
+      r2.push(ir,dr,pr);
+    });
+    const ti2=['합계 검사수'],td2=['합계 불량수'],tp2=['합계 PPM'];
+    let ati=0,atd=0;
+    mdls.forEach(mn=>{const s=mSum[mn].total;ti2.push(s.i);td2.push(s.d);tp2.push(s.i>0?Math.round(s.d/s.i*1e6):0);ati+=s.i;atd+=s.d});
+    ti2.push(ati);td2.push(atd);tp2.push(ati>0?Math.round(atd/ati*1e6):0);
+    r2.push(ti2,td2,tp2);
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([h2,...r2]),'주간공정불량');
+  }
+
+  // S3: 원본
+  if(rows.length){
+    const h3=['일자','시간','기종','면','영역','불량유형','검사수','수량','작업자','검사라인','생산라인','비고'];
+    const r3=rows.map(r=>[r.defect_date,r.defect_time,r.model_name,r.side,r.zone_name,r.defect_type,r.inspect_qty||0,r.qty||0,r.worker,r.inspect_line,r.prod_line,r.note]);
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([h3,...r3]),'원본데이터');
+  }
+
+  XLSX.writeFile(wb,'주간보고서_'+new Date().toISOString().split('T')[0].replace(/-/g,'')+'.xlsx');
+  showToast('📥 엑셀 다운로드');
+}
+
+/* ===== 초기화 ===== */
+async function init(){
+  showLoading('마스터 로딩...');
+  try{await loadMaster()}catch(e){console.log('마스터 로드 실패:',e)}
+  hideLoading();
+}
+init();
+</script>
+</body>
+</html>
