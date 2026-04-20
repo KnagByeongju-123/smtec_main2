@@ -196,7 +196,44 @@ async function sendTelegram(data){let TG_BOT=getSettings().tg_bot||'';let TG_USE
 // 검사자/검사기 관리
 async function loadInspectorsFromServer(){if(!isConfigured())return;try{const data=await sbSelect('common_code',{code_group:'eq.inspector'},'sort_order.asc',100);if(data&&data.length){_inspectorCache=data.map(r=>({id:r.id,name:String(r.code_value||'').trim(),sort:r.sort_order||0}));_inspectorCache.sort((a,b)=>a.sort-b.sort)}else{await initInspectorsOnServer()}}catch(e){}renderInspectorSelect()}
 async function initInspectorsOnServer(){if(!isConfigured())return;const rows=DEFAULT_INSPECTORS.map((name,i)=>({code_group:'inspector',code_value:name,sort_order:i+1,note:''}));try{const u=getSbUrl(),k=getSbKey();const res=await fetch(u+'/rest/v1/common_code',{method:'POST',headers:{'Content-Type':'application/json','apikey':k,'Authorization':'Bearer '+k,'Prefer':'return=representation'},body:JSON.stringify(rows)});if(res.ok){const saved=await res.json();_inspectorCache=saved.map(r=>({id:r.id,name:String(r.code_value||'').trim(),sort:r.sort_order||0}));_inspectorCache.sort((a,b)=>a.sort-b.sort)}}catch(e){}}
-function renderInspectorSelect(){const sel=document.getElementById('inspector');const prev=sel.value;sel.innerHTML='<option value="" disabled selected>선택</option>';const list=getInspectors();(Array.isArray(list)&&list.length?list:[]).forEach(item=>{const name=typeof item==='string'?item:item.name;const o=document.createElement('option');o.value=name;o.textContent=name;sel.appendChild(o)});if(prev)sel.value=prev}
+function renderInspectorSelect(){const sel=document.getElementById('inspector');const prev=sel.value;sel.innerHTML='<option value="" disabled selected>선택</option>';const list=getInspectors();(Array.isArray(list)&&list.length?list:[]).forEach(item=>{const name=typeof item==='string'?item:item.name;const o=document.createElement('option');o.value=name;o.textContent=name;sel.appendChild(o)});if(prev)sel.value=prev;autoSelectInspector()}
+
+// 접속된 사용자 이름 가져오기 (ESG 인증 시스템 연동)
+function getCurrentUserName(){
+  try{
+    var esgAuth=JSON.parse(localStorage.getItem('esg_pin_auth')||'null');
+    if(esgAuth&&esgAuth.exp>Date.now()&&esgAuth.name){
+      try{sessionStorage.setItem('ESG_USER',esgAuth.name)}catch(e){}
+      return esgAuth.name;
+    }
+    var s=sessionStorage.getItem('ESG_USER');if(s)return s;
+    var p=new URLSearchParams(location.search);
+    var u=p.get('user')||p.get('worker')||p.get('name')||p.get('inspector');
+    if(u){try{sessionStorage.setItem('ESG_USER',u)}catch(e){}return u}
+    var last=localStorage.getItem('mes_last_worker');if(last)return last;
+    return localStorage.getItem('QC_LAST_INSPECTOR')||'';
+  }catch(e){return ''}
+}
+
+// 검사자 select에 현재 사용자 자동 선택 (없으면 추가)
+function autoSelectInspector(){
+  var userName=getCurrentUserName();
+  if(!userName)return;
+  var sel=document.getElementById('inspector');
+  if(!sel)return;
+  if(sel.value&&sel.value!==userName)return;
+  var matched=false;
+  for(var i=0;i<sel.options.length;i++){
+    if(sel.options[i].value===userName){sel.value=userName;matched=true;break}
+  }
+  if(!matched){
+    var opt=document.createElement('option');
+    opt.value=userName;opt.textContent=userName+' (자동)';
+    sel.appendChild(opt);sel.value=userName;
+  }
+  try{sel.dispatchEvent(new Event('change'))}catch(e){}
+  try{localStorage.setItem('QC_LAST_INSPECTOR',userName)}catch(e){}
+}
 async function loadMachinesFromServer(){if(!isConfigured())return;try{const data=await sbSelect('common_code',{code_group:'eq.qc_machine'},'sort_order.asc',100);if(data&&data.length){_machineCache=data.map(r=>({id:r.id,name:String(r.code_value||'').trim(),sort:r.sort_order||0}));_machineCache.sort((a,b)=>a.sort-b.sort)}else{const rows=DEFAULT_MACHINES.map((name,i)=>({code_group:'qc_machine',code_value:name,sort_order:i+1}));try{const u=getSbUrl(),k=getSbKey();const res=await fetch(u+'/rest/v1/common_code',{method:'POST',headers:{'Content-Type':'application/json','apikey':k,'Authorization':'Bearer '+k,'Prefer':'return=representation'},body:JSON.stringify(rows)});if(res.ok){const saved=await res.json();_machineCache=saved.map(r=>({id:r.id,name:String(r.code_value||'').trim(),sort:r.sort_order||0}));_machineCache.sort((a,b)=>a.sort-b.sort)}}catch(e){}}}catch(e){}renderMachineSelect()}
 function renderMachineSelect(){const sel=document.getElementById('machine');const prev=sel.value;sel.innerHTML='<option value="" disabled selected>선택</option>';getMachines().forEach(item=>{const name=typeof item==='string'?item:item.name;const o=document.createElement('option');o.value=name;o.textContent=name;sel.appendChild(o)});if(prev)sel.value=prev;const histSel=document.getElementById('histMachine');if(histSel){const cv=histSel.value;histSel.innerHTML='<option value="">전체</option>';getMachines().forEach(item=>{const name=typeof item==='string'?item:item.name;histSel.innerHTML+='<option value="'+name+'">'+name+'</option>'});if(cv)histSel.value=cv}}
 function renderInspectorListUI(){const list=getInspectors();const c=document.getElementById('inspectorList');if(!c)return;if(!list.length){c.innerHTML='<div style="font-size:11px;color:var(--text3);padding:6px 0">검사자 없음</div>';return}const items=list.map(item=>typeof item==='string'?{name:item,id:null,sort:0}:item);c.innerHTML=items.map((item,i)=>`<div class="tg-user-item"><span style="color:var(--text3);font-size:11px;min-width:20px">${i+1}</span><span class="tg-name" style="flex:1">${item.name}</span><button class="tg-del" onclick="moveInspector(${i},-1)" style="background:transparent;color:var(--text2);font-size:11px">▲</button><button class="tg-del" onclick="moveInspector(${i},1)" style="background:transparent;color:var(--text2);font-size:11px">▼</button><button class="tg-del" onclick="removeInspector(${i})">✕</button></div>`).join('')}
