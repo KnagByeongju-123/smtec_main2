@@ -236,6 +236,16 @@ body{padding:0;font-size:13px}
             <div class="mid-mat-row"><span class="mat-lbl">잔여중량</span><span class="mat-val red" id="vdRemainWeight">-</span></div>
             <div class="mid-mat-row"><span class="mat-lbl">타발수</span><span class="mat-val" id="vdShotQty">-</span></div>
             <div class="mid-mat-row"><span class="mat-lbl">사용중량</span><span class="mat-val" id="vdUsedWeight">-</span></div>
+            <!-- 사용완료 체크박스 -->
+            <div id="lotCompleteBox" style="margin-top:8px;padding:8px;background:rgba(74,222,128,.08);border:1px solid rgba(74,222,128,.3);border-radius:6px;cursor:pointer;display:none" onclick="toggleLotComplete()">
+              <div style="display:flex;align-items:center;gap:8px">
+                <div id="lotCompleteChk" style="width:20px;height:20px;border:2px solid var(--green);border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:900;color:var(--green);background:#0a0f1f">　</div>
+                <div style="flex:1">
+                  <div style="font-size:12px;font-weight:800;color:var(--green)">✅ 이 로트 사용완료</div>
+                  <div style="font-size:10px;color:var(--sub);margin-top:1px">체크 후 저장시 MES에서 제외</div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -551,7 +561,8 @@ var state={
   virtDowntimes:[],
   report:{defects:{},conditions:{}},
   editId:null,
-  _dtDraft:null
+  _dtDraft:null,
+  lotCompleted:false
 };
 
 DEFECT_TYPES.forEach(function(t){state.report.defects[t]=''});
@@ -1192,6 +1203,24 @@ function renderVirtDashboard(){
     setTxt('vdRemainWeight', lot&&lot.remain_weight?(lot.remain_weight.toFixed(1)+' kg'):'-');
   }
   
+  // 사용완료 체크박스: 소재가 선택된 경우에만 표시
+  var chkBox=document.getElementById('lotCompleteBox');
+  if(chkBox){
+    chkBox.style.display=lot&&lot.heat_no?'block':'none';
+    var chk=document.getElementById('lotCompleteChk');
+    if(chk){
+      if(state.lotCompleted){
+        chk.textContent='✓';
+        chk.style.background='var(--green)';
+        chk.style.color='#000';
+      }else{
+        chk.textContent='　';
+        chk.style.background='#0a0f1f';
+        chk.style.color='var(--green)';
+      }
+    }
+  }
+  
   // KPI
   var tgtUph=spm>0?Math.round(spm*60):0;
   setTxt('vdTargetUph', tgtUph>0?tgtUph.toLocaleString():'-');
@@ -1591,14 +1620,16 @@ async function openRawPicker(){
       return;
     }
     var rows=await res.json();
-    // 가상설비 사용량(Supabase)과 합산해 잔량 계산
+    // 가상설비 사용량(Supabase)과 합산해 잔량 계산 + 완료여부
     var usageMap={};
+    var completedSet={};
     try{
-      var u=await fetch(SB_URL+'/rest/v1/virtual_raw_usage?select=heat_no,used_weight',{headers:sbH});
+      var u=await fetch(SB_URL+'/rest/v1/virtual_raw_usage?select=heat_no,used_weight,is_completed',{headers:sbH});
       if(u.ok){
         (await u.json()).forEach(function(x){
           var k=x.heat_no||'';
           usageMap[k]=(usageMap[k]||0)+(+x.used_weight||0);
+          if(x.is_completed)completedSet[k]=true;
         });
       }
     }catch(e){}
@@ -1609,6 +1640,7 @@ async function openRawPicker(){
       var remain=net-used;
       var rate=net>0?(remain/net*100):0;
       var spec=(r.material_type||'')+' '+(r.thickness||'')+'*'+(r.width_mm||'');
+      var isCompleted=!!completedSet[r.heat_no]||remain<=0.1;
       return {
         receipt_no: r.mes_receipt_no||('SB'+r.id),
         receipt_seq: 1,
@@ -1620,6 +1652,7 @@ async function openRawPicker(){
         remain_weight: Math.round(remain*10)/10,
         remain_rate: Math.round(rate*10)/10,
         is_new: used===0,
+        is_completed: isCompleted,
         receipt_date: r.receipt_date||'',
         raw_name: spec,
         raw_spec: spec,
@@ -1628,7 +1661,7 @@ async function openRawPicker(){
         width: +r.width_mm||null,
         status: r.status||'',
       };
-    }).filter(function(l){return l.remain_weight>0});
+    }).filter(function(l){return !l.is_completed});  // 완료된 것 제외
   }catch(e){
     document.getElementById('rawPickerList').innerHTML='<div style="text-align:center;color:var(--red);padding:20px">❌ 연결실패<br><span style="font-size:10px;color:var(--sub)">'+_esc(e.message)+'</span></div>';
     return;
@@ -1694,6 +1727,7 @@ async function pickLot(idx){
   if(!list||!list[idx])return;
   var lot=list[idx];
   closeRawPicker();
+  state.lotCompleted=false;  // 새 로트 선택시 초기화
   var v=state.virtManual;
   v.raw_item_code=lot.raw_code;
   v.lot_no=lot.heat_no;
@@ -1856,6 +1890,19 @@ function clearSearchFilter(){
 function openWeightSearch(){openSearchPopup()}
 function clearWeightFilter(){clearSearchFilter()}
 
+// ========== 로트 사용완료 토글 ==========
+function toggleLotComplete(){
+  var lot=state.virtLotInfo;
+  if(!lot||!lot.heat_no){showToast('먼저 소재를 선택하세요');return}
+  state.lotCompleted=!state.lotCompleted;
+  renderVirtDashboard();
+  if(state.lotCompleted){
+    showToast('✅ 사용완료 체크됨 - 저장시 MES에서 제외');
+  }else{
+    showToast('사용완료 해제');
+  }
+}
+
 // ========== 저장 ==========
 async function saveReport(){
   if(!state.machine){showToast('설비 선택 필요');return}
@@ -1864,6 +1911,18 @@ async function saveReport(){
     showToast('품번 또는 실적수량을 입력하세요');return;
   }
   var m=state.machine;
+  
+  // 소재 사용량 계산 (쇼트수 × 개당중량g / 1000)
+  var bom=state.virtBomInfo||{};
+  var lot=state.virtLotInfo;
+  var totNg=0;
+  if(state.report&&state.report.defects){
+    Object.keys(state.report.defects).forEach(function(k){totNg+=(+state.report.defects[k]||0)});
+  }
+  var shotQty=(+v.actual_qty||0)+totNg;
+  var unitPer=+bom.unit_per_qty||0;
+  var usedWeight=(shotQty>0&&unitPer>0)?(shotQty*unitPer/1000):0;
+  
   var record={
     machine_code:m.machine_code,
     machine_name:m.machine_name||'',
@@ -1884,7 +1943,9 @@ async function saveReport(){
       virtManual:Object.assign({},v),
       virtLotInfo:state.virtLotInfo,
       virtBomInfo:state.virtBomInfo,
-      virtDowntimes:state.virtDowntimes||[]
+      virtDowntimes:state.virtDowntimes||[],
+      usedWeight:Math.round(usedWeight*10)/10,
+      lotCompleted:!!(state.lotCompleted)
     },
     created_at:new Date().toISOString()
   };
@@ -1911,6 +1972,32 @@ async function saveReport(){
     if(!res.ok){
       showToast('❌ 저장 실패');return;
     }
+    
+    // 소재 사용량 기록 (virtual_raw_usage)
+    if(lot&&lot.heat_no&&(usedWeight>0||state.lotCompleted)){
+      try{
+        // 사용완료 체크시 -> 잔량 전체를 사용처리 (net_weight 전체)
+        var finalUsed=state.lotCompleted?(+lot.net_weight||usedWeight):usedWeight;
+        var usageRec={
+          heat_no:lot.heat_no,
+          receipt_no:lot.receipt_no||'',
+          raw_code:v.raw_item_code||'',
+          item_code:v.item_code||'',
+          machine_code:m.machine_code,
+          used_weight:Math.round(finalUsed*10)/10,
+          shot_qty:shotQty,
+          is_completed:!!state.lotCompleted,
+          note:state.lotCompleted?'수동 사용완료 처리':'',
+          created_at:record.created_at
+        };
+        await fetch(SB_URL+'/rest/v1/virtual_raw_usage',{
+          method:'POST',
+          headers:Object.assign({},sbH,{'Prefer':'return=minimal'}),
+          body:JSON.stringify(usageRec)
+        });
+      }catch(e){/* 실패해도 작업일보는 저장됨 */}
+    }
+    
     showToast('✅ 저장 완료',3000);
     setTimeout(function(){location.href='mes_work.html'},1500);
   }catch(e){
