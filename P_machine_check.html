@@ -613,9 +613,19 @@
 
   <!-- 3. 설비호기 -->
   <div class="card">
-    <div class="card-title">🏭 설비(호기) 관리</div>
+    <div class="card-title" style="justify-content:space-between;display:flex"><span>🏭 설비(호기) 관리 <span id="machineCntBadge" style="background:var(--accent);color:#000;font-size:11px;padding:2px 10px;border-radius:10px;font-weight:700;margin-left:6px">0</span></span></div>
     <div style="font-size:10px;color:var(--text3);margin-bottom:8px;padding:6px 8px;background:rgba(56,189,248,.08);border-radius:6px">💡 마스터 관리(p_machine)에서 통합관리 · 여기서 추가 시 마스터에도 자동 반영</div>
-    <div id="machineList"></div>
+    <div style="display:flex;gap:6px;margin-bottom:8px">
+      <input type="text" id="machineSearch" placeholder="🔍 검색" oninput="renderMachineListUI()" style="flex:1;padding:8px 10px;font-size:12px;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit">
+    </div>
+    <div style="display:flex;gap:6px;margin-bottom:8px">
+      <button type="button" onclick="document.getElementById('machineFile').click()" style="flex:1;padding:8px;background:linear-gradient(135deg,#e65100,#ff9800);color:#fff;border:none;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">📤 엑셀 업로드</button>
+      <button type="button" onclick="exportMachines()" style="flex:1;padding:8px;background:var(--surface2);color:var(--text2);border:1px solid var(--border);border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">📥 다운로드</button>
+      <button type="button" onclick="downloadMachineTpl()" style="padding:8px 12px;background:var(--surface2);color:var(--text2);border:1px solid var(--border);border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">📋</button>
+    </div>
+    <input type="file" id="machineFile" accept=".xlsx,.xls,.csv" style="display:none">
+    <div id="machineProgress" style="display:none;font-size:11px;color:var(--accent);padding:4px 0"></div>
+    <div id="machineList" style="max-height:480px;overflow-y:auto;padding:4px;background:var(--bg);border-radius:8px;border:1px solid rgba(255,255,255,.04)"></div>
     <div style="display:flex;gap:6px;margin-top:8px">
       <input type="text" id="newMachineName" placeholder="예: 1호기 쌍용200톤" style="flex:1;padding:9px 12px;font-size:13px;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit">
       <button type="button" onclick="addMachine()" style="padding:9px 14px;background:var(--accent2);border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;flex-shrink:0">+ 추가</button>
@@ -1265,12 +1275,132 @@ function renderInspectorListUI() {
 function renderMachineListUI() {
   const list = getMachines();
   const c = document.getElementById('machineList');
-  if (!list.length) { c.innerHTML = '<div style="font-size:11px;color:var(--text3);padding:6px 0">설비 없음</div>'; return; }
-  c.innerHTML = list.map((item, i) => {
+  const badge = document.getElementById('machineCntBadge');
+  if (badge) badge.textContent = list.length;
+  const search = (document.getElementById('machineSearch')?.value || '').toLowerCase().trim();
+  let filtered = list.map((item,origIdx)=>({item,origIdx}));
+  if (search) filtered = filtered.filter(({item}) => {
+    const nm = typeof item === 'string' ? item : item.name;
+    return (nm||'').toLowerCase().includes(search);
+  });
+  if (!filtered.length) {
+    c.innerHTML = list.length
+      ? '<div style="font-size:11px;color:var(--text3);padding:12px 0;text-align:center">🔍 검색 결과 없음</div>'
+      : '<div style="font-size:11px;color:var(--text3);padding:12px 0;text-align:center">설비 없음 — 아래에서 추가 또는 엑셀 업로드</div>';
+    return;
+  }
+  c.innerHTML = filtered.map(({item, origIdx}) => {
     const name = typeof item === 'string' ? item : item.name;
-    return `<div class="stg-list-item"><span style="color:var(--text3);font-size:11px;min-width:20px">${i+1}</span><span class="stg-name">${name}</span><button class="stg-move" onclick="moveItem('p_machine',${i},-1)">▲</button><button class="stg-move" onclick="moveItem('p_machine',${i},1)">▼</button><button class="stg-del" onclick="removeItem('p_machine',${i})">✕</button></div>`;
+    return `<div class="stg-list-item"><span style="color:var(--text3);font-size:11px;min-width:20px">${origIdx+1}</span><span class="stg-name">${name}</span><button class="stg-move" onclick="moveItem('p_machine',${origIdx},-1)">▲</button><button class="stg-move" onclick="moveItem('p_machine',${origIdx},1)">▼</button><button class="stg-del" onclick="removeItem('p_machine',${origIdx})">✕</button></div>`;
   }).join('');
 }
+
+// ===== 설비 엑셀 업로드/다운로드/템플릿 =====
+function downloadMachineTpl() {
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+    ['설비명'],
+    ['1호기 국일300톤'],
+    ['2호기 국일300톤'],
+    ['36호기 국일300톤'],
+    ['06호기 심팩110톤']
+  ]), '설비목록');
+  XLSX.writeFile(wb, '설비목록_템플릿.xlsx');
+}
+
+function exportMachines() {
+  const list = getMachines();
+  if (!list.length) { alert('등록된 설비가 없습니다'); return; }
+  const rows = list.map((item, i) => {
+    const name = typeof item === 'string' ? item : item.name;
+    return [i+1, name];
+  });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['순번','설비명'], ...rows]), '설비목록');
+  const ymd = new Date().toISOString().split('T')[0].replace(/-/g,'');
+  XLSX.writeFile(wb, '설비목록_'+ymd+'.xlsx');
+}
+
+document.getElementById('machineFile')?.addEventListener('change', async function(e){
+  const file = e.target.files[0];
+  if (!file) return;
+  e.target.value = '';
+  const prog = document.getElementById('machineProgress');
+  const st = document.getElementById('machineSaveStatus');
+  prog.style.display = 'block'; prog.textContent = '파일 읽는 중...';
+
+  if (!isConfigured()) {
+    prog.style.display = 'none';
+    st.textContent = '❌ Supabase 연결 필요'; st.style.color = '#ef4444';
+    return;
+  }
+  try {
+    const data = await file.arrayBuffer();
+    const wb = XLSX.read(data, {type:'array'});
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const raw = XLSX.utils.sheet_to_json(ws, {defval:'', header:1});
+    // 헤더 감지: 첫 행이 '설비명' 또는 '순번/설비명'이면 건너뜀
+    let startRow = 0;
+    if (raw.length && raw[0].some(v => String(v||'').includes('설비명') || String(v||'').includes('순번'))) {
+      startRow = 1;
+    }
+    // 설비명 추출: '설비명' 컬럼을 우선, 없으면 첫 번째 비어있지 않은 셀
+    const names = [];
+    for (let i = startRow; i < raw.length; i++) {
+      const r = raw[i];
+      if (!r || !r.length) continue;
+      let nm = '';
+      // 2컬럼 이상이면 두번째 시도 (순번/설비명)
+      if (r.length >= 2 && String(r[1]||'').trim()) nm = String(r[1]).trim();
+      else nm = String(r[0]||'').trim();
+      if (nm) names.push(nm);
+    }
+    if (!names.length) {
+      prog.style.display = 'none';
+      st.textContent = '❌ 유효한 설비명 없음'; st.style.color = '#ef4444';
+      return;
+    }
+    const existing = new Set(_machineCache.map(c => typeof c === 'string' ? c : c.name));
+    const newOnes = names.filter(n => !existing.has(n));
+    const dupCnt = names.length - newOnes.length;
+    if (!newOnes.length) {
+      prog.style.display = 'none';
+      st.textContent = '⚠ 모두 중복 ('+dupCnt+'건)'; st.style.color = '#f59e0b';
+      return;
+    }
+    if (!confirm('총 '+names.length+'건 중 신규 '+newOnes.length+'건 업로드?\n'+(dupCnt?'(중복 '+dupCnt+'건 제외)':''))) {
+      prog.style.display = 'none';
+      return;
+    }
+    prog.textContent = '업로드 중... 0/'+newOnes.length;
+    let maxSort = _machineCache.length ? Math.max(..._machineCache.map(c=>c.sort||0)) : 0;
+    const payload = newOnes.map((n,i) => ({code_group:'p_machine', code_value:n, sort_order:maxSort+i+1}));
+    // 배치 insert
+    const SB_URL=getSbUrl(), SB_KEY=getSbKey();
+    let done = 0;
+    for (let i = 0; i < payload.length; i += 50) {
+      const batch = payload.slice(i, i+50);
+      const res = await fetch(SB_URL+'/rest/v1/common_code', {
+        method:'POST',
+        headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Prefer':'return=representation'},
+        body:JSON.stringify(batch)
+      });
+      if (!res.ok) { const err = await res.text(); throw new Error(err.slice(0,200)); }
+      const saved = await res.json();
+      saved.forEach(s => _machineCache.push({id:s.id, name:s.code_value, sort:s.sort_order}));
+      done += batch.length;
+      prog.textContent = '업로드 중... '+done+'/'+newOnes.length;
+    }
+    _machineCache.sort((a,b)=>(a.sort||0)-(b.sort||0));
+    renderMachineListUI();
+    if (typeof renderMachineSelect === 'function') renderMachineSelect();
+    prog.style.display = 'none';
+    st.textContent = '✅ '+newOnes.length+'건 업로드'+(dupCnt?' (중복 '+dupCnt+'건 제외)':''); st.style.color = '#22c55e';
+  } catch(e) {
+    prog.style.display = 'none';
+    st.textContent = '❌ '+e.message; st.style.color = '#ef4444';
+  }
+});
 
 async function addInspector() {
   const inp = document.getElementById('newInspectorName');
