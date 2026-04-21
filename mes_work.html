@@ -558,8 +558,41 @@ function runNfcAuto(){
 }
 // hash 변경 시에도 재실행 허용
 window.addEventListener('hashchange',function(){_nfcDone=false;if(cachedData)runNfcAuto()});
-var _stopMap={'Z001':'작업대기','M001':'금형교체','M002':'금형예열','M003':'금형세척','M004':'금형점검','M005':'금형대기','M006':'금형수리','M007':'금형시험','M008':'금형조정','A001':'자재대기','A002':'자재교체','A003':'자재불량','A004':'모델교체','A005':'작업지시대기','E001':'설비고장','E002':'설비점검','E003':'설비수리','Q001':'품질이상','Q002':'검사대기','R001':'휴식','R002':'식사','P001':'전원이상','P002':'기타'};
-function stopName(code){if(!code||code==='N')return'가동';var sub=code.indexOf('-')>=0?code.split('-')[1]:'';return _stopMap[sub]||sub||'비가동'}
+// ====== 정지코드 마스터 (Supabase stop_code_master) ======
+// 주의: MES ICOM_MACHINE_STATUS_HIST 테이블에 MACHINE_STATUS_NAME(한글이름)이
+// 이미 저장되어 있음. Python에서 그 이름을 그대로 daily_downtime.events에 저장함.
+// 이 맵은 fallback용 (이름이 없을 때 또는 모니터링 탭의 상태표시용)
+var _stopMap={};
+var _stopPlanned={};
+var _stopMapLoaded=false;
+async function loadStopCodeMaster(){
+  try{
+    var rows=await sbGet('stop_code_master','select=code,code_name,is_planned&active=eq.true&order=sort_order.asc');
+    if(rows&&rows.length){
+      _stopMap={};_stopPlanned={};
+      rows.forEach(function(r){
+        var code=String(r.code||'').trim().toUpperCase();
+        var nm=String(r.code_name||'').trim();
+        if(!code||!nm)return;
+        _stopMap[code]=nm;
+        if(r.is_planned)_stopPlanned[code]=true;
+      });
+      _stopMapLoaded=true;
+      console.log('[stop_code_master] '+rows.length+'건 로드');
+    }
+  }catch(e){console.log('stop_code_master 로드실패:',e)}
+}
+function stopName(code){
+  if(!code||code==='N')return'가동';
+  if(code==='M')return'수동';
+  var c=String(code).trim().toUpperCase();
+  if(_stopMap[c])return _stopMap[c];
+  return c||'비가동';
+}
+function isPlannedStop(code){
+  if(!code)return false;
+  return !!_stopPlanned[String(code).trim().toUpperCase()];
+}
 
 function renderMonitor(data){
   var total=data.length,running=data.filter(function(d){return d.machine_status==='N'}).length,stopped=total-running;
@@ -2012,6 +2045,7 @@ async function init(){
     }
   }
   try{await _loadAllRulesFromServer();}catch(e){console.error('규칙 로딩 실패:',e)}
+  try{await loadStopCodeMaster();}catch(e){console.error('정지코드 로딩 실패:',e)}
   try{
     var data=await sbGet('machine_status','select=*&order=machine_code.asc');
     if(!data||!data.length){
