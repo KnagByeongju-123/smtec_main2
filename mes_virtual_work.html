@@ -142,6 +142,7 @@ body{padding:0;font-size:13px}
 .pin-dot.ok{background:var(--green);border-color:var(--green)}
 .pin-dot.err{background:var(--red);border-color:var(--red);animation:pinshake .4s}
 @keyframes pinshake{0%,100%{transform:translateX(0)}25%{transform:translateX(-6px)}75%{transform:translateX(6px)}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.55}}
 .pin-key{padding:16px;background:#1e293b;border:1px solid var(--border);color:#fff;font-size:18px;font-weight:700;border-radius:8px;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent}
 .pin-key:active{background:var(--purple);color:#0f172a;transform:scale(.95)}
 .pin-key.pin-fn{background:#334155;font-size:13px;font-weight:600}
@@ -1002,6 +1003,8 @@ function openVirtNumpad(field,label,allowDecimal){
     if(field==='spm'){
       var s=+val||0;
       if(s>0)state.virtManual.ct=(60/s).toFixed(2);
+      // ★ SPM 변경 시 소재 자동계산도 재렌더링
+      renderRawChangeList();
     }
     renderVirtDashboard();
   };
@@ -1368,6 +1371,7 @@ function startDowntime(){
   sel.value='';
   renderDowntimeList();
   updateDowntimeStat();
+  renderRawChangeList();  // ★ 로트 카운트다운 재계산 (정지중 표시)
   showToast('▶ 정지 시작: '+code);
 }
 
@@ -1380,6 +1384,7 @@ function endDowntime(idx){
   renderDowntimeList();
   updateDowntimeStat();
   renderVirtDashboard();
+  renderRawChangeList();  // ★ 로트 카운트다운 재계산 (재가동)
   showToast('■ 정지 종료: '+d.stop_code+' ('+d.duration_min+'분)');
 }
 
@@ -1389,6 +1394,7 @@ function deleteDowntime(idx){
   renderDowntimeList();
   updateDowntimeStat();
   renderVirtDashboard();
+  renderRawChangeList();  // ★ 로트 카운트다운 재계산
 }
 
 function renderDowntimeList(){
@@ -1501,6 +1507,7 @@ function saveDowntimeManual(){
   renderDowntimeList();
   updateDowntimeStat();
   renderVirtDashboard();
+  renderRawChangeList();  // ★ 로트 카운트다운 재계산
   showToast('✅ 정지 추가: '+d.stop_code+' '+d.duration_min+'분');
 }
 
@@ -1730,6 +1737,16 @@ function filterRawList(){
   var q=(document.getElementById('rawPickerSearch').value||'').toLowerCase().trim();
   if(!lotListCache)return;
   var f=lotListCache;
+  
+  // ★ 오늘 사용완료 처리된 HEAT_NO는 제외 (재고 차감됨)
+  var completedHeats={};
+  (state.rawChangeList||[]).forEach(function(x){
+    if(x.is_completed&&x.heat_no)completedHeats[x.heat_no]=true;
+  });
+  if(Object.keys(completedHeats).length>0){
+    f=f.filter(function(lot){return !completedHeats[lot.heat_no]});
+  }
+  
   if(q){
     f=f.filter(function(lot){
       var s=((lot.raw_code||'')+' '+(lot.heat_no||'')+' '+(lot.vendor||'')+' '+(lot.raw_spec||'')+' '+(lot.receipt_no||'')+' '+(lot.material_type||'')).toLowerCase();
@@ -1777,36 +1794,118 @@ function renderRawList(list){
   window._lotListFiltered=list;
 }
 
+// ════════════════════════════════════════════════════════════
+// ★ 소재 로트 관리 (단순화 버전)
+//   - 로트 한롤 = 완전소모 (used_weight = net_weight)
+//   - 현재 작업중 로트만 예상완료시각 실시간 계산
+//   - 이벤트 발생 시에만 갱신 (정지/해제, 로트교체)
+// ════════════════════════════════════════════════════════════
+
+// 현재 로트의 예상완료시각 계산
+// 반환: {remainingShots, elapsedMin, stopMin, runMin, neededMin, finishAt, progressPct}
+function calcCurrentLotStatus(){
+  var list=state.rawChangeList||[];
+  if(!list.length)return null;
+  
+  // 현재 작업중 로트 = 가장 최근에 unmount_time이 없는 것
+  var current=null;
+  for(var i=list.length-1;i>=0;i--){
+    if(!list[i].unmount_time){current=list[i];break}
+  }
+  if(!current)return null;  // 모든 로트 탈착됨
+  
+  var mt=current.mount_time?new Date(current.mount_time):null;
+  if(!mt)return null;
+  
+  var spm=+state.virtManual.spm||0;
+  var unitPer=+current.unit_per_qty||0;
+  var netKg=+current.net_weight||0;
+  
+  var now=new Date();
+  var elapsedMs=now-mt;
+  var elapsedMin=Math.max(0,elapsedMs/60000);
+  
+  // 장착 이후 정지시간 합산
+  var stopMin=0;
+  (state.virtDowntimes||[]).forEach(function(d){
+    if(d.status==='CANCELED')return;
+    var ds=d.start_time?new Date(d.start_time):null;
+    var de=d.end_time?new Date(d.end_time):(d.status==='RUNNING'?now:null);
+    if(!ds||!de)return;
+    var ovStart=Math.max(ds.getTime(),mt.getTime());
+    var ovEnd=Math.min(de.getTime(),now.getTime());
+    if(ovEnd>ovStart)stopMin+=(ovEnd-ovStart)/60000;
+  });
+  
+  var runMin=Math.max(0,elapsedMin-stopMin);
+  
+  // 현재 정지중인지 체크
+  var isDown=(state.virtDowntimes||[]).some(function(d){
+    return d.status==='RUNNING' && d.start_time;
+  });
+  
+  // 남은 shot / 남은 시간
+  var totalShots=(spm>0&&unitPer>0)?(netKg*1000/unitPer):0;
+  var producedShots=runMin*spm;
+  var remainingShots=Math.max(0,totalShots-producedShots);
+  var neededMin=(spm>0)?(remainingShots/spm):0;
+  
+  // 예상완료시각 = 현재 + 남은시간 (정지중이면 정지해제 후부터)
+  var finishAt=new Date(now.getTime()+neededMin*60000);
+  
+  // 진행률
+  var progressPct=totalShots>0?Math.min(100,(producedShots/totalShots)*100):0;
+  
+  return {
+    current:current,
+    mountTime:mt,
+    elapsedMin:Math.round(elapsedMin),
+    stopMin:Math.round(stopMin),
+    runMin:Math.round(runMin),
+    spm:spm,
+    unitPer:unitPer,
+    netKg:netKg,
+    totalShots:Math.round(totalShots),
+    producedShots:Math.round(producedShots),
+    remainingShots:Math.round(remainingShots),
+    neededMin:Math.round(neededMin),
+    finishAt:finishAt,
+    progressPct:progressPct,
+    isDown:isDown
+  };
+}
+
+// BOM에서 unit_per_qty 조회 → 교체 건에 기록
+async function fetchUnitPerQty(itemCode, rawCode){
+  if(!itemCode||!rawCode)return null;
+  try{
+    var qs='select=unit_per_qty&item_code=eq.'+encodeURIComponent(itemCode)+
+           '&raw_item_code=eq.'+encodeURIComponent(rawCode)+'&limit=1';
+    var res=await fetch(SB_URL+'/rest/v1/item_raw_bom?'+qs,{headers:sbH});
+    if(!res.ok)return null;
+    var data=await res.json();
+    if(data&&data.length&&data[0].unit_per_qty!=null){
+      return +data[0].unit_per_qty;
+    }
+  }catch(e){}
+  return null;
+}
+
 async function pickLot(idx){
   var list=window._lotListFiltered;
   if(!list||!list[idx])return;
   var lot=list[idx];
   closeRawPicker();
   
-  // ★★★ 이전 소재 "탈착시각" 기록 (직전 교체 건이 있다면) ★★★
+  // ★ 이전 로트 탈착시각만 기록 (완료는 명시적 체크)
   var nowIso=new Date().toISOString();
   if(state.rawChangeList.length>0){
     var prev=state.rawChangeList[state.rawChangeList.length-1];
     if(!prev.unmount_time){
       prev.unmount_time=nowIso;
+      // 사용완료는 자동 체크하지 않음 (사용자가 직접 "완료" 버튼 눌러야 함)
     }
   }
-  
-  // 기본 사용중량 프롬프트 (선택사항 - 편의를 위해 사용자가 입력 가능)
-  var defaultUsed=0;
-  var useWeightStr=prompt(
-    '이번에 사용할 소재 정보\n\n'+
-    '품번: '+lot.raw_code+'\n'+
-    'HEAT: '+lot.heat_no+'\n'+
-    '잔량: '+lot.remain_weight.toFixed(1)+' kg\n\n'+
-    '사용중량(kg)을 입력하세요 (모르면 그냥 확인):',
-    String(defaultUsed)
-  );
-  if(useWeightStr===null){
-    // 사용자가 취소 → 교체도 취소
-    return;
-  }
-  var usedKg=parseFloat(useWeightStr)||0;
   
   state.lotCompleted=false;
   var v=state.virtManual;
@@ -1822,7 +1921,14 @@ async function pickLot(idx){
   if(lot.thickness)state.virtBomInfo.thickness=lot.thickness;
   if(lot.width)state.virtBomInfo.width=lot.width;
   
-  // ★★★ 누적 리스트에 추가 ★★★
+  // ★ BOM에서 개당중량(unit_per_qty) 조회
+  var itemCode=state.currentWoItemCode||state.virtManual.item_code||'';
+  var unitPer=await fetchUnitPerQty(itemCode, lot.raw_code);
+  if(unitPer==null&&state.virtBomInfo&&state.virtBomInfo.unit_per_qty){
+    unitPer=+state.virtBomInfo.unit_per_qty;
+  }
+  
+  // ★ 새 로트 추가 (사용중)
   state.rawChangeList.push({
     seq: state.rawChangeList.length+1,
     raw_code: lot.raw_code||'',
@@ -1831,7 +1937,8 @@ async function pickLot(idx){
     vendor: lot.vendor||'',
     raw_spec: lot.raw_spec||'',
     net_weight: lot.net_weight||0,
-    used_weight: usedKg,
+    used_weight: 0,                // 장착중이므로 0 (탈착 시 net_weight로)
+    unit_per_qty: unitPer||0,
     remain_weight_at_mount: lot.remain_weight||0,
     mount_time: nowIso,
     unmount_time: null,
@@ -1839,16 +1946,17 @@ async function pickLot(idx){
     material_type: lot.material_type||'',
     thickness: lot.thickness||null,
     width: lot.width||null,
-    item_code: state.currentWoItemCode||state.virtManual.item_code||'',
+    item_code: itemCode,
     work_order_no: state.virtManual.work_order_no||''
   });
   
   renderRawChangeList();
   renderVirtDashboard();
-  showToast('✅ 소재 교체 #'+state.rawChangeList.length+': '+lot.heat_no+(usedKg>0?(' · '+usedKg+'kg'):''));
+  var hint=unitPer?(' · 개당 '+unitPer.toFixed(1)+'g'):' · ⚠️ BOM 중량없음';
+  showToast('✅ 로트 장착 #'+state.rawChangeList.length+': '+lot.heat_no+hint);
 }
 
-// ★★★ 누적 리스트 렌더링 ★★★
+// ★★★ 로트 사용이력 렌더링 (단순화) ★★★
 function renderRawChangeList(){
   var sect=document.getElementById('rawChangeListSect');
   var body=document.getElementById('rawChangeListBody');
@@ -1860,31 +1968,135 @@ function renderRawChangeList(){
     return;
   }
   sect.style.display='';
+  
+  // 총 사용중량 집계 (완료된 로트만)
   var totKg=0;
-  list.forEach(function(x){totKg+=(+x.used_weight||0)});
-  cnt.textContent=list.length+'건 · 총 '+totKg.toFixed(1)+'kg';
+  var doneCnt=0, usingCnt=0, detachedCnt=0;
+  list.forEach(function(x){
+    if(x.is_completed){
+      totKg+=(+x.net_weight||0);
+      doneCnt++;
+    }else if(!x.unmount_time){
+      usingCnt++;
+    }else{
+      detachedCnt++;
+    }
+  });
+  var cntTxt='완료 '+doneCnt+' · 사용중 '+usingCnt+' · 탈착 '+detachedCnt+' · 합계 '+totKg.toFixed(1)+'kg';
+  cnt.textContent=cntTxt;
+  
   var html='';
+  
+  // ═══════════════════════════════════════════════
+  // 현재 로트 예상완료시각 박스 (맨 위)
+  // ═══════════════════════════════════════════════
+  var st=calcCurrentLotStatus();
+  if(st){
+    var finishStr=st.finishAt?(
+      String(st.finishAt.getHours()).padStart(2,'0')+':'+
+      String(st.finishAt.getMinutes()).padStart(2,'0')
+    ):'-';
+    var mtStr=st.mountTime?(
+      String(st.mountTime.getHours()).padStart(2,'0')+':'+
+      String(st.mountTime.getMinutes()).padStart(2,'0')
+    ):'-';
+    var bgColor=st.isDown?'rgba(239,68,68,.15)':'rgba(74,222,128,.15)';
+    var bdColor=st.isDown?'rgba(239,68,68,.4)':'rgba(74,222,128,.4)';
+    var statusIcon=st.isDown?'⏸️ 정지중':'▶️ 가동중';
+    var statusColor=st.isDown?'#f87171':'#4ade80';
+    
+    html+='<div style="background:'+bgColor+';border:1.5px solid '+bdColor+';border-radius:10px;padding:12px;margin-bottom:10px">'+
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'+
+        '<div style="font-size:12px;font-weight:800;color:'+statusColor+'">'+statusIcon+' · 현재 로트</div>'+
+        '<div style="font-size:11px;color:#c4b5fd">'+_esc(st.current.raw_code)+' · '+_esc(st.current.heat_no)+'</div>'+
+      '</div>';
+    
+    if(st.spm<=0||st.unitPer<=0){
+      html+='<div style="color:#f97316;font-size:11px">⚠️ '+
+        (st.spm<=0?'SPM 미입력 ':'')+
+        (st.unitPer<=0?'개당중량 없음':'')+
+        ' → 예상완료시각 계산불가</div>';
+    }else{
+      // 진행률 바
+      html+='<div style="background:rgba(0,0,0,.3);border-radius:6px;overflow:hidden;height:8px;margin-bottom:8px">'+
+        '<div style="background:linear-gradient(90deg,#4ade80,#fbbf24);height:100%;width:'+st.progressPct.toFixed(1)+'%;transition:width .3s"></div>'+
+      '</div>';
+      html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:11px">'+
+        '<div><span style="color:var(--sub)">장착:</span> <b style="color:#fff">'+mtStr+'</b></div>'+
+        '<div><span style="color:var(--sub)">예상완료:</span> <b style="color:#fbbf24;font-size:13px">'+finishStr+'</b></div>'+
+        '<div><span style="color:var(--sub)">경과:</span> <b>'+st.elapsedMin+'분</b> (정지 '+st.stopMin+'분)</div>'+
+        '<div><span style="color:var(--sub)">가동:</span> <b style="color:#4ade80">'+st.runMin+'분</b> / 남 '+st.neededMin+'분</div>'+
+        '<div style="grid-column:span 2"><span style="color:var(--sub)">생산:</span> '+
+          '<b>'+st.producedShots.toLocaleString()+'</b>/'+
+          st.totalShots.toLocaleString()+' shot '+
+          '('+st.progressPct.toFixed(1)+'%)</div>'+
+      '</div>';
+    }
+    html+='</div>';
+  }
+  
+  // ═══════════════════════════════════════════════
+  // 로트 사용이력
+  // ═══════════════════════════════════════════════
   list.forEach(function(x,i){
     var mt=x.mount_time?new Date(x.mount_time):null;
     var mtStr=mt?(String(mt.getHours()).padStart(2,'0')+':'+String(mt.getMinutes()).padStart(2,'0')):'-';
     var ut=x.unmount_time?new Date(x.unmount_time):null;
-    var utStr=ut?(String(ut.getHours()).padStart(2,'0')+':'+String(ut.getMinutes()).padStart(2,'0')):'현재사용중';
+    var utStr=ut?(String(ut.getHours()).padStart(2,'0')+':'+String(ut.getMinutes()).padStart(2,'0')):'사용중';
     var utColor=ut?'var(--sub)':'#4ade80';
-    var completedIcon=x.is_completed?' ✅':'';
-    html+='<div style="padding:8px 10px;margin-bottom:4px;border-radius:6px;background:rgba(245,158,11,.06);border-left:3px solid #f59e0b">'+
+    var isCurrent=!ut;
+    var isDone=!!x.is_completed;
+    
+    // 사용중량 표시
+    var finalKg=isDone?(+x.net_weight||0):(ut?(+x.net_weight||0):0);
+    var kgColor=isDone?'#4ade80':(ut?'#fbbf24':'#94a3b8');
+    var kgText=isDone?(finalKg.toFixed(1)+' kg'):(ut?(finalKg.toFixed(1)+' kg'):'장착중');
+    
+    // 카드 스타일
+    var bgStyle;
+    if(isDone){
+      bgStyle='background:rgba(74,222,128,.08);border-left:3px solid #4ade80';
+    }else if(isCurrent){
+      bgStyle='background:rgba(59,130,246,.08);border-left:3px solid var(--primary)';
+    }else{
+      bgStyle='background:rgba(245,158,11,.06);border-left:3px solid #f59e0b';
+    }
+    
+    var statusBadge='';
+    if(isDone)statusBadge=' <span style="color:#4ade80;font-size:10px">✓ 사용완료</span>';
+    else if(isCurrent)statusBadge=' <span style="color:#60a5fa;font-size:10px">▶ 사용중</span>';
+    else statusBadge=' <span style="color:#f59e0b;font-size:10px">⏸ 탈착(재사용가능)</span>';
+    
+    // 완료 버튼 텍스트/스타일
+    var doneBtnBg, doneBtnColor, doneBtnText;
+    if(isDone){
+      doneBtnBg='rgba(74,222,128,.25)';
+      doneBtnColor='#4ade80';
+      doneBtnText='✓완료';
+    }else{
+      doneBtnBg='rgba(251,191,36,.15)';
+      doneBtnColor='#fbbf24';
+      doneBtnText='완료처리';
+    }
+    // 현재 사용중인 로트는 완료 버튼 숨김 (교체 먼저 해야함)
+    var showDoneBtn=!isCurrent;
+    
+    html+='<div style="padding:8px 10px;margin-bottom:4px;border-radius:6px;'+bgStyle+'">'+
       '<div style="display:flex;justify-content:space-between;align-items:start;gap:6px;flex-wrap:wrap">'+
         '<div style="flex:1;min-width:140px">'+
-          '<div style="font-size:11px;font-weight:800;color:#fcd34d">#'+x.seq+' '+_esc(x.raw_code)+completedIcon+'</div>'+
+          '<div style="font-size:11px;font-weight:800;color:#fcd34d">#'+x.seq+' '+_esc(x.raw_code)+statusBadge+'</div>'+
           '<div style="font-size:11px;color:#fff;margin-top:1px">🔖 <b>'+_esc(x.heat_no)+'</b></div>'+
           (x.raw_spec?'<div style="font-size:10px;color:var(--sub)">'+_esc(x.raw_spec)+'</div>':'')+
           '<div style="font-size:10px;color:'+utColor+';margin-top:2px">⏱ '+mtStr+' ~ '+utStr+'</div>'+
         '</div>'+
         '<div style="text-align:right;white-space:nowrap">'+
-          '<div style="font-size:13px;font-weight:800;color:#fbbf24">'+(+x.used_weight||0).toFixed(1)+' kg</div>'+
-          '<div style="display:flex;gap:4px;margin-top:4px">'+
-            '<button onclick="editRawChangeUsed('+i+')" style="background:rgba(96,165,250,.15);color:var(--accent);border:none;padding:4px 8px;border-radius:4px;font-size:10px;font-weight:700;cursor:pointer;font-family:inherit">중량수정</button>'+
-            '<button onclick="toggleRawChangeComplete('+i+')" style="background:'+(x.is_completed?'rgba(74,222,128,.25)':'rgba(148,163,184,.15)')+';color:'+(x.is_completed?'#4ade80':'#94a3b8')+';border:none;padding:4px 8px;border-radius:4px;font-size:10px;font-weight:700;cursor:pointer;font-family:inherit">'+(x.is_completed?'완료✓':'완료?')+'</button>'+
-            '<button onclick="removeRawChange('+i+')" style="background:rgba(239,68,68,.15);color:var(--red);border:none;padding:4px 8px;border-radius:4px;font-size:10px;font-weight:700;cursor:pointer;font-family:inherit">삭제</button>'+
+          '<div style="font-size:13px;font-weight:800;color:'+kgColor+'">'+kgText+'</div>'+
+          '<div style="font-size:10px;color:var(--sub);margin-top:1px">net '+(+x.net_weight||0).toFixed(1)+'kg</div>'+
+          '<div style="display:flex;gap:4px;margin-top:4px;flex-wrap:wrap;justify-content:flex-end">'+
+            (showDoneBtn?
+              '<button onclick="toggleRawChangeComplete('+i+')" style="background:'+doneBtnBg+';color:'+doneBtnColor+';border:none;padding:3px 10px;border-radius:4px;font-size:11px;font-weight:800;cursor:pointer;font-family:inherit">'+doneBtnText+'</button>'
+              :'')+
+            '<button onclick="removeRawChange('+i+')" style="background:rgba(239,68,68,.15);color:var(--red);border:none;padding:3px 8px;border-radius:4px;font-size:10px;font-weight:700;cursor:pointer;font-family:inherit">삭제</button>'+
           '</div>'+
         '</div>'+
       '</div></div>';
@@ -1892,16 +2104,29 @@ function renderRawChangeList(){
   body.innerHTML=html;
 }
 
-function editRawChangeUsed(idx){
+// 로트 사용완료 토글
+function toggleRawChangeComplete(idx){
   var x=state.rawChangeList[idx];
   if(!x)return;
-  var n=prompt('사용중량(kg) 수정:\n\n'+x.raw_code+' / '+x.heat_no, String(x.used_weight||0));
-  if(n===null)return;
-  var v=parseFloat(n)||0;
-  x.used_weight=v;
+  // 현재 사용중 로트(unmount_time 없음)는 완료 불가
+  if(!x.unmount_time){
+    showToast('⚠️ 먼저 다른 로트로 교체하세요 (탈착 후 완료 가능)');
+    return;
+  }
+  x.is_completed=!x.is_completed;
+  if(x.is_completed){
+    x.used_weight=+x.net_weight||0;
+    showToast('✅ #'+x.seq+' 사용완료 → 재고차감 ('+(+x.net_weight||0).toFixed(1)+'kg)');
+  }else{
+    x.used_weight=0;
+    showToast('↩️ #'+x.seq+' 완료해제 → 재사용 가능');
+  }
   renderRawChangeList();
-  showToast('✅ 중량 수정: '+v+'kg');
 }
+
+// 구 함수 호환
+function editUnitPerQty(idx){}
+function editRawChangeUsed(idx){}
 
 function toggleRawChangeComplete(idx){
   var x=state.rawChangeList[idx];
@@ -2041,9 +2266,23 @@ async function saveReport(){
   // 작업일자(YYYY-MM-DD)
   var workDateYmd=state.workDateYmd||fmtYmd(getWorkDate());
   
-  // ★★★ 누적 소재 리스트 총 사용중량 ★★★
+  // ★★★ 저장 직전 확정 처리 ★★★
+  // 정책: 사용완료 체크된 로트만 = net_weight 소모 (재고차감)
+  //       나머지 로트(사용중/탈착 미완료) = used_weight=0 유지
+  //       (다음날 이어서 작업 가능)
+  (state.rawChangeList||[]).forEach(function(x){
+    if(x.is_completed){
+      x.used_weight=+x.net_weight||0;
+    }else{
+      x.used_weight=0;
+    }
+  });
+  
+  // ★ 완료된 로트 총 사용중량
   var rawChangeTotal=0;
-  (state.rawChangeList||[]).forEach(function(x){rawChangeTotal+=(+x.used_weight||0)});
+  (state.rawChangeList||[]).forEach(function(x){
+    if(x.is_completed)rawChangeTotal+=(+x.net_weight||0);
+  });
   
   var record={
     machine_code:m.machine_code,
