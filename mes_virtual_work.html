@@ -402,7 +402,7 @@ body{padding:0;font-size:13px}
     <!-- BOM 필터 배지 -->
     <div id="bomFilterBadge" style="display:none;padding:8px 12px;background:linear-gradient(90deg,rgba(251,191,36,.15),rgba(245,158,11,.05));border-bottom:1px solid rgba(251,191,36,.3);font-size:11px;color:#fcd34d;text-align:center"></div>
     <div class="modal-srch">
-      <input type="text" id="rawPickerSearch" placeholder="🔍 HEAT번호 검색 (터치)" readonly onclick="openSearchPopup()" style="cursor:pointer">
+      <input type="text" id="rawPickerSearch" placeholder="🔍 HEAT / 소재코드 / 폭 검색" readonly onclick="openSearchPopup()" style="cursor:pointer">
       <button onclick="openSearchPopup()">🔍 검색</button>
       <button onclick="diagUsage()" style="background:#64748b;color:#fff;padding:10px 10px;font-size:11px" title="사용이력 진단">🔧</button>
     </div>
@@ -1604,35 +1604,6 @@ function pickWorkOrder(idx){
 var lotListCache=null;
 var _bomRawCodes=null;       // 설비에 연결된 모든 W/O 품번의 BOM 소재 합집합
 var _bomItemCodes=null;      // 포함된 품번 리스트 (배지 표시용)
-var _widthFilter=null;       // 폭 필터 기준값 (mm)
-var _widthFilterOff=false;   // 사용자가 폭 필터 해제했는지
-
-// 기준 폭 자동 결정 (현재 사용중 → 마지막 탈착 → W/O 규격 → null)
-function resolveReferenceWidth(){
-  var list=state.rawChangeList||[];
-  // 1) 현재 사용중 로트
-  for(var i=list.length-1;i>=0;i--){
-    if(!list[i].unmount_time && list[i].width){
-      return +list[i].width;
-    }
-  }
-  // 2) 가장 최근 로트 (탈착 여부 무관)
-  for(var j=list.length-1;j>=0;j--){
-    if(list[j].width){
-      return +list[j].width;
-    }
-  }
-  // 3) W/O 규격의 width (virtBomInfo 또는 item_spec 파싱)
-  var bom=state.virtBomInfo;
-  if(bom&&bom.width)return +bom.width;
-  // item_spec에서 파싱 시도 (예: "C67S 1.25*137")
-  var spec=state.virtManual&&state.virtManual.item_spec;
-  if(spec){
-    var m=String(spec).match(/\*\s*(\d+(?:\.\d+)?)/);
-    if(m)return +m[1];
-  }
-  return null;
-}
 
 // ★★★ "소재 교체" 버튼 엔트리 ★★★
 // 설비에 등록된 모든 W/O의 품번 BOM을 합쳐서 표시
@@ -1645,8 +1616,6 @@ async function openRawChangeModal(){
   
   _bomRawCodes=null;
   _bomItemCodes=null;
-  _widthFilter=resolveReferenceWidth();
-  _widthFilterOff=false;  // 새로 열 때마다 폭 필터 켜진 상태
   
   try{
     // 1) 설비에 연결된 모든 W/O 조회
@@ -1700,33 +1669,15 @@ async function openRawChangeModal(){
   openRawPicker();
 }
 
-// 폭 필터 토글
-function toggleWidthFilter(){
-  _widthFilterOff=!_widthFilterOff;
-  openRawPicker_refreshBadge();
-  filterRawList();
-}
-
 function openRawPicker_refreshBadge(){
   var bomBadge=document.getElementById('bomFilterBadge');
   if(!bomBadge)return;
-  var parts=[];
   if(_bomRawCodes && _bomRawCodes.size>0){
     var itemCnt=(_bomItemCodes||[]).length;
-    parts.push('🎯 설비 W/O '+itemCnt+'기종 BOM <b style="color:#fbbf24">'+_bomRawCodes.size+'종</b>');
+    bomBadge.innerHTML='🎯 설비 W/O '+itemCnt+'기종 BOM <b style="color:#fbbf24">'+_bomRawCodes.size+'종</b>';
   }else{
-    parts.push('📦 전체 소재 목록');
+    bomBadge.innerHTML='📦 전체 소재 목록';
   }
-  if(_widthFilter && !_widthFilterOff){
-    parts.push('📏 폭 <b style="color:#fde047">'+_widthFilter+'mm</b>만');
-  }
-  var btnTxt=_widthFilterOff?'🔓 폭필터 해제됨':'🔒 폭필터 ON';
-  var btnColor=_widthFilterOff?'#f97316':'#4ade80';
-  var btn=_widthFilter?
-    ('<button onclick="toggleWidthFilter()" style="margin-left:auto;background:rgba(255,255,255,.1);color:'+btnColor+';border:1px solid '+btnColor+';padding:3px 8px;border-radius:4px;font-size:10px;font-weight:700;cursor:pointer;font-family:inherit">'+btnTxt+'</button>')
-    :'';
-  bomBadge.innerHTML='<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">'+
-    '<div>'+parts.join(' · ')+'</div>'+btn+'</div>';
   bomBadge.style.display='block';
 }
 
@@ -1819,18 +1770,9 @@ function filterRawList(){
     f=f.filter(function(lot){return !completedHeats[lot.heat_no]});
   }
   
-  // ★ 폭 필터 (동일 폭만) - 사용자가 해제하지 않은 경우만
-  if(_widthFilter && !_widthFilterOff){
-    f=f.filter(function(lot){
-      var w=+lot.width||0;
-      if(!w)return false;
-      return Math.abs(w-_widthFilter)<0.5;  // 오차 0.5mm 허용
-    });
-  }
-  
   if(q){
     f=f.filter(function(lot){
-      var s=((lot.raw_code||'')+' '+(lot.heat_no||'')+' '+(lot.vendor||'')+' '+(lot.raw_spec||'')+' '+(lot.receipt_no||'')+' '+(lot.material_type||'')).toLowerCase();
+      var s=((lot.raw_code||'')+' '+(lot.heat_no||'')+' '+(lot.vendor||'')+' '+(lot.raw_spec||'')+' '+(lot.receipt_no||'')+' '+(lot.material_type||'')+' '+(lot.width||'')).toLowerCase();
       return s.indexOf(q)>=0;
     });
   }
@@ -2066,37 +2008,89 @@ async function pickLot(idx){
   }
   
   // ★ BOM 미등록 소재 자동 등록 ★
-  // _bomRawCodes에 없으면 item_raw_bom에 INSERT
+  // item_raw_bom + mes_bom_pending 둘 다 기록
   var isNewMaterial=!(_bomRawCodes && _bomRawCodes.size>0 && _bomRawCodes.has((lot.raw_code||'').trim()));
-  if(isNewMaterial && itemCode && lot.raw_code){
+  if(itemCode && lot.raw_code){
     try{
-      var bomPayload={
-        item_code: itemCode,
-        raw_item_code: lot.raw_code,
-        unit_per_qty: unitPer||null,
-        material_type: lot.material_type||null,
-        thickness: lot.thickness||null,
-        width_mm: lot.width||null,
-        cavity_qty: 1,
-        usage_count: 0,
-        last_used: new Date().toISOString().slice(0,10),
-        memo: 'auto-mounted'
-      };
-      var bomReq=await fetch(SB_URL+'/rest/v1/item_raw_bom?on_conflict=item_code,raw_item_code',{
-        method:'POST',
-        headers:Object.assign({},sbH,{
-          'Content-Type':'application/json',
-          'Prefer':'resolution=merge-duplicates,return=minimal'
-        }),
-        body:JSON.stringify([bomPayload])
-      });
-      if(bomReq.ok){
-        // 로컬 캐시에도 추가하여 다음 로트 선택 시 반영
-        if(!_bomRawCodes)_bomRawCodes=new Set();
-        _bomRawCodes.add((lot.raw_code||'').trim());
-        console.log('[BOM 자동등록] '+itemCode+' ← '+lot.raw_code);
-      }else{
-        console.warn('[BOM 자동등록 실패]',bomReq.status);
+      // 1) item_raw_bom UPSERT
+      if(isNewMaterial){
+        var bomPayload={
+          item_code: itemCode,
+          raw_item_code: lot.raw_code,
+          unit_per_qty: unitPer||null,
+          material_type: lot.material_type||null,
+          thickness: lot.thickness||null,
+          width_mm: lot.width||null,
+          cavity_qty: 1,
+          usage_count: 0,
+          last_used: new Date().toISOString().slice(0,10),
+          memo: 'auto-mounted'
+        };
+        var bomReq=await fetch(SB_URL+'/rest/v1/item_raw_bom?on_conflict=item_code,raw_item_code',{
+          method:'POST',
+          headers:Object.assign({},sbH,{
+            'Content-Type':'application/json',
+            'Prefer':'resolution=merge-duplicates,return=minimal'
+          }),
+          body:JSON.stringify([bomPayload])
+        });
+        if(bomReq.ok){
+          if(!_bomRawCodes)_bomRawCodes=new Set();
+          _bomRawCodes.add((lot.raw_code||'').trim());
+        }
+      }
+      
+      // 2) mes_bom_pending UPSERT (usage_count 누적)
+      // 기존 레코드 조회
+      var nowIsoFull=new Date().toISOString();
+      var existQs='select=id,usage_count&item_code=eq.'+encodeURIComponent(itemCode)+
+                  '&raw_item_code=eq.'+encodeURIComponent(lot.raw_code)+'&limit=1';
+      var existRes=await fetch(SB_URL+'/rest/v1/mes_bom_pending?'+existQs,{headers:sbH});
+      if(existRes.ok){
+        var exist=await existRes.json();
+        if(exist && exist.length>0){
+          // 업데이트: usage_count+1, last_used_at 갱신
+          var eId=exist[0].id;
+          var newCnt=(+exist[0].usage_count||0)+1;
+          await fetch(SB_URL+'/rest/v1/mes_bom_pending?id=eq.'+eId,{
+            method:'PATCH',
+            headers:Object.assign({},sbH,{
+              'Content-Type':'application/json',
+              'Prefer':'return=minimal'
+            }),
+            body:JSON.stringify({
+              usage_count: newCnt,
+              last_used_at: nowIsoFull,
+              heat_no_sample: lot.heat_no,
+              work_order_no: state.virtManual.work_order_no||null
+            })
+          });
+        }else{
+          // 신규 INSERT
+          var pendingPayload={
+            item_code: itemCode,
+            raw_item_code: lot.raw_code,
+            material_type: lot.material_type||null,
+            thickness: lot.thickness||null,
+            width_mm: lot.width||null,
+            unit_per_qty: unitPer||null,
+            first_used_at: nowIsoFull,
+            last_used_at: nowIsoFull,
+            usage_count: 1,
+            machine_code: (state.machine&&state.machine.machine_code)||null,
+            heat_no_sample: lot.heat_no||null,
+            work_order_no: state.virtManual.work_order_no||null,
+            status: 'pending'
+          };
+          await fetch(SB_URL+'/rest/v1/mes_bom_pending',{
+            method:'POST',
+            headers:Object.assign({},sbH,{
+              'Content-Type':'application/json',
+              'Prefer':'return=minimal'
+            }),
+            body:JSON.stringify([pendingPayload])
+          });
+        }
       }
     }catch(e){
       console.warn('[BOM 자동등록 에러]',e);
