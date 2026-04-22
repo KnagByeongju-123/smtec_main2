@@ -194,7 +194,7 @@ body{padding:0;font-size:13px}
         <div style="font-size:10px;color:var(--yellow)" id="rawChangeListCount">0건</div>
       </div>
       <div style="padding:6px 10px;background:rgba(0,0,0,.2);border-bottom:1px solid var(--border);display:flex;gap:10px;font-size:10px;color:var(--sub);flex-wrap:wrap">
-        <span>👆 탭하여 상태 변경</span>
+        <span>👆 탭: <b style="color:#4ade80">사용중</b>=취소 · <b style="color:#f97316">미완료</b>=완료토글</span>
         <span style="display:flex;align-items:center;gap:4px"><span style="width:12px;height:12px;border-radius:50%;background:#4ade80;display:inline-block"></span>사용중</span>
         <span style="display:flex;align-items:center;gap:4px"><span style="width:12px;height:12px;border-radius:50%;background:#f97316;display:inline-block"></span>미완료</span>
         <span style="display:flex;align-items:center;gap:4px"><span style="width:12px;height:12px;border-radius:50%;background:#fde047;display:inline-block"></span>완료</span>
@@ -351,6 +351,52 @@ body{padding:0;font-size:13px}
 </div>
 
 <div class="toast" id="toast"></div>
+
+<!-- ★ 가동중 로트 취소 사유 선택 모달 ★ -->
+<div class="modal-bg" id="cancelReasonModal" style="z-index:10800">
+  <div class="modal-box" style="max-width:380px">
+    <div class="modal-hdr">
+      <div class="modal-t" style="color:#f97316">⚠️ 로트 장착 취소</div>
+      <button class="modal-x" onclick="closeCancelReason()">✕</button>
+    </div>
+    <div style="padding:14px">
+      <div id="cancelReasonInfo" style="padding:10px;background:#0f172a;border-radius:8px;margin-bottom:12px;font-size:12px;color:#fff;text-align:center;border:1px solid var(--border)">-</div>
+      <div style="font-size:11px;color:var(--sub);margin-bottom:10px;text-align:center">취소 사유를 선택하세요</div>
+      
+      <button onclick="doCancelLot('wrong_mount')" style="width:100%;padding:14px;margin-bottom:8px;background:rgba(100,116,139,.2);border:1.5px solid #64748b;color:#cbd5e1;border-radius:10px;font-size:14px;font-weight:800;cursor:pointer;font-family:inherit;text-align:left">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:20px">🔄</span>
+          <div style="flex:1">
+            <div>잘못된 장착</div>
+            <div style="font-size:10px;color:var(--sub);font-weight:400;margin-top:2px">단순 제거 · 차기 검색 가능 · 비고 기록 없음</div>
+          </div>
+        </div>
+      </button>
+      
+      <button onclick="doCancelLot('wrong_receipt')" style="width:100%;padding:14px;margin-bottom:8px;background:rgba(251,191,36,.15);border:1.5px solid #fbbf24;color:#fde047;border-radius:10px;font-size:14px;font-weight:800;cursor:pointer;font-family:inherit;text-align:left">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:20px">📋</span>
+          <div style="flex:1">
+            <div>잘못된 입고</div>
+            <div style="font-size:10px;color:#fcd34d;font-weight:400;margin-top:2px">차기 검색 제외 · 비고에 이력 · MES 입고정보 오류</div>
+          </div>
+        </div>
+      </button>
+      
+      <button onclick="doCancelLot('defect')" style="width:100%;padding:14px;background:rgba(239,68,68,.15);border:1.5px solid #ef4444;color:#fca5a5;border-radius:10px;font-size:14px;font-weight:800;cursor:pointer;font-family:inherit;text-align:left">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:20px">❌</span>
+          <div style="flex:1">
+            <div>불량 소재</div>
+            <div style="font-size:10px;color:#fca5a5;font-weight:400;margin-top:2px">차기 검색 제외 · 비고에 이력 · 소재 자체 불량</div>
+          </div>
+        </div>
+      </button>
+      
+      <button onclick="closeCancelReason()" style="width:100%;padding:10px;margin-top:10px;background:transparent;border:1px solid var(--border);color:var(--sub);border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit">취소</button>
+    </div>
+  </div>
+</div>
 
 <div class="numpad-overlay" id="numpadOverlay" onclick="if(event.target===this)numpadCancel()">
   <div class="numpad-box">
@@ -1744,15 +1790,26 @@ async function openRawPicker(){
       };
     }).filter(function(l){
       if(l.is_completed)return false;
-      // BOM 필터 제거: BOM 등록 여부는 renderRawList에서 시각적으로 구분만
-      // (폭 필터는 filterRawList에서 별도 적용)
       return true;
     });
+    
+    // ★ excluded_heats 조회 - 잘못된입고/불량 로트 제외
+    await loadExcludedHeats();
   }catch(e){
     document.getElementById('rawPickerList').innerHTML='<div style="text-align:center;color:var(--red);padding:20px">❌ 연결실패</div>';
     return;
   }
   renderRawList(lotListCache);
+}
+
+// excluded_heats 조회 → state._excludedHeats Set 구축
+async function loadExcludedHeats(){
+  try{
+    var res=await fetch(SB_URL+'/rest/v1/excluded_heats?select=heat_no&restored=eq.false',{headers:sbH});
+    if(!res.ok)return;
+    var data=await res.json();
+    state._excludedHeats=new Set((data||[]).map(function(x){return x.heat_no}));
+  }catch(e){}
 }
 function closeRawPicker(){document.getElementById('rawPickerModal').classList.remove('show')}
 
@@ -1768,6 +1825,11 @@ function filterRawList(){
   });
   if(Object.keys(completedHeats).length>0){
     f=f.filter(function(lot){return !completedHeats[lot.heat_no]});
+  }
+  
+  // ★ 제외 HEAT (잘못된 입고 / 불량) - Supabase excluded_heats 기반
+  if(state._excludedHeats && state._excludedHeats.size>0){
+    f=f.filter(function(lot){return !state._excludedHeats.has(lot.heat_no)});
   }
   
   if(q){
@@ -2228,7 +2290,7 @@ function renderRawChangeList(){
       // 사용중 - 초록색
       cardBg='linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)';
       dotColor='#4ade80';
-      statusText='사용중';
+      statusText='사용중 (탭=장착취소)';
       statusColor='#86efac';
     }else{
       // 탈착 (재사용가능) - 주황색
@@ -2239,9 +2301,9 @@ function renderRawChangeList(){
     }
     
     var clickAction=isCurrent?
-      "showToast('⚠️ 현재 사용중 로트는 다른 로트로 교체 후 완료처리 가능');":
+      "cancelCurrentLot("+i+")":
       "toggleRawChangeComplete("+i+")";
-    var cursorStyle=isCurrent?'default':'pointer';
+    var cursorStyle='pointer';
     
     // 잔여중량 표시 (net_weight)
     var netW=(+x.net_weight||0).toFixed(1);
@@ -2266,7 +2328,7 @@ function toggleRawChangeComplete(idx){
   var x=state.rawChangeList[idx];
   if(!x)return;
   if(!x.unmount_time){
-    showToast('⚠️ 먼저 다른 로트로 교체하세요 (탈착 후 완료 가능)');
+    showToast('⚠️ 가동중 로트 → 카드 클릭 시 장착취소로 처리됩니다');
     return;
   }
   x.is_completed=!x.is_completed;
@@ -2280,17 +2342,98 @@ function toggleRawChangeComplete(idx){
   renderRawChangeList();
 }
 
+// ★ 가동중 로트 장착취소 - 삭제 + 비고 기록
+// ★ 가동중 로트 취소 - 3가지 사유 선택 모달
+function cancelCurrentLot(idx){
+  var x=state.rawChangeList[idx];
+  if(!x)return;
+  state._cancelTargetIdx=idx;
+  document.getElementById('cancelReasonInfo').innerHTML=
+    '<b style="color:#fbbf24">#'+x.seq+'</b> · '+_esc(x.raw_code)+' · 🔖 '+_esc(x.heat_no);
+  document.getElementById('cancelReasonModal').classList.add('show');
+}
+
+function closeCancelReason(){
+  document.getElementById('cancelReasonModal').classList.remove('show');
+  state._cancelTargetIdx=null;
+}
+
+async function doCancelLot(reasonType){
+  var idx=state._cancelTargetIdx;
+  if(idx==null)return;
+  var x=state.rawChangeList[idx];
+  if(!x){closeCancelReason();return}
+  
+  closeCancelReason();
+  
+  var reasonLabel={
+    'wrong_mount': '잘못된 장착',
+    'wrong_receipt': '잘못된 입고',
+    'defect': '불량'
+  }[reasonType];
+  
+  // 잘못된 장착: 단순 제거 (비고 기록 X, 블랙리스트 X)
+  if(reasonType==='wrong_mount'){
+    state.rawChangeList.splice(idx,1);
+    state.rawChangeList.forEach(function(r,i){r.seq=i+1});
+    renderRawChangeList();
+    renderVirtDashboard();
+    showToast('✅ 장착 취소됨 (단순제거)');
+    return;
+  }
+  
+  // 잘못된 입고 / 불량: 블랙리스트 + 비고 기록
+  var now=new Date();
+  var hhmm=String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
+  var logLine='['+hhmm+'] 로트취소 #'+x.seq+' '+x.raw_code+'/'+x.heat_no+' ('+reasonLabel+')';
+  var curNote=state.virtManual.note||'';
+  state.virtManual.note=curNote?(curNote+'\n'+logLine):logLine;
+  var noteEl=document.getElementById('vdNote');
+  if(noteEl)noteEl.value=state.virtManual.note;
+  
+  // 세션 블랙리스트에도 추가 (즉시 반영용)
+  if(!state._excludedHeats)state._excludedHeats=new Set();
+  state._excludedHeats.add(x.heat_no);
+  
+  // Supabase excluded_heats 테이블에 INSERT
+  try{
+    var worker=state.virtManual.worker||getCurrentUser()||'anonymous';
+    var payload={
+      heat_no: x.heat_no,
+      reason: reasonType,
+      raw_code: x.raw_code,
+      item_code: x.item_code||state.virtManual.item_code||null,
+      machine_code: (state.machine&&state.machine.machine_code)||null,
+      excluded_by: worker,
+      note: reasonLabel+' · 가상설비 작업일보에서 취소'
+    };
+    var res=await fetch(SB_URL+'/rest/v1/excluded_heats?on_conflict=heat_no,reason',{
+      method:'POST',
+      headers:Object.assign({},sbH,{
+        'Content-Type':'application/json',
+        'Prefer':'resolution=merge-duplicates,return=minimal'
+      }),
+      body:JSON.stringify([payload])
+    });
+    if(!res.ok){
+      console.warn('excluded_heats INSERT 실패',res.status);
+    }
+  }catch(e){
+    console.warn('excluded_heats 에러',e);
+  }
+  
+  // 리스트에서 제거
+  state.rawChangeList.splice(idx,1);
+  state.rawChangeList.forEach(function(r,i){r.seq=i+1});
+  
+  renderRawChangeList();
+  renderVirtDashboard();
+  showToast('✅ '+reasonLabel+' 처리 · 차기 검색에서 제외됨',3000);
+}
+
 // 구 함수 호환
 function editUnitPerQty(idx){}
 function editRawChangeUsed(idx){}
-
-function toggleRawChangeComplete(idx){
-  var x=state.rawChangeList[idx];
-  if(!x)return;
-  x.is_completed=!x.is_completed;
-  renderRawChangeList();
-  showToast(x.is_completed?'✅ 사용완료 체크':'사용완료 해제');
-}
 
 function removeRawChange(idx){
   var x=state.rawChangeList[idx];
