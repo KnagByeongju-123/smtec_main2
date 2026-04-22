@@ -67,6 +67,18 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 .rpt-prod-head .ph-c{text-align:center}
 .rpt-prod-foot{margin-top:6px;padding:8px 10px;background:rgba(34,197,94,.08);border-radius:6px;display:flex;justify-content:space-between;font-size:12px;font-weight:700}
 .loading{text-align:center;padding:40px;color:var(--accent);font-size:13px}
+
+/* ★★★ 작업일자 편집 영역 ★★★ */
+.workdate-row{display:flex;align-items:center;gap:10px;padding:10px 12px;background:linear-gradient(135deg,rgba(168,85,247,.12),rgba(168,85,247,.04));border:1.5px solid rgba(168,85,247,.4);border-radius:8px;margin-top:8px;flex-wrap:wrap}
+.workdate-row label{font-size:12px;font-weight:700;color:#c4b5fd;flex-shrink:0}
+.workdate-row input[type=date]{padding:8px 10px;border:1.5px solid rgba(168,85,247,.5);border-radius:6px;background:#0f1117;color:#e0e7ff;font-size:14px;font-weight:700;font-family:inherit;color-scheme:dark;cursor:pointer;letter-spacing:.5px;flex:1;min-width:130px}
+.workdate-row input[type=date]:focus{outline:none;border-color:var(--purple);box-shadow:0 0 0 2px rgba(168,85,247,.25)}
+.workdate-row input[type=date]:hover{border-color:var(--purple);background:#1a1d27}
+.workdate-row input[type=date]::-webkit-calendar-picker-indicator{cursor:pointer;filter:invert(.7) sepia(1) saturate(8) hue-rotate(240deg);font-size:16px;padding:2px;opacity:.9}
+.workdate-row .wd-hint{font-size:10px;color:#a5b4fc;flex-basis:100%;margin-top:2px}
+.workdate-row .wd-today{background:rgba(168,85,247,.2);color:#e9d5ff;border:1px solid rgba(168,85,247,.4);padding:6px 10px;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit}
+.workdate-row .wd-today:active{background:rgba(168,85,247,.35)}
+
 .numpad-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:20000;align-items:center;justify-content:center;padding:12px}
 .numpad-overlay.show{display:flex}
 .numpad-box{background:var(--card);border:1px solid var(--border);border-radius:14px;width:100%;max-width:340px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.6)}
@@ -104,6 +116,13 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
     <div class="rpt-section" id="mesAutoBox">
       <div class="rpt-section-title">📊 MES 자동집계 <span id="workDateLabel" style="font-size:11px;color:var(--sub);font-weight:500;margin-left:6px"></span></div>
       <div class="rpt-info-grid" id="mesInfoGrid"></div>
+      <!-- ★★★ 작업일자 편집 ★★★ -->
+      <div class="workdate-row">
+        <label>📅 작업일자</label>
+        <input type="date" id="workDateInput" onchange="onWorkDateChange()">
+        <button class="wd-today" onclick="setWorkDateToday()">오늘</button>
+        <div class="wd-hint" id="workDateHint">※ 이 날짜로 일보가 저장됩니다 (시간은 기존 유지)</div>
+      </div>
     </div>
     <div class="rpt-section" id="productionBox" style="display:none">
       <div class="rpt-section-title">🏭 오늘 작업한 기종 <span id="prodCount" style="font-size:11px;color:var(--sub);font-weight:500;margin-left:6px"></span></div>
@@ -184,7 +203,7 @@ var CODE_TO_GRID={'Z011':'A','Z002':'B','Z003':'C','Z004':'D','Z010':'E','A001':
 
 function _esc(s){if(s==null)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
 
-var state={machine:null,downtime:null,productionItems:[],rawMaterials:[],mesNg:null,ngMap:{},todayExistId:null,report:{defects:{},conditions:{},note:'',productionAdj:{}}};
+var state={machine:null,downtime:null,productionItems:[],rawMaterials:[],mesNg:null,ngMap:{},todayExistId:null,report:{defects:{},conditions:{},note:'',productionAdj:{}},workDateYmd:'',origCreatedAt:null};
 
 var numpadState={value:'',targetInput:null,label:'',allowDecimal:false,hintBase:'',onConfirm:null};
 function openNumpad(inp,opts){opts=opts||{};numpadState.targetInput=inp;numpadState.value=inp.value||'';numpadState.label=opts.label||inp.placeholder||'숫자 입력';numpadState.allowDecimal=!!opts.allowDecimal;numpadState.hintBase=opts.hint||'';numpadState.onConfirm=opts.onConfirm||null;document.getElementById('numpadLabel').textContent=numpadState.label;document.getElementById('npdDot').style.display=numpadState.allowDecimal?'':'none';updateNumpadDisplay();document.getElementById('numpadOverlay').classList.add('show')}
@@ -211,6 +230,90 @@ function initReport(){
   state.report={defects:{},conditions:{},note:'',productionAdj:{}};
   DEFECT_TYPES.forEach(function(t){state.report.defects[t]=''});
   COND_FIELDS.forEach(function(f){state.report.conditions[f.id]=''});
+}
+
+// ========== ★★★ 작업일자 편집 핸들러 ★★★ ==========
+function onWorkDateChange(){
+  var v=document.getElementById('workDateInput').value;
+  if(!v)return;
+  state.workDateYmd=v;
+  updateWorkDateHint();
+}
+
+function setWorkDateToday(){
+  var wd=getWorkDate();
+  var ymd=fmtYmd(wd);
+  document.getElementById('workDateInput').value=ymd;
+  state.workDateYmd=ymd;
+  updateWorkDateHint();
+  showToast('📅 업무일자로 설정: '+ymd);
+}
+
+function updateWorkDateHint(){
+  var hint=document.getElementById('workDateHint');
+  if(!hint)return;
+  var today=fmtYmd(getWorkDate());
+  var sel=state.workDateYmd||'';
+  if(!sel){hint.innerHTML='※ 이 날짜로 일보가 저장됩니다 (시간은 기존 유지)';hint.style.color='#a5b4fc';return}
+  if(sel===today){
+    hint.innerHTML='✅ 오늘 업무일 <b>'+sel+'</b> · 시간 <b>'+getTimePart(state.origCreatedAt)+'</b> 유지';
+    hint.style.color='#86efac';
+  }else{
+    var selDt=new Date(sel+'T00:00:00');
+    var todayDt=new Date(today+'T00:00:00');
+    var diffDays=Math.round((todayDt-selDt)/(86400000));
+    var label=diffDays>0?('과거 '+diffDays+'일 전'):(diffDays<0?('미래 '+(-diffDays)+'일 후'):'오늘');
+    hint.innerHTML='⚠️ <b>'+sel+'</b> ('+label+') · 시간 <b>'+getTimePart(state.origCreatedAt)+'</b> 유지';
+    hint.style.color='#fbbf24';
+  }
+}
+
+function getTimePart(iso){
+  if(!iso){
+    var now=new Date();
+    return String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0');
+  }
+  try{
+    var d=new Date(iso);
+    // KST 변환
+    var kst=new Date(d.getTime()+(d.getTimezoneOffset()+540)*60*1000);
+    return String(kst.getHours()).padStart(2,'0')+':'+
+           String(kst.getMinutes()).padStart(2,'0')+':'+
+           String(kst.getSeconds()).padStart(2,'0');
+  }catch(e){return '00:00:00'}
+}
+
+// 선택된 ymd + 원본 시간(또는 현재시간) → UTC ISO
+function buildCreatedAtIso(){
+  var ymd=state.workDateYmd||fmtYmd(getWorkDate());
+  var hh,mm,ss,ms;
+  if(state.origCreatedAt){
+    var d=new Date(state.origCreatedAt);
+    var kst=new Date(d.getTime()+(d.getTimezoneOffset()+540)*60*1000);
+    hh=kst.getHours();mm=kst.getMinutes();ss=kst.getSeconds();ms=kst.getMilliseconds();
+  }else{
+    var n=new Date();
+    hh=n.getHours();mm=n.getMinutes();ss=n.getSeconds();ms=n.getMilliseconds();
+  }
+  var p=ymd.split('-');
+  var y=+p[0], mo=+p[1]-1, dy=+p[2];
+  // KST yyyy-mm-dd HH:MM:SS → UTC
+  var utcMs=Date.UTC(y,mo,dy,hh-9,mm,ss,ms);
+  return new Date(utcMs).toISOString();
+}
+
+function initWorkDate(){
+  var ymd=fmtYmd(getWorkDate());
+  state.workDateYmd=ymd;
+  var inp=document.getElementById('workDateInput');
+  if(inp){
+    inp.value=ymd;
+    if(!inp.dataset.bound){
+      inp.dataset.bound='1';
+      inp.addEventListener('click',function(){try{inp.showPicker&&inp.showPicker()}catch(e){}});
+    }
+  }
+  updateWorkDateHint();
 }
 
 async function autoLoadFromUrl(){
@@ -257,6 +360,7 @@ async function loadMachine(mcParam){
     if(state.preloadEditRecord){existRecord=state.preloadEditRecord;state.preloadEditRecord=null}
     else{var today=fmtYmd(new Date());var existList=await sbGet('mes_check_log','select=id,created_at&machine_code=eq.'+mc+'&category=eq.report&created_at=gte.'+today+'T00:00:00&order=created_at.desc&limit=1');if(existList&&existList.length){hasExistToday=true;state.todayExistId=existList[0].id}}
     initReport();
+    initWorkDate();
     if(existRecord&&existRecord.payload&&existRecord.payload.report_snapshot){
       var rs=existRecord.payload.report_snapshot;
       if(rs.defects)Object.keys(rs.defects).forEach(function(k){state.report.defects[k]=rs.defects[k]||''});
@@ -264,6 +368,17 @@ async function loadMachine(mcParam){
       state.report.note=rs.note||'';
       if(rs.productionAdj)state.report.productionAdj=Object.assign({},rs.productionAdj);
       state.editId=existRecord.id;
+      // ★★★ 기존 레코드의 created_at → 작업일자 input 세팅 ★★★
+      if(existRecord.created_at){
+        state.origCreatedAt=existRecord.created_at;
+        var ed=new Date(existRecord.created_at);
+        var kstE=new Date(ed.getTime()+(ed.getTimezoneOffset()+540)*60*1000);
+        var editYmd=kstE.getFullYear()+'-'+String(kstE.getMonth()+1).padStart(2,'0')+'-'+String(kstE.getDate()).padStart(2,'0');
+        state.workDateYmd=editYmd;
+        var inpd=document.getElementById('workDateInput');
+        if(inpd)inpd.value=editYmd;
+        updateWorkDateHint();
+      }
       showToast('📋 작성된 일보 불러옴 (수정모드)',3000);
     }else{state.editId=state.forceEditId||null}
     renderAll();
@@ -364,6 +479,16 @@ async function loadTodayExist(){
     state.report.note=rs.note||'';
     if(rs.productionAdj)state.report.productionAdj=Object.assign({},rs.productionAdj);
     state.editId=rec.id;
+    if(rec.created_at){
+      state.origCreatedAt=rec.created_at;
+      var ed=new Date(rec.created_at);
+      var kstE=new Date(ed.getTime()+(ed.getTimezoneOffset()+540)*60*1000);
+      var editYmd=kstE.getFullYear()+'-'+String(kstE.getMonth()+1).padStart(2,'0')+'-'+String(kstE.getDate()).padStart(2,'0');
+      state.workDateYmd=editYmd;
+      var inpd=document.getElementById('workDateInput');
+      if(inpd)inpd.value=editYmd;
+      updateWorkDateHint();
+    }
     renderAll();
     var old=document.getElementById('existBanner');
     if(old)old.remove();
@@ -457,7 +582,7 @@ function onProdAdjChange(inp){
 
 function updateDefTotal(){var sum=0;Object.keys(state.report.defects).forEach(function(k){sum+=+state.report.defects[k]||0});document.getElementById('defTotal').textContent=sum.toLocaleString()}
 
-function resetForm(){if(!confirm('입력내용을 모두 지웁니다. 진행?'))return;initReport();renderAll();showToast('초기화됨')}
+function resetForm(){if(!confirm('입력내용을 모두 지웁니다. 진행?'))return;initReport();initWorkDate();state.origCreatedAt=null;renderAll();showToast('초기화됨')}
 
 async function saveReport(){
   if(!state.machine){showToast('설비 선택 필요');return}
@@ -470,7 +595,8 @@ async function saveReport(){
   var shipTotal=0;
   Object.keys(rpt.productionAdj||{}).forEach(function(k){shipTotal+=+rpt.productionAdj[k]||0});
   var m=state.machine;
-  var now=new Date();
+  // ★★★ 작업일자 반영 created_at ★★★
+  var createdAtIso=buildCreatedAtIso();
   var record={
     machine_code:m.machine_code,machine_name:m.machine_name||'',customer:m.customer||'',
     item_code:m.current_item_code||'',item_name:m.item_name||'',
@@ -490,23 +616,38 @@ async function saveReport(){
       rawMaterials:(state.rawMaterials||[]).map(function(r){
         return{lot_no:r.lot_no||'',raw_item_code:r.raw_item_code||'',receipt_no:r.receipt_no||'',unit_per_qty:+r.unit_per_qty||0,used_weight:r.used_weight!=null?+r.used_weight:null,coil_weight:r.coil_weight!=null?+r.coil_weight:null,remain_weight:r.remain_weight!=null?+r.remain_weight:null,shot_qty:+r.shot_qty||0,normal_shot:+r.normal_shot||0,abnormal_shot:+r.abnormal_shot||0,start_time:r.start_time||'',end_time:r.end_time||'',heat_no:r.heat_no||r.lot_no||''};
       }),
-      mesNg:state.mesNg?{total_qty:state.mesNg.total_qty||0,total_count:state.mesNg.total_count||0,by_code:(state.mesNg.by_code||[]).map(function(c){return{code:c.code,qty:+c.qty||0,count:+c.count||0}})}:null
+      mesNg:state.mesNg?{total_qty:state.mesNg.total_qty||0,total_count:state.mesNg.total_count||0,by_code:(state.mesNg.by_code||[]).map(function(c){return{code:c.code,qty:+c.qty||0,count:+c.count||0}})}:null,
+      workDateYmd:state.workDateYmd||''
     },
     downtime_snapshot:state.downtime?{runMin:state.downtime.run_min||0,stopMin:state.downtime.stop_min||0,plannedMin:state.downtime.planned_min||0,rate:state.downtime.rate||0}:null,
-    created_at:now.toISOString()
+    created_at:createdAtIso
   };
   try{
-    if(state.editId){await fetch(SB_URL+'/rest/v1/mes_check_log?id=eq.'+state.editId,{method:'PATCH',headers:Object.assign({},sbH,{'Prefer':'return=minimal'}),body:JSON.stringify({payload:record})});showToast('✅ 작업일보 수정됨')}
-    else{await sbPost('mes_check_log',{machine_code:record.machine_code,machine_name:record.machine_name,customer:record.customer,item_code:record.item_code,item_name:record.item_name,category:'report',payload:record,created_at:record.created_at});showToast('✅ 작업일보 저장됨')}
+    if(state.editId){
+      // 수정: payload + created_at 동시 업데이트
+      await fetch(SB_URL+'/rest/v1/mes_check_log?id=eq.'+state.editId,{
+        method:'PATCH',
+        headers:Object.assign({},sbH,{'Prefer':'return=minimal'}),
+        body:JSON.stringify({payload:record,created_at:createdAtIso})
+      });
+      showToast('✅ 작업일보 수정됨 ('+state.workDateYmd+')');
+    }
+    else{
+      await sbPost('mes_check_log',{machine_code:record.machine_code,machine_name:record.machine_name,customer:record.customer,item_code:record.item_code,item_name:record.item_name,category:'report',payload:record,created_at:createdAtIso});
+      showToast('✅ 작업일보 저장됨 ('+state.workDateYmd+')');
+    }
     await sendReportAlert(record);
     initReport();
     state.editId=null;
+    state.origCreatedAt=null;
+    initWorkDate();
     renderAll();
   }catch(e){console.log(e);showToast('❌ 저장실패')}
 }
 
 async function sendReportAlert(record){
   var msg='📄 [작업일보] '+record.machine_code+' '+record.machine_name+'\n';
+  if(state.workDateYmd)msg+='📅 작업일자: '+state.workDateYmd+'\n';
   msg+='고객:'+record.customer+' │ 품번:'+record.item_code+'\n';
   var rs=record.report_snapshot;
   var mesQty=+state.machine.actual_qty||0;
@@ -531,78 +672,33 @@ async function sendReportAlert(record){
   }catch(e){}
 }
 
-// ═════════════════════════════════════════════════════════════════════
-// 엑셀 다운로드 (v2 - 디버그 강화 · 안전 가드 · 영문 파일명)
-// ═════════════════════════════════════════════════════════════════════
-function dbg(msg){
-  console.log('[Excel] '+msg);
-  showToast(msg, 1500);
-}
-
 async function exportExcel(){
-  console.log('[Excel] ========== exportExcel 시작 ==========');
   try{
-    // ① 라이브러리 로드 확인
-    if(typeof ExcelJS==='undefined'){
-      console.error('[Excel] ExcelJS 미로드');
-      showToast('❌ ExcelJS 라이브러리 미로드 (인터넷 연결 확인)', 4000);
-      return;
-    }
-    if(typeof saveAs==='undefined'){
-      console.error('[Excel] FileSaver 미로드');
-      showToast('❌ FileSaver 라이브러리 미로드 (인터넷 연결 확인)', 4000);
-      return;
-    }
-    if(!state.machine){
-      showToast('❌ 설비 데이터가 없습니다');
-      return;
-    }
-    
-    console.log('[Excel] 라이브러리 OK - ExcelJS 버전:', ExcelJS.version || '?');
-    showToast('⏳ 엑셀 생성중...', 1000);
-    
+    if(typeof ExcelJS==='undefined'){showToast('❌ ExcelJS 미로드');return}
+    if(typeof saveAs==='undefined'){showToast('❌ FileSaver 미로드');return}
+    if(!state.machine){showToast('❌ 설비 데이터 없음');return}
+    showToast('⏳ 엑셀 생성중...',1000);
     var m=state.machine, rpt=state.report, ds=state.downtime||{};
-    var now=new Date(), workDate=getWorkDate();
-    
-    console.log('[Excel] 데이터 준비 OK');
-    
-    // ② 워크북 생성
-    var wb=new ExcelJS.Workbook();
-    wb.creator='ESG MES';
-    wb.created=now;
-    
-    var ws=wb.addWorksheet('WorkReport', {
-      pageSetup:{orientation:'landscape',paperSize:9,fitToPage:true,fitToWidth:1,fitToHeight:1}
-    });
-    
-    ws.columns=[
-      {width:5},{width:14},{width:28},{width:9},{width:10},{width:11},{width:12},{width:12},
-      {width:6},{width:6},{width:6},{width:6},{width:6},{width:6},
-      {width:6},{width:6},{width:6},{width:6},{width:6},{width:6}
-    ];
-    
-    console.log('[Excel] 워크시트 생성 OK');
-    
-    // ③ 제목 (먼저 value 설정, 나중에 merge)
+    var now=new Date();
+    // ★ 편집된 작업일자 사용
+    var workDate=state.workDateYmd?new Date(state.workDateYmd+'T00:00:00'):getWorkDate();
+    var wb=new ExcelJS.Workbook();wb.creator='ESG MES';wb.created=now;
+    var ws=wb.addWorksheet('WorkReport',{pageSetup:{orientation:'landscape',paperSize:9,fitToPage:true,fitToWidth:1,fitToHeight:1}});
+    ws.columns=[{width:5},{width:14},{width:28},{width:9},{width:10},{width:11},{width:12},{width:12},{width:6},{width:6},{width:6},{width:6},{width:6},{width:6},{width:6},{width:6},{width:6},{width:6},{width:6},{width:6}];
     ws.getCell('A1').value='프레스 작업일보';
     ws.getCell('A1').font={size:22,bold:true};
     ws.getCell('A1').alignment={vertical:'middle',horizontal:'left'};
     ws.getRow(1).height=34;
-    try{ws.mergeCells('A1:K1')}catch(e){console.warn('merge A1:K1 실패', e)}
-    
+    try{ws.mergeCells('A1:K1')}catch(e){}
     ws.getCell('L1').value='작업일: '+(workDate.getFullYear()+'년 '+(workDate.getMonth()+1)+'월 '+workDate.getDate()+'일 '+['일','월','화','수','목','금','토'][workDate.getDay()]+'요일');
     ws.getCell('L1').font={size:10,bold:true};
     try{ws.mergeCells('L1:M1')}catch(e){}
-    
     ws.getCell('N1').value='작업자: '+(m.worker||'');
     ws.getCell('N1').font={size:10,bold:true};
     try{ws.mergeCells('N1:T1')}catch(e){}
-    
-    // ④ 테이블 헤더
     var hr=3;
     ws.getRow(hr).values=['순','설비명(호기)','품명 / 품번','SPM','공정명','근무시간','일일목표수량','양품수량','계획정지시간(분)','','','','','','비가동시간(분)','','','','',''];
     ws.getRow(hr+1).values=['','','','','','480분 / 120분','','','A','B','C','D','E','','F','G','H','I','J','K'];
-    
     try{ws.mergeCells('I3:N3')}catch(e){}
     try{ws.mergeCells('O3:T3')}catch(e){}
     try{ws.mergeCells('A3:A4')}catch(e){}
@@ -614,245 +710,83 @@ async function exportExcel(){
     try{ws.mergeCells('H3:H4')}catch(e){}
     try{ws.mergeCells('N3:N4')}catch(e){}
     try{ws.mergeCells('T3:T4')}catch(e){}
-    
-    [hr,hr+1].forEach(function(r){
-      var row=ws.getRow(r);
-      row.height=22;
-      row.eachCell({includeEmpty:true},function(cell){
-        cell.font={bold:true,size:10};
-        cell.alignment={vertical:'middle',horizontal:'center',wrapText:true};
-        cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFE7E7E7'}};
-        cell.border={top:{style:'thin'},bottom:{style:'thin'},left:{style:'thin'},right:{style:'thin'}};
-      });
-    });
-    
-    console.log('[Excel] 헤더 OK');
-    
-    // ⑤ 데이터 행
+    [hr,hr+1].forEach(function(r){var row=ws.getRow(r);row.height=22;row.eachCell({includeEmpty:true},function(cell){cell.font={bold:true,size:10};cell.alignment={vertical:'middle',horizontal:'center',wrapText:true};cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFE7E7E7'}};cell.border={top:{style:'thin'},bottom:{style:'thin'},left:{style:'thin'},right:{style:'thin'}}})});
     var dr=hr+2;
     var shipTotal=0;
     Object.keys(rpt.productionAdj||{}).forEach(function(k){shipTotal+=+rpt.productionAdj[k]||0});
-    var mesQty=+m.actual_qty||0, shipQty=shipTotal;
     var actCt=+m.actual_ct||0, tgtCt=+m.target_ct||0;
     var ctVal=actCt>0?actCt:tgtCt;
     var spmText='';
-    if(ctVal>0){
-      var spmV=(60/ctVal).toFixed(1);
-      spmText=spmV+' SPM\n('+ctVal.toFixed(2)+'s'+(actCt>0?'':' 목표')+')';
-    }
-    
-    ws.getRow(dr).values=[
-      1,
-      parsePressLabel(m),
-      (m.item_name||'')+'\n'+(m.current_item_code||''),
-      spmText, 'P/R',
-      '08:00~19:00\n'+(ds.run_min?fmtMinutes(ds.run_min)+' / '+fmtMinutes(ds.planned_min||0):''),
-      (+m.target_qty||0).toLocaleString(),
-      shipQty?shipQty.toLocaleString():'',
-      '','','','','','',
-      '','','','','',''
-    ];
+    if(ctVal>0){var spmV=(60/ctVal).toFixed(1);spmText=spmV+' SPM\n('+ctVal.toFixed(2)+'s'+(actCt>0?'':' 목표')+')'}
+    ws.getRow(dr).values=[1,parsePressLabel(m),(m.item_name||'')+'\n'+(m.current_item_code||''),spmText,'P/R','08:00~19:00\n'+(ds.run_min?fmtMinutes(ds.run_min)+' / '+fmtMinutes(ds.planned_min||0):''),(+m.target_qty||0).toLocaleString(),shipTotal?shipTotal.toLocaleString():'','','','','','','','','','','','',''];
     ws.getRow(dr).height=46;
-    ws.getRow(dr).eachCell({includeEmpty:true},function(cell){
-      cell.font={size:10};
-      cell.alignment={vertical:'middle',horizontal:'center',wrapText:true};
-      cell.border={top:{style:'thin'},bottom:{style:'thin'},left:{style:'thin'},right:{style:'thin'}};
-    });
+    ws.getRow(dr).eachCell({includeEmpty:true},function(cell){cell.font={size:10};cell.alignment={vertical:'middle',horizontal:'center',wrapText:true};cell.border={top:{style:'thin'},bottom:{style:'thin'},left:{style:'thin'},right:{style:'thin'}}});
     ws.getCell('H'+dr).font={size:11,bold:true,color:{argb:'FF16A34A'}};
-    
-    console.log('[Excel] 데이터 행 OK');
-    
-    // ⑥ 계획정지/비가동 매핑
     var plannedMap={A:0,B:0,C:0,D:0,E:0};
     var unplanMap={F:0,G:0,H:0,I:0,J:0,K:0};
     var allEvents=[].concat(ds.planned_events||[],ds.stop_events||[]);
-    allEvents.forEach(function(ev){
-      var code=(ev.code||'').split('-')[1]||'';
-      var g=CODE_TO_GRID[code];
-      if(g&&plannedMap.hasOwnProperty(g))plannedMap[g]+=(+ev.min||0);
-      else if(g&&unplanMap.hasOwnProperty(g))unplanMap[g]+=(+ev.min||0);
-      else if(ev.code)unplanMap.K+=(+ev.min||0);
-    });
-    ['A','B','C','D','E'].forEach(function(k,i){
-      var col=String.fromCharCode(73+i);
-      ws.getCell(col+dr).value=plannedMap[k]||'';
-    });
-    ['F','G','H','I','J','K'].forEach(function(k,i){
-      var col=String.fromCharCode(79+i);
-      ws.getCell(col+dr).value=unplanMap[k]||'';
-    });
-    
-    // ⑦ 특기사항
+    allEvents.forEach(function(ev){var code=(ev.code||'').split('-')[1]||'';var g=CODE_TO_GRID[code];if(g&&plannedMap.hasOwnProperty(g))plannedMap[g]+=(+ev.min||0);else if(g&&unplanMap.hasOwnProperty(g))unplanMap[g]+=(+ev.min||0);else if(ev.code)unplanMap.K+=(+ev.min||0)});
+    ['A','B','C','D','E'].forEach(function(k,i){var col=String.fromCharCode(73+i);ws.getCell(col+dr).value=plannedMap[k]||''});
+    ['F','G','H','I','J','K'].forEach(function(k,i){var col=String.fromCharCode(79+i);ws.getCell(col+dr).value=unplanMap[k]||''});
     var sr=dr+2;
     ws.getCell('A'+sr).value='■ 특기사항';
     ws.getCell('A'+sr).font={bold:true,size:11};
     ws.getCell('A'+sr).alignment={vertical:'middle',horizontal:'left'};
     try{ws.mergeCells('A'+sr+':B'+sr)}catch(e){}
-    
     ws.getCell('C'+sr).value=rpt.note||'';
     ws.getCell('C'+sr).alignment={vertical:'top',horizontal:'left',wrapText:true};
     ws.getCell('C'+sr).font={size:10};
     try{ws.mergeCells('C'+sr+':T'+(sr+2))}catch(e){}
-    
-    for(var r=sr;r<=sr+2;r++){
-      for(var col=1;col<=20;col++){
-        ws.getCell(r,col).border={top:{style:'thin'},bottom:{style:'thin'},left:{style:'thin'},right:{style:'thin'}};
-      }
-    }
-    
-    // ⑧ 범례
+    for(var r=sr;r<=sr+2;r++){for(var col=1;col<=20;col++){ws.getCell(r,col).border={top:{style:'thin'},bottom:{style:'thin'},left:{style:'thin'},right:{style:'thin'}}}}
     var lr=sr+4;
     ws.getCell('A'+lr).value='■ 계획정지시간 : A.조회및교육  B.3정5행활동  C.Try-Out(샘플)  D.측정대기  E.타공정지원';
     ws.getCell('A'+lr).font={bold:true,size:10,color:{argb:'FF1E40AF'}};
     try{ws.mergeCells('A'+lr+':T'+lr)}catch(e){}
-    
     ws.getCell('A'+(lr+1)).value='■ 비가동 시간 : F.금형세팅및교환  G.금형수리및수정  H.설비이상(주변장치포함)  I.소재교환  J.불량발생및처리  K.기타(대기)';
     ws.getCell('A'+(lr+1)).font={bold:true,size:10,color:{argb:'FFDC2626'}};
     try{ws.mergeCells('A'+(lr+1)+':T'+(lr+1))}catch(e){}
-    
-    console.log('[Excel] 범례 OK');
-    
-    // ⑨ 불량유형
     var dr2=lr+3;
     ws.getCell('A'+dr2).value='■ 불량현황';
     ws.getCell('A'+dr2).font={bold:true,size:11};
     try{ws.mergeCells('A'+dr2+':B'+dr2)}catch(e){}
-    
     var dhr=dr2+1;
     var defHdr=['순'].concat(DEFECT_TYPES).concat(['합계']);
     ws.getRow(dhr).values=defHdr;
     ws.getRow(dhr).height=36;
-    ws.getRow(dhr).eachCell({includeEmpty:true},function(cell){
-      cell.font={bold:true,size:9};
-      cell.alignment={vertical:'middle',horizontal:'center',wrapText:true};
-      cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFFEE2E2'}};
-      cell.border={top:{style:'thin'},bottom:{style:'thin'},left:{style:'thin'},right:{style:'thin'}};
-    });
-    
+    ws.getRow(dhr).eachCell({includeEmpty:true},function(cell){cell.font={bold:true,size:9};cell.alignment={vertical:'middle',horizontal:'center',wrapText:true};cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFFEE2E2'}};cell.border={top:{style:'thin'},bottom:{style:'thin'},left:{style:'thin'},right:{style:'thin'}}});
     var ddr=dhr+1;
     var defRow=[1], defSum=0;
     DEFECT_TYPES.forEach(function(t){var v=+rpt.defects[t]||0;defRow.push(v||'');defSum+=v});
     defRow.push(defSum||'');
     ws.getRow(ddr).values=defRow;
     ws.getRow(ddr).height=24;
-    ws.getRow(ddr).eachCell({includeEmpty:true},function(cell){
-      cell.font={size:10};
-      cell.alignment={vertical:'middle',horizontal:'center'};
-      cell.border={top:{style:'thin'},bottom:{style:'thin'},left:{style:'thin'},right:{style:'thin'}};
-    });
+    ws.getRow(ddr).eachCell({includeEmpty:true},function(cell){cell.font={size:10};cell.alignment={vertical:'middle',horizontal:'center'};cell.border={top:{style:'thin'},bottom:{style:'thin'},left:{style:'thin'},right:{style:'thin'}}});
     ws.getCell(ddr,defHdr.length).font={bold:true,size:11,color:{argb:'FFDC2626'}};
-    
-    console.log('[Excel] 불량 섹션 OK');
-    
-    // ⑩ 조건관리 + 원자재
     var cr=ddr+2;
     ws.getCell('A'+cr).value='■ 조건관리 (프레스)';
     ws.getCell('A'+cr).font={bold:true,size:11};
     try{ws.mergeCells('A'+cr+':B'+cr)}catch(e){}
-    
     ws.getCell('I'+cr).value='■ 원자재 규격 및 사용현황';
     ws.getCell('I'+cr).font={bold:true,size:11};
     try{ws.mergeCells('I'+cr+':K'+cr)}catch(e){}
-    
     var cr2=cr+1;
     ws.getRow(cr2).values=['순','다이하이트(mm)','이송피치(mm)','SPM','','','','','재질','두께(t)','폭(mm)'];
     ws.getRow(cr2).height=22;
-    [1,2,3,4,9,10,11].forEach(function(i){
-      var cell=ws.getCell(cr2,i);
-      cell.font={bold:true,size:10};
-      cell.alignment={vertical:'middle',horizontal:'center'};
-      cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFE0F2FE'}};
-      cell.border={top:{style:'thin'},bottom:{style:'thin'},left:{style:'thin'},right:{style:'thin'}};
-    });
-    
+    [1,2,3,4,9,10,11].forEach(function(i){var cell=ws.getCell(cr2,i);cell.font={bold:true,size:10};cell.alignment={vertical:'middle',horizontal:'center'};cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFE0F2FE'}};cell.border={top:{style:'thin'},bottom:{style:'thin'},left:{style:'thin'},right:{style:'thin'}}});
     var cr3=cr2+1;
     ws.getRow(cr3).values=[1,rpt.conditions.dieHeight||'',rpt.conditions.feedPitch||'',ctVal>0?(60/ctVal).toFixed(1):'','','','','',(m.raw_item_code||''),'',''];
     ws.getRow(cr3).height=22;
-    [1,2,3,4,9,10,11].forEach(function(i){
-      var cell=ws.getCell(cr3,i);
-      cell.font={size:10};
-      cell.alignment={vertical:'middle',horizontal:'center'};
-      cell.border={top:{style:'thin'},bottom:{style:'thin'},left:{style:'thin'},right:{style:'thin'}};
-    });
-    
-    console.log('[Excel] 조건관리 OK');
-    
-    // ⑪ 파일 생성 및 다운로드 (핵심!)
-    console.log('[Excel] writeBuffer 시작...');
+    [1,2,3,4,9,10,11].forEach(function(i){var cell=ws.getCell(cr3,i);cell.font={size:10};cell.alignment={vertical:'middle',horizontal:'center'};cell.border={top:{style:'thin'},bottom:{style:'thin'},left:{style:'thin'},right:{style:'thin'}}});
     var buf=await wb.xlsx.writeBuffer();
-    console.log('[Excel] writeBuffer 완료, 크기:', buf.byteLength, 'bytes');
-    
-    // 파일명 영문+숫자로 (한글 브라우저 호환성 문제 회피)
     var ymdStr=workDate.getFullYear()+String(workDate.getMonth()+1).padStart(2,'0')+String(workDate.getDate()).padStart(2,'0');
     var mcStr=(m.machine_code||'MC').replace(/[^\w]/g,'');
     var fname='WorkReport_'+mcStr+'_'+ymdStr+'.xlsx';
-    
-    console.log('[Excel] 파일명:', fname);
-    
     var blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
-    console.log('[Excel] Blob 생성 OK, 크기:', blob.size);
-    
-    // saveAs 호출 (FileSaver.js)
-    saveAs(blob, fname);
-    
-    console.log('[Excel] saveAs 호출 완료');
-    showToast('✅ 엑셀 다운로드: '+fname, 3500);
-    
+    saveAs(blob,fname);
+    showToast('✅ 엑셀 다운로드: '+fname,3500);
   }catch(err){
-    // 모든 에러를 콘솔 + 토스트에 출력
-    console.error('[Excel] ❌ 에러 발생:', err);
-    console.error('[Excel] 스택:', err.stack);
-    showToast('❌ 엑셀 생성실패: '+(err.message||err), 5000);
-    // 폴백: 최소 CSV라도 다운로드 시도
-    tryExportCsvFallback();
-  }
-}
-
-// 엑셀 실패시 CSV라도 받을 수 있게
-function tryExportCsvFallback(){
-  try{
-    var m=state.machine, rpt=state.report, ds=state.downtime||{};
-    var workDate=getWorkDate();
-    var shipTotal=0;
-    Object.keys(rpt.productionAdj||{}).forEach(function(k){shipTotal+=+rpt.productionAdj[k]||0});
-    var lines=[];
-    lines.push('항목,값');
-    lines.push('작업일,'+fmtYmd(workDate));
-    lines.push('설비,'+parsePressLabel(m));
-    lines.push('품번,'+(m.current_item_code||''));
-    lines.push('작업자,'+(m.worker||''));
-    lines.push('목표,'+(+m.target_qty||0));
-    lines.push('MES실적,'+(+m.actual_qty||0));
-    lines.push('양품실제,'+shipTotal);
-    lines.push('가동(분),'+(ds.run_min||0));
-    lines.push('비가동(분),'+(ds.stop_min||0));
-    lines.push('');
-    lines.push('불량유형,수량');
-    var defSum=0;
-    DEFECT_TYPES.forEach(function(t){var v=+rpt.defects[t]||0;lines.push(t+','+v);defSum+=v});
-    lines.push('합계,'+defSum);
-    lines.push('');
-    lines.push('다이하이트,'+(rpt.conditions.dieHeight||''));
-    lines.push('이송피치,'+(rpt.conditions.feedPitch||''));
-    lines.push('특기사항,'+(rpt.note||'').replace(/[\r\n,]/g,' '));
-    // BOM (Byte Order Mark) 추가해 한글 깨짐 방지
-    var csv='\uFEFF'+lines.join('\r\n');
-    var blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
-    var ymdStr=workDate.getFullYear()+String(workDate.getMonth()+1).padStart(2,'0')+String(workDate.getDate()).padStart(2,'0');
-    var mcStr=(m.machine_code||'MC').replace(/[^\w]/g,'');
-    var fname='WorkReport_'+mcStr+'_'+ymdStr+'.csv';
-    if(typeof saveAs!=='undefined'){saveAs(blob,fname)}
-    else{
-      var url=URL.createObjectURL(blob);
-      var a=document.createElement('a');
-      a.href=url;a.download=fname;
-      document.body.appendChild(a);a.click();
-      setTimeout(function(){document.body.removeChild(a);URL.revokeObjectURL(url)},100);
-    }
-    showToast('⚠️ 엑셀 실패 → CSV로 대체 다운로드', 4000);
-  }catch(e){
-    console.error('[CSV fallback] 실패:', e);
-    showToast('❌ CSV 폴백도 실패: '+e.message, 5000);
+    console.error('[Excel]',err);
+    showToast('❌ 엑셀 실패: '+err.message,4000);
   }
 }
 
