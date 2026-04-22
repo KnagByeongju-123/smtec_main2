@@ -1028,7 +1028,12 @@ function numpadClear(){numpadState.value='';updateNumpadDisplay()}
 function numpadOk(){
   var v=numpadState.value;
   if(v.slice(-1)==='.')v=v.slice(0,-1);
-  if(typeof numpadState.onConfirm==='function')numpadState.onConfirm(v);
+  try{
+    if(typeof numpadState.onConfirm==='function')numpadState.onConfirm(v);
+  }catch(e){
+    console.error('numpad onConfirm error:',e);
+  }
+  // ★ 에러 여부와 관계없이 항상 닫기
   numpadCancel();
 }
 function numpadCancel(){
@@ -1599,6 +1604,35 @@ function pickWorkOrder(idx){
 var lotListCache=null;
 var _bomRawCodes=null;       // 설비에 연결된 모든 W/O 품번의 BOM 소재 합집합
 var _bomItemCodes=null;      // 포함된 품번 리스트 (배지 표시용)
+var _widthFilter=null;       // 폭 필터 기준값 (mm)
+var _widthFilterOff=false;   // 사용자가 폭 필터 해제했는지
+
+// 기준 폭 자동 결정 (현재 사용중 → 마지막 탈착 → W/O 규격 → null)
+function resolveReferenceWidth(){
+  var list=state.rawChangeList||[];
+  // 1) 현재 사용중 로트
+  for(var i=list.length-1;i>=0;i--){
+    if(!list[i].unmount_time && list[i].width){
+      return +list[i].width;
+    }
+  }
+  // 2) 가장 최근 로트 (탈착 여부 무관)
+  for(var j=list.length-1;j>=0;j--){
+    if(list[j].width){
+      return +list[j].width;
+    }
+  }
+  // 3) W/O 규격의 width (virtBomInfo 또는 item_spec 파싱)
+  var bom=state.virtBomInfo;
+  if(bom&&bom.width)return +bom.width;
+  // item_spec에서 파싱 시도 (예: "C67S 1.25*137")
+  var spec=state.virtManual&&state.virtManual.item_spec;
+  if(spec){
+    var m=String(spec).match(/\*\s*(\d+(?:\.\d+)?)/);
+    if(m)return +m[1];
+  }
+  return null;
+}
 
 // ★★★ "소재 교체" 버튼 엔트리 ★★★
 // 설비에 등록된 모든 W/O의 품번 BOM을 합쳐서 표시
@@ -1611,9 +1645,11 @@ async function openRawChangeModal(){
   
   _bomRawCodes=null;
   _bomItemCodes=null;
+  _widthFilter=resolveReferenceWidth();
+  _widthFilterOff=false;  // 새로 열 때마다 폭 필터 켜진 상태
   
   try{
-    // 1) 설비에 연결된 모든 W/O 조회 (active=true, status in [3(대기), 1(진행)])
+    // 1) 설비에 연결된 모든 W/O 조회
     var woQs='select=item_code,work_order_no,status'+
              '&machine_code=eq.'+encodeURIComponent(mc)+
              '&active=eq.true'+
@@ -1622,14 +1658,12 @@ async function openRawChangeModal(){
     if(!woRes.ok)throw new Error('W/O 조회 실패');
     var woList=await woRes.json();
     
-    // 품번 unique 수집 (상태 무관 - 대기/진행/완료 모두)
+    // 품번 unique 수집
     var itemCodeSet=new Set();
     woList.forEach(function(w){
       var ic=(w.item_code||'').trim();
       if(ic)itemCodeSet.add(ic);
     });
-    
-    // 현재 선택된 W/O 품번도 보장 추가 (active=false여도)
     if(state.currentWoItemCode)itemCodeSet.add(state.currentWoItemCode);
     if(state.virtManual.item_code)itemCodeSet.add(state.virtManual.item_code);
     
@@ -1642,16 +1676,15 @@ async function openRawChangeModal(){
       }
       _bomRawCodes=null;
     }else{
-      // 2) 모든 품번의 BOM 소재 일괄 조회 (OR 조건)
+      // 2) 모든 품번의 BOM 소재 일괄 조회
       var inList=itemCodes.map(function(x){return '"'+x.replace(/"/g,'\\"')+'"'}).join(',');
-      var bomQs='select=item_code,raw_item_code&item_code=in.('+encodeURIComponent(inList)+')';
+      var bomQs='select=item_code,raw_item_code,width_mm&item_code=in.('+encodeURIComponent(inList)+')';
       var bomRes=await fetch(SB_URL+'/rest/v1/item_raw_bom?'+bomQs,{headers:sbH});
       if(bomRes.ok){
         var bomList=await bomRes.json();
         if(bomList && bomList.length){
           _bomRawCodes=new Set(bomList.map(function(x){return (x.raw_item_code||'').trim()}));
         }else{
-          // 하나도 없으면 전체 표시 질문
           _bomRawCodes=null;
           if(!confirm('⚠️ 등록된 W/O 품번('+itemCodes.length+'개)의 BOM 소재 매핑이 없습니다.\n\n전체 소재 목록에서 선택할까요?')){
             return;
@@ -1667,22 +1700,41 @@ async function openRawChangeModal(){
   openRawPicker();
 }
 
+// 폭 필터 토글
+function toggleWidthFilter(){
+  _widthFilterOff=!_widthFilterOff;
+  openRawPicker_refreshBadge();
+  filterRawList();
+}
+
+function openRawPicker_refreshBadge(){
+  var bomBadge=document.getElementById('bomFilterBadge');
+  if(!bomBadge)return;
+  var parts=[];
+  if(_bomRawCodes && _bomRawCodes.size>0){
+    var itemCnt=(_bomItemCodes||[]).length;
+    parts.push('🎯 설비 W/O '+itemCnt+'기종 BOM <b style="color:#fbbf24">'+_bomRawCodes.size+'종</b>');
+  }else{
+    parts.push('📦 전체 소재 목록');
+  }
+  if(_widthFilter && !_widthFilterOff){
+    parts.push('📏 폭 <b style="color:#fde047">'+_widthFilter+'mm</b>만');
+  }
+  var btnTxt=_widthFilterOff?'🔓 폭필터 해제됨':'🔒 폭필터 ON';
+  var btnColor=_widthFilterOff?'#f97316':'#4ade80';
+  var btn=_widthFilter?
+    ('<button onclick="toggleWidthFilter()" style="margin-left:auto;background:rgba(255,255,255,.1);color:'+btnColor+';border:1px solid '+btnColor+';padding:3px 8px;border-radius:4px;font-size:10px;font-weight:700;cursor:pointer;font-family:inherit">'+btnTxt+'</button>')
+    :'';
+  bomBadge.innerHTML='<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">'+
+    '<div>'+parts.join(' · ')+'</div>'+btn+'</div>';
+  bomBadge.style.display='block';
+}
+
 async function openRawPicker(){
   document.getElementById('rawPickerModal').classList.add('show');
   document.getElementById('rawPickerSearch').value='';
-  // BOM 필터 배너
-  var bomBadge=document.getElementById('bomFilterBadge');
-  if(bomBadge){
-    if(_bomRawCodes && _bomRawCodes.size>0){
-      bomBadge.style.display='block';
-      var itemCnt=(_bomItemCodes||[]).length;
-      var itemHint=itemCnt>0?('설비 W/O '+itemCnt+'기종'):'';
-      bomBadge.innerHTML='🎯 '+itemHint+'의 BOM 소재 <b style="color:#fbbf24">'+_bomRawCodes.size+'종</b> 표시';
-    }else{
-      bomBadge.style.display='block';
-      bomBadge.innerHTML='📦 전체 소재 목록 (BOM 필터 없음)';
-    }
-  }
+  // BOM 필터 + 폭 필터 배너
+  openRawPicker_refreshBadge();
   document.getElementById('rawPickerList').innerHTML='<div style="text-align:center;color:var(--sub);padding:20px">⏳ 소재 조회중...</div>';
   try{
     var since=new Date();since.setDate(since.getDate()-180);
@@ -1767,6 +1819,15 @@ function filterRawList(){
   });
   if(Object.keys(completedHeats).length>0){
     f=f.filter(function(lot){return !completedHeats[lot.heat_no]});
+  }
+  
+  // ★ 폭 필터 (동일 폭만) - 사용자가 해제하지 않은 경우만
+  if(_widthFilter && !_widthFilterOff){
+    f=f.filter(function(lot){
+      var w=+lot.width||0;
+      if(!w)return false;
+      return Math.abs(w-_widthFilter)<0.5;  // 오차 0.5mm 허용
+    });
   }
   
   if(q){
