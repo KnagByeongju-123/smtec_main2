@@ -1793,10 +1793,8 @@ async function openRawPicker(){
       };
     }).filter(function(l){
       if(l.is_completed)return false;
-      // ★ BOM 필터: 현재 품번의 BOM 소재코드만
-      if(_bomRawCodes && _bomRawCodes.size>0){
-        return _bomRawCodes.has((l.raw_code||'').trim());
-      }
+      // BOM 필터 제거: BOM 등록 여부는 renderRawList에서 시각적으로 구분만
+      // (폭 필터는 filterRawList에서 별도 적용)
       return true;
     });
   }catch(e){
@@ -1848,10 +1846,42 @@ function renderRawList(list){
     c.innerHTML='<div style="text-align:center;color:var(--sub);padding:20px">📭 사용가능 로트 없음</div>';
     return;
   }
+  
+  // ★ BOM 등록/미등록 그룹 분리
+  var bomRegistered=[];
+  var bomUnregistered=[];
+  list.forEach(function(lot){
+    var code=(lot.raw_code||'').trim();
+    if(_bomRawCodes && _bomRawCodes.size>0 && _bomRawCodes.has(code)){
+      bomRegistered.push(lot);
+    }else{
+      bomUnregistered.push(lot);
+    }
+  });
+  
+  // 정렬: BOM 등록 먼저
+  var sortedList=bomRegistered.concat(bomUnregistered);
+  
   var totRemain=0;
   list.forEach(function(l){totRemain+=(+l.remain_weight||0)});
-  var html='<div style="padding:6px 10px;background:rgba(167,139,250,.1);border-radius:6px;margin-bottom:6px;font-size:11px;color:#c4b5fd">📦 <b>'+list.length+'개 로트</b> · 총 잔량 <b>'+totRemain.toLocaleString(undefined,{maximumFractionDigits:1})+' kg</b></div>';
-  list.slice(0,200).forEach(function(lot,idx){
+  
+  var html='';
+  // 상단 요약 배지
+  html+='<div style="padding:6px 10px;background:rgba(167,139,250,.1);border-radius:6px;margin-bottom:6px;font-size:11px;color:#c4b5fd;display:flex;gap:8px;flex-wrap:wrap">';
+  html+='<span>📦 <b>'+list.length+'개</b></span>';
+  if(_bomRawCodes && _bomRawCodes.size>0){
+    html+='<span>✅ BOM등록 <b style="color:#4ade80">'+bomRegistered.length+'</b></span>';
+    html+='<span>🆕 신규입고 <b style="color:#fbbf24">'+bomUnregistered.length+'</b></span>';
+  }
+  html+='<span style="margin-left:auto">잔량 <b>'+totRemain.toLocaleString(undefined,{maximumFractionDigits:1})+'kg</b></span>';
+  html+='</div>';
+  
+  // BOM 등록 구분자
+  if(bomRegistered.length>0 && bomUnregistered.length>0){
+    html+='<div style="padding:4px 8px;margin-top:2px;font-size:10px;color:#4ade80;font-weight:700">━━ ✅ BOM 등록된 소재 ━━</div>';
+  }
+  
+  var renderCard=function(lot,idx,isNewMaterial){
     var rate=lot.remain_rate||0;
     var stColor, stLabel;
     if(lot.is_new){stColor='var(--green)';stLabel='신규'}
@@ -1859,11 +1889,14 @@ function renderRawList(list){
     else if(rate>=20){stColor='var(--yellow)';stLabel=rate.toFixed(0)+'%'}
     else{stColor='var(--red)';stLabel=rate.toFixed(0)+'%'}
     var dt=lot.receipt_date?lot.receipt_date.substring(5):'';
-    html+='<div class="pick-card" onclick="pickLot('+idx+')">'+
+    // 신규 소재(BOM 미등록)는 테두리 노란색
+    var borderStyle=isNewMaterial?'border:1px solid rgba(251,191,36,.4)':'';
+    var newBadge=isNewMaterial?' <span style="font-size:9px;color:#fbbf24;background:rgba(251,191,36,.15);padding:1px 5px;border-radius:8px;margin-left:3px">🆕 BOM미등록</span>':'';
+    return '<div class="pick-card" style="'+borderStyle+'" onclick="pickLot('+idx+')">'+
       '<div style="display:flex;justify-content:space-between;align-items:start;gap:8px;flex-wrap:wrap">'+
         '<div style="flex:1;min-width:140px">'+
           '<div style="font-size:13px;font-weight:800;color:#c4b5fd">'+_esc(lot.raw_code)+
-            ' <span style="font-size:10px;color:'+stColor+';background:rgba(167,139,250,.15);padding:1px 6px;border-radius:10px;margin-left:4px">'+stLabel+'</span></div>'+
+            ' <span style="font-size:10px;color:'+stColor+';background:rgba(167,139,250,.15);padding:1px 6px;border-radius:10px;margin-left:4px">'+stLabel+'</span>'+newBadge+'</div>'+
           '<div style="font-size:11px;color:#fff;margin-top:2px">🔖 <b>'+_esc(lot.heat_no)+'</b>'+(lot.vendor?' · 🏭 '+_esc(lot.vendor):'')+'</div>'+
           (lot.raw_spec?'<div style="font-size:10px;color:var(--sub);margin-top:1px">'+_esc(lot.raw_spec)+'</div>':'')+
         '</div>'+
@@ -1872,9 +1905,30 @@ function renderRawList(list){
           '<div style="color:'+stColor+';font-weight:800;font-size:13px">'+lot.remain_weight.toLocaleString(undefined,{maximumFractionDigits:1})+' kg</div>'+
           '<div style="color:var(--sub);font-size:10px">/ '+lot.net_weight.toLocaleString(undefined,{maximumFractionDigits:1})+' kg</div>'+
         '</div></div></div>';
+  };
+  
+  // BOM 등록 소재 렌더 (인덱스는 sortedList 기준)
+  var renderedIdx=0;
+  bomRegistered.slice(0,200).forEach(function(lot){
+    html+=renderCard(lot, renderedIdx, false);
+    renderedIdx++;
   });
+  
+  // 구분자
+  if(bomRegistered.length>0 && bomUnregistered.length>0){
+    html+='<div style="padding:6px 8px;margin-top:4px;font-size:10px;color:#fbbf24;font-weight:700;background:rgba(251,191,36,.08);border-radius:4px">━━ 🆕 BOM 미등록 · 선택 시 자동등록 ━━</div>';
+  }else if(bomRegistered.length===0 && bomUnregistered.length>0){
+    html+='<div style="padding:6px 8px;margin-top:4px;font-size:10px;color:#fbbf24;font-weight:700;background:rgba(251,191,36,.08);border-radius:4px">🆕 BOM 미등록 소재 · 선택 시 자동등록</div>';
+  }
+  
+  // BOM 미등록 소재 렌더
+  bomUnregistered.slice(0,200-bomRegistered.length).forEach(function(lot){
+    html+=renderCard(lot, renderedIdx, true);
+    renderedIdx++;
+  });
+  
   c.innerHTML=html;
-  window._lotListFiltered=list;
+  window._lotListFiltered=sortedList;
 }
 
 // ════════════════════════════════════════════════════════════
@@ -2011,6 +2065,44 @@ async function pickLot(idx){
     unitPer=+state.virtBomInfo.unit_per_qty;
   }
   
+  // ★ BOM 미등록 소재 자동 등록 ★
+  // _bomRawCodes에 없으면 item_raw_bom에 INSERT
+  var isNewMaterial=!(_bomRawCodes && _bomRawCodes.size>0 && _bomRawCodes.has((lot.raw_code||'').trim()));
+  if(isNewMaterial && itemCode && lot.raw_code){
+    try{
+      var bomPayload={
+        item_code: itemCode,
+        raw_item_code: lot.raw_code,
+        unit_per_qty: unitPer||null,
+        material_type: lot.material_type||null,
+        thickness: lot.thickness||null,
+        width_mm: lot.width||null,
+        cavity_qty: 1,
+        usage_count: 0,
+        last_used: new Date().toISOString().slice(0,10),
+        memo: 'auto-mounted'
+      };
+      var bomReq=await fetch(SB_URL+'/rest/v1/item_raw_bom?on_conflict=item_code,raw_item_code',{
+        method:'POST',
+        headers:Object.assign({},sbH,{
+          'Content-Type':'application/json',
+          'Prefer':'resolution=merge-duplicates,return=minimal'
+        }),
+        body:JSON.stringify([bomPayload])
+      });
+      if(bomReq.ok){
+        // 로컬 캐시에도 추가하여 다음 로트 선택 시 반영
+        if(!_bomRawCodes)_bomRawCodes=new Set();
+        _bomRawCodes.add((lot.raw_code||'').trim());
+        console.log('[BOM 자동등록] '+itemCode+' ← '+lot.raw_code);
+      }else{
+        console.warn('[BOM 자동등록 실패]',bomReq.status);
+      }
+    }catch(e){
+      console.warn('[BOM 자동등록 에러]',e);
+    }
+  }
+  
   // ★ 새 로트 추가 (사용중)
   state.rawChangeList.push({
     seq: state.rawChangeList.length+1,
@@ -2036,7 +2128,8 @@ async function pickLot(idx){
   renderRawChangeList();
   renderVirtDashboard();
   var hint=unitPer?(' · 개당 '+unitPer.toFixed(1)+'g'):' · ⚠️ BOM 중량없음';
-  showToast('✅ 로트 장착 #'+state.rawChangeList.length+': '+lot.heat_no+hint);
+  var newHint=isNewMaterial?' 🆕BOM자동등록':'';
+  showToast('✅ 로트 장착 #'+state.rawChangeList.length+': '+lot.heat_no+hint+newHint);
 }
 
 // ★★★ 로트 사용이력 렌더링 (단순화) ★★★
