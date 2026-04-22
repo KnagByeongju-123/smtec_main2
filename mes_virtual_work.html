@@ -190,8 +190,14 @@ body{padding:0;font-size:13px}
     <!-- ★★★ 오늘 사용한 소재 누적 리스트 ★★★ -->
     <div class="dash-sect" id="rawChangeListSect" style="display:none">
       <div class="sect-hdr">
-        <div class="sect-hdr-t">🧾 오늘 사용한 소재 (일괄 등록 대기)</div>
+        <div class="sect-hdr-t">🧾 오늘 사용소재 로트</div>
         <div style="font-size:10px;color:var(--yellow)" id="rawChangeListCount">0건</div>
+      </div>
+      <div style="padding:6px 10px;background:rgba(0,0,0,.2);border-bottom:1px solid var(--border);display:flex;gap:10px;font-size:10px;color:var(--sub);flex-wrap:wrap">
+        <span>👆 탭하여 상태 변경</span>
+        <span style="display:flex;align-items:center;gap:4px"><span style="width:12px;height:12px;border-radius:50%;background:#4ade80;display:inline-block"></span>사용중</span>
+        <span style="display:flex;align-items:center;gap:4px"><span style="width:12px;height:12px;border-radius:50%;background:#f97316;display:inline-block"></span>미완료</span>
+        <span style="display:flex;align-items:center;gap:4px"><span style="width:12px;height:12px;border-radius:50%;background:#fde047;display:inline-block"></span>완료</span>
       </div>
       <div class="sect-body" id="rawChangeListBody" style="padding:8px">
         <div style="text-align:center;color:var(--sub);padding:10px;font-size:11px">아직 등록된 소재가 없습니다</div>
@@ -247,15 +253,6 @@ body{padding:0;font-size:13px}
             <div class="mid-mat-row"><span class="mat-lbl">잔여중량</span><span class="mat-val red" id="vdRemainWeight">-</span></div>
             <div class="mid-mat-row"><span class="mat-lbl">타발수</span><span class="mat-val" id="vdShotQty">-</span></div>
             <div class="mid-mat-row"><span class="mat-lbl">사용중량</span><span class="mat-val" id="vdUsedWeight">-</span></div>
-            <div id="lotCompleteBox" style="margin-top:8px;padding:8px;background:rgba(74,222,128,.08);border:1px solid rgba(74,222,128,.3);border-radius:6px;cursor:pointer;display:none" onclick="toggleLotComplete()">
-              <div style="display:flex;align-items:center;gap:8px">
-                <div id="lotCompleteChk" style="width:20px;height:20px;border:2px solid var(--green);border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:900;color:var(--green);background:#0a0f1f">　</div>
-                <div style="flex:1">
-                  <div style="font-size:12px;font-weight:800;color:var(--green)">✅ 이 로트 사용완료</div>
-                  <div style="font-size:10px;color:var(--sub);margin-top:1px">체크 후 저장시 MES에서 제외</div>
-                </div>
-              </div>
-            </div>
           </div>
         </div>
       </div>
@@ -1231,23 +1228,6 @@ function renderVirtDashboard(){
     setTxt('vdRemainWeight', lot&&lot.remain_weight?(lot.remain_weight.toFixed(1)+' kg'):'-');
   }
   
-  var chkBox=document.getElementById('lotCompleteBox');
-  if(chkBox){
-    chkBox.style.display=lot&&lot.heat_no?'block':'none';
-    var chk=document.getElementById('lotCompleteChk');
-    if(chk){
-      if(state.lotCompleted){
-        chk.textContent='✓';
-        chk.style.background='var(--green)';
-        chk.style.color='#000';
-      }else{
-        chk.textContent='　';
-        chk.style.background='#0a0f1f';
-        chk.style.color='var(--green)';
-      }
-    }
-  }
-  
   var tgtUph=spm>0?Math.round(spm*60):0;
   setTxt('vdTargetUph', tgtUph>0?tgtUph.toLocaleString():'-');
   var netRunMin=Math.max(0, wt-getTotalDowntimeMin()-getPlannedDowntimeMin());
@@ -2041,70 +2021,57 @@ function renderRawChangeList(){
   }
   
   // ═══════════════════════════════════════════════
-  // 로트 사용이력
+  // 로트 사용이력 - 토글 버튼 UI
   // ═══════════════════════════════════════════════
   list.forEach(function(x,i){
     var mt=x.mount_time?new Date(x.mount_time):null;
     var mtStr=mt?(String(mt.getHours()).padStart(2,'0')+':'+String(mt.getMinutes()).padStart(2,'0')):'-';
     var ut=x.unmount_time?new Date(x.unmount_time):null;
     var utStr=ut?(String(ut.getHours()).padStart(2,'0')+':'+String(ut.getMinutes()).padStart(2,'0')):'사용중';
-    var utColor=ut?'var(--sub)':'#4ade80';
     var isCurrent=!ut;
     var isDone=!!x.is_completed;
     
-    // 사용중량 표시
-    var finalKg=isDone?(+x.net_weight||0):(ut?(+x.net_weight||0):0);
-    var kgColor=isDone?'#4ade80':(ut?'#fbbf24':'#94a3b8');
-    var kgText=isDone?(finalKg.toFixed(1)+' kg'):(ut?(finalKg.toFixed(1)+' kg'):'장착중');
-    
-    // 카드 스타일
-    var bgStyle;
+    // 상태별 색상 (버튼 배경 + 상태 원)
+    var cardBg, dotColor, statusText, statusColor;
     if(isDone){
-      bgStyle='background:rgba(74,222,128,.08);border-left:3px solid #4ade80';
+      // 사용완료 - 노란색
+      cardBg='linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)';
+      dotColor='#fde047';
+      statusText='사용완료';
+      statusColor='#fde047';
     }else if(isCurrent){
-      bgStyle='background:rgba(59,130,246,.08);border-left:3px solid var(--primary)';
+      // 사용중 - 초록색
+      cardBg='linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)';
+      dotColor='#4ade80';
+      statusText='사용중';
+      statusColor='#86efac';
     }else{
-      bgStyle='background:rgba(245,158,11,.06);border-left:3px solid #f59e0b';
+      // 탈착 (재사용가능) - 주황색
+      cardBg='linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)';
+      dotColor='#f97316';
+      statusText='탈착(미완료)';
+      statusColor='#fdba74';
     }
     
-    var statusBadge='';
-    if(isDone)statusBadge=' <span style="color:#4ade80;font-size:10px">✓ 사용완료</span>';
-    else if(isCurrent)statusBadge=' <span style="color:#60a5fa;font-size:10px">▶ 사용중</span>';
-    else statusBadge=' <span style="color:#f59e0b;font-size:10px">⏸ 탈착(재사용가능)</span>';
+    var clickAction=isCurrent?
+      "showToast('⚠️ 현재 사용중 로트는 다른 로트로 교체 후 완료처리 가능');":
+      "toggleRawChangeComplete("+i+")";
+    var cursorStyle=isCurrent?'default':'pointer';
     
-    // 완료 버튼 텍스트/스타일
-    var doneBtnBg, doneBtnColor, doneBtnText;
-    if(isDone){
-      doneBtnBg='rgba(74,222,128,.25)';
-      doneBtnColor='#4ade80';
-      doneBtnText='✓완료';
-    }else{
-      doneBtnBg='rgba(251,191,36,.15)';
-      doneBtnColor='#fbbf24';
-      doneBtnText='완료처리';
-    }
-    // 현재 사용중인 로트는 완료 버튼 숨김 (교체 먼저 해야함)
-    var showDoneBtn=!isCurrent;
+    // 잔여중량 표시 (net_weight)
+    var netW=(+x.net_weight||0).toFixed(1);
     
-    html+='<div style="padding:8px 10px;margin-bottom:4px;border-radius:6px;'+bgStyle+'">'+
-      '<div style="display:flex;justify-content:space-between;align-items:start;gap:6px;flex-wrap:wrap">'+
-        '<div style="flex:1;min-width:140px">'+
-          '<div style="font-size:11px;font-weight:800;color:#fcd34d">#'+x.seq+' '+_esc(x.raw_code)+statusBadge+'</div>'+
-          '<div style="font-size:11px;color:#fff;margin-top:1px">🔖 <b>'+_esc(x.heat_no)+'</b></div>'+
-          (x.raw_spec?'<div style="font-size:10px;color:var(--sub)">'+_esc(x.raw_spec)+'</div>':'')+
-          '<div style="font-size:10px;color:'+utColor+';margin-top:2px">⏱ '+mtStr+' ~ '+utStr+'</div>'+
-        '</div>'+
-        '<div style="text-align:right;white-space:nowrap">'+
-          '<div style="font-size:13px;font-weight:800;color:'+kgColor+'">'+kgText+'</div>'+
-          '<div style="font-size:10px;color:var(--sub);margin-top:1px">net '+(+x.net_weight||0).toFixed(1)+'kg</div>'+
-          '<div style="display:flex;gap:4px;margin-top:4px;flex-wrap:wrap;justify-content:flex-end">'+
-            (showDoneBtn?
-              '<button onclick="toggleRawChangeComplete('+i+')" style="background:'+doneBtnBg+';color:'+doneBtnColor+';border:none;padding:3px 10px;border-radius:4px;font-size:11px;font-weight:800;cursor:pointer;font-family:inherit">'+doneBtnText+'</button>'
-              :'')+
-            '<button onclick="removeRawChange('+i+')" style="background:rgba(239,68,68,.15);color:var(--red);border:none;padding:3px 8px;border-radius:4px;font-size:10px;font-weight:700;cursor:pointer;font-family:inherit">삭제</button>'+
-          '</div>'+
-        '</div>'+
-      '</div></div>';
+    html+='<div style="background:'+cardBg+';border-radius:10px;padding:10px 14px;margin-bottom:6px;display:flex;align-items:center;gap:10px;cursor:'+cursorStyle+';box-shadow:0 2px 6px rgba(0,0,0,.3)" onclick="'+clickAction+'">'+
+      '<div style="flex:1;color:#fff">'+
+        '<div style="font-size:13px;font-weight:800">'+_esc(x.raw_code)+' · '+netW+'kg</div>'+
+        '<div style="font-size:11px;color:rgba(255,255,255,.9);margin-top:2px">🔖 '+_esc(x.heat_no)+'</div>'+
+        '<div style="font-size:10px;color:rgba(255,255,255,.7);margin-top:1px">⏱ '+mtStr+' ~ '+utStr+' · <span style="color:'+statusColor+';font-weight:700">'+statusText+'</span></div>'+
+      '</div>'+
+      // 큰 상태 원 (토글 버튼 역할)
+      '<div style="width:32px;height:32px;border-radius:50%;background:'+dotColor+';border:3px solid rgba(255,255,255,.4);box-shadow:0 0 0 2px rgba(0,0,0,.2);flex-shrink:0"></div>'+
+      // 삭제 버튼 (작게)
+      '<button onclick="event.stopPropagation();removeRawChange('+i+')" style="background:rgba(239,68,68,.3);color:#fff;border:1px solid rgba(255,255,255,.3);padding:5px 8px;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;flex-shrink:0">✕</button>'+
+    '</div>';
   });
   body.innerHTML=html;
 }
@@ -2113,7 +2080,6 @@ function renderRawChangeList(){
 function toggleRawChangeComplete(idx){
   var x=state.rawChangeList[idx];
   if(!x)return;
-  // 현재 사용중 로트(unmount_time 없음)는 완료 불가
   if(!x.unmount_time){
     showToast('⚠️ 먼저 다른 로트로 교체하세요 (탈착 후 완료 가능)');
     return;
@@ -2121,10 +2087,10 @@ function toggleRawChangeComplete(idx){
   x.is_completed=!x.is_completed;
   if(x.is_completed){
     x.used_weight=+x.net_weight||0;
-    showToast('✅ #'+x.seq+' 사용완료 → 재고차감 ('+(+x.net_weight||0).toFixed(1)+'kg)');
+    showToast('🟡 #'+x.seq+' 사용완료 → 재고차감 '+(+x.net_weight||0).toFixed(1)+'kg');
   }else{
     x.used_weight=0;
-    showToast('↩️ #'+x.seq+' 완료해제 → 재사용 가능');
+    showToast('🟠 #'+x.seq+' 완료해제 → 재사용 가능');
   }
   renderRawChangeList();
 }
