@@ -1597,38 +1597,73 @@ function pickWorkOrder(idx){
 }
 
 var lotListCache=null;
-var _bomRawCodes=null;  // ★ 현재 W/O의 BOM 매핑 소재 코드 set
+var _bomRawCodes=null;       // 설비에 연결된 모든 W/O 품번의 BOM 소재 합집합
+var _bomItemCodes=null;      // 포함된 품번 리스트 (배지 표시용)
 
 // ★★★ "소재 교체" 버튼 엔트리 ★★★
-// W/O 없으면 선택 유도, 있으면 해당 품번의 BOM만 필터링
+// 설비에 등록된 모든 W/O의 품번 BOM을 합쳐서 표시
 async function openRawChangeModal(){
-  var itemCode=state.currentWoItemCode||state.virtManual.item_code||'';
-  if(!itemCode){
-    if(!confirm('⚠️ 작업지시(W/O) 또는 품번이 선택되지 않았습니다.\n\n그래도 전체 소재 목록에서 선택할까요?\n(취소: W/O부터 선택)')){
-      openWorkOrderPicker();
-      return;
-    }
-    _bomRawCodes=null;
-  }else{
-    // BOM 조회: 현재 품번에 매핑된 소재 코드 집합
-    try{
-      var bomRes=await fetch(SB_URL+'/rest/v1/item_raw_bom?select=raw_item_code&item_code=eq.'+encodeURIComponent(itemCode),{headers:sbH});
+  var mc=state.machine&&state.machine.machine_code;
+  if(!mc){
+    showToast('⚠️ 설비 정보 없음');
+    return;
+  }
+  
+  _bomRawCodes=null;
+  _bomItemCodes=null;
+  
+  try{
+    // 1) 설비에 연결된 모든 W/O 조회 (active=true, status in [3(대기), 1(진행)])
+    var woQs='select=item_code,work_order_no,status'+
+             '&machine_code=eq.'+encodeURIComponent(mc)+
+             '&active=eq.true'+
+             '&order=created_at.desc&limit=100';
+    var woRes=await fetch(SB_URL+'/rest/v1/virtual_work_order?'+woQs,{headers:sbH});
+    if(!woRes.ok)throw new Error('W/O 조회 실패');
+    var woList=await woRes.json();
+    
+    // 품번 unique 수집 (상태 무관 - 대기/진행/완료 모두)
+    var itemCodeSet=new Set();
+    woList.forEach(function(w){
+      var ic=(w.item_code||'').trim();
+      if(ic)itemCodeSet.add(ic);
+    });
+    
+    // 현재 선택된 W/O 품번도 보장 추가 (active=false여도)
+    if(state.currentWoItemCode)itemCodeSet.add(state.currentWoItemCode);
+    if(state.virtManual.item_code)itemCodeSet.add(state.virtManual.item_code);
+    
+    var itemCodes=Array.from(itemCodeSet).filter(function(x){return x});
+    _bomItemCodes=itemCodes;
+    
+    if(itemCodes.length===0){
+      if(!confirm('⚠️ 이 설비에 등록된 W/O가 없습니다.\n\n전체 소재 목록에서 선택할까요?')){
+        return;
+      }
+      _bomRawCodes=null;
+    }else{
+      // 2) 모든 품번의 BOM 소재 일괄 조회 (OR 조건)
+      var inList=itemCodes.map(function(x){return '"'+x.replace(/"/g,'\\"')+'"'}).join(',');
+      var bomQs='select=item_code,raw_item_code&item_code=in.('+encodeURIComponent(inList)+')';
+      var bomRes=await fetch(SB_URL+'/rest/v1/item_raw_bom?'+bomQs,{headers:sbH});
       if(bomRes.ok){
         var bomList=await bomRes.json();
         if(bomList && bomList.length){
           _bomRawCodes=new Set(bomList.map(function(x){return (x.raw_item_code||'').trim()}));
         }else{
+          // 하나도 없으면 전체 표시 질문
           _bomRawCodes=null;
-          // BOM 없으면 사용자에게 알림
-          if(!confirm('⚠️ 품번 '+itemCode+'의 BOM(사용가능 소재) 매핑이 없습니다.\n\n전체 소재 목록에서 선택할까요?')){
+          if(!confirm('⚠️ 등록된 W/O 품번('+itemCodes.length+'개)의 BOM 소재 매핑이 없습니다.\n\n전체 소재 목록에서 선택할까요?')){
             return;
           }
         }
       }
-    }catch(e){
-      _bomRawCodes=null;
     }
+  }catch(e){
+    console.error(e);
+    _bomRawCodes=null;
   }
+  
   openRawPicker();
 }
 
@@ -1640,7 +1675,9 @@ async function openRawPicker(){
   if(bomBadge){
     if(_bomRawCodes && _bomRawCodes.size>0){
       bomBadge.style.display='block';
-      bomBadge.innerHTML='🎯 <b>'+(state.currentWoItemCode||state.virtManual.item_code||'')+'</b> 기종의 BOM 소재 <b style="color:#fbbf24">'+_bomRawCodes.size+'종</b>만 표시';
+      var itemCnt=(_bomItemCodes||[]).length;
+      var itemHint=itemCnt>0?('설비 W/O '+itemCnt+'기종'):'';
+      bomBadge.innerHTML='🎯 '+itemHint+'의 BOM 소재 <b style="color:#fbbf24">'+_bomRawCodes.size+'종</b> 표시';
     }else{
       bomBadge.style.display='block';
       bomBadge.innerHTML='📦 전체 소재 목록 (BOM 필터 없음)';
