@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>작업일보 호기입력 (NFC + QR)</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;600;700;800&display=swap');
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#0f1117;--card:#1a1d27;--border:#2a2e3d;--txt:#e8eaf0;--sub:#8b8fa3;--accent:#38bdf8;--green:#22c55e;--orange:#f97316;--purple:#a855f7}
+body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt);min-height:100vh;padding:20px;max-width:520px;margin:0 auto}
+h1{font-size:19px;font-weight:800;color:var(--accent);text-align:center;margin-bottom:6px}
+.sub{font-size:11px;color:var(--sub);text-align:center;margin-bottom:20px}
+
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:14px}
+.lb{font-size:12px;font-weight:700;color:var(--sub);margin-bottom:8px;display:flex;align-items:center;gap:6px}
+
+.seg{display:flex;gap:6px;margin-bottom:12px}
+.seg-btn{flex:1;padding:12px 8px;border-radius:8px;border:1px solid var(--border);background:#0f1117;color:var(--sub);cursor:pointer;font-size:13px;font-weight:700;font-family:inherit;text-align:center}
+.seg-btn.active{background:var(--accent);color:#0f172a;border-color:var(--accent)}
+
+.input-row{display:flex;gap:8px}
+input[type=text]{flex:1;padding:14px 14px;border-radius:10px;border:1px solid var(--border);background:#0f1117;color:var(--txt);font-size:22px;font-weight:800;text-align:center;font-family:inherit;letter-spacing:1px}
+input[type=text]:focus{border-color:var(--accent);outline:none}
+.btn{padding:14px 20px;border-radius:10px;border:none;font-size:14px;font-weight:800;cursor:pointer;font-family:inherit;white-space:nowrap}
+.btn-accent{background:var(--accent);color:#0f172a}
+.btn-green{background:var(--green);color:#fff}
+.btn-orange{background:var(--orange);color:#fff}
+.btn-purple{background:var(--purple);color:#fff}
+.btn-ghost{background:#222838;color:var(--txt);border:1px solid var(--border)}
+
+.url-box{background:#0a0d14;border:1px solid var(--border);border-radius:10px;padding:14px;margin-top:10px;font-family:'Consolas','Menlo',monospace;font-size:12px;color:var(--accent);word-break:break-all;line-height:1.6;user-select:all;-webkit-user-select:all;min-height:60px}
+.url-box:empty::before{content:'↑ 호기번호를 입력하고 생성 버튼을 누르세요';color:var(--sub);font-style:italic;font-family:'Noto Sans KR'}
+
+.act-row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.act-row .btn{flex:1;padding:12px 8px;font-size:13px;min-width:calc(50% - 4px)}
+
+.qr-wrap{margin-top:12px;text-align:center;display:none}
+.qr-wrap.show{display:block}
+.qr-box{display:inline-block;background:#fff;padding:16px;border-radius:12px;margin-bottom:10px}
+.qr-box img{display:block;width:240px;height:240px}
+.qr-label{font-size:13px;font-weight:700;color:var(--txt);margin-bottom:8px}
+.qr-sub{font-size:11px;color:var(--sub);margin-top:6px}
+.qr-actions{display:flex;gap:8px;justify-content:center;margin-top:10px}
+.qr-actions .btn{flex:1;padding:10px 8px;font-size:12px;max-width:140px}
+
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.92);color:#fff;padding:10px 22px;border-radius:20px;font-size:12px;font-weight:600;z-index:10001;opacity:0;transition:opacity .3s;pointer-events:none}
+.toast.show{opacity:1}
+
+.hint{font-size:11px;color:var(--sub);background:rgba(56,189,248,.08);padding:10px 12px;border-radius:8px;line-height:1.6}
+.hint code{background:rgba(0,0,0,.3);padding:1px 6px;border-radius:3px;color:var(--accent);font-family:monospace}
+
+@media print{
+  body{background:#fff;color:#000;padding:0}
+  .card,.sub,h1,.hint,.toast,.seg,.input-row,.url-box,.act-row,.qr-actions{display:none !important}
+  .qr-wrap{display:block !important;page-break-after:always}
+  .qr-box{border:1px solid #000}
+  .qr-label{color:#000;font-size:20px;margin-bottom:12px}
+  .qr-sub{color:#333}
+}
+</style>
+</head>
+<body>
+
+<h1>🏷️ 작업일보 호기입력</h1>
+<div class="sub">호기번호 입력 → NFC / QR코드 생성</div>
+
+<div class="card">
+  <div class="lb">📋 동작 선택</div>
+  <div class="seg">
+    <div class="seg-btn active" data-act="report" onclick="setAct(this)">📄 작업일보</div>
+    <div class="seg-btn" data-act="check" onclick="setAct(this)">🔧 일상점검</div>
+  </div>
+
+  <div class="lb">🔢 호기번호</div>
+  <div class="input-row">
+    <input type="text" id="hoInput" placeholder="예: 49" inputmode="numeric" autocomplete="off" onkeydown="if(event.key==='Enter')gen()">
+    <button class="btn btn-accent" onclick="gen()">생성</button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="lb">🔗 생성된 URL <span id="genHo" style="color:var(--accent);font-size:13px;margin-left:auto"></span></div>
+  <div class="url-box" id="urlBox"></div>
+  <div class="act-row">
+    <button class="btn btn-green" onclick="copyUrl()">📋 URL 복사</button>
+    <button class="btn btn-orange" onclick="openUrl()">🔗 열기 (테스트)</button>
+    <button class="btn btn-purple" onclick="showQR()">🔳 QR 생성</button>
+    <button class="btn btn-ghost" onclick="clearAll()">🗑 지우기</button>
+  </div>
+
+  <div class="qr-wrap" id="qrWrap">
+    <div class="qr-label" id="qrLabel"></div>
+    <div class="qr-box">
+      <img id="qrImg" alt="QR Code">
+    </div>
+    <div class="qr-sub" id="qrSub"></div>
+    <div class="qr-actions">
+      <button class="btn btn-green" onclick="downloadQR()">💾 이미지 저장</button>
+      <button class="btn btn-orange" onclick="printQR()">🖨 인쇄</button>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="hint">
+    💡 <b>사용 방법</b><br>
+    • <b>NFC</b>: URL 복사 → NFC Tools 앱에서 태그에 쓰기<br>
+    • <b>QR</b>: QR 생성 → 이미지 저장 or 인쇄 → 설비에 부착<br>
+    <br>
+    <b>URL 형식</b><br>
+    • 작업일보: <code>#nfc=49/report</code><br>
+    • 일상점검: <code>?ho=49&auto=1</code>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+var BASE_REPORT='https://knagbyeongju-123.github.io/smtec_main2/mes_work.html';
+var BASE_CHECK='https://knagbyeongju-123.github.io/smtec_main2/P_machine_check.html';
+var curAct='report';
+var curUrl='';
+var curHo='';
+
+function setAct(el){
+  document.querySelectorAll('.seg-btn').forEach(function(b){b.classList.remove('active')});
+  el.classList.add('active');
+  curAct=el.dataset.act;
+  if(document.getElementById('hoInput').value.trim())gen();
+}
+
+function gen(){
+  var ho=document.getElementById('hoInput').value.replace(/[^\d]/g,'');
+  if(!ho){toast('⚠ 호기번호를 입력하세요');document.getElementById('hoInput').focus();return}
+  var url;
+  if(curAct==='check'){
+    url=BASE_CHECK+'?ho='+ho+'&auto=1';
+  }else{
+    url=BASE_REPORT+'#nfc='+ho+'/report';
+  }
+  curUrl=url;
+  curHo=ho;
+  document.getElementById('urlBox').textContent=url;
+  document.getElementById('genHo').textContent=ho+'호기';
+  // QR이 이미 열려있으면 자동 갱신
+  if(document.getElementById('qrWrap').classList.contains('show')){
+    showQR();
+  }
+  navigator.clipboard.writeText(url).then(function(){toast('✅ '+ho+'호기 URL 생성 & 복사 완료')},function(){toast('✅ '+ho+'호기 URL 생성')});
+}
+
+function copyUrl(){
+  if(!curUrl){toast('⚠ 먼저 URL을 생성하세요');return}
+  navigator.clipboard.writeText(curUrl).then(function(){toast('📋 복사됨')},function(){
+    var ta=document.createElement('textarea');ta.value=curUrl;document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);toast('📋 복사됨');
+  });
+}
+
+function openUrl(){
+  if(!curUrl){toast('⚠ 먼저 URL을 생성하세요');return}
+  window.open(curUrl,'_blank');
+}
+
+function showQR(){
+  if(!curUrl){toast('⚠ 먼저 URL을 생성하세요');return}
+  // QR Server API 사용 (오픈소스 무료)
+  var qrUrl='https://api.qrserver.com/v1/create-qr-code/?size=480x480&margin=10&data='+encodeURIComponent(curUrl);
+  var img=document.getElementById('qrImg');
+  img.src=qrUrl;
+  var actTxt=curAct==='check'?'일상점검':'작업일보';
+  document.getElementById('qrLabel').textContent='📌 '+curHo+'호기 '+actTxt;
+  document.getElementById('qrSub').textContent='폰 카메라로 스캔하세요';
+  document.getElementById('qrWrap').classList.add('show');
+  toast('🔳 QR 생성됨');
+}
+
+function downloadQR(){
+  if(!curUrl){toast('⚠ 먼저 QR을 생성하세요');return}
+  // 고해상도 다운로드 URL
+  var dlUrl='https://api.qrserver.com/v1/create-qr-code/?size=800x800&margin=20&data='+encodeURIComponent(curUrl);
+  var actTxt=curAct==='check'?'점검':'일보';
+  // fetch로 이미지 받아서 다운로드
+  fetch(dlUrl).then(function(r){return r.blob()}).then(function(blob){
+    var a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download='QR_'+curHo+'호기_'+actTxt+'.png';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    toast('💾 저장 완료');
+  }).catch(function(){
+    // fallback: 새창 열기
+    window.open(dlUrl,'_blank');
+    toast('💾 새창에서 이미지 저장');
+  });
+}
+
+function printQR(){
+  if(!curUrl){toast('⚠ 먼저 QR을 생성하세요');return}
+  window.print();
+}
+
+function clearAll(){
+  document.getElementById('hoInput').value='';
+  document.getElementById('urlBox').textContent='';
+  document.getElementById('genHo').textContent='';
+  document.getElementById('qrWrap').classList.remove('show');
+  curUrl='';
+  curHo='';
+  document.getElementById('hoInput').focus();
+}
+
+function toast(msg){var t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(function(){t.classList.remove('show')},1800)}
+
+document.getElementById('hoInput').focus();
+</script>
+</body>
+</html>
