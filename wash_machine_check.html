@@ -79,6 +79,22 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
   </div></div>
   <div class="card"><div class="card-title">메모</div><div class="fg"><textarea id="memo" rows="2" placeholder="특이사항 입력" style="width:100%;padding:10px;font-size:13px;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit;resize:vertical"></textarea></div></div>
   <button type="button" class="submit-btn" onclick="submitForm()">✅ 점검 제출</button>
+
+  <!-- 🔧 수리내역 기록 (서버 저장) -->
+  <div class="card" style="margin-top:16px;border-top:2px solid rgba(245,158,11,.25)">
+    <div class="card-title" style="color:#f59e0b">🔧 수리내역 기록</div>
+    <div class="fg-row"><div class="fg"><label>수리일자</label><input type="date" id="repairDate"></div><div class="fg"><label>수리시간</label><input type="time" id="repairTime"></div></div>
+    <div class="fg-row"><div class="fg"><label>수리자</label><input type="text" id="repairWorker" placeholder="이름 입력"></div><div class="fg"><label>호기</label><select id="repairMachine"><option value="">선택</option></select></div></div>
+    <div class="fg"><label>수리내용</label><textarea id="repairDesc" rows="2" placeholder="고장/수리 내용을 입력하세요" style="width:100%;padding:10px;font-size:13px;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit;resize:vertical"></textarea></div>
+    <div class="fg"><label>교체부품 (선택)</label><input type="text" id="repairParts" placeholder="예: 펌프, 필터, 밸브 등"></div>
+    <button type="button" onclick="submitRepair()" style="width:100%;padding:13px;font-size:14px;font-weight:800;border:none;border-radius:10px;cursor:pointer;font-family:inherit;background:linear-gradient(135deg,#f59e0b,#fbbf24);color:#1e293b;box-shadow:0 4px 12px rgba(245,158,11,.3);margin-top:4px">💾 수리내역 저장</button>
+    <div id="repairStatus" style="font-size:11px;margin-top:8px;color:var(--text3);text-align:center"></div>
+  </div>
+
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div class="card-title" style="margin-bottom:0;color:#f59e0b">📋 최근 수리내역</div><button type="button" onclick="loadRepairList()" style="padding:5px 10px;background:rgba(245,158,11,.15);border:1px solid rgba(245,158,11,.3);border-radius:6px;color:#fbbf24;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">🔄 새로고침</button></div>
+    <div id="repairList"></div>
+  </div>
 </div>
 
 <!-- 설정 패널 -->
@@ -104,7 +120,19 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
 );
 ALTER TABLE wash_machine_check ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "anon_all" ON wash_machine_check;
-CREATE POLICY "anon_all" ON wash_machine_check FOR ALL TO anon USING (true) WITH CHECK (true);</pre></details>
+CREATE POLICY "anon_all" ON wash_machine_check FOR ALL TO anon USING (true) WITH CHECK (true);
+
+-- 🔧 수리내역 테이블
+CREATE TABLE IF NOT EXISTS wash_machine_repair (
+  id bigint generated always as identity primary key,
+  repair_date date not null, repair_time text,
+  worker text not null, machine text not null,
+  description text not null, parts text,
+  created_at timestamptz default now()
+);
+ALTER TABLE wash_machine_repair ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "anon_all" ON wash_machine_repair;
+CREATE POLICY "anon_all" ON wash_machine_repair FOR ALL TO anon USING (true) WITH CHECK (true);</pre></details>
   <button type="button" class="submit-btn" onclick="saveAllSettings()">💾 모든 설정 서버에 저장</button>
   <div style="text-align:center;margin-top:10px"><span id="stgSaveStatus" style="font-size:11px;color:var(--text3)"></span></div>
   <div class="card" style="margin-top:12px"><div class="card-title">연결 상태</div><div id="stgConnInfo" style="font-size:12px;color:var(--text2);line-height:1.8"></div></div>
@@ -128,7 +156,11 @@ async function sbSelect(table,query){const u=getSbUrl(),k=getSbKey();const r=awa
 async function sbDelete(table,query){const u=getSbUrl(),k=getSbKey();await fetch(u+'/rest/v1/'+table+'?'+query,{method:'DELETE',headers:{'apikey':k,'Authorization':'Bearer '+k}})}
 
 async function swTab(n){document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('on',i===n));document.querySelectorAll('.pnl').forEach((p,i)=>p.classList.toggle('on',i===n));if(n===1){loadSettingsUI();_loadAllRulesFromServer();renderNtfyRules();renderTgRules();renderDcRules();if(isConfigured())await loadRefPhotosFromServer();renderRefPhotoList()}}
-function setDateTimeNow(){const n=new Date();document.getElementById('checkDate').value=n.toISOString().split('T')[0];document.getElementById('checkTime').value=String(n.getHours()).padStart(2,'0')+':'+String(n.getMinutes()).padStart(2,'0')}
+// ===== KST (한국시간, UTC+9) 공통 유틸 =====
+function nowKST(){const d=new Date();return new Date(d.getTime()+(d.getTimezoneOffset()+540)*60000)}
+function kstDateStr(d){d=d||nowKST();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
+function kstTimeStr(d){d=d||nowKST();return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')}
+function setDateTimeNow(){const n=nowKST();document.getElementById('checkDate').value=kstDateStr(n);document.getElementById('checkTime').value=kstTimeStr(n)}
 const CHECK_NAMES=['chk_a1','chk_a2','chk_a3','chk_a4','chk_a5','chk_a6','chk_a7','chk_b1','chk_b2','chk_b3','chk_b4','chk_b5','chk_b6','chk_b7'];
 function setCheck(name,val,itemId){document.querySelectorAll(`input[name="${name}"]`).forEach(r=>{if(r.value===val)r.checked=true});const item=document.getElementById(itemId);if(!item)return;item.classList.remove('checked-ok','checked-ng');item.classList.add(val==='OK'?'checked-ok':'checked-ng');item.querySelectorAll('.okng-btn').forEach(b=>{b.classList.remove('ok-selected','ng-selected');if(b.textContent===val)b.classList.add(val==='OK'?'ok-selected':'ng-selected')});updateProgress()}
 function updateProgress(){let done=0;CHECK_NAMES.forEach(n=>{if(document.querySelector(`input[name="${n}"]:checked`))done++});const pct=Math.round(done/CHECK_NAMES.length*100);document.getElementById('progressFill').style.width=pct+'%';document.getElementById('progressText').textContent=done+' / '+CHECK_NAMES.length+' 항목 체크'}
@@ -169,9 +201,9 @@ async function sendTelegram(row){const s=getSettings();if(!s.tg_bot||!s.tg_users
 const W_DEFAULT_INSPECTORS=['강병주','김상기','오현민','문수진','허미정','강창구','서상봉','천남이'];
 const W_DEFAULT_MACHINES=['1호기','2호기','3호기'];
 let _inspCache=[],_machCache=[];
-async function loadSettingsUI(){if(isConfigured()){await loadList('w_inspector');await loadList('w_machine');initHistDates()}if(!_inspCache.length){_inspCache=W_DEFAULT_INSPECTORS.map((n,i)=>({id:null,name:n,sort:i+1}));renderListUI('inspectorList',_inspCache,'w_inspector');fillSelect('inspector',_inspCache)}if(!_machCache.length){_machCache=W_DEFAULT_MACHINES.map((n,i)=>({id:null,name:n,sort:i+1}));renderListUI('machineList',_machCache,'w_machine');fillSelect('machine',_machCache);fillSelect('histMachine',_machCache,true)}updateConnInfo()}
+async function loadSettingsUI(){if(isConfigured()){await loadList('w_inspector');await loadList('w_machine');initHistDates()}if(!_inspCache.length){_inspCache=W_DEFAULT_INSPECTORS.map((n,i)=>({id:null,name:n,sort:i+1}));renderListUI('inspectorList',_inspCache,'w_inspector');fillSelect('inspector',_inspCache)}if(!_machCache.length){_machCache=W_DEFAULT_MACHINES.map((n,i)=>({id:null,name:n,sort:i+1}));renderListUI('machineList',_machCache,'w_machine');fillSelect('machine',_machCache);fillSelect('histMachine',_machCache,true);fillSelect('repairMachine',_machCache)}updateConnInfo()}
 function updateConnInfo(){const sbOk=isConfigured();const tgCnt=getTgRules().length;const dcCnt=getDcRules().length;const ntfyCnt=getNtfyRules().length;document.getElementById('stgConnInfo').innerHTML=(sbOk?'🟢':'🔴')+' Supabase: '+(sbOk?'설정됨':'미설정')+'<br>'+(tgCnt?'🟢':'🔴')+' 텔레그램: '+tgCnt+'명<br>'+(dcCnt?'🟢':'🔴')+' 디스코드: '+dcCnt+'개<br>'+(ntfyCnt?'🟢':'🔴')+' ntfy: '+ntfyCnt+'개'}
-async function loadList(code){try{const d=await sbSelect('common_code','code_group=eq.'+code+'&order=sort_order.asc');const list=(d||[]).map(r=>({id:r.id,name:String(r.code_value||'').trim(),sort:r.sort_order||0}));if(code==='w_inspector'){_inspCache=list;renderListUI('inspectorList',list,code);fillSelect('inspector',list)}else{_machCache=list;renderListUI('machineList',list,code);fillSelect('machine',list);fillSelect('histMachine',list,true)}}catch(e){}}
+async function loadList(code){try{const d=await sbSelect('common_code','code_group=eq.'+code+'&order=sort_order.asc');const list=(d||[]).map(r=>({id:r.id,name:String(r.code_value||'').trim(),sort:r.sort_order||0}));if(code==='w_inspector'){_inspCache=list;renderListUI('inspectorList',list,code);fillSelect('inspector',list)}else{_machCache=list;renderListUI('machineList',list,code);fillSelect('machine',list);fillSelect('histMachine',list,true);fillSelect('repairMachine',list)}}catch(e){}}
 function renderListUI(elId,list,code){const c=document.getElementById(elId);c.innerHTML='';list.forEach((w,i)=>{c.innerHTML+='<div class="stg-list-item"><span style="color:var(--text3);font-size:11px;min-width:18px">'+(i+1)+'</span><span class="stg-name">'+w.name+'</span><button class="stg-del" onclick="delItem(\''+code+'\','+w.id+')">✕</button></div>'})}
 function fillSelect(selId,list,addAll){const s=document.getElementById(selId);const v=s.value;s.innerHTML=addAll?'<option value="">전체</option>':'<option value="">선택</option>';list.forEach(w=>{const o=document.createElement('option');o.value=w.name;o.textContent=w.name;s.appendChild(o)});if(v)s.value=v}
 async function addInspector(){const inp=document.getElementById('newInspectorName');const n=inp.value.trim();if(!n)return;const ns=_inspCache.length?Math.max(..._inspCache.map(w=>w.sort))+1:1;try{await sbInsert('common_code',{code_group:'w_inspector',code_value:n,sort_order:ns});inp.value='';toast('✅ '+n);await loadList('w_inspector')}catch(e){toast('❌ '+e.message)}}
@@ -179,7 +211,7 @@ async function addMachine(){const inp=document.getElementById('newMachineName');
 async function delItem(code,id){if(!confirm('삭제?'))return;try{await sbDelete('common_code','id=eq.'+id);toast('삭제됨');await loadList(code)}catch(e){toast('❌ '+e.message)}}
 
 // 이력
-function initHistDates(){const t=new Date(),m=new Date();m.setMonth(m.getMonth()-1);document.getElementById('histEndDate').value=t.toISOString().split('T')[0];document.getElementById('histStartDate').value=m.toISOString().split('T')[0]}
+function initHistDates(){const t=nowKST(),m=nowKST();m.setMonth(m.getMonth()-1);document.getElementById('histEndDate').value=kstDateStr(t);document.getElementById('histStartDate').value=kstDateStr(m)}
 async function histFetchFiltered(){const sd=document.getElementById('histStartDate').value,ed=document.getElementById('histEndDate').value;if(!sd||!ed)return{ok:false};let q='check_date=gte.'+sd+'&check_date=lte.'+ed+'&order=check_date.desc,check_time.desc&limit=500';const m=document.getElementById('histMachine').value;if(m)q+='&machine=eq.'+m;try{return{ok:true,data:await sbSelect(TABLE_NAME,q)}}catch(e){return{ok:false,msg:e.message}}}
 async function histPreview(){const st=document.getElementById('histMgmtStatus'),area=document.getElementById('histPreviewArea');st.textContent='조회 중...';area.innerHTML='';const r=await histFetchFiltered();if(!r.ok||!r.data?.length){st.textContent=r.data?'⚠ 없음':'❌ '+r.msg;return}const data=r.data;st.textContent='✅ '+data.length+'건';st.style.color='#22c55e';let h='<table style="width:100%;border-collapse:collapse;font-size:11px"><tr style="background:var(--surface2)"><th style="padding:5px 4px;border-bottom:1px solid var(--border)">일자</th><th style="padding:5px 4px;border-bottom:1px solid var(--border)">점검자</th><th style="padding:5px 4px;border-bottom:1px solid var(--border)">호기</th><th style="padding:5px 4px;border-bottom:1px solid var(--border)">판정</th></tr>';data.slice(0,100).forEach(r=>{h+='<tr><td style="padding:4px">'+r.check_date+'</td><td style="padding:4px">'+(r.inspector||'')+'</td><td style="padding:4px">'+(r.machine||'')+'</td><td style="padding:4px;color:'+(r.result==='NG'?'#ef4444':'#22c55e')+';font-weight:700">'+(r.result||'')+'</td></tr>'});area.innerHTML=h+'</table>'}
 async function histDownload(){const r=await histFetchFiltered();if(!r.ok||!r.data?.length){toast('데이터 없음');return}const hd=['일자','시간','점검자','호기','1.환기','2.밸브','3.세척액','4.탱크','5.펌프','6.에어','7.보호구A','8.정리','9.구분','10.낙하','11.청결','12.온도','13.시간','14.보호구B','교체일','온도값','시간값','NG수','판정','메모'];const rows=r.data.map(d=>[d.check_date,d.check_time,d.inspector,d.machine,d.chk_a1,d.chk_a2,d.chk_a3,d.chk_a4,d.chk_a5,d.chk_a6,d.chk_a7,d.chk_b1,d.chk_b2,d.chk_b3,d.chk_b4,d.chk_b5,d.chk_b6,d.chk_b7,d.val_b4,d.val_b5,d.val_b6,d.ng_count,d.result,d.memo]);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([hd,...rows]),'세척기점검');XLSX.writeFile(wb,'세척기점검_'+document.getElementById('histStartDate').value.replace(/-/g,'')+'_'+document.getElementById('histEndDate').value.replace(/-/g,'')+'.xlsx');toast('📥 다운로드')}
@@ -206,11 +238,44 @@ let tt;function toast(m){const el=document.getElementById('toast');el.textConten
 document.addEventListener('DOMContentLoaded',async()=>{
   if(!localStorage.getItem(LS_KEY))localStorage.setItem(LS_KEY,JSON.stringify(DEFAULT_SETTINGS));
   setDateTimeNow();
-  if(isConfigured()){loadList('w_inspector');loadList('w_machine');await loadRefPhotosFromServer()}
+  setRepairDateTimeNow();
+  if(isConfigured()){loadList('w_inspector');loadList('w_machine');await loadRefPhotosFromServer();loadRepairList()}
   renderRefPhotoList();
   if(!isConfigured()){document.getElementById('pnl0').insertAdjacentHTML('afterbegin','<div style="background:rgba(239,68,68,.15);border:1.5px solid rgba(239,68,68,.3);border-radius:10px;padding:12px;margin-bottom:12px;font-size:12px;color:#fca5a5;text-align:center">⚠️ Supabase 미설정</div>')}
   _loadAllRulesFromServer();
 });
+
+/* ===== 🔧 수리내역 (서버 저장: wash_machine_repair) ===== */
+const REPAIR_TABLE='wash_machine_repair';
+function setRepairDateTimeNow(){const el=document.getElementById('repairDate');if(!el)return;el.value=kstDateStr();document.getElementById('repairTime').value=kstTimeStr()}
+async function submitRepair(){
+  const date=document.getElementById('repairDate').value;
+  const time=document.getElementById('repairTime').value;
+  const worker=document.getElementById('repairWorker').value.trim();
+  const machine=document.getElementById('repairMachine').value;
+  const desc=document.getElementById('repairDesc').value.trim();
+  const parts=document.getElementById('repairParts').value.trim();
+  const st=document.getElementById('repairStatus');
+  if(!date||!worker||!machine||!desc){st.textContent='⚠ 일자/수리자/호기/내용 필수';st.style.color='#f59e0b';return}
+  st.textContent='저장 중...';st.style.color='var(--text3)';
+  try{
+    await sbInsert(REPAIR_TABLE,{repair_date:date,repair_time:time,worker,machine,description:desc,parts});
+    st.textContent='✅ 저장 완료';st.style.color='#22c55e';
+    document.getElementById('repairDesc').value='';document.getElementById('repairParts').value='';
+    setRepairDateTimeNow();
+    loadRepairList();
+  }catch(e){st.textContent='❌ '+e.message;st.style.color='#ef4444'}
+}
+async function loadRepairList(){
+  const c=document.getElementById('repairList');if(!c)return;
+  if(!isConfigured()){c.innerHTML='<div style="font-size:11px;color:var(--text3);padding:10px;text-align:center">Supabase 미설정</div>';return}
+  try{
+    const data=await sbSelect(REPAIR_TABLE,'order=repair_date.desc,repair_time.desc&limit=20');
+    if(!data||!data.length){c.innerHTML='<div style="font-size:12px;color:var(--text3);padding:12px;text-align:center">수리내역 없음</div>';return}
+    c.innerHTML=data.map(r=>'<div style="background:var(--bg);border:1px solid rgba(245,158,11,.15);border-left:3px solid #f59e0b;border-radius:8px;padding:10px 12px;margin-bottom:6px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px"><span style="font-size:11px;color:#fbbf24;font-weight:700">📅 '+(r.repair_date||'')+' '+(r.repair_time||'')+'</span><button class="stg-del" onclick="delRepair('+r.id+')">✕</button></div><div style="font-size:12px;color:var(--text);margin-bottom:4px"><strong style="color:var(--accent)">'+(r.machine||'')+'</strong> <span style="color:var(--text3)">·</span> '+(r.worker||'')+'</div><div style="font-size:12px;color:var(--text2);line-height:1.5;white-space:pre-wrap;word-break:break-word">'+(r.description||'').replace(/</g,'&lt;')+'</div>'+(r.parts?'<div style="font-size:11px;color:var(--text3);margin-top:4px;padding-top:4px;border-top:1px dashed rgba(255,255,255,.06)">🔩 '+r.parts.replace(/</g,'&lt;')+'</div>':'')+'</div>').join('');
+  }catch(e){c.innerHTML='<div style="font-size:11px;color:#ef4444;padding:10px;text-align:center">로드 실패: '+e.message+'</div>'}
+}
+async function delRepair(id){if(!confirm('수리내역을 삭제하시겠습니까?'))return;try{await sbDelete(REPAIR_TABLE,'id=eq.'+id);toast('🗑 삭제됨');loadRepairList()}catch(e){toast('❌ 삭제 실패')}}
 
 // ntfy
 const NTFY_LS='W_NTFY_RULES';const NTFY_SERVER='https://ntfy.sh';
