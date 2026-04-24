@@ -1815,11 +1815,78 @@ function hiRenderTable(data){
   });
   c.appendChild(list);
 }
+// ============================================================
+// ★★★ 작업일보 삭제 시 MES 실적수량 원본 복원 ★★★
+// ============================================================
+async function _restoreMesFromReport(rec){
+  // rec.payload.report_snapshot._mesOriginal 이 있고
+  // rec.payload.report_snapshot._mesSyncedAt 이 있으면(= MES를 한번 덮어썼던 일보)
+  // 원본값으로 되돌림
+  try{
+    var p=rec&&rec.payload?rec.payload:{};
+    var rs=p.report_snapshot||{};
+    var orig=rs._mesOriginal;
+    var synced=rs._mesSyncedAt;
+    if(!orig||!synced){return {skipped:true,reason:'no_original_or_not_synced'}}
+    var mc=orig.machine_code||rec.machine_code;
+    if(!mc)return {skipped:true,reason:'no_machine_code'};
+
+    var items=(orig.items||[]).filter(function(it){return it.work_order_no&&it.actual_qty!=null}).map(function(it){
+      return {work_order_no:it.work_order_no,actual_qty:+it.actual_qty||0};
+    });
+    var payload={
+      machine_code:mc,
+      items:items,
+      actual_qty:+orig.machine_actual_qty||0
+    };
+    var r=await fetch('/api/mes/update_actual_qty',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(payload)
+    });
+    if(r.ok){
+      var res=await r.json();
+      return {ok:true,res:res};
+    }else{
+      // API 실패시 Supabase fallback
+      await fetch(SB_URL+'/rest/v1/machine_status?machine_code=eq.'+encodeURIComponent(mc),{
+        method:'PATCH',
+        headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Content-Type':'application/json','Prefer':'return=minimal'},
+        body:JSON.stringify({actual_qty:+orig.machine_actual_qty||0})
+      });
+      return {ok:false,fallback:'supabase'};
+    }
+  }catch(e){
+    console.log('[_restoreMesFromReport] 예외:',e);
+    return {ok:false,error:e.message};
+  }
+}
+
+async function _fetchReportsByIds(ids){
+  if(!ids||!ids.length)return [];
+  try{
+    var r=await fetch(SB_URL+'/rest/v1/mes_check_log?select=id,machine_code,category,payload&id=in.('+ids.join(',')+')&category=eq.report',{
+      headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY}
+    });
+    return r.ok?(await r.json()):[];
+  }catch(e){return []}
+}
+
 function hiDeleteOne(id){
-  if(!confirm('이 기록을 삭제합니다. 진행?'))return;
+  if(!confirm('이 기록을 삭제합니다. 진행?\n\n※ 작업일보의 경우 MES 실적수량도 원래 값으로 복원됩니다.'))return;
   (async function(){
-    try{await sbDelete('mes_check_log','id=eq.'+id);showToast('✅삭제');hiSearch()}
-    catch(e){showToast('삭제실패');console.log(e)}
+    try{
+      // 삭제 전에 레코드를 조회하여 MES 복원
+      var recs=await _fetchReportsByIds([id]);
+      if(recs&&recs.length){
+        var restRes=await _restoreMesFromReport(recs[0]);
+        if(restRes.ok){console.log('[hiDeleteOne] MES 복원됨:',restRes.res)}
+        else if(!restRes.skipped){console.log('[hiDeleteOne] MES 복원 실패:',restRes)}
+      }
+      await sbDelete('mes_check_log','id=eq.'+id);
+      showToast('✅삭제'+(recs&&recs.length?' · MES 복원':''));
+      hiSearch();
+    }catch(e){showToast('삭제실패');console.log(e)}
   })();
 }
 function hiEditRecordSimple(d){
@@ -2175,13 +2242,22 @@ function _fmtTs(iso){
 async function hiDeleteSelected(){
   var chks=document.querySelectorAll('.hi-chk:checked');
   if(!chks.length){showToast('선택된 항목 없음');return}
-  if(!confirm('선택한 '+chks.length+'건을 삭제합니다. 진행?'))return;
+  if(!confirm('선택한 '+chks.length+'건을 삭제합니다. 진행?\n\n※ 작업일보의 경우 MES 실적수량도 원래 값으로 복원됩니다.'))return;
   var ids=[];chks.forEach(function(c){ids.push(c.value)});
   var curCat=document.getElementById('hiCat').value;
   var tbl=(curCat==='mat_used'||curCat==='mat_unused')?'virtual_raw_usage':'mes_check_log';
   try{
+    // 작업일보 카테고리면 삭제 전에 MES 복원
+    var restoredCnt=0;
+    if(tbl==='mes_check_log'){
+      var recs=await _fetchReportsByIds(ids);
+      for(var i=0;i<recs.length;i++){
+        var rr=await _restoreMesFromReport(recs[i]);
+        if(rr.ok||rr.fallback)restoredCnt++;
+      }
+    }
     await sbDelete(tbl,'id=in.('+ids.join(',')+')');
-    showToast('✅'+ids.length+'건 삭제');
+    showToast('✅'+ids.length+'건 삭제'+(restoredCnt?' · MES '+restoredCnt+'건 복원':''));
     hiSearch();
   }catch(e){showToast('삭제실패');console.log(e)}
 }
