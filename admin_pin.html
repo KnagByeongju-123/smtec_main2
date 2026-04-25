@@ -185,6 +185,22 @@ body.locked{overflow:hidden}
       </div>
     </div>
   </div>
+
+  <!-- 서버 동기화 (안전 확인) -->
+  <div class="card">
+    <div class="card-title" style="margin-bottom:8px">
+      💾 서버 동기화 확인
+      <span class="badge" id="syncBadge" style="margin-left:auto;background:rgba(34,197,94,.15);color:#22c55e">동기화됨</span>
+    </div>
+    <div style="font-size:11px;color:#8b8fa3;line-height:1.6;margin-bottom:10px;padding:10px;background:rgba(56,189,248,.06);border:1px solid rgba(56,189,248,.2);border-radius:8px">
+      💡 모든 추가/수정/삭제는 <b style="color:#22c55e">즉시 서버에 저장</b>됩니다.<br>
+      이 버튼은 <b style="color:#f59e0b">안전 확인용</b>으로, 네트워크 오류 등으로 누락된 변경이 없는지 검증합니다.
+    </div>
+    <div id="syncStat" style="font-size:12px;color:#cbd5e1;margin-bottom:10px;padding:10px;background:#0f1117;border-radius:8px;line-height:1.7;display:none"></div>
+    <button class="btn btn-grn" id="syncCheckBtn" style="width:100%;justify-content:center">🔍 서버 동기화 상태 확인</button>
+    <button class="btn btn-sec" id="syncForceBtn" style="width:100%;justify-content:center;margin-top:6px;display:none">🔄 누락된 항목 강제 재전송</button>
+    <div class="msg" id="syncMsg"></div>
+  </div>
 </div>
 
 
@@ -215,6 +231,9 @@ let lockTimer = null;
 let empCache = [];
 let uploadData = [];
 let editingId = null;
+// 서버 동기화 추적
+let _opLog = []; // {ts, op, path, name, ok, error}
+let _failedOps = []; // 실패한 작업 큐 (재전송 대상)
 
 async function sha256hex(s){
   const b = new TextEncoder().encode(s);
@@ -235,14 +254,47 @@ async function sbReq(method, path, body){
     }
   };
   if(body) opt.body = JSON.stringify(body);
-  const r = await fetch(SUPABASE_URL + '/rest/v1/' + path, opt);
-  if(!r.ok){
-    const txt = await r.text();
-    throw new Error(r.status + ': ' + txt);
+  const isWrite = method === 'POST' || method === 'PATCH' || method === 'DELETE';
+  const logEntry = {ts: Date.now(), op: method, path: path, name: body && body.name, body: body, ok: false};
+  try{
+    const r = await fetch(SUPABASE_URL + '/rest/v1/' + path, opt);
+    if(!r.ok){
+      const txt = await r.text();
+      logEntry.error = r.status + ': ' + txt;
+      if(isWrite){_opLog.push(logEntry); _failedOps.push({method, path, body, ts: logEntry.ts}); updateSyncBadge();}
+      throw new Error(r.status + ': ' + txt);
+    }
+    const ct = r.headers.get('content-type') || '';
+    logEntry.ok = true;
+    if(isWrite){_opLog.push(logEntry); updateSyncBadge();}
+    if(ct.includes('json')) return await r.json();
+    return null;
+  }catch(err){
+    if(!logEntry.error){
+      logEntry.error = err.message || '네트워크 오류';
+      if(isWrite){_opLog.push(logEntry); _failedOps.push({method, path, body, ts: logEntry.ts}); updateSyncBadge();}
+    }
+    throw err;
   }
-  const ct = r.headers.get('content-type') || '';
-  if(ct.includes('json')) return await r.json();
-  return null;
+}
+
+function updateSyncBadge(){
+  const b = document.getElementById('syncBadge');
+  if(!b) return;
+  const failed = _failedOps.length;
+  if(failed > 0){
+    b.textContent = '⚠️ 실패 ' + failed + '건';
+    b.style.background = 'rgba(239,68,68,.15)';
+    b.style.color = '#ef4444';
+    const fb = document.getElementById('syncForceBtn');
+    if(fb) fb.style.display = '';
+  }else{
+    b.textContent = '동기화됨';
+    b.style.background = 'rgba(34,197,94,.15)';
+    b.style.color = '#22c55e';
+    const fb = document.getElementById('syncForceBtn');
+    if(fb) fb.style.display = 'none';
+  }
 }
 
 /* ========== 마스터 잠금 ========== */
@@ -595,6 +647,123 @@ async function addSingleEmp(){
   }
 }
 
+/* ========== 서버 동기화 확인 ========== */
+async function checkServerSync(){
+  const stat = document.getElementById('syncStat');
+  const msg = document.getElementById('syncMsg');
+  const btn = document.getElementById('syncCheckBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ 확인 중...';
+  stat.style.display = 'none';
+  msg.classList.remove('show');
+  
+  try{
+    // 1. 서버 사원 수 조회
+    const serverData = await sbReq('GET', TBL + '?select=id,name,pin_plain&order=name.asc') || [];
+    const serverCount = serverData.length;
+    const localCount = empCache.length;
+    
+    // 2. 작업 이력 통계
+    const writes = _opLog.filter(e => e.op === 'POST' || e.op === 'PATCH' || e.op === 'DELETE');
+    const success = writes.filter(e => e.ok).length;
+    const failed = writes.filter(e => !e.ok).length;
+    
+    // 3. 무결성 검증 - 캐시와 서버 비교
+    const cacheNames = empCache.map(e => e.name).sort();
+    const serverNames = serverData.map(e => e.name).sort();
+    const diff = [];
+    cacheNames.forEach(n => {if(!serverNames.includes(n)) diff.push('캐시에만 있음: '+n)});
+    serverNames.forEach(n => {if(!cacheNames.includes(n)) diff.push('서버에만 있음: '+n)});
+    
+    // 4. 결과 표시
+    let html = '';
+    html += '<div>📊 <b>서버 사원 수:</b> ' + serverCount + '명</div>';
+    html += '<div>💾 <b>로컬 캐시:</b> ' + localCount + '명</div>';
+    html += '<div>✅ <b>이번 세션 성공:</b> ' + success + '건</div>';
+    if(failed > 0){
+      html += '<div style="color:#ef4444">❌ <b>실패:</b> ' + failed + '건 (재전송 가능)</div>';
+    }
+    if(diff.length > 0){
+      html += '<div style="color:#f59e0b;margin-top:8px">⚠️ 불일치 ' + diff.length + '건:<br>' + diff.slice(0,5).join('<br>') + (diff.length > 5 ? '<br>...' : '') + '</div>';
+    }
+    
+    // 작업 이력 (최근 10건)
+    if(writes.length > 0){
+      const recent = writes.slice(-10).reverse();
+      html += '<div style="margin-top:10px;border-top:1px solid #2a2e3d;padding-top:8px"><b>📜 최근 작업 이력</b></div>';
+      recent.forEach(e => {
+        const t = new Date(e.ts);
+        const tStr = String(t.getHours()).padStart(2,'0') + ':' + String(t.getMinutes()).padStart(2,'0') + ':' + String(t.getSeconds()).padStart(2,'0');
+        const opIcon = e.op === 'POST' ? '➕' : e.op === 'PATCH' ? '✏️' : e.op === 'DELETE' ? '🗑️' : '🔍';
+        const statusIcon = e.ok ? '✓' : '❌';
+        const target = e.name || (e.path ? e.path.split('?')[0] : '');
+        const color = e.ok ? '#22c55e' : '#ef4444';
+        html += '<div style="font-size:11px;color:'+color+';margin-top:2px">' + tStr + ' ' + statusIcon + ' ' + opIcon + ' ' + target + (e.error ? ' ('+e.error.substring(0,40)+')' : '') + '</div>';
+      });
+    }
+    
+    stat.innerHTML = html;
+    stat.style.display = '';
+    
+    // 5. 결론
+    if(diff.length === 0 && failed === 0){
+      showMsg('syncMsg', '✅ 모든 데이터가 서버와 동기화되어 있습니다 ('+serverCount+'명)', 'ok');
+    }else if(diff.length === 0 && failed > 0){
+      showMsg('syncMsg', '⚠️ 서버 데이터는 정상이지만 ' + failed + '건 작업이 실패했습니다. [재전송] 버튼을 누르세요.', 'warn');
+    }else{
+      showMsg('syncMsg', '⚠️ 서버와 캐시가 일치하지 않습니다. [목록 새로고침]을 권장합니다.', 'warn');
+    }
+    
+    // 캐시 갱신
+    empCache = serverData;
+    document.getElementById('empCount').textContent = serverCount;
+    if(document.getElementById('empListPanel').style.display !== 'none'){
+      filterAndRender('');
+    }
+  }catch(err){
+    showMsg('syncMsg', '❌ 서버 연결 실패: ' + err.message, 'err');
+  }finally{
+    btn.disabled = false;
+    btn.textContent = '🔍 서버 동기화 상태 확인';
+  }
+}
+
+async function forceResync(){
+  if(_failedOps.length === 0){showMsg('syncMsg','재전송할 항목이 없습니다','ok');return}
+  if(!confirm(_failedOps.length + '건의 실패한 작업을 재전송하시겠습니까?\n\n(POST/PATCH/DELETE 모두 다시 시도)')) return;
+  
+  const btn = document.getElementById('syncForceBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ 재전송 중...';
+  
+  let ok = 0, fail = 0;
+  const remaining = [];
+  for(const item of _failedOps.slice()){
+    try{
+      await sbReq(item.method, item.path, item.body);
+      ok++;
+      // 성공 시 큐에서 제거
+      const idx = _failedOps.indexOf(item);
+      if(idx >= 0) _failedOps.splice(idx, 1);
+    }catch(err){
+      fail++;
+      remaining.push(item);
+    }
+  }
+  
+  btn.disabled = false;
+  btn.textContent = '🔄 누락된 항목 강제 재전송';
+  updateSyncBadge();
+  
+  if(fail === 0){
+    showMsg('syncMsg', '✅ 모든 항목 재전송 성공 ('+ok+'건)', 'ok');
+  }else{
+    showMsg('syncMsg', '⚠️ 성공 '+ok+'건 / 실패 '+fail+'건 (네트워크 또는 서버 상태 확인)', 'warn');
+  }
+  // 목록 새로고침
+  await loadList();
+}
+
 /* ========== 유틸 ========== */
 function showMsg(id, text, cls){
   const e=document.getElementById(id);
@@ -610,6 +779,8 @@ document.getElementById('uploadConfirmBtn').onclick = executeUpload;
 document.getElementById('addBtn').onclick = addSingleEmp;
 document.getElementById('empListToggle').onclick = toggleEmpList;
 document.getElementById('searchName').addEventListener('input', renderList);
+document.getElementById('syncCheckBtn').onclick = checkServerSync;
+document.getElementById('syncForceBtn').onclick = forceResync;
 
 // 파일 영역
 const fa = document.getElementById('fileArea');
