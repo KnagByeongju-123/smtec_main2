@@ -220,11 +220,15 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
 .sig-btn{flex:1;padding:10px;font-size:12px;font-weight:700;border:none;border-radius:8px;cursor:pointer;font-family:inherit}
 .sig-btn-clear{background:rgba(239,68,68,.15);color:#fca5a5;border:1.5px solid rgba(239,68,68,.3)}
 .sig-btn-undo{background:var(--surface2);color:var(--text2)}
+.sig-btn-start{background:linear-gradient(135deg,#3b82f6,#2563eb);color:#fff;border:none;font-weight:800}
 .sig-btn-done{background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;border:none;font-weight:800}
 .sig-btn:disabled{opacity:.4;cursor:not-allowed;filter:grayscale(.5)}
 .sig-lock{position:absolute;inset:0;background:rgba(34,197,94,.92);color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:800;border-radius:8px;z-index:5;letter-spacing:.5px;backdrop-filter:blur(2px)}
 .sig-wrap.locked{border-color:#22c55e;border-style:solid}
 .sig-wrap.locked .sig-canvas{pointer-events:none;touch-action:none}
+.sig-wrap.locked-init{border-color:#475569;border-style:solid;background:#f1f5f9}
+.sig-wrap.locked-init .sig-canvas{pointer-events:none;touch-action:none;opacity:.5}
+.sig-wrap.locked-init .sig-placeholder{color:#3b82f6;font-weight:700}
 
 /* 위험요소 체크리스트 */
 .risk-item{display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;margin-bottom:6px}
@@ -377,19 +381,19 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
 
   <!-- 작성자 서명 -->
   <div class="card">
-    <div class="card-title">✍️ 작성자(확인자) 서명 <span id="sigStatus" style="font-size:10px;color:var(--text3);margin-left:auto;font-weight:400">대기 중...</span></div>
-    <div class="sig-wrap" id="sigWrap">
+    <div class="card-title">✍️ 작성자(확인자) 서명 <span id="sigStatus" style="font-size:10px;color:var(--text3);margin-left:auto;font-weight:400">시작 전</span></div>
+    <div class="sig-wrap locked-init" id="sigWrap">
       <canvas id="sigCanvas" class="sig-canvas"></canvas>
-      <div id="sigPlaceholder" class="sig-placeholder">↑ 여기에 손가락/펜으로 서명하세요 ↑</div>
+      <div id="sigPlaceholder" class="sig-placeholder">↓ 아래 [✏️ 서명 시작] 버튼을 누른 후 서명 ↓</div>
       <div id="sigLock" class="sig-lock" style="display:none">🔒 서명 완료 (수정 잠금)</div>
     </div>
     <div class="sig-actions">
-      <button type="button" class="sig-btn sig-btn-undo" id="sigUndoBtn" onclick="sigUndo()">↺ 한번 취소</button>
-      <button type="button" class="sig-btn sig-btn-clear" id="sigClearBtn" onclick="sigClear()">🗑 전체 지우기</button>
-      <button type="button" class="sig-btn sig-btn-done" id="sigDoneBtn" onclick="sigDone()">✓ 완료</button>
+      <button type="button" class="sig-btn sig-btn-start" id="sigStartBtn" onclick="sigStart()">✏️ 서명 시작</button>
+      <button type="button" class="sig-btn sig-btn-clear" id="sigClearBtn" onclick="sigClear()" disabled>🗑 다시 쓰기</button>
+      <button type="button" class="sig-btn sig-btn-done" id="sigDoneBtn" onclick="sigDone()" disabled>✓ 완료</button>
     </div>
     <div style="font-size:10px;color:var(--text3);margin-top:6px;text-align:center">
-      💡 서명 후 <b style="color:#22c55e">✓ 완료</b> 버튼을 눌러 잠그세요. 잠그면 실수로 지워지지 않습니다.
+      💡 <b style="color:#3b82f6">✏️ 시작</b> → 서명 → <b style="color:#22c55e">✓ 완료</b> 순서로 진행하세요.
     </div>
   </div>
 
@@ -487,10 +491,6 @@ GRANT USAGE, SELECT ON SEQUENCE safety_education_log_id_seq TO anon, authenticat
   <div class="modal-box">
     <div class="modal-title" id="nameModalTitle">👤 이름 입력</div>
     <input type="text" class="modal-input" id="nameModalInput" placeholder="이름 입력" inputmode="text" autocomplete="off">
-    <div class="modal-recent" id="nameModalRecent" style="display:none">
-      <div class="modal-recent-label">최근 사용</div>
-      <div class="modal-recent-list" id="nameModalRecentList"></div>
-    </div>
     <div id="nameModalAttendeesArea" style="display:none;margin-top:10px">
       <div style="font-size:11px;color:var(--text3);margin-bottom:6px">📋 추가된 피교육자</div>
       <div id="nameModalAttendeesList" style="display:flex;flex-wrap:wrap;gap:6px;min-height:40px;padding:8px;background:var(--bg);border-radius:6px"></div>
@@ -1020,34 +1020,15 @@ function openNameModal(target){
   _currentNameTarget=target;
   const inp=document.getElementById('nameModalInput');
   const title=document.getElementById('nameModalTitle');
-  const recentArea=document.getElementById('nameModalRecent');
-  const recentList=document.getElementById('nameModalRecentList');
   const attendeesArea=document.getElementById('nameModalAttendeesArea');
   const confirmBtn=document.getElementById('nameModalConfirmBtn');
 
   inp.value='';
-  // 이제 피교육자 추가 전용 모달
   title.textContent='👥 피교육자 추가';
   inp.placeholder='피교육자 이름 (한 명씩 입력 후 + 추가)';
   attendeesArea.style.display='';
   renderAttendeesInModal();
   confirmBtn.textContent='+ 추가';
-
-  // 최근 사용 목록
-  const recents=getRecentNames();
-  if(recents.length){
-    recentArea.style.display='';
-    recentList.innerHTML='';
-    recents.forEach(n=>{
-      const b=document.createElement('div');
-      b.className='modal-recent-item';
-      b.textContent=n;
-      b.onclick=()=>{inp.value=n;inp.focus()};
-      recentList.appendChild(b);
-    });
-  }else{
-    recentArea.style.display='none';
-  }
 
   document.getElementById('nameModal').classList.add('show');
   setTimeout(()=>inp.focus(),100);
@@ -1152,17 +1133,17 @@ function renderAttendeeSigList(){
     wrap.style.cssText='margin-bottom:14px;padding:10px;background:var(--bg);border:1.5px solid var(--border);border-radius:10px';
     wrap.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">'+
       '<span style="font-size:13px;font-weight:700;color:var(--text)"><span style="background:var(--accent);color:#0f172a;width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:11px;margin-right:6px">'+(i+1)+'</span>'+escHtml(name)+'</span>'+
-      '<span id="atSigStatus_'+i+'" style="font-size:10px;color:var(--text3);font-weight:600">미서명</span>'+
+      '<span id="atSigStatus_'+i+'" style="font-size:10px;color:var(--text3);font-weight:600">시작 전</span>'+
       '</div>'+
-      '<div class="sig-wrap" id="atSigWrap_'+i+'" style="height:130px">'+
+      '<div class="sig-wrap locked-init" id="atSigWrap_'+i+'" style="height:130px">'+
         '<canvas id="atSigCanvas_'+i+'" class="sig-canvas"></canvas>'+
-        '<div id="atSigPlaceholder_'+i+'" class="sig-placeholder">↑ '+escHtml(name)+' 본인 서명 ↑</div>'+
+        '<div id="atSigPlaceholder_'+i+'" class="sig-placeholder">↓ [✏️ 시작] 누른 후 서명 ↓</div>'+
         '<div id="atSigLock_'+i+'" class="sig-lock" style="display:none">🔒 서명 완료 (수정 잠금)</div>'+
       '</div>'+
       '<div class="sig-actions">'+
-        '<button type="button" class="sig-btn sig-btn-undo" id="atSigUndoBtn_'+i+'" onclick="atSigUndo('+i+')">↺ 취소</button>'+
-        '<button type="button" class="sig-btn sig-btn-clear" id="atSigClearBtn_'+i+'" onclick="atSigClear('+i+')">🗑 지우기</button>'+
-        '<button type="button" class="sig-btn sig-btn-done" id="atSigDoneBtn_'+i+'" onclick="atSigDone('+i+')">✓ 완료</button>'+
+        '<button type="button" class="sig-btn sig-btn-start" id="atSigStartBtn_'+i+'" onclick="atSigStart('+i+')">✏️ 시작</button>'+
+        '<button type="button" class="sig-btn sig-btn-clear" id="atSigClearBtn_'+i+'" onclick="atSigClear('+i+')" disabled>🗑 다시</button>'+
+        '<button type="button" class="sig-btn sig-btn-done" id="atSigDoneBtn_'+i+'" onclick="atSigDone('+i+')" disabled>✓ 완료</button>'+
       '</div>';
     c.appendChild(wrap);
   });
@@ -1227,32 +1208,38 @@ function initOneAttendeeSigPad(i,savedData){
 
 // 피교육자 서명 잠금 상태 (인덱스 기준)
 let _atSigLocked={};
+let _atSigStarted={};
 
-function atSigUndo(i){
-  if(_atSigLocked[i]){alert('🔒 잠긴 서명입니다.\n[🔓 잠금해제] 후 수정하세요.');return}
-  const pad=_attendeeSigPads[i];
-  if(!pad)return;
-  const data=pad.toData();
-  if(data&&data.length){
-    data.pop();
-    pad.fromData(data);
-    if(data.length===0){
-      document.getElementById('atSigPlaceholder_'+i).classList.remove('hide');
-      const st=document.getElementById('atSigStatus_'+i);
-      if(st){st.textContent='미서명';st.style.color='var(--text3)'}
-    }
+// ✏️ 시작 - 해당 피교육자 서명란 활성화
+function atSigStart(i){
+  _atSigStarted[i]=true;
+  const wrap=document.getElementById('atSigWrap_'+i);
+  const ph=document.getElementById('atSigPlaceholder_'+i);
+  const startBtn=document.getElementById('atSigStartBtn_'+i);
+  const clearBtn=document.getElementById('atSigClearBtn_'+i);
+  const doneBtn=document.getElementById('atSigDoneBtn_'+i);
+  const st=document.getElementById('atSigStatus_'+i);
+  if(wrap)wrap.classList.remove('locked-init');
+  if(ph){
+    const name=_attendeesList[i]||'';
+    ph.textContent='↑ '+name+' 본인 서명 ↑';
+    ph.style.color='#9ca3af';
   }
-  updateAttendeeSigCount();
+  if(startBtn)startBtn.disabled=true;
+  if(clearBtn)clearBtn.disabled=false;
+  if(doneBtn)doneBtn.disabled=false;
+  if(st){st.textContent='✏️ 서명 가능';st.style.color='#86efac'}
 }
 
 function atSigClear(i){
   if(_atSigLocked[i]){alert('🔒 잠긴 서명입니다.\n[🔓 잠금해제] 후 수정하세요.');return}
+  if(!_atSigStarted[i]){alert('먼저 [✏️ 시작] 버튼을 누르세요.');return}
   const pad=_attendeeSigPads[i];
   if(!pad)return;
   pad.clear();
   document.getElementById('atSigPlaceholder_'+i).classList.remove('hide');
   const st=document.getElementById('atSigStatus_'+i);
-  if(st){st.textContent='미서명';st.style.color='var(--text3)'}
+  if(st){st.textContent='✏️ 서명 가능';st.style.color='#86efac'}
   updateAttendeeSigCount();
 }
 
@@ -1263,8 +1250,8 @@ function atSigDone(i){
   const wrap=document.getElementById('atSigWrap_'+i);
   const lock=document.getElementById('atSigLock_'+i);
   const doneBtn=document.getElementById('atSigDoneBtn_'+i);
-  const undoBtn=document.getElementById('atSigUndoBtn_'+i);
   const clearBtn=document.getElementById('atSigClearBtn_'+i);
+  const startBtn=document.getElementById('atSigStartBtn_'+i);
   const st=document.getElementById('atSigStatus_'+i);
   if(!_atSigLocked[i]){
     if(pad.isEmpty()){
@@ -1274,16 +1261,15 @@ function atSigDone(i){
     _atSigLocked[i]=true;
     if(wrap)wrap.classList.add('locked');
     if(lock)lock.style.display='flex';
-    if(doneBtn){doneBtn.textContent='🔓 잠금해제';doneBtn.style.background='linear-gradient(135deg,#64748b,#475569)'}
-    if(undoBtn)undoBtn.disabled=true;
+    if(doneBtn){doneBtn.textContent='🔓 해제';doneBtn.style.background='linear-gradient(135deg,#64748b,#475569)'}
     if(clearBtn)clearBtn.disabled=true;
+    if(startBtn)startBtn.disabled=true;
     if(st){st.textContent='🔒 잠김';st.style.color='#22c55e'}
   }else{
     _atSigLocked[i]=false;
     if(wrap)wrap.classList.remove('locked');
     if(lock)lock.style.display='none';
     if(doneBtn){doneBtn.textContent='✓ 완료';doneBtn.style.background='linear-gradient(135deg,#22c55e,#16a34a)'}
-    if(undoBtn)undoBtn.disabled=false;
     if(clearBtn)clearBtn.disabled=false;
     if(st){st.textContent='✏️ 수정 가능';st.style.color='#fbbf24'}
   }
@@ -1417,28 +1403,34 @@ function initSignaturePad(){
 }
 
 let _sigLocked=false;
+let _sigStarted=false;
+
+// ✏️ 서명 시작 — locked-init 해제하여 캔버스 활성화
+function sigStart(){
+  _sigStarted=true;
+  const wrap=document.getElementById('sigWrap');
+  const ph=document.getElementById('sigPlaceholder');
+  const startBtn=document.getElementById('sigStartBtn');
+  const clearBtn=document.getElementById('sigClearBtn');
+  const doneBtn=document.getElementById('sigDoneBtn');
+  if(wrap)wrap.classList.remove('locked-init');
+  if(ph){
+    ph.textContent='↑ 여기에 손가락/펜으로 서명하세요 ↑';
+    ph.style.color='#9ca3af';
+  }
+  if(startBtn)startBtn.disabled=true;
+  if(clearBtn)clearBtn.disabled=false;
+  if(doneBtn)doneBtn.disabled=false;
+  setSigStatus('✏️ 서명 가능','#86efac');
+}
 
 function sigClear(){
   if(_sigLocked){alert('🔒 서명이 잠겨있습니다.\n수정하려면 [🔓 잠금해제]를 먼저 누르세요.');return}
+  if(!_sigStarted){alert('먼저 [✏️ 서명 시작] 버튼을 누르세요.');return}
   if(_signaturePad){
     _signaturePad.clear();
     document.getElementById('sigPlaceholder').classList.remove('hide');
     setSigStatus('✏️ 서명 가능','#86efac');
-  }
-}
-
-function sigUndo(){
-  if(_sigLocked){alert('🔒 서명이 잠겨있습니다.\n수정하려면 [🔓 잠금해제]를 먼저 누르세요.');return}
-  if(_signaturePad){
-    const data=_signaturePad.toData();
-    if(data&&data.length){
-      data.pop();
-      _signaturePad.fromData(data);
-      if(data.length===0){
-        document.getElementById('sigPlaceholder').classList.remove('hide');
-        setSigStatus('✏️ 서명 가능','#86efac');
-      }
-    }
   }
 }
 
@@ -1447,31 +1439,27 @@ function sigDone(){
   const wrap=document.getElementById('sigWrap');
   const lock=document.getElementById('sigLock');
   const doneBtn=document.getElementById('sigDoneBtn');
-  const undoBtn=document.getElementById('sigUndoBtn');
   const clearBtn=document.getElementById('sigClearBtn');
+  const startBtn=document.getElementById('sigStartBtn');
   if(!_sigLocked){
-    // 잠그기 전 검증
     if(!_signaturePad||_signaturePad.isEmpty()){
       alert('서명 후 완료 버튼을 누르세요.');
       return;
     }
     _sigLocked=true;
-    wrap.classList.add('locked');
-    lock.style.display='flex';
-    doneBtn.textContent='🔓 잠금해제';
-    doneBtn.style.background='linear-gradient(135deg,#64748b,#475569)';
-    undoBtn.disabled=true;
-    clearBtn.disabled=true;
+    if(wrap)wrap.classList.add('locked');
+    if(lock)lock.style.display='flex';
+    if(doneBtn){doneBtn.textContent='🔓 잠금해제';doneBtn.style.background='linear-gradient(135deg,#64748b,#475569)'}
+    if(clearBtn)clearBtn.disabled=true;
+    if(startBtn)startBtn.disabled=true;
     setSigStatus('🔒 서명 완료 (잠김)','#22c55e');
   }else{
-    // 잠금 해제
     _sigLocked=false;
-    wrap.classList.remove('locked');
-    lock.style.display='none';
-    doneBtn.textContent='✓ 완료';
-    doneBtn.style.background='linear-gradient(135deg,#22c55e,#16a34a)';
-    undoBtn.disabled=false;
-    clearBtn.disabled=false;
+    if(wrap)wrap.classList.remove('locked');
+    if(lock)lock.style.display='none';
+    if(doneBtn){doneBtn.textContent='✓ 완료';doneBtn.style.background='linear-gradient(135deg,#22c55e,#16a34a)'}
+    if(clearBtn)clearBtn.disabled=false;
+    if(startBtn)startBtn.disabled=true; // 잠금해제는 시작 후 단계라 시작 비활성 유지
     setSigStatus('✏️ 서명 수정 가능','#fbbf24');
   }
 }
@@ -1657,6 +1645,9 @@ function resetForm(){
   _attendeesList=[];
   _attendeeSigPads={}; // 피교육자 서명패드도 초기화
   _atSigLocked={};     // 피교육자 잠금상태 초기화
+  _atSigStarted={};    // 피교육자 시작상태 초기화
+  _sigStarted=false;   // 작성자 시작상태 초기화
+  _sigLocked=false;
   _userEditedDateTime=false;
   setDateTimeNow(true);
   // 작성자: 로그인 정보가 있으면 자동, 없으면 input 비움
@@ -1666,21 +1657,21 @@ function resetForm(){
   renderAttendees(); // 내부에서 renderAttendeeSigList 호출
   // 교육자 초기화 (직접 입력)
   document.getElementById('instructor').value='';
-  // 작성자 서명 잠금 해제 후 초기화
-  if(_sigLocked){
-    _sigLocked=false;
-    const wrap=document.getElementById('sigWrap');
-    const lock=document.getElementById('sigLock');
-    const doneBtn=document.getElementById('sigDoneBtn');
-    const undoBtn=document.getElementById('sigUndoBtn');
-    const clearBtn=document.getElementById('sigClearBtn');
-    if(wrap)wrap.classList.remove('locked');
-    if(lock)lock.style.display='none';
-    if(doneBtn){doneBtn.textContent='✓ 완료';doneBtn.style.background='linear-gradient(135deg,#22c55e,#16a34a)'}
-    if(undoBtn)undoBtn.disabled=false;
-    if(clearBtn)clearBtn.disabled=false;
-  }
-  sigClear();
+  // 작성자 서명 영역 - 시작 전 잠금 상태로 초기화
+  const wrap=document.getElementById('sigWrap');
+  const lock=document.getElementById('sigLock');
+  const ph=document.getElementById('sigPlaceholder');
+  const doneBtn=document.getElementById('sigDoneBtn');
+  const clearBtn=document.getElementById('sigClearBtn');
+  const startBtn=document.getElementById('sigStartBtn');
+  if(wrap){wrap.classList.remove('locked');wrap.classList.add('locked-init')}
+  if(lock)lock.style.display='none';
+  if(ph){ph.classList.remove('hide');ph.textContent='↓ 아래 [✏️ 서명 시작] 버튼을 누른 후 서명 ↓';ph.style.color='#3b82f6'}
+  if(doneBtn){doneBtn.textContent='✓ 완료';doneBtn.style.background='linear-gradient(135deg,#22c55e,#16a34a)';doneBtn.disabled=true}
+  if(clearBtn)clearBtn.disabled=true;
+  if(startBtn)startBtn.disabled=false;
+  if(_signaturePad)_signaturePad.clear();
+  setSigStatus('시작 전','var(--text3)');
   // 임시저장 삭제
   localStorage.removeItem(TEMP_KEY);
 }
@@ -1900,6 +1891,8 @@ async function editRow(id){
         img.onload=()=>{
           const canvas=document.getElementById('atSigCanvas_'+i);
           if(canvas){
+            // 시작 상태로 자동 전환
+            atSigStart(i);
             const ctx=canvas.getContext('2d');
             const w=canvas.width;
             const h=canvas.height;
@@ -1927,6 +1920,7 @@ async function editRow(id){
   renderEduList();
   // 작성자 서명
   if(r.signature&&_signaturePad){
+    sigStart(); // 시작 상태로 전환
     const img=new Image();
     img.onload=()=>{
       const canvas=document.getElementById('sigCanvas');
