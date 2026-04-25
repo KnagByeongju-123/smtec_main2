@@ -374,7 +374,7 @@
 
 <div class="hdr">
   <h1>🏭 생산설비 일상점검 체크시트</h1>
-  <p>생산기술팀 · 프레스 설비 일상점검 기록</p>
+  <p>생산기술팀 · 프레스 설비 일상점검 기록 <span id="hdrUserBadge" style="display:none;background:rgba(74,222,128,.15);color:#4ade80;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;margin-left:6px"></span></p>
 </div>
 
 <!-- 탭 -->
@@ -402,10 +402,12 @@
     </div>
     <div class="fg-row">
       <div class="fg">
-        <label class="field-label">점검자</label>
-        <select id="inspector" required>
-          <option value="" disabled selected>선택</option>
-        </select>
+        <label class="field-label">점검자 <span style="font-size:10px;color:var(--accent);font-weight:600">· 로그인 정보 자동</span></label>
+        <div id="inspectorDisplay" style="padding:11px 14px;background:rgba(56,189,248,.08);border:1.5px solid rgba(56,189,248,.3);border-radius:8px;font-size:14px;font-weight:700;color:var(--accent);min-height:44px;display:flex;align-items:center;gap:6px">
+          <span style="font-size:18px">👤</span>
+          <span id="inspectorName">로그인 필요</span>
+        </div>
+        <input type="hidden" id="inspector" required>
       </div>
       <div class="fg">
         <label class="field-label">호기</label>
@@ -635,17 +637,7 @@
     <div id="machineSaveStatus" style="font-size:11px;margin-top:6px;color:var(--text3)"></div>
   </div>
 
-  <!-- 4. 작업자 -->
-  <div class="card">
-    <div class="card-title">👤 점검자 관리</div>
-    <div style="font-size:10px;color:var(--text3);margin-bottom:8px;padding:6px 8px;background:rgba(56,189,248,.08);border-radius:6px">💡 마스터 관리(p_inspector)에서 통합관리 · 여기서 추가 시 마스터에도 자동 반영</div>
-    <div id="inspectorList"></div>
-    <div style="display:flex;gap:6px;margin-top:8px">
-      <input type="text" id="newInspectorName" placeholder="이름 입력" style="flex:1;padding:9px 12px;font-size:13px;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit">
-      <button type="button" onclick="addInspector()" style="padding:9px 14px;background:var(--accent2);border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;flex-shrink:0">+ 추가</button>
-    </div>
-    <div id="inspectorSaveStatus" style="font-size:11px;margin-top:6px;color:var(--text3)"></div>
-  </div>
+  <!-- 4. 작업자 관리는 ESG 로그인 시스템으로 대체됨 (제거) -->
 
   <!-- 5. ntfy 알림 -->
   <div class="card">
@@ -927,7 +919,8 @@ function tempRestore() {
     if (!data || !data.savedAt) return;
     if (data.date) document.getElementById('checkDate').value = data.date;
     if (data.time) document.getElementById('checkTime').value = data.time;
-    if (data.inspector) setTimeout(() => { document.getElementById('inspector').value = data.inspector; }, 500);
+    // 점검자는 로그인 정보로 자동 설정 (임시저장 데이터 무시)
+    setTimeout(autoSelectInspector, 500);
     if (data.machine) setTimeout(() => { document.getElementById('machine').value = data.machine; }, 500);
     if (data.memo) document.getElementById('memo').value = data.memo;
     if (data.qrEnabled && data.qrEnabled.length) {
@@ -1051,7 +1044,8 @@ async function submitForm() {
   const inspector = document.getElementById('inspector').value;
   const machine = document.getElementById('machine').value;
 
-  if (!date || !time || !inspector || !machine) { alert('기본 정보를 모두 입력하세요.'); return; }
+  if (!inspector) { alert('점검자가 설정되지 않았습니다.\nESG 메인페이지에서 PIN 로그인 후 다시 시도하세요.'); return; }
+  if (!date || !time || !machine) { alert('일자/시간/호기를 입력하세요.'); return; }
 
   const qrItems = ['overload','motor','clutch','safety','oil','pitch'];
   for (const key of qrItems) {
@@ -1117,9 +1111,9 @@ async function submitForm() {
 
 function resetForm() {
   tempClear();
-  const prevInspector = document.getElementById('inspector').value;
   setDateTimeNow();
-  document.getElementById('inspector').value = prevInspector;
+  // 점검자는 로그인 정보로 자동 재설정
+  autoSelectInspector();
   document.getElementById('memo').value = '';
 
   document.querySelectorAll('.check-item').forEach(el => {
@@ -1194,10 +1188,8 @@ function loadSettingsUI() {
   
   document.getElementById('stgSbKey').value = s.sb_key || '';
   renderTgUsers();
-  renderInspectorListUI();
   renderMachineListUI();
   if (isConfigured()) {
-    loadListFromServer('p_inspector').then(() => renderInspectorListUI());
     loadListFromServer('p_machine').then(() => renderMachineListUI());
   }
   updateConnInfo();
@@ -1290,15 +1282,7 @@ async function initMachinesOnServer() {
 }
 
 function renderInspectorSelect() {
-  const sel = document.getElementById('inspector');
-  const prev = sel.value;
-  sel.innerHTML = '<option value="" disabled selected>선택</option>';
-  getInspectors().forEach(item => {
-    const name = typeof item === 'string' ? item : item.name;
-    sel.innerHTML += `<option value="${name}">${name}</option>`;
-  });
-  if (prev) sel.value = prev;
-  // 접속 사용자 자동선택 (NFC 무관)
+  // select가 readonly 텍스트로 변경됨 - 로그인 사용자 자동 표시만 수행
   autoSelectInspector();
 }
 
@@ -1326,28 +1310,35 @@ function getCurrentUserName() {
   } catch(e) { return ''; }
 }
 
-// 점검자 select에 현재 사용자 자동 선택 (없으면 추가)
+// 점검자 표시 + hidden input에 현재 사용자 자동 입력
 function autoSelectInspector() {
   var userName = getCurrentUserName();
-  if (!userName) return;
-  var sel = document.getElementById('inspector');
-  if (!sel) return;
-  // 이미 다른 값이 사용자에 의해 선택되어 있으면 덮어쓰지 않음
-  if (sel.value && sel.value !== userName) return;
-  // 일치 옵션 찾기
-  var matched = false;
-  for (var i = 0; i < sel.options.length; i++) {
-    if (sel.options[i].value === userName) { sel.value = userName; matched = true; break; }
+  var nameSpan = document.getElementById('inspectorName');
+  var hiddenInp = document.getElementById('inspector');
+  var displayBox = document.getElementById('inspectorDisplay');
+  var hdrBadge = document.getElementById('hdrUserBadge');
+  if (!userName) {
+    if (nameSpan) nameSpan.textContent = '로그인 필요';
+    if (hiddenInp) hiddenInp.value = '';
+    if (displayBox) {
+      displayBox.style.background = 'rgba(239,68,68,.08)';
+      displayBox.style.borderColor = 'rgba(239,68,68,.3)';
+      displayBox.style.color = '#ef4444';
+    }
+    if (hdrBadge) hdrBadge.style.display = 'none';
+    return;
   }
-  // 없으면 추가
-  if (!matched) {
-    var opt = document.createElement('option');
-    opt.value = userName;
-    opt.textContent = userName + ' (자동)';
-    sel.appendChild(opt);
-    sel.value = userName;
+  if (nameSpan) nameSpan.textContent = userName;
+  if (hiddenInp) hiddenInp.value = userName;
+  if (displayBox) {
+    displayBox.style.background = 'rgba(56,189,248,.08)';
+    displayBox.style.borderColor = 'rgba(56,189,248,.3)';
+    displayBox.style.color = 'var(--accent)';
   }
-  try { sel.dispatchEvent(new Event('change')); } catch(e){}
+  if (hdrBadge) {
+    hdrBadge.textContent = '👤 ' + userName;
+    hdrBadge.style.display = 'inline-block';
+  }
   try { localStorage.setItem('P_LAST_INSPECTOR', userName); } catch(e){}
 }
 
@@ -1363,8 +1354,9 @@ function renderMachineSelect() {
 }
 
 function renderInspectorListUI() {
-  const list = getInspectors();
   const c = document.getElementById('inspectorList');
+  if (!c) return; // 점검자 관리 UI 제거됨 - 안전 종료
+  const list = getInspectors();
   if (!list.length) { c.innerHTML = '<div style="font-size:11px;color:var(--text3);padding:6px 0">점검자 없음 — 아래에서 추가하세요</div>'; return; }
   c.innerHTML = list.map((item, i) => `<div class="stg-list-item"><span style="color:var(--text3);font-size:11px;min-width:20px">${i+1}</span><span class="stg-name">${item.name}</span><button class="stg-move" onclick="moveItem('p_inspector',${i},-1)">▲</button><button class="stg-move" onclick="moveItem('p_inspector',${i},1)">▼</button><button class="stg-del" onclick="removeItem('p_inspector',${i})">✕</button></div>`).join('');
 }
@@ -2073,22 +2065,23 @@ window.addEventListener('DOMContentLoaded', async () => {
     localStorage.setItem(LS_KEY, JSON.stringify(defaults));
   }
   setDateTimeNow();
-  renderInspectorSelect();
+  // 점검자: ESG 로그인 사용자 자동 표시 (별도 마스터 불필요)
+  autoSelectInspector();
   renderMachineSelect();
   updateProgress();
 
   // 임시저장 복원
   tempRestore();
 
-  // 기본정보 변경 시 임시저장
-  ['checkDate','checkTime','inspector','machine','memo'].forEach(id => {
+  // 기본정보 변경 시 임시저장 (inspector는 자동 입력이므로 제외)
+  ['checkDate','checkTime','machine','memo'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('change', tempSave);
     if (el && el.tagName === 'TEXTAREA') el.addEventListener('input', tempSave);
   });
 
   if (isConfigured()) {
-    loadListFromServer('p_inspector');
+    // 설비 마스터만 서버 로드 (점검자는 ESG 로그인 정보 사용)
     loadListFromServer('p_machine').then(() => {
       // 설정탭/히스토리탭 select 갱신
       const histSel = document.getElementById('histMachine');
