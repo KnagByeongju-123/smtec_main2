@@ -605,6 +605,25 @@ function unlock(name){
   sessionStorage.setItem('ESG_USER', name);
   // 잠금해제 후 미열람 문서 체크 (1초 지연 - UI 안정화 후)
   setTimeout(checkUnreadDocs, 1000);
+  // 페이지 복귀/포커스 시 자동 재체크 (배지 즉시 갱신)
+  if(!window._docCheckListenerAdded){
+    window._docCheckListenerAdded = true;
+    // 탭 전환 또는 다른 페이지에서 돌아왔을 때
+    document.addEventListener('visibilitychange', () => {
+      if(!document.hidden) {
+        // 팝업은 띄우지 말고 배지만 갱신 (silent 모드)
+        checkUnreadDocs(true);
+      }
+    });
+    // 페이지 포커스 시 (모바일에서 앱 전환 등)
+    window.addEventListener('focus', () => {
+      checkUnreadDocs(true);
+    });
+    // 5분마다 자동 갱신
+    setInterval(() => {
+      if(!document.hidden) checkUnreadDocs(true);
+    }, 5*60*1000);
+  }
 }
 
 /* ============================================================
@@ -647,11 +666,15 @@ function daysUntilDoc(dateStr){
 
 function fmtDateDoc(s){if(!s)return'-';return s.substring(5,10).replace('-','/')}
 
-async function checkUnreadDocs(){
+async function checkUnreadDocs(silent){
+  // silent=true이면 팝업 표시 없이 배지만 갱신
+  
   // 1. 명시적 스누즈 체크 (사용자가 "1시간 동안 안 보기" 클릭한 경우)
+  //    silent 모드에서도 배지는 갱신해야 함
+  let snoozed=false;
   try{
     const snz=parseInt(localStorage.getItem(DOC_SNOOZE_KEY)||'0');
-    if(snz>Date.now())return;
+    if(snz>Date.now())snoozed=true;
   }catch(e){}
   
   const me=getUserKey();
@@ -661,7 +684,7 @@ async function checkUnreadDocs(){
   try{
     // 2. 활성 문서 가져오기
     const docs=await docSbReq('doc_register?status=eq.active&select=id,doc_no,title,doc_type,deadline,target_depts,target_users,registered_by&order=registered_at.desc');
-    if(!docs||!docs.length)return;
+    if(!docs||!docs.length){updateUnreadBadge(0);return}
     
     // 3. 본인 확인 이력 가져오기
     const logs=await docSbReq('doc_view_log?viewer_name=eq.'+encodeURIComponent(me)+'&select=doc_id');
@@ -687,6 +710,9 @@ async function checkUnreadDocs(){
     
     // 헤더 배지는 항상 갱신 (팝업과 별개로 시각적 알림)
     updateUnreadBadge(unread.length);
+    
+    // silent 모드면 배지만 갱신하고 팝업은 안 띄움
+    if(silent||snoozed)return;
     
     // 5. 스마트 표시 판단 - 다음 중 하나라도 만족해야 표시:
     //    A. 새로운 미열람 문서가 추가됨 (지난번 표시 후 등록된 문서)
