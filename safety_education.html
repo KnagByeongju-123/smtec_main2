@@ -4,16 +4,145 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>안전교육 확인 체크시트</title>
-<script src="https://cdn.jsdelivr.net/npm/[email protected]/build/signature_pad.umd.min.js"></script>
 <script>
-// CDN 폴백 - jsDelivr 실패시 unpkg 시도
-window.addEventListener('error',function(e){
-  if(e.target&&e.target.src&&e.target.src.includes('signature_pad')&&typeof SignaturePad==='undefined'){
-    var s=document.createElement('script');
-    s.src='https://unpkg.com/[email protected]/dist/signature_pad.umd.min.js';
-    document.head.appendChild(s);
+/* ═══════════════════════════════════════════════════════════════
+   Mini SignaturePad - 자체 구현 (외부 라이브러리 의존 X)
+   API: new SignaturePad(canvas, opts)
+        .clear() / .isEmpty() / .toDataURL() / .toData() / .fromData()
+        .addEventListener('beginStroke'|'endStroke', cb)
+   ═══════════════════════════════════════════════════════════════ */
+(function(global){
+  'use strict';
+  function SignaturePad(canvas, opts){
+    opts = opts || {};
+    this.canvas = canvas;
+    this.ctx = canvas.getContext('2d');
+    this.bgColor = opts.backgroundColor || 'rgba(255,255,255,1)';
+    this.penColor = opts.penColor || '#000';
+    this.minWidth = opts.minWidth || 1.0;
+    this.maxWidth = opts.maxWidth || 2.5;
+    this._strokes = [];     // 저장용 [{points:[{x,y,t}], color}]
+    this._currentStroke = null;
+    this._listeners = { beginStroke: [], endStroke: [] };
+    this._drawing = false;
+    this._init();
+    this.clear();
   }
-},true);
+  SignaturePad.prototype._init = function(){
+    var self = this, c = this.canvas;
+    function getXY(e){
+      var rect = c.getBoundingClientRect();
+      var t = e.touches && e.touches[0] ? e.touches[0] : e;
+      return {
+        x: t.clientX - rect.left,
+        y: t.clientY - rect.top
+      };
+    }
+    function start(e){
+      e.preventDefault();
+      self._drawing = true;
+      var p = getXY(e);
+      self._currentStroke = { color: self.penColor, points: [p] };
+      self._strokes.push(self._currentStroke);
+      self._fire('beginStroke');
+      self._drawDot(p.x, p.y);
+    }
+    function move(e){
+      if(!self._drawing) return;
+      e.preventDefault();
+      var p = getXY(e);
+      var pts = self._currentStroke.points;
+      var prev = pts[pts.length - 1];
+      pts.push(p);
+      self._drawLine(prev.x, prev.y, p.x, p.y);
+    }
+    function end(e){
+      if(!self._drawing) return;
+      e.preventDefault();
+      self._drawing = false;
+      self._fire('endStroke');
+    }
+    // mouse
+    c.addEventListener('mousedown', start);
+    c.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', end);
+    // touch
+    c.addEventListener('touchstart', start, {passive:false});
+    c.addEventListener('touchmove', move, {passive:false});
+    c.addEventListener('touchend', end, {passive:false});
+    c.addEventListener('touchcancel', end, {passive:false});
+    // pointer (펜 입력 등)
+    if(window.PointerEvent){
+      c.addEventListener('pointerdown', function(e){ if(e.pointerType==='pen'||e.pointerType==='mouse'||e.pointerType==='touch') start(e); });
+    }
+  };
+  SignaturePad.prototype._drawDot = function(x, y){
+    this.ctx.fillStyle = this.penColor;
+    this.ctx.beginPath();
+    this.ctx.arc(x, y, this.minWidth, 0, Math.PI * 2);
+    this.ctx.fill();
+  };
+  SignaturePad.prototype._drawLine = function(x1, y1, x2, y2){
+    var ctx = this.ctx;
+    ctx.strokeStyle = this.penColor;
+    ctx.lineWidth = this.maxWidth;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+  };
+  SignaturePad.prototype._fire = function(name){
+    var arr = this._listeners[name] || [];
+    for(var i=0;i<arr.length;i++){ try{ arr[i]() }catch(e){} }
+  };
+  SignaturePad.prototype.addEventListener = function(name, cb){
+    if(!this._listeners[name]) this._listeners[name] = [];
+    this._listeners[name].push(cb);
+  };
+  SignaturePad.prototype.clear = function(){
+    var ctx = this.ctx, c = this.canvas;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0); // reset
+    ctx.fillStyle = this.bgColor;
+    ctx.fillRect(0, 0, c.width, c.height);
+    ctx.restore();
+    this._strokes = [];
+    this._currentStroke = null;
+  };
+  SignaturePad.prototype.isEmpty = function(){
+    return this._strokes.length === 0;
+  };
+  SignaturePad.prototype.toDataURL = function(type, quality){
+    return this.canvas.toDataURL(type || 'image/png', quality);
+  };
+  SignaturePad.prototype.toData = function(){
+    return JSON.parse(JSON.stringify(this._strokes));
+  };
+  SignaturePad.prototype.fromData = function(data){
+    var self = this;
+    self._strokes = JSON.parse(JSON.stringify(data));
+    // 캔버스 리셋 후 재드로잉
+    var ctx = self.ctx, c = self.canvas;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = self.bgColor;
+    ctx.fillRect(0, 0, c.width, c.height);
+    ctx.restore();
+    self._strokes.forEach(function(s){
+      var pts = s.points; if(!pts || !pts.length) return;
+      var prevColor = self.penColor;
+      self.penColor = s.color || prevColor;
+      self._drawDot(pts[0].x, pts[0].y);
+      for(var i=1;i<pts.length;i++){
+        self._drawLine(pts[i-1].x, pts[i-1].y, pts[i].x, pts[i].y);
+      }
+      self.penColor = prevColor;
+    });
+  };
+  global.SignaturePad = SignaturePad;
+})(window);
 </script>
 <style>
 :root{--bg:#0f172a;--surface:#1e293b;--surface2:#334155;--border:#475569;--accent:#f59e0b;--accent2:#d97706;--ok:#22c55e;--ok-bg:rgba(34,197,94,.12);--ng:#ef4444;--ng-bg:rgba(239,68,68,.12);--text:#e2e8f0;--text2:#94a3b8;--text3:#64748b;--radius:12px}
@@ -72,8 +201,8 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
 .modal-title{font-size:15px;font-weight:800;color:var(--accent);margin-bottom:12px;display:flex;align-items:center;gap:6px}
 .modal-input{width:100%;padding:14px 14px;font-size:18px;font-family:'Noto Sans KR',sans-serif;background:var(--bg);border:2px solid var(--accent);border-radius:8px;color:var(--text);margin-bottom:10px;font-weight:700;letter-spacing:1px}
 .modal-input:focus{outline:none;box-shadow:0 0 0 3px rgba(245,158,11,.2)}
-.modal-actions{display:flex;gap:8px;margin-top:8px}
-.modal-btn{flex:1;padding:12px;font-size:14px;font-weight:700;border:none;border-radius:8px;cursor:pointer;font-family:inherit}
+.modal-actions{display:flex;gap:6px;margin-top:8px}
+.modal-btn{flex:1;padding:11px 6px;font-size:13px;font-weight:700;border:none;border-radius:8px;cursor:pointer;font-family:inherit;white-space:nowrap}
 .modal-btn-cancel{background:var(--surface2);color:var(--text2)}
 .modal-btn-ok{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#0f172a}
 .modal-recent{margin-top:10px;padding:8px;background:var(--bg);border-radius:6px}
@@ -286,19 +415,23 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
   </div>
 
   <div class="card">
-    <div class="card-title">🔧 Supabase 설정</div>
+    <div class="card-title">🔧 Supabase 설정 <span style="font-size:10px;color:var(--text3);margin-left:auto;font-weight:400">🔒 보호됨</span></div>
     <div class="fg">
       <label class="field-label">Supabase URL</label>
-      <input type="text" id="stgSbUrl" placeholder="https://xxxxx.supabase.co" autocomplete="off" autocorrect="off" spellcheck="false" data-form-type="other" data-lpignore="true">
+      <input type="password" id="stgSbUrl" placeholder="••••••••" autocomplete="off" autocorrect="off" spellcheck="false" data-form-type="other" data-lpignore="true" readonly style="font-family:monospace;letter-spacing:1px">
     </div>
     <div class="fg">
       <label class="field-label">Anon Key</label>
-      <input type="text" id="stgSbKey" placeholder="eyJ... or sb_publishable_..." autocomplete="off" autocorrect="off" spellcheck="false" data-form-type="other" data-lpignore="true">
+      <input type="password" id="stgSbKey" placeholder="••••••••" autocomplete="off" autocorrect="off" spellcheck="false" data-form-type="other" data-lpignore="true" readonly style="font-family:monospace;letter-spacing:1px">
     </div>
-    <button type="button" onclick="saveSb()" style="width:100%;padding:11px;background:linear-gradient(135deg,#0284c7,#38bdf8);border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">💾 저장</button>
+    <div style="display:flex;gap:6px">
+      <button type="button" onclick="toggleSbReveal()" id="sbRevealBtn" style="flex:1;padding:11px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text2);font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">👁 보기</button>
+      <button type="button" onclick="enableSbEdit()" id="sbEditBtn" style="flex:1;padding:11px;background:linear-gradient(135deg,#f59e0b,#d97706);border:none;border-radius:8px;color:#0f172a;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">✏️ 수정</button>
+      <button type="button" onclick="saveSb()" id="sbSaveBtn" style="flex:1;padding:11px;background:linear-gradient(135deg,#0284c7,#38bdf8);border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;display:none">💾 저장</button>
+    </div>
     <div id="stgSbStatus" style="font-size:11px;margin-top:8px;color:var(--text3)"></div>
     <div style="font-size:10px;color:var(--text3);margin-top:8px;padding:8px;background:rgba(56,189,248,.08);border-radius:6px;line-height:1.5">
-      💡 테이블명: <code style="background:rgba(0,0,0,.3);padding:1px 4px;border-radius:3px">safety_education_log</code> (자동 생성 SQL은 아래)
+      💡 테이블명: <code style="background:rgba(0,0,0,.3);padding:1px 4px;border-radius:3px">safety_education_log</code> · 보안을 위해 기본은 마스킹·읽기전용
     </div>
     <details style="margin-top:8px">
       <summary style="font-size:11px;color:var(--accent);cursor:pointer;font-weight:700">📋 SQL 보기 (Supabase에 한번 실행)</summary>
@@ -360,7 +493,8 @@ GRANT USAGE, SELECT ON SEQUENCE safety_education_log_id_seq TO anon, authenticat
     </div>
     <div class="modal-actions">
       <button type="button" class="modal-btn modal-btn-cancel" onclick="closeNameModal(false)">취소</button>
-      <button type="button" class="modal-btn modal-btn-ok" id="nameModalConfirmBtn" onclick="closeNameModal(true)">확인</button>
+      <button type="button" class="modal-btn modal-btn-ok" id="nameModalConfirmBtn" onclick="closeNameModal(true)">+ 추가</button>
+      <button type="button" class="modal-btn" id="nameModalDoneBtn" onclick="finishNameModal()" style="background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;font-weight:800">✓ 완료</button>
     </div>
   </div>
 </div>
@@ -938,6 +1072,25 @@ function closeNameModal(confirm){
   document.getElementById('nameModal').classList.remove('show');
 }
 
+// ✓ 완료 버튼: 입력값 있으면 추가하고 모달 닫기
+function finishNameModal(){
+  const inp=document.getElementById('nameModalInput');
+  const name=inp.value.trim();
+  if(name){
+    if(!_attendeesList.includes(name)){
+      _attendeesList.push(name);
+      pushRecentName(name);
+      renderAttendees();
+    }
+    inp.value='';
+  }
+  if(_attendeesList.length===0){
+    if(!confirm('피교육자가 한 명도 추가되지 않았습니다.\n그래도 닫으시겠습니까?'))return;
+  }
+  tempSave();
+  document.getElementById('nameModal').classList.remove('show');
+}
+
 function renderAttendees(){
   const disp=document.getElementById('attendeesDisplay');
   const txt=document.getElementById('attendeesText');
@@ -1270,10 +1423,22 @@ async function sbDelete(table,id){
   const u=getSbUrl(),k=getSbKey();
   const res=await fetch(u+'/rest/v1/'+table+'?id=eq.'+id,{
     method:'DELETE',
-    headers:{'apikey':k,'Authorization':'Bearer '+k}
+    headers:{
+      'apikey':k,
+      'Authorization':'Bearer '+k,
+      'Prefer':'return=representation' // 삭제된 row 반환받아 검증
+    }
   });
-  if(!res.ok)throw new Error('삭제 실패');
-  return true;
+  if(!res.ok){
+    const t=await res.text().catch(()=>'');
+    throw new Error('삭제 실패: '+res.status+' '+t);
+  }
+  // 응답 본문에 삭제된 row가 들어있어야 정상
+  const deleted=await res.json().catch(()=>[]);
+  if(!deleted||!deleted.length){
+    throw new Error('삭제 대상이 없거나 권한 부족 (id='+id+')');
+  }
+  return deleted;
 }
 
 async function sbSelect(table,filter,order,limit){
@@ -1352,20 +1517,49 @@ document.getElementById('eduForm').addEventListener('submit',async function(e){
   };
 
   try{
+    let serverResp=null;
+    let actionLabel='';
     if(_editingId){
       delete row.created_at;
-      await sbUpdate('safety_education_log',_editingId,row);
-      alert('✅ 안전교육 이력이 수정되었습니다');
+      serverResp=await sbUpdate('safety_education_log',_editingId,row);
+      actionLabel='수정';
       _editingId=null;
     }else{
-      await sbInsert('safety_education_log',row);
-      alert('✅ 안전교육 이력이 등록되었습니다');
+      serverResp=await sbInsert('safety_education_log',row);
+      actionLabel='등록';
     }
+    // 서버 응답에서 ID와 created_at 추출
+    let savedId='?', savedTime='';
+    if(serverResp&&serverResp.length){
+      savedId=serverResp[0].id||'?';
+      const ts=serverResp[0].created_at||serverResp[0].edu_date;
+      if(ts){
+        const d=new Date(ts);
+        savedTime=d.toLocaleString('ko-KR',{hour12:false});
+      }
+    }
+    // 서버 저장 알림 (강화된 메시지)
+    const sigCount=1+Object.keys(attSigs).length;
+    alert(
+      '✅ 서버 저장 완료\n\n'+
+      '═══════════════════════\n'+
+      '📋 안전교육 '+actionLabel+' 성공\n'+
+      '═══════════════════════\n\n'+
+      '🆔 이력 번호: #'+savedId+'\n'+
+      '🗓 일자: '+row.edu_date+' '+(row.edu_time||'').substring(0,5)+'\n'+
+      '🏷 작업: '+row.work_name+'\n'+
+      '🏢 업체: '+row.vendor+'\n'+
+      '👥 피교육자: '+_attendeesList.length+'명\n'+
+      '🖋 서명: '+sigCount+'개 (작성자 1 + 피교육자 '+(sigCount-1)+')\n'+
+      '📚 교육항목: '+checkedCount+'/'+TOTAL_EDU+' ('+row.result+')\n'+
+      (savedTime?'⏱ 저장시각: '+savedTime+'\n':'')+
+      '\n💾 Supabase 클라우드에 안전하게 저장되었습니다.'
+    );
     // 마지막 작성자 저장 (다음번 추천용)
     try{localStorage.setItem('SAFETY_LAST_WRITER',writerName)}catch(e){}
     resetForm();
   }catch(err){
-    alert('저장 실패: '+err.message);
+    alert('❌ 서버 저장 실패\n\n'+err.message+'\n\n• 네트워크 연결 확인\n• Supabase 설정·권한 확인\n• [이력·설정] 탭에서 재시도');
   }
 });
 
@@ -1537,13 +1731,39 @@ function viewDetail(id){
 function closeDetailModal(){document.getElementById('detailModal').classList.remove('show')}
 
 async function deleteRow(id){
-  if(!confirm('이 안전교육 이력을 삭제하시겠습니까?\n(되돌릴 수 없습니다)'))return;
+  // 삭제 대상 정보 조회 (캐시에서)
+  const r=(window._histCache||[]).find(x=>x.id===id);
+  let info='';
+  let sigCount=0;
+  if(r){
+    // 피교육자 서명 갯수 계산
+    let attSigs={};
+    try{if(r.attendee_signatures)attSigs=JSON.parse(r.attendee_signatures)}catch(e){}
+    sigCount=(r.signature?1:0)+Object.keys(attSigs).length;
+    info='\n\n🗓 일자: '+r.edu_date+' '+(r.edu_time||'').substring(0,5)+
+         '\n🏷 작업: '+(r.work_name||'(이름 없음)')+
+         '\n🏢 업체: '+(r.vendor||'(없음)')+
+         '\n👥 피교육자: '+((r.attendees||'').split(',').filter(x=>x.trim()).length)+'명'+
+         '\n🖋 서명: '+sigCount+'개';
+  }
+  if(!confirm('⚠️ 이 안전교육 이력을 삭제하시겠습니까?'+info+'\n\n● 작성자 서명 / 피교육자 전원 서명도 함께 영구 삭제됩니다.\n● 되돌릴 수 없습니다.'))return;
+
   try{
-    await sbDelete('safety_education_log',id);
-    alert('✅ 삭제됨');
-    histPreview();
+    const deleted=await sbDelete('safety_education_log',id);
+    // 캐시에서도 제거
+    if(window._histCache){
+      window._histCache=window._histCache.filter(x=>x.id!==id);
+    }
+    // 상세보기 모달이 이 row를 보고 있었다면 닫기
+    if(_detailRow&&_detailRow.id===id){
+      _detailRow=null;
+      const dm=document.getElementById('detailModal');
+      if(dm)dm.classList.remove('show');
+    }
+    alert('✅ 삭제 완료\n\n• 이력 1건\n• 서명 '+sigCount+'개\n\n모두 영구 삭제되었습니다.');
+    histPreview(); // 목록 갱신
   }catch(e){
-    alert('❌ 삭제 실패: '+e.message);
+    alert('❌ 삭제 실패\n\n'+e.message+'\n\n• Supabase 권한(RLS·GRANT) 확인\n• 네트워크 상태 확인');
   }
 }
 
@@ -1735,8 +1955,53 @@ function exportDetailPdf(){
 // ============== 설정 저장 ==============
 function loadSettingsUI(){
   const s=getSettings();
+  // 읽기전용 + 비밀번호 형식으로 로드 (마스킹 상태)
   document.getElementById('stgSbUrl').value=s.sb_url||'';
   document.getElementById('stgSbKey').value=s.sb_key||'';
+  // 초기 상태: 마스킹 + readonly
+  document.getElementById('stgSbUrl').type='password';
+  document.getElementById('stgSbKey').type='password';
+  document.getElementById('stgSbUrl').readOnly=true;
+  document.getElementById('stgSbKey').readOnly=true;
+  document.getElementById('sbRevealBtn').textContent='👁 보기';
+  document.getElementById('sbEditBtn').style.display='';
+  document.getElementById('sbSaveBtn').style.display='none';
+}
+
+// 👁 보기/숨기기 토글 (읽기전용 유지)
+function toggleSbReveal(){
+  const url=document.getElementById('stgSbUrl');
+  const key=document.getElementById('stgSbKey');
+  const btn=document.getElementById('sbRevealBtn');
+  if(url.type==='password'){
+    url.type='text';
+    key.type='text';
+    btn.textContent='🙈 숨기기';
+    btn.style.background='rgba(245,158,11,.2)';
+    btn.style.color='#fde68a';
+  }else{
+    url.type='password';
+    key.type='password';
+    btn.textContent='👁 보기';
+    btn.style.background='var(--surface2)';
+    btn.style.color='var(--text2)';
+  }
+}
+
+// ✏️ 수정 모드 진입
+function enableSbEdit(){
+  if(!confirm('⚠️ Supabase 접속 정보를 수정하시겠습니까?\n\n잘못된 정보를 입력하면 데이터 저장/조회가 안될 수 있습니다.'))return;
+  const url=document.getElementById('stgSbUrl');
+  const key=document.getElementById('stgSbKey');
+  url.type='text';
+  key.type='text';
+  url.readOnly=false;
+  key.readOnly=false;
+  url.focus();
+  document.getElementById('sbEditBtn').style.display='none';
+  document.getElementById('sbSaveBtn').style.display='';
+  document.getElementById('stgSbStatus').textContent='✏️ 수정 모드 - 변경 후 저장하세요';
+  document.getElementById('stgSbStatus').style.color='#fbbf24';
 }
 
 function saveSb(){
@@ -1744,7 +2009,17 @@ function saveSb(){
   const k=document.getElementById('stgSbKey').value.trim();
   if(!u||!k){alert('URL과 Key를 모두 입력하세요');return}
   localStorage.setItem(LS_KEY,JSON.stringify({sb_url:u,sb_key:k}));
-  document.getElementById('stgSbStatus').textContent='✅ 저장됨';
+  // 저장 후 다시 잠금 + 마스킹
+  document.getElementById('stgSbUrl').type='password';
+  document.getElementById('stgSbKey').type='password';
+  document.getElementById('stgSbUrl').readOnly=true;
+  document.getElementById('stgSbKey').readOnly=true;
+  document.getElementById('sbEditBtn').style.display='';
+  document.getElementById('sbSaveBtn').style.display='none';
+  document.getElementById('sbRevealBtn').textContent='👁 보기';
+  document.getElementById('sbRevealBtn').style.background='var(--surface2)';
+  document.getElementById('sbRevealBtn').style.color='var(--text2)';
+  document.getElementById('stgSbStatus').textContent='✅ 저장됨 · 🔒 보호됨';
   document.getElementById('stgSbStatus').style.color='#22c55e';
 }
 
