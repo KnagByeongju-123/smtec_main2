@@ -118,6 +118,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:#212121;pa
     <button class="btn btn-sm" onclick="loadMesData()" style="background:linear-gradient(135deg,#e65100,#ff9800);color:#fff;flex:0">🏭 MES 조회</button>
   </div>
   <div id="mesSummaryWrap"></div>
+  <div id="mesWeeklyWrap" style="margin-top:10px"></div>
   <div style="overflow-x:auto;margin-top:8px" id="mesTableWrap"></div>
 </div>
 
@@ -141,6 +142,8 @@ function getMonday(ds){const d=new Date(ds+'T00:00:00');const day=d.getDay();con
 function fmtMD(d){return(d.getMonth()+1)+'/'+d.getDate()}
 function isoWeekNum(d){const t=new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()));const dn=t.getUTCDay()||7;t.setUTCDate(t.getUTCDate()+4-dn);const ys=new Date(Date.UTC(t.getUTCFullYear(),0,1));return Math.ceil((((t-ys)/86400000)+1)/7)}
 function weekKey(ds){return'W'+isoWeekNum(getMonday(ds))}
+function fmtYMD(d){const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),dd=String(d.getDate()).padStart(2,'0');return y+'-'+m+'-'+dd}
+function weekRange(ds){const mon=getMonday(ds);const sun=new Date(mon);sun.setDate(sun.getDate()+6);return{from:fmtYMD(mon),to:fmtYMD(sun)}}
 function ppmColor(v,target){return v>target?'#c62828':v>target/2?'#e65100':'#2e7d32'}
 
 /* ===== 데이터 ===== */
@@ -214,6 +217,10 @@ async function loadReport(){
     let sortedW=wKeys.map(w=>w.k);
     const custs=[...custSet].sort((a,b)=>a.localeCompare(b,'ko'));
 
+    // 주차→월요일 일자 매핑 (실제 데이터 + 미래 빈 주차)
+    const weekToMonday={};
+    wKeys.forEach(wk=>{weekToMonday[wk.k]=fmtYMD(getMonday(wk.d))});
+
     // 최소 20개 주차가 표시되도록 빈 열 추가
     const MIN_WEEKS=20;
     {
@@ -224,7 +231,7 @@ async function loadReport(){
         w++;
         const d=new Date(lastMon);d.setDate(d.getDate()+w*7);
         const k='W'+isoWeekNum(d);
-        if(!existing.has(k)){sortedW.push(k);existing.add(k)}
+        if(!existing.has(k)){sortedW.push(k);existing.add(k);weekToMonday[k]=fmtYMD(d)}
       }
     }
 
@@ -264,7 +271,7 @@ async function loadReport(){
       }
     });
 
-    reportData={wMap,sortedW,custs,mSum,tTop,rows,thisWk,fromS,toS,target,daily};
+    reportData={wMap,sortedW,custs,mSum,tTop,rows,thisWk,fromS,toS,target,daily,weekToMonday};
 
     // 이번주 요약
     let twI=0,twD=0;
@@ -663,12 +670,95 @@ async function loadMesData(){
     h+='</tr></tbody></table>';
 
     tw.innerHTML=h;
+
+    // 주간 MES PPM 추이 (상위 보고서가 조회된 경우만)
+    await renderMesWeekly(apiBase);
+
     showToast('🏭 MES '+sorted.length+'품목 조회');
   }catch(e){
     document.getElementById('mesSummaryWrap').innerHTML='<div class="empty" style="color:var(--red)">❌ '+e.message+'<br><span style="font-size:10px;color:#888">qc_monitor.exe 실행 중인지 확인하세요</span></div>';
     document.getElementById('mesTableWrap').innerHTML='';
   }
   hideLoading();
+}
+
+/* ===== 주간 MES PPM 추이 (전체 PPM만 단순 표시) ===== */
+async function renderMesWeekly(apiBase){
+  const wrap=document.getElementById('mesWeeklyWrap');
+  if(!wrap)return;
+  wrap.innerHTML='';
+  if(!reportData||!reportData.sortedW||!reportData.weekToMonday){
+    wrap.innerHTML='<div style="font-size:11px;color:#888;padding:6px;text-align:center">ℹ️ 주간 MES PPM 추이를 보려면 상단에서 [조회]를 먼저 실행하세요</div>';
+    return;
+  }
+  const{sortedW,weekToMonday}=reportData;
+
+  // 미래 주차는 호출 스킵 (데이터 없음)
+  const todayS=new Date().toISOString().split('T')[0];
+  const weeksToFetch=sortedW.filter(wk=>{
+    const mon=weekToMonday[wk];return mon&&mon<=todayS;
+  });
+
+  wrap.innerHTML='<div style="font-size:11px;color:#888;padding:6px">📊 주간 MES PPM 조회 중... ('+weeksToFetch.length+'주)</div>';
+
+  // 병렬 호출 (4개씩 청크)
+  const results={};
+  const CHUNK=4;
+  for(let i=0;i<weeksToFetch.length;i+=CHUNK){
+    const chunk=weeksToFetch.slice(i,i+CHUNK);
+    const ps=chunk.map(async wk=>{
+      const mon=weekToMonday[wk];
+      const sun=new Date(mon+'T00:00:00');sun.setDate(sun.getDate()+6);
+      const sunS=fmtYMD(sun);
+      try{
+        const r=await fetch(apiBase+'/api/mes_defect?start='+mon+'&end='+sunS);
+        if(!r.ok){results[wk]=null;return}
+        const d=await r.json();
+        if(d.error){results[wk]=null;return}
+        results[wk]={shot:d.total_shot||0,ng:d.total_ng||0};
+      }catch(e){results[wk]=null}
+    });
+    await Promise.all(ps);
+  }
+
+  // 표 렌더링: 생산수 / 불량수 / PPM 3행
+  const TARGET_PPM=3800;
+  let h='<div style="font-size:12px;font-weight:700;color:var(--primary);padding:4px 0 6px 2px">📊 주간 MES PPM 추이</div>';
+  h+='<div style="overflow-x:auto"><table class="stat-table" id="mesWeeklyTable"><thead><tr>';
+  h+='<th style="text-align:left;min-width:90px">구분</th>';
+  sortedW.forEach(wk=>{h+='<th style="min-width:55px">'+wk+'</th>'});
+  h+='</tr></thead><tbody>';
+
+  h+='<tr><td style="text-align:left;font-weight:700">생산수</td>';
+  sortedW.forEach(wk=>{
+    const v=results[wk];
+    if(!v||v.shot===0){h+='<td></td>'}
+    else{h+='<td style="font-weight:600;color:var(--primary)">'+v.shot.toLocaleString()+'</td>'}
+  });
+  h+='</tr>';
+
+  h+='<tr><td style="text-align:left;font-weight:700">불량수</td>';
+  sortedW.forEach(wk=>{
+    const v=results[wk];
+    if(!v||v.shot===0){h+='<td></td>'}
+    else{h+='<td style="font-weight:600;color:'+(v.ng>0?'var(--red)':'#888')+'">'+v.ng.toLocaleString()+'</td>'}
+  });
+  h+='</tr>';
+
+  h+='<tr class="st-total"><td style="text-align:left;font-weight:800">PPM</td>';
+  sortedW.forEach(wk=>{
+    const v=results[wk];
+    if(!v||v.shot===0){h+='<td></td>'}
+    else{
+      const p=Math.round(v.ng/v.shot*1e6);
+      const col=p>TARGET_PPM?'var(--red)':p>TARGET_PPM/2?'var(--warn)':'var(--ok)';
+      h+='<td style="font-weight:800;color:'+col+'">'+p.toLocaleString()+'</td>';
+    }
+  });
+  h+='</tr></tbody></table></div>';
+  h+='<div style="font-size:10px;color:#888;padding:4px 2px">목표: '+TARGET_PPM.toLocaleString()+' PPM</div>';
+
+  wrap.innerHTML=h;
 }
 
 /* ===== 초기화 ===== */
