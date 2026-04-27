@@ -693,19 +693,25 @@ async function renderMesWeekly(apiBase){
   }
   const{sortedW,weekToMonday}=reportData;
 
-  // 미래 주차는 호출 스킵 (데이터 없음)
-  const todayS=new Date().toISOString().split('T')[0];
-  const weeksToFetch=sortedW.filter(wk=>{
-    const mon=weekToMonday[wk];return mon&&mon<=todayS;
+  // 이번주(현재 진행중인 주) 제외 → 지난주까지만
+  // 기준: 이번주 월요일보다 이전(<)인 주차만 포함
+  const todayMon=fmtYMD(getMonday(new Date().toISOString().split('T')[0]));
+  const filteredW=sortedW.filter(wk=>{
+    const mon=weekToMonday[wk];return mon&&mon<todayMon;
   });
 
-  wrap.innerHTML='<div style="font-size:11px;color:#888;padding:6px">📊 주간 MES PPM 조회 중... ('+weeksToFetch.length+'주)</div>';
+  if(!filteredW.length){
+    wrap.innerHTML='<div style="font-size:11px;color:#888;padding:6px;text-align:center">표시할 지난주 데이터가 없습니다</div>';
+    return;
+  }
+
+  wrap.innerHTML='<div style="font-size:11px;color:#888;padding:6px">📊 주간 MES PPM 조회 중... ('+filteredW.length+'주)</div>';
 
   // 병렬 호출 (4개씩 청크)
   const results={};
   const CHUNK=4;
-  for(let i=0;i<weeksToFetch.length;i+=CHUNK){
-    const chunk=weeksToFetch.slice(i,i+CHUNK);
+  for(let i=0;i<filteredW.length;i+=CHUNK){
+    const chunk=filteredW.slice(i,i+CHUNK);
     const ps=chunk.map(async wk=>{
       const mon=weekToMonday[wk];
       const sun=new Date(mon+'T00:00:00');sun.setDate(sun.getDate()+6);
@@ -721,16 +727,22 @@ async function renderMesWeekly(apiBase){
     await Promise.all(ps);
   }
 
-  // 표 렌더링: 생산수 / 불량수 / PPM 3행
   const TARGET_PPM=3800;
-  let h='<div style="font-size:12px;font-weight:700;color:var(--primary);padding:4px 0 6px 2px">📊 주간 MES PPM 추이</div>';
+
+  // ===== 표 + 차트 컨테이너 =====
+  let h='<div style="font-size:12px;font-weight:700;color:var(--primary);padding:4px 0 6px 2px">📊 주간 MES PPM 추이 <span style="font-size:10px;color:var(--gray);font-weight:400">('+filteredW[0]+' ~ '+filteredW[filteredW.length-1]+', 지난주까지)</span></div>';
+
+  // 차트 영역
+  h+='<div id="mesWeeklyChartWrap" style="overflow-x:auto;background:#fff;border:1.5px solid #555;border-radius:8px;padding:6px;margin-bottom:8px"><canvas id="mesWeeklyChart"></canvas></div>';
+
+  // 표 영역
   h+='<div style="overflow-x:auto"><table class="stat-table" id="mesWeeklyTable"><thead><tr>';
   h+='<th style="text-align:left;min-width:90px">구분</th>';
-  sortedW.forEach(wk=>{h+='<th style="min-width:55px">'+wk+'</th>'});
+  filteredW.forEach(wk=>{h+='<th style="min-width:55px">'+wk+'</th>'});
   h+='</tr></thead><tbody>';
 
   h+='<tr><td style="text-align:left;font-weight:700">생산수</td>';
-  sortedW.forEach(wk=>{
+  filteredW.forEach(wk=>{
     const v=results[wk];
     if(!v||v.shot===0){h+='<td></td>'}
     else{h+='<td style="font-weight:600;color:var(--primary)">'+v.shot.toLocaleString()+'</td>'}
@@ -738,7 +750,7 @@ async function renderMesWeekly(apiBase){
   h+='</tr>';
 
   h+='<tr><td style="text-align:left;font-weight:700">불량수</td>';
-  sortedW.forEach(wk=>{
+  filteredW.forEach(wk=>{
     const v=results[wk];
     if(!v||v.shot===0){h+='<td></td>'}
     else{h+='<td style="font-weight:600;color:'+(v.ng>0?'var(--red)':'#888')+'">'+v.ng.toLocaleString()+'</td>'}
@@ -746,7 +758,7 @@ async function renderMesWeekly(apiBase){
   h+='</tr>';
 
   h+='<tr class="st-total"><td style="text-align:left;font-weight:800">PPM</td>';
-  sortedW.forEach(wk=>{
+  filteredW.forEach(wk=>{
     const v=results[wk];
     if(!v||v.shot===0){h+='<td></td>'}
     else{
@@ -759,6 +771,85 @@ async function renderMesWeekly(apiBase){
   h+='<div style="font-size:10px;color:#888;padding:4px 2px">목표: '+TARGET_PPM.toLocaleString()+' PPM</div>';
 
   wrap.innerHTML=h;
+
+  // ===== 차트 그리기 =====
+  requestAnimationFrame(()=>{
+    const tbl=document.getElementById('mesWeeklyTable');
+    const W=tbl?tbl.offsetWidth:Math.max(700,filteredW.length*55+100);
+    const H=260;
+    const canvas=document.getElementById('mesWeeklyChart');
+    if(!canvas)return;
+    const ctx=canvas.getContext('2d');
+    const cw=document.getElementById('mesWeeklyChartWrap');
+    if(cw)cw.style.width=W+'px';
+    const dpr=window.devicePixelRatio||1;
+    canvas.width=W*dpr;canvas.height=H*dpr;canvas.style.width=W+'px';canvas.style.height=H+'px';ctx.scale(dpr,dpr);
+
+    // PPM 데이터 배열
+    const ppmData=filteredW.map(wk=>{
+      const v=results[wk];
+      return(v&&v.shot>0)?Math.round(v.ng/v.shot*1e6):null;
+    });
+    const validPpm=ppmData.filter(p=>p!==null);
+    let mxP=Math.max(...validPpm,TARGET_PPM*1.2);
+    const yML=Math.ceil(mxP/1000)*1000||5000;
+
+    // 레이아웃
+    const pad={t:25,r:25,b:48,l:60},pw=W-pad.l-pad.r,ph=H-pad.t-pad.b;
+    ctx.clearRect(0,0,W,H);ctx.fillStyle='#fff';ctx.fillRect(0,0,W,H);
+
+    // 목표선
+    const tgtY=pad.t+ph-(TARGET_PPM/yML)*ph;
+    ctx.strokeStyle='#ef5350';ctx.lineWidth=1;ctx.setLineDash([6,4]);
+    ctx.beginPath();ctx.moveTo(pad.l,tgtY);ctx.lineTo(pad.l+pw,tgtY);ctx.stroke();ctx.setLineDash([]);
+    ctx.fillStyle='#ef5350';ctx.font='9px "Noto Sans KR"';ctx.textAlign='left';
+    ctx.fillText('목표 '+TARGET_PPM.toLocaleString(),pad.l+2,tgtY-4);
+
+    // Y축 그리드
+    ctx.strokeStyle='#e0e0e0';ctx.lineWidth=.5;ctx.font='10px "Noto Sans KR"';ctx.fillStyle='#888';ctx.textAlign='right';
+    for(let i=0;i<=5;i++){
+      const y=pad.t+ph-(i/5)*ph,v=Math.round(i/5*yML);
+      ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(pad.l+pw,y);ctx.stroke();
+      ctx.fillText(v.toLocaleString(),pad.l-6,y+3);
+    }
+    ctx.save();ctx.translate(14,pad.t+ph/2);ctx.rotate(-Math.PI/2);
+    ctx.fillStyle='#e65100';ctx.font='bold 11px "Noto Sans KR"';ctx.textAlign='center';
+    ctx.fillText('MES PPM',0,0);ctx.restore();
+
+    // X축 라벨
+    ctx.textAlign='center';ctx.fillStyle='#555';ctx.font='10px "Noto Sans KR"';
+    const xS=filteredW.length>1?pw/(filteredW.length-1):pw;
+    filteredW.forEach((wk,i)=>{
+      const x=pad.l+(filteredW.length>1?i*xS:pw/2);
+      ctx.fillText(wk,x,pad.t+ph+16);
+    });
+
+    // PPM 라인
+    const lineColor='#e65100';
+    ctx.strokeStyle=lineColor;ctx.lineWidth=2.5;ctx.beginPath();
+    let started=false;
+    ppmData.forEach((p,i)=>{
+      if(p===null)return;
+      const x=pad.l+(filteredW.length>1?i*xS:pw/2);
+      const y=pad.t+ph-(p/yML)*ph;
+      if(!started){ctx.moveTo(x,y);started=true}else{ctx.lineTo(x,y)}
+    });
+    ctx.stroke();
+
+    // 데이터 포인트 + 값 라벨
+    ppmData.forEach((p,i)=>{
+      if(p===null)return;
+      const x=pad.l+(filteredW.length>1?i*xS:pw/2);
+      const y=pad.t+ph-(p/yML)*ph;
+      const overTgt=p>TARGET_PPM;
+      ctx.fillStyle=overTgt?'#c62828':lineColor;
+      ctx.beginPath();ctx.arc(x,y,4,0,Math.PI*2);ctx.fill();
+      // 값 표시
+      ctx.fillStyle=overTgt?'#c62828':'#333';
+      ctx.font='bold 10px "Noto Sans KR"';ctx.textAlign='center';
+      ctx.fillText(p.toLocaleString(),x,y-8);
+    });
+  });
 }
 
 /* ===== 초기화 ===== */
