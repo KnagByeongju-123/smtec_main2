@@ -598,6 +598,8 @@ function exportReport(){
 }
 
 /* ===== MES 불량 조회 ===== */
+let mesState={apiBase:'',baseFromS:'',baseToS:'',codeNames:{}};
+
 async function loadMesData(){
   const fromS=document.getElementById('rptDateFrom').value;
   const toS=document.getElementById('rptDateTo').value;
@@ -605,81 +607,157 @@ async function loadMesData(){
   if(!fromS||!toS){showToast('날짜 범위를 선택하세요');return}
   if(!apiBase){showToast('MES API URL을 입력하세요');return}
 
-  showLoading('MES 불량 조회 중...');
+  mesState.apiBase=apiBase;
+  mesState.baseFromS=fromS;
+  mesState.baseToS=toS;
+
   document.getElementById('mesCard').style.display='block';
-  document.getElementById('mesRange').textContent=fromS+' ~ '+toS;
 
+  // 1) 요약(상단 카드) + 주간 추이는 기본 범위로
+  showLoading('MES 불량 조회 중...');
   try{
-    const url=apiBase+'/api/mes_defect?start='+fromS+'&end='+toS;
-    const res=await fetch(url);
-    if(!res.ok)throw new Error('MES API 오류: '+res.status);
-    const data=await res.json();
-    if(data.error)throw new Error(data.error);
-
-    const rows=data.data||[];
-    const ngCodes=data.ng_codes||[];
-    const codeNames=data.code_names||{};
-    const totalShot=data.total_shot||0;
-    const totalNg=data.total_ng||0;
-    const ngTotals=data.ng_totals||{};
-    const mesPpm=totalShot>0?Math.round(totalNg/totalShot*1e6):0;
-
-    // 요약 카드
-    const sw=document.getElementById('mesSummaryWrap');
-    sw.innerHTML='<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:0;border:2px solid #333;border-radius:10px;overflow:hidden">'+
-      '<div style="padding:12px 6px;text-align:center;border-right:1.5px solid #555"><div style="font-size:18px;font-weight:800;color:var(--primary)">'+totalShot.toLocaleString()+'</div><div style="font-size:9px;color:#888;margin-top:2px">생산수</div></div>'+
-      '<div style="padding:12px 6px;text-align:center;border-right:1.5px solid #555"><div style="font-size:18px;font-weight:800;color:var(--red)">'+totalNg.toLocaleString()+'</div><div style="font-size:9px;color:#888;margin-top:2px">불량수</div></div>'+
-      '<div style="padding:12px 6px;text-align:center;border-right:1.5px solid #555;background:'+(mesPpm>3800?'var(--red-light)':'var(--ok-light)')+'"><div style="font-size:18px;font-weight:800;color:'+(mesPpm>3800?'var(--red)':'var(--ok)')+'">'+mesPpm.toLocaleString()+'</div><div style="font-size:9px;color:#888;margin-top:2px">PPM</div></div>'+
-      '<div style="padding:12px 6px;text-align:center"><div style="font-size:18px;font-weight:800;color:var(--warn)">목표 3,800</div><div style="font-size:9px;color:#888;margin-top:2px">PPM</div></div>'+
-      '</div>';
-
-    // MES 형태 테이블: 품목코드 | 실적수량 | 불량유형1 | 불량유형2 | ... | 총계
-    const tw=document.getElementById('mesTableWrap');
-    if(!rows.length){tw.innerHTML='<div class="empty">MES 불량 데이터 없음</div>';hideLoading();return}
-
-    // 데이터가 있는 NG코드만 필터
-    const activeNg=ngCodes.filter(c=>ngTotals[c]>0);
-
-    let h='<table class="stat-table"><thead><tr>';
-    h+='<th style="text-align:left;min-width:70px;background:#ffffcc">품목코드</th>';
-    h+='<th style="min-width:60px;background:#ffffcc">실적수량</th>';
-    activeNg.forEach(c=>{h+='<th style="min-width:50px;background:#ffffcc">'+(codeNames[c]||c)+'</th>'});
-    h+='<th style="min-width:50px;background:#ffffcc;font-weight:800">총계</th>';
-    h+='</tr></thead><tbody>';
-
-    // 불량 총계 기준 내림차순
-    const sorted=rows.filter(r=>r.ng_total>0).sort((a,b)=>b.ng_total-a.ng_total);
-
-    sorted.forEach(r=>{
-      const ppm=r.shot>0?Math.round(r.ng_total/r.shot*1e6):0;
-      h+='<tr>';
-      h+='<td style="text-align:left;font-size:12px;font-weight:600">'+r.item_code+'</td>';
-      h+='<td>'+r.shot.toLocaleString()+'</td>';
-      activeNg.forEach(c=>{
-        const v=r.ng_types[c]||0;
-        h+='<td style="'+(v>0?'color:var(--red);font-weight:700':'')+'">'+(v||'')+'</td>';
-      });
-      h+='<td style="font-weight:800;color:var(--red)">'+r.ng_total.toLocaleString()+'</td>';
-      h+='</tr>';
-    });
-
-    // 합계 행
-    h+='<tr class="st-total"><td style="text-align:left;font-weight:800">Grand Total</td>';
-    h+='<td style="font-weight:800">'+totalShot.toLocaleString()+'</td>';
-    activeNg.forEach(c=>{h+='<td style="font-weight:800;color:var(--red)">'+(ngTotals[c]||0).toLocaleString()+'</td>'});
-    h+='<td style="font-weight:900;color:var(--red);font-size:13px">'+totalNg.toLocaleString()+'</td>';
-    h+='</tr></tbody></table>';
-
-    tw.innerHTML=h;
-
-    // 주간 MES PPM 추이 (상위 보고서가 조회된 경우만)
+    await fetchAndRenderMesSummary(fromS,toS);
+    // 2) 세부 표는 기본 범위로 + 주차 선택 UI 부착
+    await renderMesDetail(fromS,toS,null);
+    // 3) 주간 추이 차트
     await renderMesWeekly(apiBase);
-
-    showToast('🏭 MES '+sorted.length+'품목 조회');
+    showToast('🏭 MES 조회 완료');
   }catch(e){
     document.getElementById('mesSummaryWrap').innerHTML='<div class="empty" style="color:var(--red)">❌ '+e.message+'<br><span style="font-size:10px;color:#888">qc_monitor.exe 실행 중인지 확인하세요</span></div>';
     document.getElementById('mesTableWrap').innerHTML='';
   }
+  hideLoading();
+}
+
+/* 요약 카드만 그리기 (상단 4칸) */
+async function fetchAndRenderMesSummary(fromS,toS){
+  document.getElementById('mesRange').textContent=fromS+' ~ '+toS;
+  const url=mesState.apiBase+'/api/mes_defect?start='+fromS+'&end='+toS;
+  const res=await fetch(url);
+  if(!res.ok)throw new Error('MES API 오류: '+res.status);
+  const data=await res.json();
+  if(data.error)throw new Error(data.error);
+
+  const totalShot=data.total_shot||0;
+  const totalNg=data.total_ng||0;
+  const mesPpm=totalShot>0?Math.round(totalNg/totalShot*1e6):0;
+
+  const sw=document.getElementById('mesSummaryWrap');
+  sw.innerHTML='<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:0;border:2px solid #333;border-radius:10px;overflow:hidden">'+
+    '<div style="padding:12px 6px;text-align:center;border-right:1.5px solid #555"><div style="font-size:18px;font-weight:800;color:var(--primary)">'+totalShot.toLocaleString()+'</div><div style="font-size:9px;color:#888;margin-top:2px">생산수</div></div>'+
+    '<div style="padding:12px 6px;text-align:center;border-right:1.5px solid #555"><div style="font-size:18px;font-weight:800;color:var(--red)">'+totalNg.toLocaleString()+'</div><div style="font-size:9px;color:#888;margin-top:2px">불량수</div></div>'+
+    '<div style="padding:12px 6px;text-align:center;border-right:1.5px solid #555;background:'+(mesPpm>3800?'var(--red-light)':'var(--ok-light)')+'"><div style="font-size:18px;font-weight:800;color:'+(mesPpm>3800?'var(--red)':'var(--ok)')+'">'+mesPpm.toLocaleString()+'</div><div style="font-size:9px;color:#888;margin-top:2px">PPM</div></div>'+
+    '<div style="padding:12px 6px;text-align:center"><div style="font-size:18px;font-weight:800;color:var(--warn)">목표 3,800</div><div style="font-size:9px;color:#888;margin-top:2px">PPM</div></div>'+
+    '</div>';
+}
+
+/* 세부 표만 그리기 + 주차 선택 UI */
+async function renderMesDetail(fromS,toS,selectedWk){
+  const tw=document.getElementById('mesTableWrap');
+  tw.innerHTML='<div class="empty" style="padding:20px">📊 세부 데이터 조회 중...</div>';
+
+  const url=mesState.apiBase+'/api/mes_defect?start='+fromS+'&end='+toS;
+  let data;
+  try{
+    const res=await fetch(url);
+    if(!res.ok)throw new Error('MES API 오류: '+res.status);
+    data=await res.json();
+    if(data.error)throw new Error(data.error);
+  }catch(e){
+    tw.innerHTML='<div class="empty" style="color:var(--red)">❌ '+e.message+'</div>';
+    return;
+  }
+
+  const rows=data.data||[];
+  const ngCodes=data.ng_codes||[];
+  const codeNames=data.code_names||{};
+  const totalShot=data.total_shot||0;
+  const totalNg=data.total_ng||0;
+  const ngTotals=data.ng_totals||{};
+  mesState.codeNames=codeNames;
+
+  // ===== 주차 선택 바 =====
+  const today=new Date();
+  const year=today.getFullYear();
+  const todayMon=fmtYMD(getMonday(today.toISOString().split('T')[0]));
+  let bar='<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:6px 4px;margin-bottom:6px;background:#f8f9fa;border:1.5px solid #555;border-radius:8px">';
+  bar+='<span style="font-size:12px;font-weight:700;color:var(--primary);padding:0 4px">📅 주차 선택:</span>';
+  bar+='<select id="mesWeekSel" onchange="onMesWeekChange()" style="padding:6px 10px;border:1.5px solid #555;border-radius:6px;font-size:12px;font-weight:600;min-width:120px;background:#fff">';
+  bar+='<option value="">전체 ('+fromS+' ~ '+toS+')</option>';
+  for(let i=1;i<=20;i++){
+    const wk='W'+i;
+    const mon=fmtYMD(isoWeekMonday(year,i));
+    if(mon>=todayMon)continue; // 이번주/미래 제외
+    const sun=new Date(mon+'T00:00:00');sun.setDate(sun.getDate()+6);
+    const sunS=fmtYMD(sun);
+    const sel=(selectedWk===wk)?' selected':'';
+    bar+='<option value="'+wk+'|'+mon+'|'+sunS+'"'+sel+'>'+wk+' ('+mon.slice(5)+'~'+sunS.slice(5)+')</option>';
+  }
+  bar+='</select>';
+  if(selectedWk){
+    bar+='<button onclick="resetMesWeek()" style="padding:6px 12px;border:1.5px solid #555;border-radius:6px;background:#fff;font-size:12px;font-weight:600;cursor:pointer">↺ 원래 범위</button>';
+    bar+='<span style="margin-left:auto;font-size:11px;color:var(--warn);font-weight:700">🔍 '+selectedWk+' 필터링 중</span>';
+  }
+  bar+='</div>';
+
+  if(!rows.length){
+    tw.innerHTML=bar+'<div class="empty">MES 불량 데이터 없음</div>';
+    return;
+  }
+
+  const activeNg=ngCodes.filter(c=>ngTotals[c]>0);
+
+  let h=bar+'<table class="stat-table"><thead><tr>';
+  h+='<th style="text-align:left;min-width:70px;background:#ffffcc">품목코드</th>';
+  h+='<th style="min-width:60px;background:#ffffcc">실적수량</th>';
+  activeNg.forEach(c=>{h+='<th style="min-width:50px;background:#ffffcc">'+(codeNames[c]||c)+'</th>'});
+  h+='<th style="min-width:50px;background:#ffffcc;font-weight:800">총계</th>';
+  h+='</tr></thead><tbody>';
+
+  const sorted=rows.filter(r=>r.ng_total>0).sort((a,b)=>b.ng_total-a.ng_total);
+
+  sorted.forEach(r=>{
+    h+='<tr>';
+    h+='<td style="text-align:left;font-size:12px;font-weight:600">'+r.item_code+'</td>';
+    h+='<td>'+r.shot.toLocaleString()+'</td>';
+    activeNg.forEach(c=>{
+      const v=r.ng_types[c]||0;
+      h+='<td style="'+(v>0?'color:var(--red);font-weight:700':'')+'">'+(v||'')+'</td>';
+    });
+    h+='<td style="font-weight:800;color:var(--red)">'+r.ng_total.toLocaleString()+'</td>';
+    h+='</tr>';
+  });
+
+  h+='<tr class="st-total"><td style="text-align:left;font-weight:800">Grand Total</td>';
+  h+='<td style="font-weight:800">'+totalShot.toLocaleString()+'</td>';
+  activeNg.forEach(c=>{h+='<td style="font-weight:800;color:var(--red)">'+(ngTotals[c]||0).toLocaleString()+'</td>'});
+  h+='<td style="font-weight:900;color:var(--red);font-size:13px">'+totalNg.toLocaleString()+'</td>';
+  h+='</tr></tbody></table>';
+
+  tw.innerHTML=h;
+}
+
+/* 주차 선택 변경 */
+async function onMesWeekChange(){
+  const sel=document.getElementById('mesWeekSel');
+  const v=sel.value;
+  if(!v){
+    // 전체 → 원래 범위로
+    showLoading('세부 데이터 조회 중...');
+    await renderMesDetail(mesState.baseFromS,mesState.baseToS,null);
+    hideLoading();
+    return;
+  }
+  const[wk,from,to]=v.split('|');
+  showLoading(wk+' 세부 데이터 조회 중...');
+  await renderMesDetail(from,to,wk);
+  hideLoading();
+}
+
+/* 원래 범위 복원 */
+async function resetMesWeek(){
+  showLoading('세부 데이터 조회 중...');
+  await renderMesDetail(mesState.baseFromS,mesState.baseToS,null);
   hideLoading();
 }
 
@@ -852,19 +930,46 @@ async function renderMesWeekly(apiBase){
     });
     ctx.stroke();
 
-    // 데이터 포인트 + 값 라벨
+    // 데이터 포인트 + 값 라벨 + 클릭 hit-target 저장
+    const hitPts=[];
     ppmData.forEach((p,i)=>{
       if(p===null)return;
       const x=pad.l+(displayW.length>1?i*xS:pw/2);
       const y=pad.t+ph-(p/yML)*ph;
       const overTgt=p>TARGET_PPM;
       ctx.fillStyle=overTgt?'#c62828':lineColor;
-      ctx.beginPath();ctx.arc(x,y,4,0,Math.PI*2);ctx.fill();
+      ctx.beginPath();ctx.arc(x,y,5,0,Math.PI*2);ctx.fill();
       // 값 표시
       ctx.fillStyle=overTgt?'#c62828':'#333';
       ctx.font='bold 10px "Noto Sans KR"';ctx.textAlign='center';
-      ctx.fillText(p.toLocaleString(),x,y-8);
+      ctx.fillText(p.toLocaleString(),x,y-9);
+      hitPts.push({x,y,wk:displayW[i],mon:mesWeekMonday[displayW[i]]});
     });
+
+    // 캔버스 클릭 → 가까운 점 찾아서 세부 표 필터링
+    canvas.style.cursor='pointer';
+    canvas.title='데이터 포인트 클릭 시 해당 주차로 세부 데이터 필터링';
+    canvas.onclick=async (ev)=>{
+      const rect=canvas.getBoundingClientRect();
+      const cx=ev.clientX-rect.left,cy=ev.clientY-rect.top;
+      let best=null,bestD=999;
+      hitPts.forEach(pt=>{
+        const d=Math.hypot(pt.x-cx,pt.y-cy);
+        if(d<bestD){bestD=d;best=pt}
+      });
+      if(best&&bestD<25){
+        const sun=new Date(best.mon+'T00:00:00');sun.setDate(sun.getDate()+6);
+        const sunS=fmtYMD(sun);
+        const sel=document.getElementById('mesWeekSel');
+        if(sel){
+          const matchOpt=Array.from(sel.options).find(o=>o.value.startsWith(best.wk+'|'));
+          if(matchOpt){sel.value=matchOpt.value;await onMesWeekChange()}
+        }
+        // 페이지 스크롤을 표 위치로
+        const tw=document.getElementById('mesTableWrap');
+        if(tw)tw.scrollIntoView({behavior:'smooth',block:'start'});
+      }
+    };
   });
 }
 
