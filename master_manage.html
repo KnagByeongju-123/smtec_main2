@@ -308,9 +308,9 @@ function showMmAdd(){document.getElementById('mmEditId').value='';document.getEl
 function editMM(id){const m=_mm.find(x=>x.id===id);if(!m)return;document.getElementById('mmEditId').value=id;document.getElementById('mmModalTitle').textContent='🧱 소재 수정 (#'+id+')';document.getElementById('mmType').value=m.material_type||'';document.getElementById('mmThick').value=m.thickness||'';document.getElementById('mmWidth').value=m.width||'';document.getElementById('mmPitch').value=m.pitch||'';document.getElementById('mmModels').value=m.mapped_models||'';document.getElementById('mmMold').value=m.mold_number||'';document.getElementById('mmModelCode').value=m.model_code||'';document.getElementById('mmSG').value=m.specific_gravity||'';document.getElementById('mmUnitWt').value=m.unit_weight||'';document.getElementById('mmMonthly').value=m.monthly_order||'';document.getElementById('mmEstOrder').value=m.est_material_order||'';document.getElementById('mmCustomer').value=m.customer||'';prevMmName();document.getElementById('mmModal').classList.add('show')}
 function closeMmModal(){document.getElementById('mmModal').classList.remove('show')}
 function prevMmName(){const t=document.getElementById('mmType').value.trim(),th=document.getElementById('mmThick').value.trim(),w=document.getElementById('mmWidth').value.trim(),p=document.getElementById('mmPitch').value.trim();let n=t;if(th)n+='-'+th+'T';if(w)n+='-'+w+'W';if(p)n+='-P'+p;const el=document.getElementById('mmNamePrev');if(n){el.textContent='📌 '+n;el.style.display='block'}else{el.style.display='none'}}
-// ===== mold_parts 자동 동기화 (mold_model + mold_info) =====
+// ===== mold_parts 자동 동기화 (mold_model + mold_info) — 단방향 SSOT cascade =====
 // 캐시: 같은 세션에서 반복 조회 방지
-let _moldModelCache=null, _moldInfoCache={};
+let _moldModelCache=null, _moldInfoCache={};  // _moldInfoCache[modelId] = Map(mold_no → id)
 async function _ensureMoldCache(){
   if(_moldModelCache===null){
     try{_moldModelCache=await sbSelect('mold_model','select=id,name')}catch(e){_moldModelCache=[]}
@@ -320,35 +320,59 @@ async function _getOrCreateMoldModel(modelName){
   await _ensureMoldCache();
   let m=_moldModelCache.find(x=>x.name===modelName);
   if(m)return m.id;
-  // 신규 기종 생성
   const r=await sbInsert('mold_model',{name:modelName,process_count:20});
   if(r&&r.length){_moldModelCache.push({id:r[0].id,name:modelName});return r[0].id}
   throw new Error('mold_model 생성 실패: '+modelName);
 }
-async function _getMoldInfoSet(modelId){
+async function _findMoldModel(modelName){
+  await _ensureMoldCache();
+  return _moldModelCache.find(x=>x.name===modelName);
+}
+async function _getMoldInfoMap(modelId){
   if(!_moldInfoCache[modelId]){
-    try{const d=await sbSelect('mold_info',`model_id=eq.${modelId}&select=mold_no`);_moldInfoCache[modelId]=new Set(d.map(x=>x.mold_no))}catch(e){_moldInfoCache[modelId]=new Set()}
+    try{const d=await sbSelect('mold_info',`model_id=eq.${modelId}&select=id,mold_no`);const mp=new Map();d.forEach(x=>mp.set(x.mold_no,x.id));_moldInfoCache[modelId]=mp}catch(e){_moldInfoCache[modelId]=new Map()}
   }
   return _moldInfoCache[modelId];
 }
-// 한 건의 소재마스터 row를 mold_parts에 동기화 → {addedModels, addedMolds}
+function resetMoldCache(){_moldModelCache=null;_moldInfoCache={}}
+// 매핑기종 문자열 → 기종명 배열
+function _parseModels(s){return (s||'').split(/[,;\s]+/).map(v=>v.trim()).filter(v=>v)}
+// 다른 소재가 같은 (modelName, moldNo)를 쓰는지 체크 (자기 자신 제외)
+function _isMoldUsedByOthers(modelName,moldNo,excludeId){
+  return _mm.some(r=>{
+    if(excludeId&&r.id===excludeId)return false;
+    if((r.mold_number||'').trim()!==moldNo)return false;
+    return _parseModels(r.mapped_models).includes(modelName);
+  });
+}
+// mold_info 1건 삭제 (mold_part도 cascade) — 다른 소재가 안 쓸 때만
+async function _deleteMoldInfo(modelId,modelName,moldNo,excludeMmId){
+  if(_isMoldUsedByOthers(modelName,moldNo,excludeMmId))return false;
+  const mp=await _getMoldInfoMap(modelId);
+  const moldId=mp.get(moldNo);
+  if(!moldId)return false;
+  // mold_part 먼저 삭제 (FK 보호)
+  try{await sbDelFilter('mold_part',`mold_id=eq.${moldId}`)}catch(e){}
+  try{await sbDelFilter('mold_log',`mold_id=eq.${moldId}`)}catch(e){}
+  await sbDelFilter('mold_info',`id=eq.${moldId}`);
+  mp.delete(moldNo);
+  return true;
+}
+// 한 건의 소재마스터 row를 mold_parts에 ADD (추가/없으면 생성) → {addedModels, addedMolds, errors}
 async function syncMoldFromMM(row){
   const result={addedModels:0,addedMolds:0,errors:[]};
   const moldNo=(row.mold_number||'').trim();
-  const mappedRaw=(row.mapped_models||'').trim();
-  if(!moldNo||!mappedRaw)return result;
-  // 매핑기종 분해 (쉼표/공백/세미콜론)
-  const modelNames=mappedRaw.split(/[,;\s]+/).map(s=>s.trim()).filter(s=>s);
-  if(!modelNames.length)return result;
+  const modelNames=_parseModels(row.mapped_models);
+  if(!moldNo||!modelNames.length)return result;
   await _ensureMoldCache();
   const beforeModelCount=_moldModelCache.length;
   for(const mn of modelNames){
     try{
       const modelId=await _getOrCreateMoldModel(mn);
-      const set=await _getMoldInfoSet(modelId);
-      if(!set.has(moldNo)){
-        await sbInsert('mold_info',{model_id:modelId,mold_no:moldNo,note:'auto: '+(row.material_name||row.material_type||'')});
-        set.add(moldNo);
+      const mp=await _getMoldInfoMap(modelId);
+      if(!mp.has(moldNo)){
+        const r=await sbInsert('mold_info',{model_id:modelId,mold_no:moldNo,note:'auto: '+(row.material_name||row.material_type||'')});
+        if(r&&r.length)mp.set(moldNo,r[0].id);
         result.addedMolds++;
       }
     }catch(e){result.errors.push(mn+':'+e.message)}
@@ -356,8 +380,62 @@ async function syncMoldFromMM(row){
   result.addedModels=_moldModelCache.length-beforeModelCount;
   return result;
 }
-// 캐시 리셋 (다른 화면에서 변경 가능성 → 명시적 리셋)
-function resetMoldCache(){_moldModelCache=null;_moldInfoCache={}}
+// 수정 cascade: oldRow와 newRow 비교 → 제거된 쌍 삭제, 추가된 쌍 추가
+async function syncMoldOnEdit(oldRow,newRow,mmId){
+  const result={removedMolds:0,addedMolds:0,addedModels:0,errors:[]};
+  const oldMoldNo=(oldRow.mold_number||'').trim();
+  const newMoldNo=(newRow.mold_number||'').trim();
+  const oldModels=_parseModels(oldRow.mapped_models);
+  const newModels=_parseModels(newRow.mapped_models);
+  // 이전 (model, mold) 쌍
+  const oldPairs=oldMoldNo?oldModels.map(m=>m+'|'+oldMoldNo):[];
+  const newPairs=newMoldNo?newModels.map(m=>m+'|'+newMoldNo):[];
+  const toRemove=oldPairs.filter(p=>!newPairs.includes(p));
+  const toAdd=newPairs.filter(p=>!oldPairs.includes(p));
+  // 제거 처리
+  for(const pair of toRemove){
+    const [mn,no]=pair.split('|');
+    try{
+      const model=await _findMoldModel(mn);
+      if(!model)continue;
+      if(await _deleteMoldInfo(model.id,mn,no,mmId))result.removedMolds++;
+    }catch(e){result.errors.push('del '+pair+':'+e.message)}
+  }
+  // 추가 처리
+  if(toAdd.length){
+    await _ensureMoldCache();
+    const before=_moldModelCache.length;
+    for(const pair of toAdd){
+      const [mn,no]=pair.split('|');
+      try{
+        const modelId=await _getOrCreateMoldModel(mn);
+        const mp=await _getMoldInfoMap(modelId);
+        if(!mp.has(no)){
+          const r=await sbInsert('mold_info',{model_id:modelId,mold_no:no,note:'auto: '+(newRow.material_name||newRow.material_type||'')});
+          if(r&&r.length)mp.set(no,r[0].id);
+          result.addedMolds++;
+        }
+      }catch(e){result.errors.push('add '+pair+':'+e.message)}
+    }
+    result.addedModels=_moldModelCache.length-before;
+  }
+  return result;
+}
+// 삭제 cascade: 한 건 row 삭제 시 매핑된 mold_info 정리
+async function syncMoldOnDelete(row,mmId){
+  const result={removedMolds:0,errors:[]};
+  const moldNo=(row.mold_number||'').trim();
+  const modelNames=_parseModels(row.mapped_models);
+  if(!moldNo||!modelNames.length)return result;
+  for(const mn of modelNames){
+    try{
+      const model=await _findMoldModel(mn);
+      if(!model)continue;
+      if(await _deleteMoldInfo(model.id,mn,moldNo,mmId))result.removedMolds++;
+    }catch(e){result.errors.push(mn+':'+e.message)}
+  }
+  return result;
+}
 
 async function saveMM(){
   const t=document.getElementById('mmType').value.trim();if(!t){toast('재질 입력');return}
@@ -365,21 +443,60 @@ async function saveMM(){
   if(th)name+='-'+th+'T';if(w)name+='-'+w+'W';if(p)name+='-P'+p;
   const data={material_name:name,material_type:t,thickness:th,width:w,pitch:p,mapped_models:document.getElementById('mmModels').value.trim(),mold_number:document.getElementById('mmMold').value.trim(),model_code:document.getElementById('mmModelCode').value.trim(),specific_gravity:document.getElementById('mmSG').value?parseFloat(document.getElementById('mmSG').value):7.85,unit_weight:document.getElementById('mmUnitWt').value?parseFloat(document.getElementById('mmUnitWt').value):0,monthly_order:document.getElementById('mmMonthly').value?parseInt(document.getElementById('mmMonthly').value):0,est_material_order:document.getElementById('mmEstOrder').value?parseFloat(document.getElementById('mmEstOrder').value):0,customer:document.getElementById('mmCustomer').value.trim()};
   const editId=document.getElementById('mmEditId').value;
+  // 수정 모드면 이전 상태 보관 (cascade 비교용)
+  const oldRow=editId?_mm.find(x=>x.id==editId):null;
   try{
-    if(editId){await sbUpdate('material_master_tj',editId,data);toast('✅ 수정: '+name)}
-    else{await sbInsert('material_master_tj',{...data,sort_order:0});toast('✅ 추가: '+name)}
-    // ===== mold_parts 자동 동기화 =====
-    try{
-      const sr=await syncMoldFromMM(data);
-      if(sr.addedModels||sr.addedMolds){
-        toast(`🔧 금형 동기화: 기종${sr.addedModels}개·금형${sr.addedMolds}개 추가`);
-      }
-      if(sr.errors.length)console.warn('mold sync errors:',sr.errors);
-    }catch(e){console.warn('mold sync skipped:',e.message)}
+    if(editId){
+      await sbUpdate('material_master_tj',editId,data);
+      // _mm 즉시 갱신 (다른 소재 사용 체크용)
+      const idx=_mm.findIndex(x=>x.id==editId);
+      if(idx>=0)_mm[idx]={..._mm[idx],...data};
+      toast('✅ 수정: '+name);
+      // ===== cascade 동기화 (수정) =====
+      try{
+        const sr=await syncMoldOnEdit(oldRow||{},data,parseInt(editId));
+        const msgs=[];
+        if(sr.addedModels)msgs.push('기종+'+sr.addedModels);
+        if(sr.addedMolds)msgs.push('금형+'+sr.addedMolds);
+        if(sr.removedMolds)msgs.push('금형-'+sr.removedMolds);
+        if(msgs.length)toast('🔧 동기화: '+msgs.join(', '));
+        if(sr.errors.length)console.warn('mold sync errors:',sr.errors);
+      }catch(e){console.warn('mold sync skipped:',e.message)}
+    }else{
+      const ins=await sbInsert('material_master_tj',{...data,sort_order:0});
+      const newId=(ins&&ins.length)?ins[0].id:null;
+      if(newId)_mm.push({id:newId,...data});
+      toast('✅ 추가: '+name);
+      // ===== 신규 추가 동기화 =====
+      try{
+        const sr=await syncMoldFromMM(data);
+        if(sr.addedModels||sr.addedMolds)toast(`🔧 동기화: 기종+${sr.addedModels}, 금형+${sr.addedMolds}`);
+        if(sr.errors.length)console.warn('mold sync errors:',sr.errors);
+      }catch(e){console.warn('mold sync skipped:',e.message)}
+    }
     closeMmModal();await loadMM(true);
   }catch(e){toast('❌ '+e.message)}
 }
-async function delMM(id){if(!confirm('삭제?'))return;try{await sbDel('material_master_tj',id);toast('삭제됨');await loadMM(true)}catch(e){toast('❌ '+e.message)}}
+async function delMM(id){
+  const row=_mm.find(x=>x.id===id);
+  if(!row){toast('대상 없음');return}
+  const moldNo=(row.mold_number||'').trim();
+  const msg=moldNo?`삭제? (mold_parts에서 금형 ${moldNo}도 cascade 정리됨)`:'삭제?';
+  if(!confirm(msg))return;
+  try{
+    await sbDel('material_master_tj',id);
+    // _mm 즉시 갱신
+    _mm=_mm.filter(x=>x.id!==id);
+    toast('삭제됨');
+    // ===== cascade 동기화 (삭제) =====
+    try{
+      const sr=await syncMoldOnDelete(row,id);
+      if(sr.removedMolds)toast(`🔧 동기화: 금형 ${sr.removedMolds}개 정리`);
+      if(sr.errors.length)console.warn('mold sync errors:',sr.errors);
+    }catch(e){console.warn('mold sync skipped:',e.message)}
+    await loadMM(true);
+  }catch(e){toast('❌ '+e.message)}
+}
 
 // ===== 소재마스터 전체를 mold_parts에 동기화 =====
 async function syncAllMoldFromMM(){
@@ -404,7 +521,20 @@ async function syncAllMoldFromMM(){
   if(errs.length)console.warn('sync errors:',errs);
   setTimeout(()=>{prog.style.display='none'},5000);
 }
-async function delMmByCust(cust){const items=_mm.filter(m=>(m.customer||'공용')===cust);if(!confirm(cust+' '+items.length+'건 전체삭제?'))return;try{for(const m of items)await sbDel('material_master_tj',m.id);toast('✅ '+items.length+'건 삭제');await loadMM(true)}catch(e){toast('❌ '+e.message)}}
+async function delMmByCust(cust){
+  const items=_mm.filter(m=>(m.customer||'공용')===cust);
+  if(!confirm(cust+' '+items.length+'건 전체삭제? (mold_parts cascade 정리됨)'))return;
+  try{
+    let totRemoved=0;
+    for(const m of items){
+      await sbDel('material_master_tj',m.id);
+      _mm=_mm.filter(x=>x.id!==m.id);  // 즉시 _mm 갱신 (다른 항목의 _isMoldUsedByOthers 체크 정확도)
+      try{const sr=await syncMoldOnDelete(m,m.id);totRemoved+=sr.removedMolds}catch(e){}
+    }
+    toast(`✅ ${items.length}건 삭제 / 🔧 금형 ${totRemoved}개 정리`);
+    await loadMM(true);
+  }catch(e){toast('❌ '+e.message)}
+}
 function downloadMmTpl(){const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([['재질','두께','폭','피치','매핑기종','금형재번','기종코드','비중','소요량(g)','월발주량','원자재예상발주량(kg)','고객사'],['SPCC','0.6','33','12.5','1560-006','9DHA034A','6906','7.85','28.6','70000','1589','SKF씰']]),'소재마스터');XLSX.writeFile(wb,'소재마스터_템플릿.xlsx')}
 function exportMM(){if(!_mm.length){toast('데이터 없음');return}const hd=['재질','두께','폭','피치','매핑기종','금형재번','기종코드','비중','소요량(g)','월발주량','원자재(kg)','고객사','소재명'];const rows=_mm.map(m=>[m.material_type,m.thickness,m.width,m.pitch,m.mapped_models,m.mold_number,m.model_code,m.specific_gravity,m.unit_weight,m.monthly_order,m.est_material_order,m.customer,m.material_name]);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([hd,...rows]),'소재마스터');XLSX.writeFile(wb,'소재마스터_'+new Date().toISOString().split('T')[0].replace(/-/g,'')+'.xlsx')}
 document.getElementById('mmFile').addEventListener('change',async function(e){
