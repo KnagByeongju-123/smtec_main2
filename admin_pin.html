@@ -40,6 +40,8 @@ body{font-family:'Noto Sans KR',sans-serif;background:#0f1117;color:#e8eaf0;min-
 .tbl tr:last-child td{border-bottom:none}
 .name-cell{font-weight:600}
 .pin-cell{font-family:monospace;color:#e2b04a;font-weight:700;letter-spacing:2px}
+.dept-cell{font-size:11px;color:#7dd3fc;font-weight:600}
+.dept-cell.auto{color:#8b8fa3;font-style:italic}
 .empty{text-align:center;padding:30px;color:#5a5e72;font-size:13px}
 .actions{display:flex;gap:4px;justify-content:flex-end}
 
@@ -91,13 +93,17 @@ body.locked{overflow:hidden}
 .preview-count{font-size:12px;color:#8b8fa3}
 
 /* 수정 모달 */
-.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9998;display:none;align-items:center;justify-content:center;padding:20px}
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9998;display:none;align-items:center;justify-content:center;padding:20px}
 .modal-bg.show{display:flex}
-.modal{background:#1a1d27;border:1px solid #2a2e3d;border-radius:16px;padding:20px;width:100%;max-width:360px}
-.modal-title{font-size:15px;font-weight:700;margin-bottom:14px}
-.modal-row{margin-bottom:10px}
-.modal-row label{font-size:12px;color:#8b8fa3;display:block;margin-bottom:4px;font-weight:600}
-.modal-actions{display:flex;gap:8px;margin-top:14px}
+.modal{background:#1a1d27;border:1px solid #2a2e3d;border-radius:16px;padding:20px;width:100%;max-width:380px;max-height:90vh;overflow-y:auto}
+.modal-title{font-size:15px;font-weight:700;margin-bottom:14px;color:#e8eaf0}
+.modal-row{margin-bottom:12px}
+.modal-row label{font-size:12px;color:#8b8fa3;display:block;margin-bottom:5px;font-weight:600}
+.modal-row .pin-hint{font-size:10px;color:#5a5e72;margin-top:4px;line-height:1.5}
+.modal-row select.inp{appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b8fa3' stroke-width='2'%3e%3cpolyline points='6 9 12 15 18 9'/%3e%3c/svg%3e");background-repeat:no-repeat;background-position:right 12px center;padding-right:36px}
+.modal-actions{display:flex;gap:8px;margin-top:16px}
+.modal-actions .btn{flex:1;justify-content:center}
+.dept-auto-info{background:rgba(79,140,255,.08);border:1px solid rgba(79,140,255,.25);border-radius:8px;padding:8px 10px;font-size:11px;color:#7dd3fc;line-height:1.6;margin-top:6px}
 </style>
 </head>
 <body class="locked">
@@ -117,7 +123,7 @@ body.locked{overflow:hidden}
 
 <div class="hdr">
   <div class="hdr-title">🔐 PIN 관리 (관리자 전용)</div>
-  <div class="hdr-sub">직원 이름 및 4자리 PIN 등록·수정·삭제</div>
+  <div class="hdr-sub">직원 이름 · PIN · 부서 등록·수정·삭제</div>
   <button class="logout" id="logoutBtn">🔒 잠금</button>
 </div>
 
@@ -136,7 +142,7 @@ body.locked{overflow:hidden}
       </div>
       <div class="file-area" id="fileArea">
         <input type="file" id="fileInput" accept=".xlsx,.xls,.csv">
-        <div class="file-area-text">📁 엑셀 파일 <b>클릭</b> 또는 <b>드래그</b><br><span style="font-size:11px">이름 | PIN (4자리 숫자)</span></div>
+        <div class="file-area-text">📁 엑셀 파일 <b>클릭</b> 또는 <b>드래그</b><br><span style="font-size:11px">이름 | PIN(4자리) | 부서 | 직위 | 사번</span></div>
       </div>
       <div class="preview" id="preview" style="display:none">
         <div class="preview-header">
@@ -146,8 +152,9 @@ body.locked{overflow:hidden}
         <div id="previewTable"></div>
       </div>
       <div class="help">
-        • <b>이름</b> 열 + <b>PIN</b> 열 (4자리 숫자)<br>
-        • 기존 이름 → PIN 업데이트 / 신규 이름 → 추가<br>
+        • <b>이름</b> 열 + <b>PIN</b> 열 (4자리 숫자) 필수<br>
+        • <b>부서</b> 열 선택 (없으면 PIN 첫자리로 자동 매핑)<br>
+        • 기존 이름 → 업데이트 / 신규 이름 → 추가<br>
         • PIN 중복 시 해당 행 건너뜀
       </div>
     </div>
@@ -161,12 +168,24 @@ body.locked{overflow:hidden}
     </div>
     <div class="acc-body">
       <div class="msg" id="addMsg"></div>
-      <div class="form-row" style="display:flex;gap:8px;margin-bottom:10px">
+      <div class="form-row" style="display:flex;gap:8px;margin-bottom:8px">
         <input type="text" class="inp" id="addName" placeholder="이름" maxlength="20" style="flex:1">
         <input type="text" class="inp pin" id="addPin" placeholder="PIN" maxlength="4" inputmode="numeric" pattern="[0-9]*" style="flex:0 0 100px">
+      </div>
+      <div class="form-row" style="display:flex;gap:8px;margin-bottom:10px">
+        <select class="inp" id="addDept" style="flex:1">
+          <option value="">부서 선택 (PIN 첫자리 자동매핑)</option>
+          <option value="대표이사">대표이사 (PIN 0xxx)</option>
+          <option value="개발팀">개발팀 (PIN 1xxx)</option>
+          <option value="생산팀">생산팀 (PIN 2xxx)</option>
+          <option value="설계팀">설계팀 (PIN 3xxx)</option>
+          <option value="품질관리팀">품질관리팀 (PIN 4xxx)</option>
+          <option value="영업관리팀">영업관리팀 (PIN 5xxx)</option>
+          <option value="공장장">공장장 (PIN 6xxx)</option>
+        </select>
         <button class="btn btn-pri" id="addBtn" style="flex-shrink:0">등록</button>
       </div>
-      <div class="help">• 이름 중복 금지 · PIN 중복 금지 (4자리 숫자)</div>
+      <div class="help">• 이름 중복 금지 · PIN 중복 금지 (4자리 숫자)<br>• 부서를 선택 안 하면 PIN 첫자리로 자동 매핑</div>
     </div>
   </div>
 
@@ -178,7 +197,7 @@ body.locked{overflow:hidden}
     </div>
     <div id="empListPanel" style="display:none;margin-top:12px">
       <div style="margin-bottom:10px">
-        <input type="text" class="inp" id="searchName" placeholder="🔍 이름 검색" style="padding:10px 14px">
+        <input type="text" class="inp" id="searchName" placeholder="🔍 이름 / 부서 검색" style="padding:10px 14px">
       </div>
       <div id="listWrap">
         <div class="empty">로딩중...</div>
@@ -203,6 +222,49 @@ body.locked{overflow:hidden}
   </div>
 </div>
 
+<!-- 사원 정보 수정 모달 -->
+<div class="modal-bg" id="editModal">
+  <div class="modal">
+    <div class="modal-title" id="editModalTitle">✏️ 사원 정보 수정</div>
+    <div class="msg" id="editMsg"></div>
+    <div class="modal-row">
+      <label>이름</label>
+      <input type="text" class="inp" id="editName" maxlength="20">
+    </div>
+    <div class="modal-row">
+      <label>PIN (4자리 숫자)</label>
+      <input type="text" class="inp pin" id="editPin" maxlength="4" inputmode="numeric" pattern="[0-9]*">
+      <div class="pin-hint">변경하지 않으려면 그대로 두세요</div>
+    </div>
+    <div class="modal-row">
+      <label>부서</label>
+      <select class="inp" id="editDept">
+        <option value="">자동 매핑 (PIN 첫자리)</option>
+        <option value="대표이사">대표이사 (PIN 0xxx)</option>
+        <option value="개발팀">개발팀 (PIN 1xxx)</option>
+        <option value="생산팀">생산팀 (PIN 2xxx)</option>
+        <option value="설계팀">설계팀 (PIN 3xxx)</option>
+        <option value="품질관리팀">품질관리팀 (PIN 4xxx)</option>
+        <option value="영업관리팀">영업관리팀 (PIN 5xxx)</option>
+        <option value="공장장">공장장 (PIN 6xxx)</option>
+      </select>
+      <div class="dept-auto-info" id="editDeptAutoInfo" style="display:none"></div>
+    </div>
+    <div class="modal-row">
+      <label>직위 (선택)</label>
+      <input type="text" class="inp" id="editPosition" maxlength="20" placeholder="팀장 / 과장 / 대리 ...">
+    </div>
+    <div class="modal-row">
+      <label>사번 (선택)</label>
+      <input type="text" class="inp" id="editEmpId" maxlength="20">
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-sec" id="editCancelBtn">취소</button>
+      <button class="btn btn-pri" id="editSaveBtn">💾 저장</button>
+    </div>
+  </div>
+</div>
+
 
 <script>
 /* 아코디언 토글 */
@@ -211,7 +273,7 @@ function toggleAcc(id){
 }
 
 /* ============================================================
-   Supabase 설정 - ★ 기존 프로젝트와 동일한 URL/key 입력
+   Supabase 설정
    ============================================================ */
 const SUPABASE_URL = 'https://omngtyewdaqpphnzeate.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_9j2YkkL-7ul1TrhH-NjVdQ_vWDG2-1D';
@@ -226,14 +288,53 @@ const ADMIN_TTL_MIN = 30;
 const MAX_FAIL = 5;
 const LOCKOUT_SEC = 60;
 
+/* ============================================================
+   부서 매핑 (doc_review.html과 동일 규칙)
+   ============================================================ */
+const PIN_DEPT_MAP = {
+  '0':'대표이사',
+  '1':'개발팀',
+  '2':'생산팀',
+  '3':'설계팀',
+  '4':'품질관리팀',
+  '5':'영업관리팀',
+  '6':'공장장'
+};
+const VALID_DEPTS = Object.values(PIN_DEPT_MAP);
+
+// 부서명 정규화 (별칭 통일)
+const DEPT_ALIAS = {
+  '대표':'대표이사',
+  '개발':'개발팀','연구개발팀':'개발팀','R&D':'개발팀',
+  '생산':'생산팀',
+  '설계':'설계팀',
+  '품질':'품질관리팀','품질관리':'품질관리팀',
+  '영업':'영업관리팀','영업관리':'영업관리팀',
+  '공장':'공장장'
+};
+function normalizeDept(d){if(!d)return '';const t=String(d).trim();return DEPT_ALIAS[t]||t}
+
+// PIN 첫자리 → 부서명
+function deptFromPin(pin){
+  if(!pin||pin.length===0)return '';
+  return PIN_DEPT_MAP[pin.charAt(0)]||'';
+}
+
+// 표시용: 실제 dept 또는 자동 매핑
+function getDisplayDept(emp){
+  if(emp.dept)return {name:emp.dept, auto:false};
+  const auto=deptFromPin(emp.pin_plain||'');
+  return {name:auto||'(미지정)', auto:true};
+}
+
 let curPin = '';
 let lockTimer = null;
 let empCache = [];
 let uploadData = [];
-let editingId = null;
+let editingEmp = null; // 수정 중인 사원 객체
 // 서버 동기화 추적
-let _opLog = []; // {ts, op, path, name, ok, error}
-let _failedOps = []; // 실패한 작업 큐 (재전송 대상)
+let _opLog = [];
+let _failedOps = [];
 
 async function sha256hex(s){
   const b = new TextEncoder().encode(s);
@@ -379,26 +480,36 @@ function unlockAdmin(){
 function downloadTemplate(){
   const wb = XLSX.utils.book_new();
   const ws = XLSX.utils.aoa_to_sheet([
-    ['이름', 'PIN'],
-    ['홍길동', '1234'],
-    ['김철수', '5678']
+    ['이름', 'PIN', '부서', '직위', '사번'],
+    ['홍길동', '1234', '개발팀', '대리', 'E001'],
+    ['김철수', '4567', '품질관리팀', '과장', 'E002'],
+    ['박영희', '2890', '생산팀', '', '']
   ]);
-  ws['!cols'] = [{wch:16},{wch:12}];
+  ws['!cols'] = [{wch:12},{wch:8},{wch:14},{wch:10},{wch:10}];
   XLSX.utils.book_append_sheet(wb, ws, '직원PIN');
   XLSX.writeFile(wb, 'PIN_템플릿.xlsx');
 }
 
-/* 현재 목록 다운로드 (PIN은 미포함, 이름만) */
+/* 현재 목록 다운로드 (PIN 포함, 부서 포함) */
 function downloadCurrent(){
   if(empCache.length === 0){showMsg('uploadMsg','등록된 직원이 없습니다','warn');return}
   const wb = XLSX.utils.book_new();
-  const rows = [['이름', 'PIN']];
-  empCache.forEach(e => rows.push([e.name, '']));
+  const rows = [['이름', 'PIN', '부서', '직위', '사번']];
+  empCache.forEach(e => {
+    const dispDept=getDisplayDept(e);
+    rows.push([
+      e.name||'',
+      e.pin_plain||'',
+      e.dept||(dispDept.auto?dispDept.name+' (자동)':dispDept.name),
+      e.position||'',
+      e.emp_id||''
+    ]);
+  });
   const ws = XLSX.utils.aoa_to_sheet(rows);
-  ws['!cols'] = [{wch:16},{wch:12}];
+  ws['!cols'] = [{wch:12},{wch:8},{wch:14},{wch:10},{wch:10}];
   XLSX.utils.book_append_sheet(wb, ws, '직원PIN');
   XLSX.writeFile(wb, 'PIN_현재목록.xlsx');
-  showMsg('uploadMsg','✓ 다운로드 완료 (PIN칸에 새 PIN 입력 후 업로드)','ok');
+  showMsg('uploadMsg','✓ 다운로드 완료','ok');
 }
 
 /* ========== 파일 업로드 & 파싱 ========== */
@@ -420,7 +531,7 @@ function handleFile(file){
           const v = row[j].toLowerCase();
           if(v==='성명'||v==='이름'||v==='name') colMap.name=j;
           else if(v==='pin'||v==='비번'||v==='비밀번호'||v==='핀') colMap.pin=j;
-          else if(v==='id'||v==='사번') colMap.emp_id=j;
+          else if(v==='id'||v==='사번'||v==='emp_id') colMap.emp_id=j;
           else if(v==='부서'||v==='dept') colMap.dept=j;
           else if(v==='직위'||v==='직급'||v==='position') colMap.position=j;
         }
@@ -440,7 +551,12 @@ function handleFile(file){
         if(uploadData.find(x=>x.pin===pin)){errors.push((i+1)+'행: ['+name+'] PIN 중복');continue}
         const row = {name, pin};
         if(colMap.emp_id>=0) row.emp_id = String(r[colMap.emp_id]||'').trim();
-        if(colMap.dept>=0) row.dept = String(r[colMap.dept]||'').trim();
+        if(colMap.dept>=0){
+          const rawDept=String(r[colMap.dept]||'').trim();
+          // 자동매핑 표시 제거 ("(자동)" 부분)
+          const cleanDept=rawDept.replace(/\s*\(자동\)\s*$/,'').trim();
+          row.dept = normalizeDept(cleanDept);
+        }
         if(colMap.position>=0) row.position = String(r[colMap.position]||'').trim();
         uploadData.push(row);
       }
@@ -449,18 +565,20 @@ function handleFile(file){
         showMsg('uploadMsg','유효한 데이터 없음','err');return;
       }
 
-      // 미리보기 표시
+      // 미리보기
       document.getElementById('preview').style.display='block';
       document.getElementById('previewCount').textContent='등록 예정: '+uploadData.length+'명'+(errors.length?' / 오류: '+errors.length+'건':'');
 
-      let html = '<table class="tbl"><thead><tr><th>ID</th><th>부서</th><th>이름</th><th>직위</th><th>PIN</th><th>상태</th></tr></thead><tbody>';
+      let html = '<table class="tbl"><thead><tr><th>이름</th><th>부서</th><th>직위</th><th>PIN</th><th>상태</th></tr></thead><tbody>';
       uploadData.forEach(d=>{
         const exist = empCache.find(x=>x.name===d.name);
-        html += '<tr><td>'+(d.emp_id||'')+'</td><td>'+(d.dept||'')+'</td><td class="name-cell">'+d.name+'</td><td>'+(d.position||'')+'</td><td class="pin-cell">'+d.pin+'</td><td style="font-size:11px;color:'+(exist?'#f59e0b':'#22c55e')+'">'+(exist?'업데이트':'신규')+'</td></tr>';
+        const dispDept = d.dept || (deptFromPin(d.pin)?deptFromPin(d.pin)+' (자동)':'(미지정)');
+        const deptColor = d.dept ? '#7dd3fc' : '#8b8fa3';
+        html += '<tr><td class="name-cell">'+escHtml(d.name)+'</td><td style="font-size:11px;color:'+deptColor+'">'+escHtml(dispDept)+'</td><td>'+escHtml(d.position||'')+'</td><td class="pin-cell">'+d.pin+'</td><td style="font-size:11px;color:'+(exist?'#f59e0b':'#22c55e')+'">'+(exist?'업데이트':'신규')+'</td></tr>';
       });
       if(errors.length){
         errors.forEach(e=>{
-          html += '<tr><td colspan="6" style="font-size:11px;color:#ef4444">⚠ '+e+'</td></tr>';
+          html += '<tr><td colspan="5" style="font-size:11px;color:#ef4444">⚠ '+escHtml(e)+'</td></tr>';
         });
       }
       html += '</tbody></table>';
@@ -495,7 +613,7 @@ async function executeUpload(){
     try{
       const pinHash = await sha256hex(d.pin);
 
-      // PIN 중복 체크 (다른 사람과 겹치는지)
+      // PIN 중복 체크
       const pinChk = await sbReq('GET', TBL+'?select=id,name&pin_hash=eq.'+pinHash);
       if(pinChk && pinChk.length && pinChk[0].name !== d.name){
         errors.push(d.name+': PIN이 ['+pinChk[0].name+']와 중복');
@@ -557,20 +675,24 @@ function toggleEmpList(){
 
 async function loadList(){
   const wrap = document.getElementById('listWrap');
-  wrap.innerHTML = '<div class="empty">로딩중...</div>';
+  if(wrap)wrap.innerHTML = '<div class="empty">로딩중...</div>';
   try{
-    empCache = await sbReq('GET', TBL+'?select=id,name,pin_plain&order=name.asc') || [];
+    empCache = await sbReq('GET', TBL+'?select=id,name,pin_plain,dept,position,emp_id&order=name.asc') || [];
     document.getElementById('empCount').textContent = empCache.length;
     renderList();
   }catch(err){
-    wrap.innerHTML = '<div class="empty" style="color:#ef4444">❌ '+err.message+'</div>';
+    if(wrap)wrap.innerHTML = '<div class="empty" style="color:#ef4444">❌ '+err.message+'</div>';
   }
 }
 
 function renderList(){
   const wrap = document.getElementById('listWrap');
+  if(!wrap)return;
   const kw = (document.getElementById('searchName').value||'').trim().toLowerCase();
-  const list = kw ? empCache.filter(x=>x.name.toLowerCase().includes(kw)) : empCache;
+  const list = kw ? empCache.filter(x=>{
+    const txt = ((x.name||'')+' '+(x.dept||'')+' '+(x.position||'')).toLowerCase();
+    return txt.includes(kw);
+  }) : empCache;
 
   if(list.length===0){
     wrap.innerHTML='<div class="empty">'+(empCache.length===0?'등록된 직원이 없습니다':'검색결과 없음')+'</div>';
@@ -579,45 +701,143 @@ function renderList(){
 
   const tbl=document.createElement('table');tbl.className='tbl';
   const thead=document.createElement('thead');
-  thead.innerHTML='<tr><th>이름</th><th>PIN</th><th style="text-align:right">관리</th></tr>';
+  thead.innerHTML='<tr><th>이름</th><th>부서</th><th>PIN</th><th style="text-align:right">관리</th></tr>';
   tbl.appendChild(thead);
   const tbody=document.createElement('tbody');
 
   list.forEach(emp=>{
     const tr=document.createElement('tr');
-    const tdN=document.createElement('td');tdN.className='name-cell';tdN.textContent=emp.name;tr.appendChild(tdN);
+
+    // 이름 + 직위
+    const tdN=document.createElement('td');tdN.className='name-cell';
+    tdN.textContent=emp.name;
+    if(emp.position){
+      const sp=document.createElement('span');
+      sp.style.cssText='font-size:10px;color:#8b8fa3;font-weight:500;margin-left:5px';
+      sp.textContent=emp.position;
+      tdN.appendChild(sp);
+    }
+    tr.appendChild(tdN);
+
+    // 부서 (자동매핑이면 다른 색)
+    const tdD=document.createElement('td');
+    const dispDept=getDisplayDept(emp);
+    tdD.className='dept-cell'+(dispDept.auto?' auto':'');
+    tdD.textContent=dispDept.name+(dispDept.auto?' ⚙':'');
+    tdD.title=dispDept.auto?'PIN 첫자리 자동매핑 (실제 저장값 없음)':'직접 지정된 부서';
+    tr.appendChild(tdD);
+
+    // PIN
     const tdPin=document.createElement('td');tdPin.className='pin-cell';tdPin.textContent=emp.pin_plain||'—';tr.appendChild(tdPin);
+
+    // 액션
     const tdA=document.createElement('td');
     const act=document.createElement('div');act.className='actions';
-
     const eb=document.createElement('button');eb.className='btn btn-sec btn-sm';eb.textContent='수정';
-    eb.onclick=()=>promptEdit(emp.id, emp.name);act.appendChild(eb);
-
+    eb.onclick=()=>openEditModal(emp);act.appendChild(eb);
     const db=document.createElement('button');db.className='btn btn-dan btn-sm';db.textContent='삭제';
     db.onclick=()=>delEmp(emp.id, emp.name);act.appendChild(db);
-
     tdA.appendChild(act);tr.appendChild(tdA);
+
     tbody.appendChild(tr);
   });
   tbl.appendChild(tbody);wrap.innerHTML='';wrap.appendChild(tbl);
 }
 
-async function promptEdit(id, name){
-  const pin = prompt('['+name+'] 새 PIN 4자리 입력:');
-  if(!pin) return;
-  if(!/^\d{4}$/.test(pin.trim())){alert('숫자 4자리만 가능');return}
+/* ========== 사원 정보 수정 모달 ========== */
+function openEditModal(emp){
+  editingEmp = emp;
+  document.getElementById('editModalTitle').textContent='✏️ 사원 정보 수정';
+  document.getElementById('editName').value=emp.name||'';
+  document.getElementById('editPin').value=emp.pin_plain||'';
+  document.getElementById('editDept').value=emp.dept||'';
+  document.getElementById('editPosition').value=emp.position||'';
+  document.getElementById('editEmpId').value=emp.emp_id||'';
+  hideMsg('editMsg');
+  updateEditDeptAutoInfo();
+  document.getElementById('editModal').classList.add('show');
+}
+
+function closeEditModal(){
+  editingEmp=null;
+  document.getElementById('editModal').classList.remove('show');
+}
+
+function updateEditDeptAutoInfo(){
+  const pin=document.getElementById('editPin').value.trim();
+  const dept=document.getElementById('editDept').value;
+  const info=document.getElementById('editDeptAutoInfo');
+  if(!dept && pin.length>=1){
+    const auto=deptFromPin(pin);
+    if(auto){
+      info.innerHTML='ℹ️ 부서 미지정 → PIN 첫자리(<b>'+pin.charAt(0)+'</b>)로 자동 매핑: <b>'+auto+'</b>';
+      info.style.display='';
+      return;
+    }
+  }
+  info.style.display='none';
+}
+
+async function saveEdit(){
+  if(!editingEmp)return;
+  const newName=document.getElementById('editName').value.trim();
+  const newPin=document.getElementById('editPin').value.trim();
+  const newDept=document.getElementById('editDept').value;
+  const newPosition=document.getElementById('editPosition').value.trim();
+  const newEmpId=document.getElementById('editEmpId').value.trim();
+
+  if(!newName){showMsg('editMsg','이름을 입력하세요','err');return}
+  if(newName.length<2){showMsg('editMsg','이름은 2자 이상','err');return}
+  if(!/^\d{4}$/.test(newPin)){showMsg('editMsg','PIN은 4자리 숫자','err');return}
+
+  const btn=document.getElementById('editSaveBtn');
+  btn.disabled=true;btn.textContent='저장중...';
+
   try{
-    const pinHash = await sha256hex(pin.trim());
-    const chk = await sbReq('GET', TBL+'?select=id,name&pin_hash=eq.'+pinHash);
-    if(chk && chk.length && chk[0].name !== name){alert('이미 사용중인 PIN ('+chk[0].name+')');return}
-    await sbReq('PATCH', TBL+'?id=eq.'+id, {pin_hash: pinHash, pin_plain: pin.trim()});
-    alert('✓ PIN 변경: '+name);
-    loadList();
-  }catch(err){alert('오류: '+err.message)}
+    // 1. 이름 변경 시 중복 체크
+    if(newName!==editingEmp.name){
+      const nameChk=await sbReq('GET', TBL+'?select=id&name=eq.'+encodeURIComponent(newName));
+      if(nameChk && nameChk.length){
+        showMsg('editMsg','이미 등록된 이름: '+newName,'err');
+        btn.disabled=false;btn.textContent='💾 저장';return;
+      }
+    }
+
+    // 2. PIN 변경 시 중복 체크
+    const pinHash=await sha256hex(newPin);
+    if(newPin!==editingEmp.pin_plain){
+      const pinChk=await sbReq('GET', TBL+'?select=id,name&pin_hash=eq.'+pinHash);
+      if(pinChk && pinChk.length && pinChk[0].id !== editingEmp.id){
+        showMsg('editMsg','이미 사용중인 PIN ('+pinChk[0].name+')','err');
+        btn.disabled=false;btn.textContent='💾 저장';return;
+      }
+    }
+
+    // 3. PATCH 페이로드 구성
+    const payload={
+      name: newName,
+      pin_hash: pinHash,
+      pin_plain: newPin,
+      dept: newDept||null,        // 미선택 시 NULL → 조회 측에서 PIN 자동매핑
+      position: newPosition||null,
+      emp_id: newEmpId||null
+    };
+
+    await sbReq('PATCH', TBL+'?id=eq.'+editingEmp.id, payload);
+    showMsg('editMsg','✓ 저장 완료','ok');
+    setTimeout(()=>{
+      closeEditModal();
+      loadList();
+    },600);
+  }catch(err){
+    showMsg('editMsg','❌ '+err.message,'err');
+  }finally{
+    btn.disabled=false;btn.textContent='💾 저장';
+  }
 }
 
 async function delEmp(id, name){
-  if(!confirm('['+name+'] 삭제하시겠습니까?')) return;
+  if(!confirm('['+name+'] 삭제하시겠습니까?\n\n관련 PIN/부서/직위 정보가 모두 삭제됩니다.')) return;
   try{
     await sbReq('DELETE', TBL+'?id=eq.'+id);
     loadList();
@@ -628,6 +848,7 @@ async function delEmp(id, name){
 async function addSingleEmp(){
   const name = document.getElementById('addName').value.trim();
   const pin = document.getElementById('addPin').value.trim();
+  const dept = document.getElementById('addDept').value;
   if(!name){showMsg('addMsg','이름 입력','err');return}
   if(name.length<2){showMsg('addMsg','이름 2자 이상','err');return}
   if(!/^\d{4}$/.test(pin)){showMsg('addMsg','PIN은 숫자 4자리','err');return}
@@ -637,10 +858,14 @@ async function addSingleEmp(){
     if(nameChk && nameChk.length){showMsg('addMsg','이미 등록된 이름','err');return}
     const pinChk = await sbReq('GET', TBL+'?select=id,name&pin_hash=eq.'+pinHash);
     if(pinChk && pinChk.length){showMsg('addMsg','이미 사용중인 PIN (['+pinChk[0].name+'])','err');return}
-    await sbReq('POST', TBL, {name: name, pin_hash: pinHash, pin_plain: pin});
-    showMsg('addMsg','✓ 등록 완료: '+name,'ok');
+    const payload={name: name, pin_hash: pinHash, pin_plain: pin};
+    if(dept)payload.dept=dept;
+    await sbReq('POST', TBL, payload);
+    const dispDept=dept||deptFromPin(pin)||'(미지정)';
+    showMsg('addMsg','✓ 등록 완료: '+name+' ('+dispDept+')','ok');
     document.getElementById('addName').value='';
     document.getElementById('addPin').value='';
+    document.getElementById('addDept').value='';
     loadList();
   }catch(err){
     showMsg('addMsg','❌ '+err.message,'err');
@@ -658,24 +883,27 @@ async function checkServerSync(){
   msg.classList.remove('show');
   
   try{
-    // 1. 서버 사원 수 조회
-    const serverData = await sbReq('GET', TBL + '?select=id,name,pin_plain&order=name.asc') || [];
+    const serverData = await sbReq('GET', TBL + '?select=id,name,pin_plain,dept,position,emp_id&order=name.asc') || [];
     const serverCount = serverData.length;
     const localCount = empCache.length;
     
-    // 2. 작업 이력 통계
     const writes = _opLog.filter(e => e.op === 'POST' || e.op === 'PATCH' || e.op === 'DELETE');
     const success = writes.filter(e => e.ok).length;
     const failed = writes.filter(e => !e.ok).length;
     
-    // 3. 무결성 검증 - 캐시와 서버 비교
     const cacheNames = empCache.map(e => e.name).sort();
     const serverNames = serverData.map(e => e.name).sort();
     const diff = [];
     cacheNames.forEach(n => {if(!serverNames.includes(n)) diff.push('캐시에만 있음: '+n)});
     serverNames.forEach(n => {if(!cacheNames.includes(n)) diff.push('서버에만 있음: '+n)});
     
-    // 4. 결과 표시
+    // 부서 통계
+    const deptStat={};
+    serverData.forEach(e=>{
+      const d=e.dept||'(자동매핑) '+(deptFromPin(e.pin_plain)||'미지정');
+      deptStat[d]=(deptStat[d]||0)+1;
+    });
+
     let html = '';
     html += '<div>📊 <b>서버 사원 수:</b> ' + serverCount + '명</div>';
     html += '<div>💾 <b>로컬 캐시:</b> ' + localCount + '명</div>';
@@ -686,8 +914,12 @@ async function checkServerSync(){
     if(diff.length > 0){
       html += '<div style="color:#f59e0b;margin-top:8px">⚠️ 불일치 ' + diff.length + '건:<br>' + diff.slice(0,5).join('<br>') + (diff.length > 5 ? '<br>...' : '') + '</div>';
     }
+    // 부서 분포
+    html += '<div style="margin-top:10px;border-top:1px solid #2a2e3d;padding-top:8px"><b>📂 부서별 인원</b></div>';
+    Object.keys(deptStat).sort().forEach(d=>{
+      html+='<div style="font-size:11px;color:#cbd5e1;margin-top:2px">· '+escHtml(d)+': <b>'+deptStat[d]+'명</b></div>';
+    });
     
-    // 작업 이력 (최근 10건)
     if(writes.length > 0){
       const recent = writes.slice(-10).reverse();
       html += '<div style="margin-top:10px;border-top:1px solid #2a2e3d;padding-top:8px"><b>📜 최근 작업 이력</b></div>';
@@ -698,14 +930,13 @@ async function checkServerSync(){
         const statusIcon = e.ok ? '✓' : '❌';
         const target = e.name || (e.path ? e.path.split('?')[0] : '');
         const color = e.ok ? '#22c55e' : '#ef4444';
-        html += '<div style="font-size:11px;color:'+color+';margin-top:2px">' + tStr + ' ' + statusIcon + ' ' + opIcon + ' ' + target + (e.error ? ' ('+e.error.substring(0,40)+')' : '') + '</div>';
+        html += '<div style="font-size:11px;color:'+color+';margin-top:2px">' + tStr + ' ' + statusIcon + ' ' + opIcon + ' ' + escHtml(target) + (e.error ? ' ('+escHtml(e.error.substring(0,40))+')' : '') + '</div>';
       });
     }
     
     stat.innerHTML = html;
     stat.style.display = '';
     
-    // 5. 결론
     if(diff.length === 0 && failed === 0){
       showMsg('syncMsg', '✅ 모든 데이터가 서버와 동기화되어 있습니다 ('+serverCount+'명)', 'ok');
     }else if(diff.length === 0 && failed > 0){
@@ -714,11 +945,10 @@ async function checkServerSync(){
       showMsg('syncMsg', '⚠️ 서버와 캐시가 일치하지 않습니다. [목록 새로고침]을 권장합니다.', 'warn');
     }
     
-    // 캐시 갱신
     empCache = serverData;
     document.getElementById('empCount').textContent = serverCount;
     if(document.getElementById('empListPanel').style.display !== 'none'){
-      filterAndRender('');
+      renderList();
     }
   }catch(err){
     showMsg('syncMsg', '❌ 서버 연결 실패: ' + err.message, 'err');
@@ -737,17 +967,14 @@ async function forceResync(){
   btn.textContent = '⏳ 재전송 중...';
   
   let ok = 0, fail = 0;
-  const remaining = [];
   for(const item of _failedOps.slice()){
     try{
       await sbReq(item.method, item.path, item.body);
       ok++;
-      // 성공 시 큐에서 제거
       const idx = _failedOps.indexOf(item);
       if(idx >= 0) _failedOps.splice(idx, 1);
     }catch(err){
       fail++;
-      remaining.push(item);
     }
   }
   
@@ -760,16 +987,21 @@ async function forceResync(){
   }else{
     showMsg('syncMsg', '⚠️ 성공 '+ok+'건 / 실패 '+fail+'건 (네트워크 또는 서버 상태 확인)', 'warn');
   }
-  // 목록 새로고침
   await loadList();
 }
 
 /* ========== 유틸 ========== */
 function showMsg(id, text, cls){
   const e=document.getElementById(id);
+  if(!e)return;
   e.textContent=text;e.className='msg show '+(cls||'ok');
   clearTimeout(e._t);e._t=setTimeout(()=>e.classList.remove('show'),5000);
 }
+function hideMsg(id){
+  const e=document.getElementById(id);
+  if(e)e.classList.remove('show');
+}
+function escHtml(s){if(s==null)return '';return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 
 /* ========== 이벤트 바인딩 ========== */
 document.getElementById('logoutBtn').onclick=()=>{if(!confirm('관리자 잠금?'))return;clearAdminAuth();location.reload()};
@@ -781,6 +1013,19 @@ document.getElementById('empListToggle').onclick = toggleEmpList;
 document.getElementById('searchName').addEventListener('input', renderList);
 document.getElementById('syncCheckBtn').onclick = checkServerSync;
 document.getElementById('syncForceBtn').onclick = forceResync;
+
+// 수정 모달 이벤트
+document.getElementById('editCancelBtn').onclick = closeEditModal;
+document.getElementById('editSaveBtn').onclick = saveEdit;
+document.getElementById('editPin').addEventListener('input', function(e){
+  e.target.value=e.target.value.replace(/\D/g,'').slice(0,4);
+  updateEditDeptAutoInfo();
+});
+document.getElementById('editDept').addEventListener('change', updateEditDeptAutoInfo);
+// 모달 배경 클릭 시 닫기
+document.getElementById('editModal').addEventListener('click', function(e){
+  if(e.target===this)closeEditModal();
+});
 
 // 파일 영역
 const fa = document.getElementById('fileArea');
