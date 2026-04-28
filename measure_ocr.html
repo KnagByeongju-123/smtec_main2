@@ -1,0 +1,693 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>계측기 숫자 인식 (OCR)</title>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<style>
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+body {
+  margin: 0; padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Malgun Gothic", sans-serif;
+  background: #0f172a; color: #e2e8f0;
+  min-height: 100vh; padding-bottom: 40px;
+}
+.header {
+  background: linear-gradient(135deg, #1e293b, #0f172a);
+  padding: 16px; border-bottom: 2px solid #334155;
+  position: sticky; top: 0; z-index: 100;
+}
+.header h1 { margin: 0; font-size: 18px; font-weight: 700; color: #38bdf8; }
+.header .sub { font-size: 12px; color: #94a3b8; margin-top: 4px; }
+
+.container { padding: 16px; max-width: 720px; margin: 0 auto; }
+
+.card {
+  background: #1e293b; border: 1px solid #334155;
+  border-radius: 12px; padding: 16px; margin-bottom: 16px;
+}
+.card h2 {
+  margin: 0 0 12px 0; font-size: 14px;
+  color: #38bdf8; font-weight: 600;
+  display: flex; align-items: center; gap: 8px;
+}
+.card h2 .num {
+  background: #38bdf8; color: #0f172a;
+  width: 22px; height: 22px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 700;
+}
+
+.btn {
+  display: block; width: 100%; padding: 16px;
+  font-size: 16px; font-weight: 700;
+  border: none; border-radius: 10px; cursor: pointer;
+  margin-bottom: 8px; transition: all 0.15s;
+}
+.btn-primary { background: #38bdf8; color: #0f172a; }
+.btn-primary:active { transform: scale(0.98); background: #0ea5e9; }
+.btn-success { background: #22c55e; color: #fff; }
+.btn-success:active { background: #16a34a; }
+.btn-warn { background: #f59e0b; color: #0f172a; }
+.btn-warn:active { background: #d97706; }
+.btn-secondary { background: #475569; color: #e2e8f0; }
+.btn-secondary:active { background: #334155; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.preview-wrap {
+  position: relative; width: 100%;
+  background: #000; border-radius: 8px; overflow: hidden;
+  margin-bottom: 12px; min-height: 200px;
+  display: flex; align-items: center; justify-content: center;
+}
+.preview-wrap img, .preview-wrap canvas, .preview-wrap video {
+  width: 100%; height: auto; display: block;
+}
+.preview-wrap .placeholder {
+  color: #64748b; font-size: 14px; padding: 40px 16px;
+  text-align: center;
+}
+
+.crop-overlay {
+  position: absolute; top: 0; left: 0;
+  width: 100%; height: 100%;
+  cursor: crosshair; touch-action: none;
+}
+.crop-box {
+  position: absolute;
+  border: 2px dashed #fbbf24;
+  background: rgba(251, 191, 36, 0.15);
+  pointer-events: none;
+}
+.crop-hint {
+  position: absolute; bottom: 8px; left: 8px;
+  background: rgba(0,0,0,0.7); color: #fbbf24;
+  padding: 4px 8px; font-size: 11px; border-radius: 4px;
+  pointer-events: none;
+}
+
+.result-display {
+  background: #0f172a;
+  border: 2px solid #38bdf8;
+  border-radius: 8px;
+  padding: 20px;
+  text-align: center;
+  margin-bottom: 12px;
+}
+.result-display .label {
+  font-size: 12px; color: #94a3b8; margin-bottom: 8px;
+}
+.result-display .value {
+  font-size: 36px; font-weight: 800;
+  font-family: "Courier New", monospace;
+  color: #38bdf8; letter-spacing: 2px;
+  word-break: break-all;
+}
+.result-display .raw {
+  font-size: 11px; color: #64748b; margin-top: 8px;
+  font-family: "Courier New", monospace;
+}
+
+.input-row {
+  display: flex; gap: 8px; align-items: center;
+  margin-bottom: 8px;
+}
+.input-row label {
+  font-size: 13px; color: #cbd5e1; min-width: 80px;
+}
+.input-row input, .input-row select {
+  flex: 1; padding: 12px;
+  background: #0f172a; color: #e2e8f0;
+  border: 1px solid #475569; border-radius: 6px;
+  font-size: 16px; font-family: "Courier New", monospace;
+}
+.input-row input:focus, .input-row select:focus {
+  outline: none; border-color: #38bdf8;
+}
+
+.options-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+  margin-bottom: 12px;
+}
+.opt-btn {
+  padding: 10px; font-size: 13px;
+  background: #334155; color: #cbd5e1;
+  border: 1px solid #475569; border-radius: 6px;
+  cursor: pointer;
+}
+.opt-btn.active {
+  background: #38bdf8; color: #0f172a;
+  border-color: #38bdf8; font-weight: 700;
+}
+
+.status {
+  padding: 10px 12px; border-radius: 6px;
+  font-size: 13px; margin-bottom: 12px;
+  display: none;
+}
+.status.show { display: block; }
+.status.info { background: #1e3a5f; color: #93c5fd; }
+.status.success { background: #14532d; color: #86efac; }
+.status.error { background: #7f1d1d; color: #fca5a5; }
+
+.progress {
+  height: 6px; background: #334155; border-radius: 3px;
+  overflow: hidden; margin-top: 6px;
+}
+.progress-bar {
+  height: 100%; background: #38bdf8;
+  width: 0%; transition: width 0.3s;
+}
+
+.history {
+  max-height: 200px; overflow-y: auto;
+}
+.history-item {
+  display: flex; justify-content: space-between;
+  padding: 8px; border-bottom: 1px solid #334155;
+  font-size: 13px; align-items: center;
+}
+.history-item:last-child { border-bottom: none; }
+.history-item .time { color: #64748b; font-size: 11px; }
+.history-item .val {
+  font-family: "Courier New", monospace;
+  color: #38bdf8; font-weight: 700;
+}
+
+input[type="file"] { display: none; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>📷 계측기 숫자 인식</h1>
+  <div class="sub">사진을 찍으면 LCD 숫자를 자동으로 읽어옵니다</div>
+</div>
+
+<div class="container">
+
+  <!-- 1. 모드 선택 -->
+  <div class="card">
+    <h2><span class="num">1</span>측정 항목</h2>
+    <div class="options-grid">
+      <button class="opt-btn active" data-mode="number" onclick="setMode('number')">숫자만</button>
+      <button class="opt-btn" data-mode="decimal" onclick="setMode('decimal')">소수점 포함</button>
+      <button class="opt-btn" data-mode="negative" onclick="setMode('negative')">±부호 포함</button>
+      <button class="opt-btn" data-mode="alphanum" onclick="setMode('alphanum')">영문+숫자</button>
+    </div>
+    <div class="input-row">
+      <label>저장 항목</label>
+      <select id="targetField">
+        <option value="weight">중량 (kg/g)</option>
+        <option value="length">길이 (mm)</option>
+        <option value="thickness">두께 (mm)</option>
+        <option value="diameter">직경 (mm)</option>
+        <option value="hardness">경도 (HRC)</option>
+        <option value="temperature">온도 (℃)</option>
+        <option value="pressure">압력</option>
+        <option value="custom">기타 (직접입력)</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- 2. 사진 -->
+  <div class="card">
+    <h2><span class="num">2</span>사진 촬영</h2>
+    <div class="preview-wrap" id="previewWrap">
+      <div class="placeholder">아래 버튼으로 사진을 찍거나<br>갤러리에서 선택하세요</div>
+    </div>
+
+    <input type="file" id="cameraInput" accept="image/*" capture="environment">
+    <input type="file" id="galleryInput" accept="image/*">
+
+    <button class="btn btn-primary" onclick="document.getElementById('cameraInput').click()">
+      📸 카메라로 촬영
+    </button>
+    <button class="btn btn-secondary" onclick="document.getElementById('galleryInput').click()">
+      🖼 갤러리에서 선택
+    </button>
+  </div>
+
+  <!-- 3. 영역 선택 -->
+  <div class="card" id="cropCard" style="display:none">
+    <h2><span class="num">3</span>인식 영역 선택</h2>
+    <div class="status info show" style="font-size:12px">
+      💡 LCD 숫자 영역만 손가락으로 드래그해서 박스로 감싸주세요. 영역이 좁을수록 정확도가 높습니다.
+    </div>
+    <div class="preview-wrap" style="position:relative">
+      <canvas id="cropCanvas"></canvas>
+      <div class="crop-overlay" id="cropOverlay"></div>
+      <div class="crop-box" id="cropBox" style="display:none"></div>
+      <div class="crop-hint">드래그하여 영역 선택</div>
+    </div>
+    <button class="btn btn-secondary" onclick="resetCrop()">영역 초기화</button>
+    <button class="btn btn-warn" onclick="useFullImage()">전체 이미지 사용</button>
+  </div>
+
+  <!-- 4. 인식 -->
+  <div class="card" id="ocrCard" style="display:none">
+    <h2><span class="num">4</span>숫자 인식</h2>
+
+    <button class="btn btn-success" id="ocrBtn" onclick="runOCR()">
+      🔍 숫자 읽기 시작
+    </button>
+
+    <div class="status" id="ocrStatus"></div>
+    <div class="progress" id="progressWrap" style="display:none">
+      <div class="progress-bar" id="progressBar"></div>
+    </div>
+
+    <div class="result-display" id="resultDisplay" style="display:none">
+      <div class="label">인식 결과</div>
+      <div class="value" id="resultValue">-</div>
+      <div class="raw" id="resultRaw"></div>
+    </div>
+
+    <div class="input-row" id="editRow" style="display:none">
+      <label>수정/확인</label>
+      <input type="text" id="editValue" inputmode="decimal">
+    </div>
+
+    <button class="btn btn-primary" id="useBtn" onclick="useResult()" style="display:none">
+      ✅ 이 값 사용하기
+    </button>
+  </div>
+
+  <!-- 5. 입력 결과 -->
+  <div class="card">
+    <h2><span class="num">5</span>최종 입력값</h2>
+    <div class="input-row">
+      <label id="finalLabel">중량</label>
+      <input type="text" id="finalValue" placeholder="여기에 인식된 값이 입력됩니다" readonly>
+    </div>
+    <button class="btn btn-secondary" onclick="copyFinal()">📋 클립보드 복사</button>
+  </div>
+
+  <!-- 6. 이력 -->
+  <div class="card">
+    <h2><span class="num">6</span>최근 인식 이력</h2>
+    <div class="history" id="historyList">
+      <div style="padding:12px;color:#64748b;text-align:center;font-size:13px">아직 이력이 없습니다</div>
+    </div>
+    <button class="btn btn-secondary" onclick="clearHistory()" style="margin-top:8px">이력 지우기</button>
+  </div>
+
+</div>
+
+<script>
+let originalImage = null;
+let cropCanvas = null;
+let cropCtx = null;
+let imageScale = 1;
+let cropArea = null;
+let isDrawing = false;
+let drawStart = null;
+let currentMode = 'number';
+let history = [];
+
+const MODE_CONFIG = {
+  number:    { whitelist: '0123456789', desc: '숫자만' },
+  decimal:   { whitelist: '0123456789.', desc: '소수점 포함' },
+  negative:  { whitelist: '0123456789.+-', desc: '±부호 포함' },
+  alphanum:  { whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ.-', desc: '영문+숫자' }
+};
+
+const FIELD_LABELS = {
+  weight: '중량',
+  length: '길이',
+  thickness: '두께',
+  diameter: '직경',
+  hardness: '경도',
+  temperature: '온도',
+  pressure: '압력',
+  custom: '값'
+};
+
+// ===== 모드 설정 =====
+function setMode(mode) {
+  currentMode = mode;
+  document.querySelectorAll('.opt-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.mode === mode);
+  });
+}
+
+// ===== 항목 라벨 갱신 =====
+document.getElementById('targetField').addEventListener('change', (e) => {
+  document.getElementById('finalLabel').textContent = FIELD_LABELS[e.target.value] || '값';
+});
+
+// ===== 이미지 로드 =====
+function loadImage(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const img = new Image();
+    img.onload = () => {
+      originalImage = img;
+      showImageOnCanvas(img);
+      document.getElementById('cropCard').style.display = 'block';
+      document.getElementById('ocrCard').style.display = 'block';
+      document.getElementById('cropCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      resetCrop();
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+document.getElementById('cameraInput').addEventListener('change', (e) => loadImage(e.target.files[0]));
+document.getElementById('galleryInput').addEventListener('change', (e) => loadImage(e.target.files[0]));
+
+// ===== 캔버스에 이미지 표시 =====
+function showImageOnCanvas(img) {
+  // 미리보기에도 표시
+  const previewWrap = document.getElementById('previewWrap');
+  previewWrap.innerHTML = '';
+  const previewImg = document.createElement('img');
+  previewImg.src = img.src;
+  previewWrap.appendChild(previewImg);
+
+  // 크롭용 캔버스
+  cropCanvas = document.getElementById('cropCanvas');
+  cropCtx = cropCanvas.getContext('2d');
+
+  // 모바일 화면 폭에 맞춰 표시 크기 결정
+  const containerWidth = cropCanvas.parentElement.clientWidth;
+  imageScale = containerWidth / img.naturalWidth;
+  const displayHeight = img.naturalHeight * imageScale;
+
+  cropCanvas.width = img.naturalWidth;
+  cropCanvas.height = img.naturalHeight;
+  cropCanvas.style.width = containerWidth + 'px';
+  cropCanvas.style.height = displayHeight + 'px';
+
+  cropCtx.drawImage(img, 0, 0);
+
+  const overlay = document.getElementById('cropOverlay');
+  overlay.style.width = containerWidth + 'px';
+  overlay.style.height = displayHeight + 'px';
+}
+
+// ===== 영역 선택 (드래그) =====
+const overlay = document.getElementById('cropOverlay');
+const cropBox = document.getElementById('cropBox');
+
+function getPointerPos(e) {
+  const rect = overlay.getBoundingClientRect();
+  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+  return { x: clientX - rect.left, y: clientY - rect.top };
+}
+
+function startDraw(e) {
+  e.preventDefault();
+  isDrawing = true;
+  drawStart = getPointerPos(e);
+  cropBox.style.display = 'block';
+  cropBox.style.left = drawStart.x + 'px';
+  cropBox.style.top = drawStart.y + 'px';
+  cropBox.style.width = '0px';
+  cropBox.style.height = '0px';
+}
+
+function moveDraw(e) {
+  if (!isDrawing) return;
+  e.preventDefault();
+  const pos = getPointerPos(e);
+  const x = Math.min(pos.x, drawStart.x);
+  const y = Math.min(pos.y, drawStart.y);
+  const w = Math.abs(pos.x - drawStart.x);
+  const h = Math.abs(pos.y - drawStart.y);
+  cropBox.style.left = x + 'px';
+  cropBox.style.top = y + 'px';
+  cropBox.style.width = w + 'px';
+  cropBox.style.height = h + 'px';
+}
+
+function endDraw(e) {
+  if (!isDrawing) return;
+  isDrawing = false;
+  const left = parseFloat(cropBox.style.left);
+  const top = parseFloat(cropBox.style.top);
+  const w = parseFloat(cropBox.style.width);
+  const h = parseFloat(cropBox.style.height);
+  if (w < 10 || h < 10) {
+    cropBox.style.display = 'none';
+    cropArea = null;
+    return;
+  }
+  // 표시좌표 → 원본좌표 변환
+  cropArea = {
+    x: Math.round(left / imageScale),
+    y: Math.round(top / imageScale),
+    w: Math.round(w / imageScale),
+    h: Math.round(h / imageScale)
+  };
+}
+
+overlay.addEventListener('touchstart', startDraw);
+overlay.addEventListener('touchmove', moveDraw);
+overlay.addEventListener('touchend', endDraw);
+overlay.addEventListener('mousedown', startDraw);
+overlay.addEventListener('mousemove', moveDraw);
+overlay.addEventListener('mouseup', endDraw);
+
+function resetCrop() {
+  cropArea = null;
+  cropBox.style.display = 'none';
+}
+
+function useFullImage() {
+  if (!originalImage) return;
+  cropArea = { x: 0, y: 0, w: originalImage.naturalWidth, h: originalImage.naturalHeight };
+  cropBox.style.display = 'block';
+  cropBox.style.left = '0px';
+  cropBox.style.top = '0px';
+  cropBox.style.width = (originalImage.naturalWidth * imageScale) + 'px';
+  cropBox.style.height = (originalImage.naturalHeight * imageScale) + 'px';
+}
+
+// ===== 이미지 전처리 (대비 강화 + 이진화) =====
+function preprocessImage(srcCanvas, area) {
+  const tempCanvas = document.createElement('canvas');
+  const tempCtx = tempCanvas.getContext('2d');
+
+  // 작은 영역이면 4배 확대 (LCD 작은 글씨 인식률 향상)
+  const scale = (area.w < 200 || area.h < 100) ? 4 : 2;
+  tempCanvas.width = area.w * scale;
+  tempCanvas.height = area.h * scale;
+
+  tempCtx.imageSmoothingEnabled = true;
+  tempCtx.imageSmoothingQuality = 'high';
+  tempCtx.drawImage(srcCanvas,
+    area.x, area.y, area.w, area.h,
+    0, 0, tempCanvas.width, tempCanvas.height);
+
+  // 그레이스케일 + 대비 + 이진화 (Otsu 간이 버전)
+  const imgData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+  const data = imgData.data;
+
+  // 1단계: 그레이스케일 변환 + 평균 휘도 계산
+  let sum = 0;
+  const grays = new Uint8Array(data.length / 4);
+  for (let i = 0; i < data.length; i += 4) {
+    const gray = Math.round(0.299 * data[i] + 0.587 * data[i+1] + 0.114 * data[i+2]);
+    grays[i / 4] = gray;
+    sum += gray;
+  }
+  const avg = sum / grays.length;
+
+  // 2단계: 임계값 = 평균 + 약간의 오프셋 (LCD는 보통 어두운 배경 + 밝은 숫자)
+  // 배경이 밝고 숫자가 어두우면 반전
+  let darkCount = 0;
+  for (let i = 0; i < grays.length; i++) {
+    if (grays[i] < avg) darkCount++;
+  }
+  const isDarkBackground = darkCount > grays.length / 2;
+  const threshold = avg;
+
+  // 3단계: 이진화 (검은 배경 + 흰 숫자 → 흰 배경 + 검은 숫자로 변환)
+  for (let i = 0; i < data.length; i += 4) {
+    const g = grays[i / 4];
+    let v;
+    if (isDarkBackground) {
+      v = g > threshold ? 0 : 255;     // 밝은 부분(숫자)을 검게
+    } else {
+      v = g > threshold ? 255 : 0;     // 그대로
+    }
+    data[i] = data[i+1] = data[i+2] = v;
+  }
+  tempCtx.putImageData(imgData, 0, 0);
+
+  return tempCanvas;
+}
+
+// ===== OCR 실행 =====
+async function runOCR() {
+  if (!originalImage) {
+    showStatus('먼저 사진을 선택하세요', 'error');
+    return;
+  }
+
+  const area = cropArea || {
+    x: 0, y: 0,
+    w: originalImage.naturalWidth, h: originalImage.naturalHeight
+  };
+
+  const btn = document.getElementById('ocrBtn');
+  const progressWrap = document.getElementById('progressWrap');
+  const progressBar = document.getElementById('progressBar');
+  btn.disabled = true;
+  btn.textContent = '⏳ 인식 중...';
+  progressWrap.style.display = 'block';
+  progressBar.style.width = '0%';
+
+  try {
+    showStatus('이미지 전처리 중...', 'info');
+    const processed = preprocessImage(cropCanvas, area);
+
+    showStatus('OCR 엔진 로딩 중...', 'info');
+
+    const config = MODE_CONFIG[currentMode];
+    const worker = await Tesseract.createWorker('eng', 1, {
+      logger: m => {
+        if (m.status === 'recognizing text') {
+          progressBar.style.width = (m.progress * 100) + '%';
+        }
+      }
+    });
+
+    await worker.setParameters({
+      tessedit_char_whitelist: config.whitelist,
+      tessedit_pageseg_mode: '7',  // 한 줄로 처리
+      classify_bln_numeric_mode: '1'
+    });
+
+    showStatus('숫자 인식 중...', 'info');
+    const { data } = await worker.recognize(processed);
+    await worker.terminate();
+
+    const rawText = data.text.trim();
+    const confidence = Math.round(data.confidence);
+
+    // 후처리: 공백/줄바꿈 제거
+    let cleaned = rawText.replace(/\s+/g, '');
+
+    // 숫자 모드면 추가 정제 (자주 헷갈리는 문자)
+    if (currentMode === 'number' || currentMode === 'decimal' || currentMode === 'negative') {
+      cleaned = cleaned
+        .replace(/[Oo]/g, '0')
+        .replace(/[lI|]/g, '1')
+        .replace(/[Ss]/g, '5')
+        .replace(/[Bb]/g, '8')
+        .replace(/,/g, '.');
+    }
+
+    document.getElementById('resultDisplay').style.display = 'block';
+    document.getElementById('resultValue').textContent = cleaned || '(인식실패)';
+    document.getElementById('resultRaw').textContent = `원본: "${rawText}" / 신뢰도: ${confidence}%`;
+    document.getElementById('editRow').style.display = 'flex';
+    document.getElementById('editValue').value = cleaned;
+    document.getElementById('useBtn').style.display = 'block';
+
+    if (cleaned) {
+      showStatus(`인식 완료! 신뢰도 ${confidence}%`, 'success');
+    } else {
+      showStatus('숫자를 인식하지 못했습니다. 영역을 다시 선택하거나 더 가까이 촬영해주세요.', 'error');
+    }
+
+  } catch (err) {
+    console.error(err);
+    showStatus('오류: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🔍 숫자 읽기 시작';
+    setTimeout(() => { progressWrap.style.display = 'none'; }, 500);
+  }
+}
+
+function showStatus(msg, type) {
+  const el = document.getElementById('ocrStatus');
+  el.textContent = msg;
+  el.className = 'status show ' + type;
+}
+
+// ===== 결과 사용 =====
+function useResult() {
+  const val = document.getElementById('editValue').value.trim();
+  if (!val) {
+    showStatus('값이 비어있습니다', 'error');
+    return;
+  }
+  document.getElementById('finalValue').value = val;
+
+  // 이력 저장
+  const field = document.getElementById('targetField').value;
+  const label = FIELD_LABELS[field];
+  history.unshift({
+    time: new Date().toLocaleTimeString('ko-KR'),
+    field: label,
+    value: val
+  });
+  if (history.length > 20) history.pop();
+  renderHistory();
+
+  showStatus(`✅ "${val}" 입력 완료`, 'success');
+
+  // 진동 피드백
+  if (navigator.vibrate) navigator.vibrate(100);
+
+  // 결과 영역으로 스크롤
+  document.getElementById('finalValue').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+// ===== 클립보드 복사 =====
+function copyFinal() {
+  const val = document.getElementById('finalValue').value;
+  if (!val) {
+    showStatus('복사할 값이 없습니다', 'error');
+    return;
+  }
+  navigator.clipboard.writeText(val).then(() => {
+    showStatus('📋 클립보드에 복사됨', 'success');
+    if (navigator.vibrate) navigator.vibrate(50);
+  }).catch(err => {
+    // fallback
+    const ta = document.createElement('textarea');
+    ta.value = val;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    showStatus('📋 클립보드에 복사됨', 'success');
+  });
+}
+
+// ===== 이력 =====
+function renderHistory() {
+  const list = document.getElementById('historyList');
+  if (history.length === 0) {
+    list.innerHTML = '<div style="padding:12px;color:#64748b;text-align:center;font-size:13px">아직 이력이 없습니다</div>';
+    return;
+  }
+  list.innerHTML = history.map(h => `
+    <div class="history-item">
+      <div>
+        <div style="color:#cbd5e1">${h.field}</div>
+        <div class="time">${h.time}</div>
+      </div>
+      <div class="val">${h.value}</div>
+    </div>
+  `).join('');
+}
+
+function clearHistory() {
+  if (!confirm('이력을 모두 지우시겠습니까?')) return;
+  history = [];
+  renderHistory();
+}
+
+</script>
+</body>
+</html>
