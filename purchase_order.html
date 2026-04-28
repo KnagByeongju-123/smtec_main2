@@ -1,0 +1,1022 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>금형부품 발주관리 v3</title>
+<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: 'Malgun Gothic','맑은 고딕',sans-serif; margin: 0; padding: 14px; background: #0f1a2e; color: #e8eef7; }
+  h1 { margin: 0 0 12px; font-size: 21px; color: #4ec3ff; display: flex; align-items: center; gap: 10px; }
+
+  .tabs { display: flex; gap: 4px; border-bottom: 2px solid #2d4368; margin-bottom: 14px; }
+  .tab { padding: 10px 22px; cursor: pointer; background: #1a2845; color: #8fa3c4; border-radius: 8px 8px 0 0; font-size: 15px; font-weight: 500; border: 1px solid #2d4368; border-bottom: none; }
+  .tab:hover { color: #4ec3ff; }
+  .tab.active { background: #2d4368; color: #4ec3ff; border-color: #4ec3ff; }
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  .card { background: #1a2845; border-radius: 10px; padding: 16px; margin-bottom: 14px; border-left: 4px solid #4ec3ff; }
+  .card.amber  { border-left-color: #f59e0b; }
+  .card.green  { border-left-color: #10b981; }
+  .card.cyan   { border-left-color: #06b6d4; }
+  .card h2 { margin: 0 0 12px; font-size: 16px; color: #4ec3ff; display: flex; align-items: center; gap: 8px; }
+  .card.amber h2  { color: #fbbf24; }
+  .card.green h2  { color: #34d399; }
+  .card.cyan h2   { color: #22d3ee; }
+
+  label { display: block; font-size: 11px; color: #8fa3c4; margin-bottom: 3px; font-weight: 500; }
+  input, select, textarea { width: 100%; padding: 6px 9px; border: 1px solid #2d4368; border-radius: 4px; background: #fff; color: #222; font-size: 13px; font-family: inherit; }
+  textarea { resize: vertical; min-height: 50px; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+  .grid-4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 10px; }
+  .grid-5 { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
+  .grid-6 { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; }
+  .full   { grid-column: 1 / -1; }
+  .col-2  { grid-column: span 2; }
+
+  /* 치수 단위/값 한쌍 */
+  .dim-pair { display: grid; grid-template-columns: 70px 1fr; gap: 4px; }
+
+  button { padding: 7px 14px; border: none; border-radius: 5px; cursor: pointer; font-size: 13px; font-weight: 500; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .btn-p { background: #2563eb; color: #fff; }
+  .btn-p:hover:not(:disabled) { background: #3b7bf2; }
+  .btn-s { background: #10b981; color: #fff; }
+  .btn-s:hover:not(:disabled) { background: #1bcc94; }
+  .btn-w { background: #f59e0b; color: #fff; }
+  .btn-w:hover:not(:disabled) { background: #fbb234; }
+  .btn-d { background: #ef4444; color: #fff; }
+  .btn-d:hover:not(:disabled) { background: #f56565; }
+  .btn-i { background: #06b6d4; color: #fff; }
+  .btn-i:hover:not(:disabled) { background: #22c8e0; }
+  .btn-g { background: #4a5568; color: #fff; }
+  .btn-g:hover:not(:disabled) { background: #5a6578; }
+  .btn-sm { padding: 4px 8px; font-size: 12px; }
+
+  .table-wrap { background: #fff; border-radius: 6px; overflow: auto; max-height: 60vh; color: #222; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { padding: 5px 7px; border: 1px solid #ddd; text-align: left; white-space: nowrap; }
+  thead th { background: #1a3a6c; color: #fff; position: sticky; top: 0; z-index: 10; font-weight: 500; font-size: 11px; }
+  tbody tr:nth-child(even) { background: #f8f9fb; }
+  tbody tr:hover { background: #e8f0fb; }
+  td.actions { text-align: center; }
+  .empty { text-align: center; padding: 30px; color: #999; }
+
+  .status-bar { margin-top: 8px; padding: 6px 12px; border-radius: 4px; font-size: 13px; display: none; }
+  .status-bar.ok   { display: block; background: #103a2a; color: #4ee399; border: 1px solid #2e8b57; }
+  .status-bar.err  { display: block; background: #3a1010; color: #ff8888; border: 1px solid #8b2e2e; }
+  .status-bar.warn { display: block; background: #3a2e10; color: #ffc966; border: 1px solid #8b6e2e; }
+
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; margin-bottom: 12px; padding: 12px; background: #1a2845; border-radius: 6px; }
+  .stat { padding: 6px 12px; background: #2d4368; color: #4ec3ff; border-radius: 4px; font-size: 13px; font-weight: 500; }
+
+  .modal-bg { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 1000; align-items: flex-start; justify-content: center; padding: 30px 12px; overflow-y: auto; }
+  .modal-bg.active { display: flex; }
+  .modal { background: #1a2845; border-radius: 10px; padding: 22px; width: 100%; max-width: 1100px; box-shadow: 0 8px 30px rgba(0,0,0,.5); border: 1px solid #2d4368; }
+  .modal h3 { margin: 0 0 14px; color: #4ec3ff; font-size: 17px; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; padding-top: 12px; border-top: 1px solid #2d4368; }
+
+  .toast { position: fixed; top: 20px; right: 20px; z-index: 2000; padding: 12px 20px; border-radius: 6px; color: #fff; font-size: 14px; box-shadow: 0 4px 16px rgba(0,0,0,.3); animation: slideIn .3s; }
+  .toast.ok { background: #10b981; }
+  .toast.err { background: #ef4444; }
+  @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+  details summary { cursor: pointer; padding: 4px 0; font-size: 12px; color: #8fa3c4; }
+  .hide { display: none !important; }
+
+  /* 기초DB 옵션 카드 */
+  .mopt-card { background: #0f1a2e; border: 1px solid #2d4368; border-radius: 8px; padding: 12px; margin-bottom: 10px; }
+  .mopt-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid #2d4368; }
+  .mopt-title { font-size: 14px; color: #fbbf24; font-weight: 600; }
+  .mopt-key { font-size: 11px; color: #8fa3c4; font-family: monospace; margin-left: 6px; }
+  .mopt-list { display: flex; flex-wrap: wrap; gap: 6px; min-height: 30px; }
+  .mopt-tag { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px 4px 10px; background: #2d4368; color: #e8eef7; border-radius: 14px; font-size: 12px; }
+  .mopt-tag.inactive { opacity: 0.4; text-decoration: line-through; }
+  .mopt-tag .x { cursor: pointer; color: #ff8888; font-weight: bold; padding: 0 4px; }
+  .mopt-tag .x:hover { color: #ff5555; }
+  .mopt-add { display: flex; gap: 4px; margin-top: 8px; }
+  .mopt-add input { flex: 1; padding: 4px 8px; font-size: 12px; }
+  .mopt-add button { padding: 4px 10px; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<h1>📋 금형부품 발주관리 <span style="font-size:12px; padding:3px 10px; background:#2563eb; color:#fff; border-radius:12px;">v3</span></h1>
+
+<div class="tabs">
+  <div class="tab active" data-tab="main">📝 입력 / 조회</div>
+  <div class="tab" data-tab="history">📊 이력 / 출력</div>
+  <div class="tab" data-tab="settings">⚙ 설정</div>
+</div>
+
+<!-- ========== 탭1: 입력/조회 ========== -->
+<div class="panel active" id="panel-main">
+  <div class="card">
+    <h2>📝 구매의뢰 목록</h2>
+    <div class="toolbar">
+      <button class="btn-p" onclick="openOrderModal()">＋ 신규 구매의뢰</button>
+      <button class="btn-i" onclick="reloadOrders()">↻ 새로고침</button>
+      <span style="flex:1"></span>
+      <div>
+        <label>고객사</label>
+        <select id="filterCustomer" onchange="renderMain()" style="min-width:140px"><option value="">전체</option></select>
+      </div>
+      <div>
+        <label>상태</label>
+        <select id="filterStatus" onchange="renderMain()" style="min-width:120px"><option value="">전체</option></select>
+      </div>
+      <div>
+        <label>검색</label>
+        <input type="search" id="searchBox" placeholder="품명/품번/제번/기타..." oninput="renderMain()" style="min-width:220px">
+      </div>
+      <span class="stat" id="rowCount">총 0건</span>
+    </div>
+    <div class="table-wrap">
+      <table id="mainTable">
+        <thead><tr id="mainHead"></tr></thead>
+        <tbody id="mainBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ========== 탭2: 이력/출력 ========== -->
+<div class="panel" id="panel-history">
+  <div class="card green">
+    <h2>📊 이력 관리 (날짜 / 고객사 필터)</h2>
+    <div class="grid-4">
+      <div><label>시작일 (의뢰일자)</label><input type="date" id="histStart"></div>
+      <div><label>종료일 (의뢰일자)</label><input type="date" id="histEnd"></div>
+      <div><label>고객사</label><select id="histCustomer"><option value="">전체</option></select></div>
+      <div style="display:flex; gap:6px; align-items:end;">
+        <button class="btn-w" onclick="searchHistory()">🔍 조회</button>
+        <button class="btn-s" onclick="exportHistoryExcel()">📊 엑셀</button>
+      </div>
+    </div>
+    <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
+      <button class="btn-d btn-sm" onclick="deleteHistorySelected()">🗑 선택삭제</button>
+      <span class="stat" id="histCount">총 0건</span>
+      <span style="flex:1"></span>
+    </div>
+    <div class="table-wrap" style="margin-top:10px;">
+      <table id="histTable">
+        <thead><tr id="histHead"></tr></thead>
+        <tbody id="histBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ========== 탭3: 설정 ========== -->
+<div class="panel" id="panel-settings">
+
+  <!-- 기초DB 관리 -->
+  <div class="card amber">
+    <h2>📚 기초DB 관리 (드롭다운 옵션)</h2>
+    <div style="background:#0f1a2e; padding:10px; border-radius:6px; font-size:12px; color:#8fa3c4; margin-bottom:12px;">
+      💡 구매의뢰 입력폼의 드롭다운에 표시될 옵션 값들을 카테고리별로 관리합니다. 추가/삭제/비활성화 가능.
+    </div>
+    <div id="masterContainer"></div>
+  </div>
+
+  <!-- Supabase 연결 (맨 하단) -->
+  <div class="card cyan">
+    <h2>🔗 Supabase 연결</h2>
+    <div class="grid-2">
+      <div>
+        <label>Supabase URL <span style="color:#10b981;">🔒 잠김</span></label>
+        <input type="password" id="supaUrl" readonly tabindex="-1" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" style="background:#0f1a2e; color:#8fa3c4; cursor:not-allowed; pointer-events:none; user-select:none;">
+      </div>
+      <div>
+        <label>Anon / Publishable Key <span style="color:#10b981;">🔒 잠김</span></label>
+        <input type="password" id="supaKey" readonly tabindex="-1" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" style="background:#0f1a2e; color:#8fa3c4; cursor:not-allowed; pointer-events:none; user-select:none;">
+      </div>
+    </div>
+    <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;">
+      <button class="btn-i" onclick="connectSupabase()">🔌 연결 테스트 & 데이터 로드</button>
+      <button class="btn-g" onclick="document.getElementById('sqlBox').classList.toggle('hide')">📋 테이블 생성 SQL 보기</button>
+      <button class="btn-w" onclick="copySQL()">📄 SQL 복사</button>
+    </div>
+    <div class="status-bar" id="connStatus"></div>
+
+    <div id="sqlBox" class="hide" style="margin-top:12px;">
+      <div style="font-size:12px; color:#8fa3c4; margin-bottom:6px;">
+        💡 아래 SQL 복사 → Supabase Dashboard → SQL Editor에 붙여넣기 → [Run]
+      </div>
+      <textarea id="sqlText" readonly style="height:280px; background:#0a0f1a; color:#7dd3fc; font-family:'Consolas',monospace; font-size:12px; padding:10px;"></textarea>
+    </div>
+
+    <details style="margin-top:8px">
+      <summary>※ 안내</summary>
+      <div style="font-size:12px; color:#8fa3c4; padding-left:8px; line-height:1.7">
+        • URL/Key는 브라우저 LocalStorage에 저장됩니다.<br>
+        • 처음 설치 시 [📄 SQL 복사] → Supabase에서 실행하면 첨부파일의 기초DB 값이 자동 입력됩니다.
+      </div>
+    </details>
+  </div>
+
+</div>
+
+<!-- 구매의뢰 등록/수정 모달 -->
+<div class="modal-bg" id="orderModal">
+  <div class="modal">
+    <h3 id="orderModalTitle">신규 구매의뢰</h3>
+
+    <!-- 1단계: 기본정보 -->
+    <h4 style="color:#fbbf24; margin:0 0 8px; font-size:14px;">📌 기본정보</h4>
+    <div class="grid-4">
+      <div><label>구매의뢰번호</label><input type="text" id="of_pr_no" placeholder="자동생성/수동입력"></div>
+      <div><label>구매의뢰일자</label><input type="date" id="of_pr_date"></div>
+      <div><label>납기요청일자</label><input type="date" id="of_due_date"></div>
+      <div><label>진행상태</label><select id="of_status"></select></div>
+    </div>
+
+    <!-- 2단계: 분류 -->
+    <h4 style="color:#fbbf24; margin:14px 0 8px; font-size:14px;">📌 분류</h4>
+    <div class="grid-3">
+      <div><label>구분 *</label><select id="of_category"></select></div>
+      <div><label>고객사 *</label><select id="of_customer"></select></div>
+      <div><label>의뢰품명</label><select id="of_request_type"></select></div>
+    </div>
+
+    <!-- 3단계: 품목 -->
+    <h4 style="color:#fbbf24; margin:14px 0 8px; font-size:14px;">📌 품목정보</h4>
+    <div class="grid-3">
+      <div><label>제품품번</label><input type="text" id="of_product_no"></div>
+      <div><label>금형제번</label><input type="text" id="of_mold_no"></div>
+      <div><label>금형부품명칭 *</label><input type="text" id="of_part_name"></div>
+    </div>
+    <div class="grid-3" style="margin-top:8px;">
+      <div><label>금형부품번호</label><input type="text" id="of_part_no"></div>
+      <div><label>위치</label><select id="of_location"></select></div>
+      <div><label>세부</label><select id="of_detail"></select></div>
+    </div>
+
+    <!-- 4단계: 치수 -->
+    <h4 style="color:#fbbf24; margin:14px 0 8px; font-size:14px;">📌 치수 (선택)</h4>
+    <div class="grid-4">
+      <div>
+        <label>치수1</label>
+        <div class="dim-pair">
+          <select id="of_unit1"></select>
+          <input type="text" id="of_dim1">
+        </div>
+      </div>
+      <div>
+        <label>치수2</label>
+        <div class="dim-pair">
+          <select id="of_unit2"></select>
+          <input type="text" id="of_dim2">
+        </div>
+      </div>
+      <div>
+        <label>치수3</label>
+        <div class="dim-pair">
+          <select id="of_unit3"></select>
+          <input type="text" id="of_dim3">
+        </div>
+      </div>
+      <div>
+        <label>치수4</label>
+        <div class="dim-pair">
+          <select id="of_unit4"></select>
+          <input type="text" id="of_dim4">
+        </div>
+      </div>
+    </div>
+
+    <!-- 5단계: 수량/담당자 -->
+    <h4 style="color:#fbbf24; margin:14px 0 8px; font-size:14px;">📌 수량 / 담당자</h4>
+    <div class="grid-5">
+      <div><label>구매의뢰수량 *</label><input type="number" id="of_qty" min="0" step="any"></div>
+      <div><label>단위</label><select id="of_qty_unit"></select></div>
+      <div><label>구매의뢰자</label><select id="of_requester"></select></div>
+      <div><label>승인자</label><select id="of_approver"></select></div>
+      <div><label>검토자</label><select id="of_reviewer"></select></div>
+    </div>
+    <div class="grid-2" style="margin-top:8px;">
+      <div><label>검토일자</label><input type="date" id="of_review_date"></div>
+      <div></div>
+    </div>
+
+    <!-- 6단계: 비고 -->
+    <div style="margin-top:10px;">
+      <label>기타사항</label>
+      <textarea id="of_note" rows="2"></textarea>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn-g" onclick="closeOrderModal()">취소</button>
+      <button class="btn-p" onclick="saveOrder()">💾 저장</button>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+// ===========================================
+// 전역
+// ===========================================
+const LS_KEY = 'mold_supa_conn_v3';
+let supaClient = null;
+
+// 표시용 컬럼 정의 (메인/이력 테이블 + 엑셀)
+const COLS = [
+  { key:'pr_no',        label:'의뢰번호' },
+  { key:'pr_date',      label:'의뢰일자' },
+  { key:'due_date',     label:'납기요청' },
+  { key:'category',     label:'구분' },
+  { key:'customer',     label:'고객사' },
+  { key:'request_type', label:'의뢰품명' },
+  { key:'product_no',   label:'제품품번' },
+  { key:'mold_no',      label:'금형제번' },
+  { key:'part_name',    label:'부품명칭' },
+  { key:'part_no',      label:'부품번호' },
+  { key:'location',     label:'위치' },
+  { key:'detail',       label:'세부' },
+  { key:'dim_summary',  label:'치수' },          // 합산 표시용
+  { key:'qty',          label:'수량' },
+  { key:'qty_unit',     label:'단위' },
+  { key:'requester',    label:'의뢰자' },
+  { key:'approver',     label:'승인자' },
+  { key:'reviewer',     label:'검토자' },
+  { key:'status',       label:'상태' },
+  { key:'note',         label:'기타' },
+];
+
+// 마스터 카테고리 → 폼의 select 매핑
+const MASTER_TO_SELECTS = {
+  category:     ['of_category', 'filter_category'],
+  customer:     ['of_customer', 'filterCustomer', 'histCustomer'],
+  request_type: ['of_request_type'],
+  location:     ['of_location'],
+  detail:       ['of_detail'],
+  unit_dim:     ['of_unit1','of_unit2','of_unit3','of_unit4'],
+  unit:         ['of_qty_unit'],
+  requester:    ['of_requester'],
+  approver:     ['of_approver'],
+  reviewer:     ['of_reviewer'],
+  status:       ['of_status', 'filterStatus'],
+};
+
+let state = {
+  rows: [],
+  histRows: [],
+  master: {},        // { category_key: [{id, option_value, sort_order, is_active}] }
+  categories: [],    // [{category_key, category_label, sort_order}]
+  editingId: null,
+};
+
+// ===========================================
+// 유틸
+// ===========================================
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+function toast(msg, type='ok') {
+  const el = document.createElement('div');
+  el.className = 'toast ' + type;
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 2800);
+}
+function showStatus(elId, type, msg) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  el.className = 'status-bar ' + type;
+  el.textContent = msg;
+}
+function todayStr() { return new Date().toISOString().slice(0,10); }
+function formatDate(s) {
+  if (!s) return '';
+  if (typeof s === 'string' && s.length >= 10) return s.slice(0,10);
+  return s;
+}
+function dimSummary(r) {
+  const parts = [];
+  for (let i = 1; i <= 4; i++) {
+    const u = r['unit' + i] || '';
+    const d = r['dim'  + i] || '';
+    if (u || d) parts.push(`${u}${u && d ? ' ' : ''}${d}`.trim());
+  }
+  return parts.filter(Boolean).join(' / ');
+}
+
+// ===========================================
+// 탭 전환
+// ===========================================
+document.querySelectorAll('.tab').forEach(t => {
+  t.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(x => x.classList.remove('active'));
+    t.classList.add('active');
+    document.getElementById('panel-' + t.dataset.tab).classList.add('active');
+  });
+});
+
+// ===========================================
+// 초기화 + 자동 연결
+// ===========================================
+window.addEventListener('DOMContentLoaded', () => {
+  const defaults = {
+    url: 'https://jgvikmakenpllwxwdugk.supabase.co',
+    key: 'sb_publishable_sKp-6nz2PQ9LxQ5pF-nYkg_YwoEJN6S'
+  };
+  try {
+    const saved = JSON.parse(localStorage.getItem(LS_KEY) || '{}');
+    document.getElementById('supaUrl').value = saved.url || defaults.url;
+    document.getElementById('supaKey').value = saved.key || defaults.key;
+  } catch(e) {
+    document.getElementById('supaUrl').value = defaults.url;
+    document.getElementById('supaKey').value = defaults.key;
+  }
+
+  // 기본 날짜
+  const today = new Date();
+  const end = today.toISOString().slice(0,10);
+  const start = new Date(today.getTime() - 90*86400000).toISOString().slice(0,10);
+  document.getElementById('histStart').value = start;
+  document.getElementById('histEnd').value = end;
+
+  // SQL 박스 초기화
+  document.getElementById('sqlText').value = CREATE_TABLE_SQL;
+
+  // 자동 연결
+  if (document.getElementById('supaUrl').value && document.getElementById('supaKey').value) {
+    connectSupabase();
+  }
+});
+
+// ===========================================
+// Supabase 연결
+// ===========================================
+async function connectSupabase() {
+  const url = document.getElementById('supaUrl').value.trim();
+  const key = document.getElementById('supaKey').value.trim();
+  if (!url || !key) { showStatus('connStatus','err','❌ URL/Key 입력하세요'); return; }
+  try {
+    showStatus('connStatus','warn','⏳ 연결 중...');
+    supaClient = supabase.createClient(url, key, {
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+      global: {
+        fetch: (input, init) => {
+          if (init && init.headers && init.headers instanceof Headers) {
+            const plain = {};
+            init.headers.forEach((v,k) => { plain[k] = v; });
+            init = { ...init, headers: plain };
+          }
+          return fetch(input, init);
+        }
+      }
+    });
+    const { error } = await supaClient.from('master_categories').select('category_key').limit(1);
+    if (error) throw error;
+    localStorage.setItem(LS_KEY, JSON.stringify({ url, key }));
+    showStatus('connStatus','ok','✅ 연결됨. 데이터 로드 중...');
+    await loadAll();
+    showStatus('connStatus','ok',`✅ 연결 성공 (구매의뢰 ${state.rows.length}건 / 마스터 ${Object.keys(state.master).length}개 카테고리)`);
+  } catch(e) {
+    console.error(e);
+    showStatus('connStatus','err','❌ 연결 실패: ' + (e.message || e));
+    supaClient = null;
+  }
+}
+
+async function loadAll() {
+  if (!supaClient) return;
+
+  // 카테고리
+  const { data: cats } = await supaClient.from('master_categories').select('*').order('sort_order');
+  state.categories = cats || [];
+
+  // 옵션
+  const { data: opts } = await supaClient.from('master_options').select('*').order('sort_order');
+  state.master = {};
+  (opts || []).forEach(o => {
+    if (!state.master[o.category_key]) state.master[o.category_key] = [];
+    state.master[o.category_key].push(o);
+  });
+
+  // 발주
+  const { data: rows } = await supaClient.from('pr_orders').select('*').order('id', { ascending: false });
+  state.rows = rows || [];
+
+  renderAll();
+}
+
+function renderAll() {
+  fillAllSelects();
+  renderMain();
+  renderMasterContainer();
+}
+
+// ===========================================
+// 셀렉트 자동 채우기 (마스터 → DOM 옵션)
+// ===========================================
+function fillSelect(elId, options, currentVal, includeBlank = true) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  const cur = currentVal != null ? currentVal : el.value;
+  const blankHtml = includeBlank ? '<option value="">--</option>' : '';
+  el.innerHTML = blankHtml + options.filter(o => o.is_active !== false)
+    .map(o => `<option value="${escapeHtml(o.option_value)}" ${o.option_value === cur ? 'selected' : ''}>${escapeHtml(o.option_value)}</option>`).join('');
+}
+
+function fillAllSelects() {
+  Object.entries(MASTER_TO_SELECTS).forEach(([catKey, ids]) => {
+    const opts = state.master[catKey] || [];
+    ids.forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      // 필터 셀렉트는 "전체" 라벨로 빈값
+      if (id.startsWith('filter') || id.startsWith('hist')) {
+        const cur = el.value;
+        el.innerHTML = '<option value="">전체</option>' +
+          opts.filter(o => o.is_active !== false)
+              .map(o => `<option value="${escapeHtml(o.option_value)}">${escapeHtml(o.option_value)}</option>`).join('');
+        el.value = cur;
+      } else {
+        fillSelect(id, opts, null, true);
+      }
+    });
+  });
+}
+
+// ===========================================
+// 메인 - 구매의뢰 목록
+// ===========================================
+function renderMain() {
+  const head = document.getElementById('mainHead');
+  let h = '<th style="width:40px">No</th>';
+  COLS.forEach(c => h += `<th>${escapeHtml(c.label)}</th>`);
+  h += '<th style="width:130px">관리</th>';
+  head.innerHTML = h;
+
+  const fc = document.getElementById('filterCustomer').value;
+  const fs = document.getElementById('filterStatus').value;
+  const q = document.getElementById('searchBox').value.trim().toLowerCase();
+  const filtered = state.rows.filter(r => {
+    if (fc && r.customer !== fc) return false;
+    if (fs && r.status !== fs) return false;
+    if (q) {
+      const blob = COLS.map(c => r[c.key] ?? '').join(' ').toLowerCase();
+      if (!blob.includes(q)) return false;
+    }
+    return true;
+  });
+
+  const body = document.getElementById('mainBody');
+  if (filtered.length === 0) {
+    body.innerHTML = `<tr><td colspan="${COLS.length + 2}" class="empty">데이터 없음. [+ 신규 구매의뢰]로 추가하세요.</td></tr>`;
+  } else {
+    body.innerHTML = filtered.map((r, i) => {
+      let html = `<tr><td>${i+1}</td>`;
+      COLS.forEach(c => {
+        let v = r[c.key];
+        if (c.key === 'dim_summary') v = dimSummary(r);
+        if (c.key === 'pr_date' || c.key === 'due_date') v = formatDate(v);
+        html += `<td>${escapeHtml(v ?? '')}</td>`;
+      });
+      html += `<td class="actions">
+        <button class="btn-p btn-sm" onclick="openOrderModal(${r.id})">수정</button>
+        <button class="btn-d btn-sm" onclick="deleteOrder(${r.id})">삭제</button>
+      </td></tr>`;
+      return html;
+    }).join('');
+  }
+  document.getElementById('rowCount').textContent = `총 ${filtered.length}건 / 전체 ${state.rows.length}건`;
+}
+
+async function reloadOrders() {
+  if (!supaClient) { toast('Supabase 미연결','err'); return; }
+  const { data } = await supaClient.from('pr_orders').select('*').order('id', { ascending: false });
+  state.rows = data || [];
+  renderMain();
+  toast('새로고침 완료','ok');
+}
+
+// ===========================================
+// 구매의뢰 등록/수정 모달
+// ===========================================
+const ORDER_FIELDS = [
+  'pr_no','pr_date','due_date','status',
+  'category','customer','request_type',
+  'product_no','mold_no','part_name','part_no','location','detail',
+  'unit1','dim1','unit2','dim2','unit3','dim3','unit4','dim4',
+  'qty','qty_unit','requester','approver','reviewer','review_date','note'
+];
+
+function openOrderModal(id) {
+  // 모든 필드 초기화
+  ORDER_FIELDS.forEach(f => {
+    const el = document.getElementById('of_' + f);
+    if (el) el.value = '';
+  });
+  fillAllSelects();
+
+  if (id == null) {
+    state.editingId = null;
+    document.getElementById('orderModalTitle').textContent = '신규 구매의뢰';
+    // 기본값
+    document.getElementById('of_pr_date').value = todayStr();
+    document.getElementById('of_status').value = '대기';
+  } else {
+    const r = state.rows.find(x => x.id === id);
+    if (!r) return;
+    state.editingId = id;
+    document.getElementById('orderModalTitle').textContent = `수정 (#${id})`;
+    ORDER_FIELDS.forEach(f => {
+      const el = document.getElementById('of_' + f);
+      if (!el) return;
+      let v = r[f];
+      if (f === 'pr_date' || f === 'due_date' || f === 'review_date') v = formatDate(v);
+      el.value = v ?? '';
+    });
+  }
+  document.getElementById('orderModal').classList.add('active');
+}
+
+function closeOrderModal() {
+  document.getElementById('orderModal').classList.remove('active');
+}
+
+async function saveOrder() {
+  if (!supaClient) { toast('Supabase 미연결','err'); return; }
+  const get = id => {
+    const el = document.getElementById('of_' + id);
+    return el ? el.value.trim() : '';
+  };
+
+  if (!get('category'))  { alert('구분을 선택하세요'); return; }
+  if (!get('customer'))  { alert('고객사를 선택하세요'); return; }
+  if (!get('part_name')) { alert('부품명칭을 입력하세요'); return; }
+  if (!get('qty'))       { alert('수량을 입력하세요'); return; }
+
+  const payload = {};
+  ORDER_FIELDS.forEach(f => {
+    const v = get(f);
+    if (f === 'qty')      payload[f] = v ? parseFloat(v) : null;
+    else if (['pr_date','due_date','review_date'].includes(f))
+                          payload[f] = v || null;
+    else                  payload[f] = v || null;
+  });
+
+  try {
+    if (state.editingId == null) {
+      const { error } = await supaClient.from('pr_orders').insert(payload);
+      if (error) throw error;
+    } else {
+      const { error } = await supaClient.from('pr_orders').update(payload).eq('id', state.editingId);
+      if (error) throw error;
+    }
+    closeOrderModal();
+    await reloadOrders();
+    toast('저장 완료','ok');
+  } catch(e) {
+    alert('저장 실패: ' + (e.message || e));
+  }
+}
+
+async function deleteOrder(id) {
+  const r = state.rows.find(x => x.id === id);
+  if (!r) return;
+  if (!confirm(`"${r.part_name || '항목'}" (의뢰번호: ${r.pr_no || '-'}) 삭제?`)) return;
+  try {
+    const { error } = await supaClient.from('pr_orders').delete().eq('id', id);
+    if (error) throw error;
+    await reloadOrders();
+    toast('삭제 완료','ok');
+  } catch(e) { alert('삭제 실패: ' + (e.message || e)); }
+}
+
+// ===========================================
+// 기초DB (master_options) 관리
+// ===========================================
+function renderMasterContainer() {
+  const c = document.getElementById('masterContainer');
+  if (state.categories.length === 0) {
+    c.innerHTML = `<div class="empty">카테고리 없음 (Supabase 미연결?)</div>`;
+    return;
+  }
+  c.innerHTML = state.categories.map(cat => {
+    const opts = state.master[cat.category_key] || [];
+    return `
+      <div class="mopt-card">
+        <div class="mopt-header">
+          <div>
+            <span class="mopt-title">${escapeHtml(cat.category_label)}</span>
+            <span class="mopt-key">[${cat.category_key}]</span>
+          </div>
+          <div style="font-size:11px; color:#8fa3c4;">총 ${opts.length}개 (활성 ${opts.filter(o=>o.is_active!==false).length}개)</div>
+        </div>
+        <div class="mopt-list" id="mlist_${cat.category_key}">
+          ${opts.map(o => `
+            <span class="mopt-tag ${o.is_active === false ? 'inactive' : ''}" title="더블클릭: 활성/비활성 토글">
+              <span ondblclick="toggleMasterOption(${o.id})">${escapeHtml(o.option_value)}</span>
+              <span class="x" onclick="deleteMasterOption(${o.id})" title="삭제">✕</span>
+            </span>
+          `).join('')}
+        </div>
+        <div class="mopt-add">
+          <input type="text" id="madd_${cat.category_key}" placeholder="새 옵션 추가" onkeydown="if(event.key==='Enter') addMasterOption('${cat.category_key}')">
+          <button class="btn-w" onclick="addMasterOption('${cat.category_key}')">＋ 추가</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+async function addMasterOption(catKey) {
+  if (!supaClient) { toast('Supabase 미연결','err'); return; }
+  const inp = document.getElementById('madd_' + catKey);
+  const v = inp.value.trim();
+  if (!v) return;
+  // 중복 체크
+  const exists = (state.master[catKey] || []).some(o => o.option_value === v);
+  if (exists) { alert('이미 등록된 값입니다.'); return; }
+  const maxSort = Math.max(0, ...(state.master[catKey] || []).map(o => o.sort_order || 0));
+  try {
+    const { error } = await supaClient.from('master_options').insert({
+      category_key: catKey, option_value: v, sort_order: maxSort + 1, is_active: true
+    });
+    if (error) throw error;
+    inp.value = '';
+    await reloadMaster();
+    toast('추가 완료','ok');
+  } catch(e) { alert('추가 실패: ' + (e.message || e)); }
+}
+
+async function deleteMasterOption(id) {
+  if (!supaClient) return;
+  if (!confirm('이 옵션을 삭제하시겠습니까?')) return;
+  try {
+    const { error } = await supaClient.from('master_options').delete().eq('id', id);
+    if (error) throw error;
+    await reloadMaster();
+    toast('삭제 완료','ok');
+  } catch(e) { alert('실패: ' + (e.message || e)); }
+}
+
+async function toggleMasterOption(id) {
+  if (!supaClient) return;
+  let target = null;
+  Object.values(state.master).forEach(arr => {
+    const f = arr.find(o => o.id === id);
+    if (f) target = f;
+  });
+  if (!target) return;
+  try {
+    const { error } = await supaClient.from('master_options')
+      .update({ is_active: !target.is_active }).eq('id', id);
+    if (error) throw error;
+    await reloadMaster();
+  } catch(e) { alert('실패: ' + (e.message || e)); }
+}
+
+async function reloadMaster() {
+  const { data: opts } = await supaClient.from('master_options').select('*').order('sort_order');
+  state.master = {};
+  (opts || []).forEach(o => {
+    if (!state.master[o.category_key]) state.master[o.category_key] = [];
+    state.master[o.category_key].push(o);
+  });
+  fillAllSelects();
+  renderMasterContainer();
+}
+
+// ===========================================
+// 이력/출력
+// ===========================================
+async function searchHistory() {
+  if (!supaClient) { toast('Supabase 미연결','err'); return; }
+  const start = document.getElementById('histStart').value;
+  const end = document.getElementById('histEnd').value;
+  const cust = document.getElementById('histCustomer').value;
+  let q = supaClient.from('pr_orders').select('*').order('pr_date', { ascending: false });
+  if (start) q = q.gte('pr_date', start);
+  if (end)   q = q.lte('pr_date', end);
+  if (cust)  q = q.eq('customer', cust);
+  try {
+    const { data, error } = await q;
+    if (error) throw error;
+    state.histRows = data || [];
+    renderHistTable();
+  } catch(e) { alert('조회 실패: ' + (e.message || e)); }
+}
+
+function renderHistTable() {
+  const head = document.getElementById('histHead');
+  let h = '<th style="width:30px"><input type="checkbox" id="histSelAll" onchange="toggleHistAll(this.checked)"></th><th style="width:40px">No</th>';
+  COLS.forEach(c => h += `<th>${escapeHtml(c.label)}</th>`);
+  head.innerHTML = h;
+
+  const body = document.getElementById('histBody');
+  if (state.histRows.length === 0) {
+    body.innerHTML = `<tr><td colspan="${COLS.length + 2}" class="empty">조회결과 없음</td></tr>`;
+    document.getElementById('histCount').textContent = '총 0건';
+    return;
+  }
+  body.innerHTML = state.histRows.map((r, i) => {
+    let html = `<tr><td><input type="checkbox" class="hist-chk" data-id="${r.id}"></td><td>${i+1}</td>`;
+    COLS.forEach(c => {
+      let v = r[c.key];
+      if (c.key === 'dim_summary') v = dimSummary(r);
+      if (c.key === 'pr_date' || c.key === 'due_date') v = formatDate(v);
+      html += `<td>${escapeHtml(v ?? '')}</td>`;
+    });
+    html += '</tr>';
+    return html;
+  }).join('');
+  document.getElementById('histCount').textContent = `총 ${state.histRows.length}건`;
+}
+
+function toggleHistAll(checked) {
+  document.querySelectorAll('.hist-chk').forEach(c => c.checked = checked);
+}
+
+async function deleteHistorySelected() {
+  if (!supaClient) { toast('Supabase 미연결','err'); return; }
+  const ids = Array.from(document.querySelectorAll('.hist-chk:checked')).map(c => parseInt(c.dataset.id));
+  if (ids.length === 0) { alert('삭제할 항목 선택'); return; }
+  if (!confirm(`선택한 ${ids.length}건 삭제?`)) return;
+  try {
+    const { error } = await supaClient.from('pr_orders').delete().in('id', ids);
+    if (error) throw error;
+    toast(`${ids.length}건 삭제`,'ok');
+    await searchHistory();
+    await reloadOrders();
+  } catch(e) { alert('실패: ' + (e.message || e)); }
+}
+
+async function exportHistoryExcel() {
+  if (state.histRows.length === 0) { alert('조회된 데이터 없음'); return; }
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('구매의뢰이력');
+  ws.columns = COLS.map(c => ({ header: c.label, key: c.key, width: c.key === 'note' ? 25 : 14 }));
+
+  state.histRows.forEach(r => {
+    const row = {};
+    COLS.forEach(c => {
+      let v = r[c.key];
+      if (c.key === 'dim_summary') v = dimSummary(r);
+      if (c.key === 'pr_date' || c.key === 'due_date') v = formatDate(v);
+      row[c.key] = v ?? '';
+    });
+    ws.addRow(row);
+  });
+
+  ws.getRow(1).eachCell(cell => {
+    cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1A3A6C' } };
+    cell.alignment = { horizontal: 'center', vertical: 'middle' };
+    cell.border = { top:{style:'thin'},left:{style:'thin'},right:{style:'thin'},bottom:{style:'thin'} };
+  });
+  for (let i = 2; i <= ws.rowCount; i++) {
+    ws.getRow(i).eachCell(cell => {
+      cell.border = { top:{style:'thin'},left:{style:'thin'},right:{style:'thin'},bottom:{style:'thin'} };
+    });
+  }
+
+  const buf = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `구매의뢰이력_${todayStr().replace(/-/g,'')}.xlsx`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// 모달 바깥 클릭 닫기
+document.querySelectorAll('.modal-bg').forEach(bg => {
+  bg.addEventListener('click', e => { if (e.target === bg) bg.classList.remove('active'); });
+});
+
+// ===========================================
+// SQL 복사
+// ===========================================
+const CREATE_TABLE_SQL = `-- 금형부품 발주관리 v3 - SQL 스키마
+-- Supabase Dashboard > SQL Editor 에서 전체 실행
+-- (※ 첨부파일의 기초DB 값이 자동 입력됩니다)
+
+-- 1. 구매의뢰 메인
+CREATE TABLE IF NOT EXISTS pr_orders (
+    id BIGSERIAL PRIMARY KEY,
+    pr_no TEXT, pr_date DATE, due_date DATE,
+    category TEXT, customer TEXT, request_type TEXT,
+    product_no TEXT, mold_no TEXT, part_name TEXT, part_no TEXT,
+    location TEXT, detail TEXT,
+    unit1 TEXT, dim1 TEXT, unit2 TEXT, dim2 TEXT,
+    unit3 TEXT, dim3 TEXT, unit4 TEXT, dim4 TEXT,
+    qty_unit TEXT, qty NUMERIC,
+    requester TEXT, approver TEXT, reviewer TEXT, review_date DATE,
+    note TEXT, status TEXT DEFAULT '대기',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_pr_orders_customer ON pr_orders(customer);
+CREATE INDEX IF NOT EXISTS idx_pr_orders_pr_date  ON pr_orders(pr_date);
+CREATE INDEX IF NOT EXISTS idx_pr_orders_part_no  ON pr_orders(part_no);
+
+-- 2. 기초DB
+CREATE TABLE IF NOT EXISTS master_options (
+    id BIGSERIAL PRIMARY KEY,
+    category_key TEXT NOT NULL,
+    option_value TEXT NOT NULL,
+    sort_order INT DEFAULT 0,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(category_key, option_value)
+);
+
+CREATE TABLE IF NOT EXISTS master_categories (
+    category_key TEXT PRIMARY KEY,
+    category_label TEXT NOT NULL,
+    sort_order INT DEFAULT 0
+);
+
+INSERT INTO master_categories (category_key, category_label, sort_order) VALUES
+    ('category','구분',1),('customer','고객사',2),('request_type','의뢰품명',3),
+    ('location','위치',4),('detail','세부',5),('unit_dim','치수단위',6),
+    ('unit','수량단위',7),('requester','구매의뢰자',8),('approver','구매의뢰승인자',9),
+    ('reviewer','검토자',10),('status','진행상태',11)
+ON CONFLICT (category_key) DO NOTHING;
+
+-- 3. 기초DB 기본값 (첨부파일에서 추출)
+INSERT INTO master_options (category_key, option_value, sort_order) VALUES
+('category','금형부품',1),('category','원소재',2),('category','표준품',3),
+('category','부자재',4),('category','고속가공기용',5),('category','CNC선반',6),
+('customer','SKF씰',1),('customer','대원강업',2),('customer','태진신규개발',3),
+('customer','SKF코리아',4),('customer','태진(연구개발)',5),('customer','선일플라스틱',6),
+('customer','일진글로벌',7),('customer','일진베어링',8),('customer','세동산업',9),('customer','기타',99),
+('request_type','신규',1),('request_type','SKF 요청',2),('request_type','수정',3),
+('request_type','스페어',4),('request_type','대원요청',5),('request_type','부품파손',6),
+('request_type','마모',7),('request_type','개선품',8),('request_type','코팅',9),
+('request_type','테스트용',10),('request_type','가공불량',11),('request_type','반품',12),
+('request_type','용접',13),('request_type','방전탭',14),('request_type','지그',15),
+('location','A',1),('location','B',2),('location','C',3),('location','D',4),
+('location','E',5),('location','F',6),('location','G',7),('location','H',8),
+('location','I',9),('location','J',10),('location','K',11),('location','L',12),
+('location','M',13),('location','N',14),('location','O',15),('location','P',16),
+('location','Q',17),('location','R',18),('location','S',19),('location','T',20),
+('location','U',21),('location','V',22),('location','W',23),('location','X',24),
+('location','Y',25),('location','Z',26),('location','AA',27),('location','A/B',28),
+('detail','소재포함',1),('detail','소재사급',2),
+('detail','1',3),('detail','2',4),('detail','3',5),('detail','4',6),('detail','5',7),
+('detail','6',8),('detail','7',9),('detail','8',10),('detail','9',11),('detail','10',12),
+('detail','A',13),('detail','B',14),('detail','C',15),('detail','D',16),('detail','L',17),
+('unit_dim','∅',1),('unit_dim','외경',2),('unit_dim','내경',3),('unit_dim','치수',4),
+('unit_dim','폭',5),('unit_dim','t',6),('unit_dim','kg',7),('unit_dim','g',8),('unit_dim','톤',9),
+('unit','ea',1),('unit','set',2),('unit','통',3),('unit','말',4),('unit','D/M',5),
+('unit','리터',6),('unit','드럼',7),('unit','Kg',8),('unit','g',9),('unit','톤',10),
+('unit','자루',11),('unit','봉',12),('unit','L',13),('unit','BOX',14),
+('unit','롤',15),('unit','본',16),('unit','장',17),
+('requester','윤동욱',1),('requester','유성환',2),('requester','강창구',3),('requester','이성현',4),
+('requester','문성민',5),('requester','박창세',6),('requester','이재성',7),('requester','강병주',8),
+('requester','박기근',9),('requester','김상기',10),('requester','왕석주',11),('requester','강영태',12),
+('approver','윤동욱',1),('approver','유성환',2),('approver','강창구',3),('approver','박창세',4),
+('approver','김오연',5),('approver','이재규',6),('approver','박기근',7),('approver','강병주',8),
+('reviewer','윤동욱',1),('reviewer','박기근',2),('reviewer','강창구',3),('reviewer','이재규',4),
+('status','대기',1),('status','검토중',2),('status','승인',3),('status','발주완료',4),
+('status','입고대기',5),('status','입고완료',6),('status','취소',99),('status','반려',98)
+ON CONFLICT (category_key, option_value) DO NOTHING;
+
+-- 4. RLS
+ALTER TABLE pr_orders         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE master_options    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE master_categories ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "anon_all_pr"    ON pr_orders;
+CREATE POLICY "anon_all_pr"    ON pr_orders         FOR ALL USING (TRUE) WITH CHECK (TRUE);
+DROP POLICY IF EXISTS "anon_all_mopts" ON master_options;
+CREATE POLICY "anon_all_mopts" ON master_options    FOR ALL USING (TRUE) WITH CHECK (TRUE);
+DROP POLICY IF EXISTS "anon_all_mcats" ON master_categories;
+CREATE POLICY "anon_all_mcats" ON master_categories FOR ALL USING (TRUE) WITH CHECK (TRUE);
+
+-- 5. updated_at 트리거
+CREATE OR REPLACE FUNCTION trg_set_updated_at()
+RETURNS TRIGGER AS $$ BEGIN NEW.updated_at = NOW(); RETURN NEW; END; $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS set_updated_at ON pr_orders;
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON pr_orders
+FOR EACH ROW EXECUTE FUNCTION trg_set_updated_at();
+
+SELECT category_key, COUNT(*) FROM master_options GROUP BY category_key;
+`;
+
+async function copySQL() {
+  try {
+    await navigator.clipboard.writeText(CREATE_TABLE_SQL);
+    toast('✅ SQL 복사 완료. Supabase에서 붙여넣기 → Run','ok');
+  } catch(e) {
+    document.getElementById('sqlBox').classList.remove('hide');
+    document.getElementById('sqlText').select();
+    document.execCommand('copy');
+    toast('SQL 복사 (수동)','ok');
+  }
+}
+</script>
+</body>
+</html>
