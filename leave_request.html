@@ -354,9 +354,92 @@ async function otUpdate(){const rows=otRows.filter(r=>r._id&&r.name);if(!rows.le
 async function otApprove(){if(!otRows.length){toast('데이터 없음');return}const pending=otRows.filter(r=>r.name&&!r.approval);if(!pending.length){toast('승인할 대상이 없습니다');return}const who=prompt('승인자 성명 ('+pending.length+'명):');if(!who)return;let cnt=0;for(const r of otRows){if(r.name&&!r.approval){r.approval=who;cnt++;if(r._id){try{await sb('overtime_reports?id=eq.'+r._id,'PATCH',{approval:who})}catch(e){console.error(e)}}}}renderOtTable();const apNMsg='✅ 연장근무 승인 완료\n승인자: '+who+'\n일자: '+(document.getElementById('otBaseDate').value||TODAY)+'\n대상: '+cnt+'명';sendNtfyByType('overtime',apNMsg);toast('✅ '+cnt+'명 승인 완료'+(otRows.some(r=>r._id)?'  (DB 저장됨)':' → 저장 버튼으로 DB 반영)'))}
 async function otDeleteAll(){const bd=document.getElementById('otBaseDate').value;if(!bd){toast('기준일');return}if(!confirm(bd+' 전체 삭제?'))return;try{await sb('overtime_reports?today_date=eq.'+bd,'DELETE');toast('삭제');otClear()}catch(e){toast('❌ '+e.message)}}
 function otClear(){otRows=[];renderOtTable()}
-async function openSnsReport(){showShareModeSelect()}
-function showShareModeSelect(){let ov=document.getElementById('shareModeOverlay');if(!ov){ov=document.createElement('div');ov.id='shareModeOverlay';ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:250;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(2px)';ov.innerHTML=`<div style="background:#fff;border-radius:16px;padding:24px;width:85%;max-width:360px;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,.2)"><div style="font-size:17px;font-weight:700;margin-bottom:6px">📱 공유 형식 선택</div><div style="font-size:13px;color:var(--text2);margin-bottom:18px">보고서 범위를 선택하세요</div><div style="display:flex;gap:10px"><button class="btn btn-accent" onclick="doSnsReport('simple')" style="flex:1;padding:16px 12px;font-size:15px;flex-direction:column;gap:4px;justify-content:center;border-radius:12px"><span style="font-size:24px">📋</span><span>일반</span><span style="font-size:10px;opacity:.7">금일 연장근무</span></button><button class="btn btn-purple" onclick="doSnsReport('detail')" style="flex:1;padding:16px 12px;font-size:15px;flex-direction:column;gap:4px;justify-content:center;border-radius:12px"><span style="font-size:24px">📊</span><span>세부</span><span style="font-size:10px;opacity:.7">전체 현황</span></button></div><button class="btn btn-gray" onclick="document.getElementById('shareModeOverlay').style.display='none'" style="width:100%;margin-top:12px;justify-content:center">취소</button></div>`;document.body.appendChild(ov)}else{ov.style.display='flex'}}
-async function doSnsReport(mode){document.getElementById('shareModeOverlay').style.display='none';const bd=document.getElementById('otBaseDate').value||TODAY;const d=new Date(bd);const days=['일요일','월요일','화요일','수요일','목요일','금요일','토요일'];const dateStr=`${d.getFullYear()}년 ${d.getMonth()+1}월 ${d.getDate()}일 ${days[d.getDay()]}`;await loadEmpCache();const totalEmp=empCache.length;const depts=getDepts();const deptEmpCnt={};depts.forEach(dp=>deptEmpCnt[dp]=0);empCache.forEach(e=>{if(e.dept)deptEmpCnt[e.dept]=(deptEmpCnt[e.dept]||0)+1});let otData=[];try{otData=await sb('overtime_reports?today_date=eq.'+bd+'&select=dept,name,today_normal,today_overtime,today_note')||[]}catch{}const otByDept={};depts.forEach(dp=>otByDept[dp]=0);const deptOtHours={};depts.forEach(dp=>deptOtHours[dp]=0);otData.forEach(r=>{const ot=pN(r.today_overtime)||0;if(r.dept){deptOtHours[r.dept]=(deptOtHours[r.dept]||0)+ot;if(ot>0)otByDept[r.dept]=(otByDept[r.dept]||0)+1}});let html='';if(mode==='simple'){html+=`<h2>일일 근태현황 보고</h2><table class="sns-tbl"><tr><td>날짜</td><td colspan="2"><b>${dateStr}</b></td></tr><tr class="y"><td class="y">출근 인원</td><td class="y" colspan="2"><b>${totalEmp} 명</b></td></tr></table>`;html+=`<div style="margin:12px 0"><b style="color:#d32f2f">※ 금일 연장근무</b></div>`;html+=`<table class="sns-tbl"><tr style="background:#f5f5f5"><td style="font-weight:700">부서</td><td style="font-weight:700">인원</td><td style="font-weight:700">잔업</td><td style="font-weight:700">잔업률</td></tr>`;let totalOtPpl=0,totalDeptPpl=0;depts.forEach(dept=>{const cnt=deptEmpCnt[dept]||0;const ot=otByDept[dept]||0;const rate=cnt>0?Math.round(ot/cnt*100):0;totalOtPpl+=ot;totalDeptPpl+=cnt;html+=`<tr><td>${dept}</td><td>${cnt}명</td><td><b>${ot}명</b></td><td style="color:${rate>=80?'#d32f2f':rate>=50?'#e65100':'#333'};font-weight:700">${rate}%</td></tr>`});const totalRate=totalDeptPpl>0?Math.round(totalOtPpl/totalDeptPpl*100):0;html+=`<tr style="background:#fff9c4"><td style="font-weight:700">합계</td><td style="font-weight:700">${totalDeptPpl}명</td><td style="font-weight:700">${totalOtPpl}명</td><td style="font-weight:700;color:#d32f2f">${totalRate}%</td></tr></table>`}else{const dayOfWeek=d.getDay();const mondayOffset=dayOfWeek===0?-6:1-dayOfWeek;const monday=new Date(d);monday.setDate(d.getDate()+mondayOffset);const monStr=monday.toISOString().split('T')[0];let weekData=[];try{weekData=await sb('overtime_reports?today_date=gte.'+monStr+'&today_date=lte.'+bd+'&select=name,dept,today_normal,today_overtime,holiday_work,today_note')||[]}catch{}const weeklyMap={};weekData.forEach(r=>{if(!r.name)return;if(!weeklyMap[r.name])weeklyMap[r.name]={dept:r.dept||'',normal:0,ot:0,hol:0};const isLeave=r.today_note&&r.today_note.includes('연차');if(!isLeave){weeklyMap[r.name].normal+=(pN(r.today_normal)||0);weeklyMap[r.name].ot+=(pN(r.today_overtime)||0)}weeklyMap[r.name].hol+=(pN(r.holiday_work)||0)});const overList=[];const warnList=[];Object.entries(weeklyMap).forEach(([name,v])=>{const total=v.normal+v.ot+v.hol;if(total>52)overList.push({name,dept:v.dept,total});else if(total>=48)warnList.push({name,dept:v.dept,total})});html+=`<h2>일일 근태현황 보고</h2><table class="sns-tbl"><tr><td>날짜</td><td colspan="2"><b>${dateStr}</b></td></tr><tr class="y"><td class="y">출근 인원</td><td class="y" colspan="2"><b>${totalEmp} 명</b></td></tr></table>`;html+=`<div style="margin:12px 0"><b style="color:#d32f2f">※ 금일 연장근무</b></div>`;html+=`<table class="sns-tbl"><tr style="background:#f5f5f5"><td style="font-weight:700">부서</td><td style="font-weight:700">인원</td><td style="font-weight:700">잔업</td><td style="font-weight:700">잔업률</td></tr>`;let totalOtPpl=0,totalDeptPpl=0;depts.forEach(dept=>{const cnt=deptEmpCnt[dept]||0;const ot=otByDept[dept]||0;const rate=cnt>0?Math.round(ot/cnt*100):0;totalOtPpl+=ot;totalDeptPpl+=cnt;html+=`<tr><td>${dept}</td><td>${cnt}명</td><td><b>${ot}명</b></td><td style="color:${rate>=80?'#d32f2f':rate>=50?'#e65100':'#333'};font-weight:700">${rate}%</td></tr>`});const totalRate=totalDeptPpl>0?Math.round(totalOtPpl/totalDeptPpl*100):0;html+=`<tr style="background:#fff9c4"><td style="font-weight:700">합계</td><td style="font-weight:700">${totalDeptPpl}명</td><td style="font-weight:700">${totalOtPpl}명</td><td style="font-weight:700;color:#d32f2f">${totalRate}%</td></tr></table>`;const weekLabel=`${parseInt(monStr.split('-')[1])}/${monStr.split('-')[2]}~${parseInt(bd.split('-')[1])}/${bd.split('-')[2]}`;if(overList.length||warnList.length){html+=`<div style="margin:12px 0"><b style="color:#d32f2f">⚠ 주52시간 관리 (${weekLabel})</b><br>`;if(overList.length){html+=`<span style="color:#d32f2f;font-weight:700">🚨 초과자:</span><br>`;overList.forEach(p=>{html+=`<span style="color:#d32f2f">_ ${p.dept} ${p.name}: <b>${p.total}h</b></span><br>`})}if(warnList.length){html+=`<span style="color:#e65100;font-weight:700">⚠ 주의(48h↑):</span><br>`;warnList.forEach(p=>{html+=`<span style="color:#e65100">_ ${p.dept} ${p.name}: <b>${p.total}h</b></span><br>`})}html+=`</div>`}else{html+=`<div style="margin:12px 0;color:#16a34a"><b>✅ 주52시간 관리 (${weekLabel})</b> — 초과/주의 없음</div>`}}document.getElementById('snsContent').innerHTML=html;document.getElementById('snsOverlay').style.display='block'}
+async function openSnsReport(){doSnsReport('simple')}
+function showShareModeSelect(){doSnsReport('simple')}
+async function doSnsReport(mode){
+  const ov=document.getElementById('shareModeOverlay');if(ov)ov.style.display='none';
+  const bd=document.getElementById('otBaseDate').value||TODAY;
+  const d=new Date(bd);
+  const days=['일요일','월요일','화요일','수요일','목요일','금요일','토요일'];
+  const dateStr=`${d.getFullYear()}년 ${d.getMonth()+1}월 ${d.getDate()}일 ${days[d.getDay()]}`;
+  await loadEmpCache();
+  const totalEmp=empCache.length;
+  const depts=getDepts();
+  const empPosMap={}; // 이름 → 직위
+  empCache.forEach(e=>{if(e.name)empPosMap[e.name]=e.position||''});
+  const deptEmpCnt={}; depts.forEach(dp=>deptEmpCnt[dp]=0);
+  empCache.forEach(e=>{if(e.dept)deptEmpCnt[e.dept]=(deptEmpCnt[e.dept]||0)+1});
+  // 금일 데이터 조회
+  let otData=[];
+  try{otData=await sb('overtime_reports?today_date=eq.'+bd+'&select=dept,name,position,today_normal,today_overtime,today_note')||[]}catch{}
+  // 잔업 집계 (잔업 > 0인 사람)
+  const otByDept={}; depts.forEach(dp=>otByDept[dp]=0);
+  otData.forEach(r=>{const ot=pN(r.today_overtime)||0;if(r.dept&&ot>0)otByDept[r.dept]=(otByDept[r.dept]||0)+1});
+  // 연차/병가 비고 파싱
+  const leaveByDept={}; const sickList=[];
+  otData.forEach(r=>{
+    const note=r.today_note||'';
+    if(!note)return;
+    const dept=r.dept||'';
+    const name=r.name||'';
+    const pos=r.position||empPosMap[name]||'';
+    if(/연차/.test(note)){
+      if(!leaveByDept[dept])leaveByDept[dept]=[];
+      leaveByDept[dept].push(name+(pos?pos:''));
+    }
+    if(/병가/.test(note)){
+      // 비고에서 기간 추출 (예: "병가 4/13~5/3")
+      let period='';
+      const m=note.match(/(\d{1,2}\/\d{1,2}\s*[~∼-]\s*\d{1,2}\/\d{1,2})/);
+      if(m)period=m[1].replace(/\s/g,'');
+      sickList.push({dept,name:name+(pos?pos:''),period});
+    }
+  });
+  const leaveCount=Object.values(leaveByDept).reduce((s,arr)=>s+arr.length,0);
+  const attendCount=totalEmp-leaveCount;
+  // ── HTML 생성 ──
+  let html='';
+  html+=`<h2>일일 근태현황 보고</h2>`;
+  html+=`<table class="sns-tbl">`;
+  html+=`<tr><td>날짜</td><td colspan="2"><b>${dateStr}</b></td></tr>`;
+  html+=`<tr class="y"><td class="y">총 인원</td><td class="y" colspan="2"><b>${totalEmp} 명</b></td></tr>`;
+  html+=`<tr><td style="color:#1565c0">결근자(연차및휴가)</td><td colspan="2"><b style="color:#1565c0">${leaveCount} 명</b></td></tr>`;
+  html+=`<tr class="y"><td class="y">출근 인원</td><td class="y" colspan="2"><b>${attendCount} 명</b></td></tr>`;
+  html+=`</table>`;
+  // 연차 휴가 명단
+  if(leaveCount>0){
+    html+=`<div style="margin:12px 0;text-align:left;font-size:15px"><b style="color:#1565c0"># 연차 휴가</b><br>`;
+    Object.keys(leaveByDept).sort().forEach(dept=>{
+      html+=`<span style="color:#1565c0">_ ${dept}: ${leaveByDept[dept].join(',')}</span><br>`;
+    });
+    html+=`</div>`;
+  }
+  // 금일 연장근무 (잔업 인원수 내림차순)
+  const otRows=depts.map(dp=>({dept:dp,cnt:otByDept[dp]||0})).filter(r=>r.cnt>0).sort((a,b)=>b.cnt-a.cnt);
+  if(otRows.length>0){
+    html+=`<div style="margin:12px 0 6px;text-align:left;font-size:15px"><b style="color:#d32f2f">※ 금일 연장근무</b></div>`;
+    html+=`<div style="text-align:left;font-size:15px;line-height:1.9">`;
+    otRows.forEach(r=>{
+      html+=`<span style="color:#d32f2f">_ ${r.dept}: <b style="margin-left:8px">${r.cnt}명</b></span><br>`;
+    });
+    html+=`</div>`;
+  }
+  // 병가
+  if(sickList.length>0){
+    html+=`<div style="margin:12px 0 6px;background:#e8f5e9;padding:8px;border-radius:6px;text-align:center"><b style="font-size:15px">&lt;&lt; 병 가 &gt;&gt;</b></div>`;
+    html+=`<div style="text-align:left;font-size:14px;line-height:1.8">`;
+    // 부서별 그룹
+    const byDept={};
+    sickList.forEach(s=>{if(!byDept[s.dept])byDept[s.dept]=[];byDept[s.dept].push(s)});
+    Object.keys(byDept).sort().forEach(dp=>{
+      const items=byDept[dp].map(s=>s.name+(s.period?`(${s.period})`:''));
+      html+=`# ${dp}; &nbsp;${items.join(', ')}<br>`;
+    });
+    html+=`</div>`;
+  }
+  document.getElementById('snsContent').innerHTML=html;
+  document.getElementById('snsOverlay').style.display='block';
+}
 function closeSns(){document.getElementById('snsOverlay').style.display='none'}
 function copySnsText(){const el=document.getElementById('snsContent');const text=el.innerText;navigator.clipboard.writeText(text).then(()=>toast('텍스트 복사됨')).catch(()=>toast('복사 실패'))}
 async function copySnsHtml(){const el=document.getElementById('snsContent');try{toast('이미지 생성 중...');const canvas=await html2canvas(el,{scale:2,backgroundColor:'#ffffff',useCORS:true});canvas.toBlob(async(blob)=>{if(!blob){toast('이미지 생성 실패');return}try{await navigator.clipboard.write([new ClipboardItem({'image/png':blob})]);toast('✅ 이미지 클립보드 복사 완료')}catch{const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='근태현황_'+TODAY+'.png';a.click();URL.revokeObjectURL(url);toast('📥 이미지 다운로드 완료')}},'image/png')}catch(e){toast('캡처 실패: '+e.message)}}
