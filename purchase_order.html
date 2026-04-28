@@ -142,6 +142,7 @@
 
 <div class="tabs">
   <div class="tab active" data-tab="main">📝 입력 / 조회</div>
+  <div class="tab" data-tab="purchase">🚚 발주현황</div>
   <div class="tab" data-tab="history">📊 이력 / 출력</div>
   <div class="tab" data-tab="settings">⚙ 설정</div>
 </div>
@@ -177,7 +178,77 @@
   </div>
 </div>
 
-<!-- ========== 탭2: 이력/출력 ========== -->
+<!-- ========== 탭2: 발주현황 ========== -->
+<div class="panel" id="panel-purchase">
+  <!-- 외주업체별 현황 -->
+  <div class="card" style="border-left-color:#7c3aed;">
+    <h2 style="color:#7c3aed;">🚚 외주업체별 발주현황</h2>
+    <div class="toolbar">
+      <div>
+        <label>시작일 (발주일)</label>
+        <input type="date" id="poStart">
+      </div>
+      <div>
+        <label>종료일 (발주일)</label>
+        <input type="date" id="poEnd">
+      </div>
+      <div>
+        <label>외주업체</label>
+        <select id="poFilterVendor" onchange="renderPurchaseList()" style="min-width:140px"><option value="">전체</option></select>
+      </div>
+      <div>
+        <label>발주종류</label>
+        <select id="poFilterType" onchange="renderPurchaseList()" style="min-width:140px"><option value="">전체</option></select>
+      </div>
+      <div>
+        <label>상태</label>
+        <select id="poFilterStatus" onchange="renderPurchaseList()" style="min-width:120px">
+          <option value="">전체</option>
+          <option value="발주">발주</option>
+          <option value="입고대기">입고대기</option>
+          <option value="일부입고">일부입고</option>
+          <option value="입고완료">입고완료</option>
+          <option value="취소">취소</option>
+        </select>
+      </div>
+      <div>
+        <label>검색</label>
+        <input type="search" id="poSearchBox" placeholder="품명/품번/제번..." oninput="renderPurchaseList()" style="min-width:200px">
+      </div>
+      <button class="btn-w" onclick="searchPurchases()">🔍 조회</button>
+      <button class="btn-s" onclick="exportPurchaseExcel()">📊 엑셀</button>
+      <span class="stat" id="poCount">총 0건</span>
+    </div>
+
+    <!-- 외주업체별 요약 -->
+    <div id="poVendorSummary" style="margin-bottom:14px;"></div>
+
+    <!-- 발주 상세 목록 -->
+    <div class="table-wrap">
+      <table id="poTable">
+        <thead><tr id="poHead"></tr></thead>
+        <tbody id="poBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 금형별 현황 -->
+  <div class="card" style="border-left-color:#0891b2;">
+    <h2 style="color:#0891b2;">🔧 금형별 발주현황</h2>
+    <div class="toolbar">
+      <div>
+        <label>금형제번 검색</label>
+        <input type="search" id="moldSearchBox" placeholder="금형제번 입력 (예: 9DHA034A)" oninput="renderMoldSummary()" style="min-width:240px">
+      </div>
+      <button class="btn-i" onclick="renderMoldSummary()">🔄 새로고침</button>
+      <span style="flex:1"></span>
+      <span class="stat" id="moldCount">금형 0개</span>
+    </div>
+    <div id="moldSummary" style="margin-top:8px;"></div>
+  </div>
+</div>
+
+<!-- ========== 탭3: 이력/출력 ========== -->
 <div class="panel" id="panel-history">
   <div class="card green">
     <h2>📊 이력 관리 (날짜 / 고객사 필터)</h2>
@@ -405,6 +476,31 @@
   </div>
 </div>
 
+<!-- 발주처리 모달 (구매의뢰 → 발주분할) -->
+<div class="modal-bg" id="purchaseModal">
+  <div class="modal" style="max-width:1200px;">
+    <h3 id="purchaseModalTitle">🚚 발주처리</h3>
+
+    <!-- 구매의뢰 정보 (읽기전용 요약) -->
+    <div style="background:#f0f9ff; border:1px solid #bae6fd; border-radius:6px; padding:10px 14px; margin-bottom:12px;">
+      <div style="font-size:12px; color:#0c4a6e; line-height:1.6;" id="prSummary"></div>
+    </div>
+
+    <!-- 발주 행 목록 (1구매의뢰 → N발주) -->
+    <h4 style="color:#1e40af; margin:0 0 8px; font-size:14px;">📌 발주 항목 (분할발주 가능)</h4>
+    <div id="poRows"></div>
+    <div style="margin-top:8px;">
+      <button class="btn-w btn-sm" onclick="addPoRow()">＋ 발주행 추가</button>
+      <span style="font-size:12px; color:#6b7280; margin-left:8px;">예: 공정별로 다른 외주업체에 분할 발주</span>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn-g" onclick="closePurchaseModal()">취소</button>
+      <button class="btn-p" onclick="savePurchases()">💾 발주 저장</button>
+    </div>
+  </div>
+</div>
+
 <script>
 'use strict';
 
@@ -440,25 +536,30 @@ const COLS = [
 
 // 마스터 카테고리 → 폼의 select 매핑
 const MASTER_TO_SELECTS = {
-  category:     ['of_category', 'filter_category'],
-  customer:     ['of_customer', 'filterCustomer', 'histCustomer'],
-  request_type: ['of_request_type'],
-  location:     ['of_location'],
-  detail:       ['of_detail'],
-  unit_dim:     ['of_unit1','of_unit2','of_unit3','of_unit4'],
-  unit:         ['of_qty_unit'],
-  requester:    ['of_requester'],
-  approver:     ['of_approver'],
-  reviewer:     ['of_reviewer'],
-  status:       ['of_status', 'filterStatus'],
+  category:        ['of_category', 'filter_category'],
+  customer:        ['of_customer', 'filterCustomer', 'histCustomer'],
+  request_type:    ['of_request_type'],
+  location:        ['of_location'],
+  detail:          ['of_detail'],
+  unit_dim:        ['of_unit1','of_unit2','of_unit3','of_unit4'],
+  unit:            ['of_qty_unit'],
+  requester:       ['of_requester'],
+  approver:        ['of_approver'],
+  reviewer:        ['of_reviewer'],
+  status:          ['of_status', 'filterStatus'],
+  vendor_outsource:['poFilterVendor'],   // 발주현황 필터용
+  purchase_type:   ['poFilterType'],
 };
 
 let state = {
   rows: [],
   histRows: [],
-  master: {},        // { category_key: [{id, option_value, sort_order, is_active}] }
-  categories: [],    // [{category_key, category_label, sort_order}]
+  purchases: [],   // 모든 발주 데이터
+  poFilteredRows: [],
+  master: {},
+  categories: [],
   editingId: null,
+  editingPrId: null,    // 발주처리 대상 구매의뢰 ID
 };
 
 // ===========================================
@@ -635,6 +736,8 @@ window.addEventListener('DOMContentLoaded', () => {
   const start = new Date(today.getTime() - 90*86400000).toISOString().slice(0,10);
   document.getElementById('histStart').value = start;
   document.getElementById('histEnd').value = end;
+  document.getElementById('poStart').value = start;
+  document.getElementById('poEnd').value = end;
 
   // SQL 박스 초기화
   document.getElementById('sqlText').value = CREATE_TABLE_SQL;
@@ -698,9 +801,15 @@ async function loadAll() {
   });
   attachLocalIds();
 
-  // 발주
+  // 구매의뢰
   const { data: rows } = await supaClient.from('pr_orders').select('*').order('id', { ascending: false });
   state.rows = rows || [];
+
+  // 발주
+  try {
+    const { data: pps } = await supaClient.from('pr_purchases').select('*').order('id', { ascending: false });
+    state.purchases = pps || [];
+  } catch(e) { console.warn('pr_purchases 로드 실패 (테이블 미생성 가능):', e); state.purchases = []; }
 
   renderAll();
 }
@@ -709,6 +818,8 @@ function renderAll() {
   fillAllSelects();
   renderMain();
   renderMasterContainer();
+  renderPurchaseList();
+  renderMoldSummary();
 }
 
 // ===========================================
@@ -813,8 +924,9 @@ function renderMain() {
         if (c.key === 'pr_date' || c.key === 'due_date') v = formatDate(v);
         html += `<td>${escapeHtml(v ?? '')}</td>`;
       });
-      html += `<td class="actions">
+      html += `<td class="actions" style="white-space:nowrap;">
         <button class="btn-p btn-sm" onclick="openOrderModal(${r.id})">수정</button>
+        <button class="btn-s btn-sm" onclick="openPurchaseModal(${r.id})" title="발주처리">🚚 발주</button>
         <button class="btn-d btn-sm" onclick="deleteOrder(${r.id})">삭제</button>
       </td></tr>`;
       return html;
@@ -921,13 +1033,525 @@ async function saveOrder() {
 async function deleteOrder(id) {
   const r = state.rows.find(x => x.id === id);
   if (!r) return;
-  if (!confirm(`"${r.part_name || '항목'}" (의뢰번호: ${r.pr_no || '-'}) 삭제?`)) return;
+  if (!confirm(`"${r.part_name || '항목'}" (의뢰번호: ${r.pr_no || '-'}) 삭제?\n※ 연결된 발주도 함께 삭제됩니다.`)) return;
   try {
     const { error } = await supaClient.from('pr_orders').delete().eq('id', id);
     if (error) throw error;
     await reloadOrders();
+    await reloadPurchases();
     toast('삭제 완료','ok');
   } catch(e) { alert('삭제 실패: ' + (e.message || e)); }
+}
+
+// ===========================================
+// 발주처리 (구매의뢰 → 발주분할)
+// ===========================================
+let _poRowSeq = 0;
+let _poRowsState = [];   // [{_localId, id?, vendor_outsource, purchase_type, qty, qty_unit, unit_price, total_price, po_date, delivery_date, status, note, _isExisting}]
+
+async function openPurchaseModal(prId) {
+  const r = state.rows.find(x => x.id === prId);
+  if (!r) return;
+  state.editingPrId = prId;
+
+  // 구매의뢰 요약 표시
+  const dims = dimSummary(r);
+  document.getElementById('prSummary').innerHTML = `
+    <div style="font-size:14px; font-weight:700; color:#0c4a6e; margin-bottom:6px;">
+      📋 ${escapeHtml(r.pr_no || '의뢰번호 없음')} — ${escapeHtml(r.part_name || '')} ${r.part_no ? `(${escapeHtml(r.part_no)})` : ''}
+    </div>
+    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:6px; font-size:12px;">
+      <div><b>고객사:</b> ${escapeHtml(r.customer || '-')}</div>
+      <div><b>구분:</b> ${escapeHtml(r.category || '-')}</div>
+      <div><b>금형제번:</b> ${escapeHtml(r.mold_no || '-')}</div>
+      <div><b>제품품번:</b> ${escapeHtml(r.product_no || '-')}</div>
+      ${dims ? `<div><b>치수:</b> ${escapeHtml(dims)}</div>` : ''}
+      <div><b>수량:</b> ${escapeHtml(r.qty ?? '-')} ${escapeHtml(r.qty_unit || '')}</div>
+      <div><b>의뢰자:</b> ${escapeHtml(r.requester || '-')}</div>
+      <div><b>의뢰일:</b> ${escapeHtml(formatDate(r.pr_date) || '-')}</div>
+      ${r.note ? `<div style="grid-column: 1/-1;"><b>기타:</b> ${escapeHtml(r.note)}</div>` : ''}
+    </div>
+  `;
+
+  // 기존 발주 로드
+  _poRowsState = [];
+  _poRowSeq = 0;
+  try {
+    const { data } = await supaClient.from('pr_purchases').select('*').eq('pr_order_id', prId).order('id');
+    (data || []).forEach(p => {
+      _poRowsState.push({
+        _localId: ++_poRowSeq,
+        id: p.id,
+        _isExisting: true,
+        vendor_outsource: p.vendor_outsource || '',
+        purchase_type: p.purchase_type || '',
+        qty: p.qty ?? '',
+        qty_unit: p.qty_unit || r.qty_unit || '',
+        unit_price: p.unit_price ?? '',
+        total_price: p.total_price ?? '',
+        po_no: p.po_no || '',
+        po_date: formatDate(p.po_date) || '',
+        delivery_date: formatDate(p.delivery_date) || '',
+        status: p.status || '발주',
+        note: p.note || '',
+      });
+    });
+  } catch(e) { console.warn(e); }
+
+  // 기존 발주가 없으면 1행 추가
+  if (_poRowsState.length === 0) {
+    _poRowsState.push(makeEmptyPoRow(r));
+  }
+
+  document.getElementById('purchaseModalTitle').textContent = `🚚 발주처리 — ${r.pr_no || '#' + prId}`;
+  renderPoRows();
+  document.getElementById('purchaseModal').classList.add('active');
+}
+
+function makeEmptyPoRow(prOrder) {
+  return {
+    _localId: ++_poRowSeq,
+    _isExisting: false,
+    vendor_outsource: '',
+    purchase_type: '',
+    qty: prOrder ? (prOrder.qty ?? '') : '',
+    qty_unit: prOrder ? (prOrder.qty_unit || '') : '',
+    unit_price: '',
+    total_price: '',
+    po_no: '',
+    po_date: todayStr(),
+    delivery_date: '',
+    status: '발주',
+    note: '',
+  };
+}
+
+function addPoRow() {
+  const r = state.rows.find(x => x.id === state.editingPrId);
+  _poRowsState.push(makeEmptyPoRow(r));
+  renderPoRows();
+}
+
+function removePoRow(localId) {
+  const row = _poRowsState.find(x => x._localId === localId);
+  if (!row) return;
+  if (row._isExisting && row.id) {
+    if (!confirm('기존 발주를 삭제하시겠습니까? (DB에서도 제거됩니다)')) return;
+    row._toDelete = true;
+    renderPoRows();
+  } else {
+    _poRowsState = _poRowsState.filter(x => x._localId !== localId);
+    renderPoRows();
+  }
+}
+
+function renderPoRows() {
+  const c = document.getElementById('poRows');
+  const visible = _poRowsState.filter(r => !r._toDelete);
+  if (visible.length === 0) {
+    c.innerHTML = '<div style="text-align:center; padding:20px; color:#9ca3af;">발주 행이 없습니다. [+ 발주행 추가] 버튼을 누르세요.</div>';
+    return;
+  }
+  const vendorOpts = (state.master.vendor_outsource || []).filter(o => o.is_active !== false && !o._deleted);
+  const typeOpts = (state.master.purchase_type || []).filter(o => o.is_active !== false && !o._deleted);
+  const unitOpts = (state.master.unit || []).filter(o => o.is_active !== false && !o._deleted);
+
+  c.innerHTML = visible.map((row, idx) => {
+    const venOpts = vendorOpts.map(o => `<option value="${escapeHtml(o.option_value)}" ${row.vendor_outsource === o.option_value ? 'selected' : ''}>${escapeHtml(o.option_value)}</option>`).join('');
+    const typOpts = typeOpts.map(o => `<option value="${escapeHtml(o.option_value)}" ${row.purchase_type === o.option_value ? 'selected' : ''}>${escapeHtml(o.option_value)}</option>`).join('');
+    const unOpts = unitOpts.map(o => `<option value="${escapeHtml(o.option_value)}" ${row.qty_unit === o.option_value ? 'selected' : ''}>${escapeHtml(o.option_value)}</option>`).join('');
+    const statusOpts = ['발주','입고대기','일부입고','입고완료','취소'].map(s => `<option value="${s}" ${row.status === s ? 'selected' : ''}>${s}</option>`).join('');
+    return `
+      <div style="border:1px solid #e5e7eb; border-radius:8px; padding:10px; margin-bottom:8px; background:${row._isExisting ? '#f0fdf4' : '#fffbeb'};">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+          <span style="font-size:12px; font-weight:600; color:#374151;">발주 #${idx+1} ${row._isExisting ? `<span style="color:#059669;">(저장됨, id: ${row.id})</span>` : '<span style="color:#d97706;">(신규)</span>'}</span>
+          <button class="btn-d btn-sm" onclick="removePoRow(${row._localId})">✕ 삭제</button>
+        </div>
+        <div class="grid-4">
+          <div>
+            <label>외주업체 *</label>
+            <select onchange="updatePoRow(${row._localId}, 'vendor_outsource', this.value)">
+              <option value="">-- 선택 --</option>${venOpts}
+            </select>
+          </div>
+          <div>
+            <label>발주종류 *</label>
+            <select onchange="updatePoRow(${row._localId}, 'purchase_type', this.value)">
+              <option value="">-- 선택 --</option>${typOpts}
+            </select>
+          </div>
+          <div>
+            <label>발주번호</label>
+            <input type="text" value="${escapeHtml(row.po_no)}" oninput="updatePoRow(${row._localId}, 'po_no', this.value)" placeholder="자동/수동">
+          </div>
+          <div>
+            <label>상태</label>
+            <select onchange="updatePoRow(${row._localId}, 'status', this.value)">${statusOpts}</select>
+          </div>
+        </div>
+        <div class="grid-4" style="margin-top:6px;">
+          <div>
+            <label>발주수량 *</label>
+            <input type="number" step="any" value="${escapeHtml(row.qty)}" oninput="updatePoRow(${row._localId}, 'qty', this.value)">
+          </div>
+          <div>
+            <label>단위</label>
+            <select onchange="updatePoRow(${row._localId}, 'qty_unit', this.value)">
+              <option value="">--</option>${unOpts}
+            </select>
+          </div>
+          <div>
+            <label>단가</label>
+            <input type="number" step="any" value="${escapeHtml(row.unit_price)}" oninput="updatePoRow(${row._localId}, 'unit_price', this.value); recalcTotal(${row._localId})">
+          </div>
+          <div>
+            <label>합계금액</label>
+            <input type="number" step="any" id="poTotal_${row._localId}" value="${escapeHtml(row.total_price)}" oninput="updatePoRow(${row._localId}, 'total_price', this.value)">
+          </div>
+        </div>
+        <div class="grid-3" style="margin-top:6px;">
+          <div>
+            <label>발주일자</label>
+            <input type="date" value="${escapeHtml(row.po_date)}" oninput="updatePoRow(${row._localId}, 'po_date', this.value)">
+          </div>
+          <div>
+            <label>입고예정일</label>
+            <input type="date" value="${escapeHtml(row.delivery_date)}" oninput="updatePoRow(${row._localId}, 'delivery_date', this.value)">
+          </div>
+          <div>
+            <label>비고</label>
+            <input type="text" value="${escapeHtml(row.note)}" oninput="updatePoRow(${row._localId}, 'note', this.value)">
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function updatePoRow(localId, field, value) {
+  const row = _poRowsState.find(x => x._localId === localId);
+  if (!row) return;
+  row[field] = value;
+}
+
+function recalcTotal(localId) {
+  const row = _poRowsState.find(x => x._localId === localId);
+  if (!row) return;
+  const q = parseFloat(row.qty) || 0;
+  const u = parseFloat(row.unit_price) || 0;
+  if (q > 0 && u > 0) {
+    row.total_price = (q * u).toFixed(2);
+    const el = document.getElementById('poTotal_' + localId);
+    if (el) el.value = row.total_price;
+  }
+}
+
+function closePurchaseModal() {
+  document.getElementById('purchaseModal').classList.remove('active');
+}
+
+async function savePurchases() {
+  if (!supaClient) { toast('Supabase 미연결','err'); return; }
+  if (!state.editingPrId) return;
+
+  const toInsert = [];
+  const toUpdate = [];
+  const toDelete = [];
+
+  _poRowsState.forEach(row => {
+    if (row._toDelete && row._isExisting) {
+      toDelete.push(row.id);
+      return;
+    }
+    if (row._toDelete) return;
+    // 검증
+    if (!row.vendor_outsource) { throw new Error(`외주업체를 선택하세요 (발주 #${row._localId})`); }
+    if (!row.purchase_type)    { throw new Error(`발주종류를 선택하세요 (발주 #${row._localId})`); }
+    if (!row.qty || parseFloat(row.qty) <= 0) { throw new Error(`발주수량을 입력하세요 (발주 #${row._localId})`); }
+
+    const payload = {
+      pr_order_id: state.editingPrId,
+      po_no: row.po_no || null,
+      po_date: row.po_date || null,
+      delivery_date: row.delivery_date || null,
+      vendor_outsource: row.vendor_outsource,
+      purchase_type: row.purchase_type,
+      qty: parseFloat(row.qty),
+      qty_unit: row.qty_unit || null,
+      unit_price: row.unit_price ? parseFloat(row.unit_price) : null,
+      total_price: row.total_price ? parseFloat(row.total_price) : null,
+      status: row.status || '발주',
+      note: row.note || null,
+    };
+
+    if (row._isExisting) {
+      toUpdate.push({ id: row.id, ...payload });
+    } else {
+      toInsert.push(payload);
+    }
+  });
+
+  try {
+    if (toDelete.length) {
+      const { error } = await supaClient.from('pr_purchases').delete().in('id', toDelete);
+      if (error) throw error;
+    }
+    if (toInsert.length) {
+      const { error } = await supaClient.from('pr_purchases').insert(toInsert);
+      if (error) throw error;
+    }
+    for (const u of toUpdate) {
+      const { id, ...rest } = u;
+      const { error } = await supaClient.from('pr_purchases').update(rest).eq('id', id);
+      if (error) throw error;
+    }
+    toast('✅ 발주 저장 완료','ok');
+    closePurchaseModal();
+    await reloadPurchases();
+  } catch(e) {
+    alert('저장 실패: ' + (e.message || e));
+  }
+}
+
+async function reloadPurchases() {
+  if (!supaClient) return;
+  const { data } = await supaClient.from('pr_purchases').select('*').order('id', { ascending: false });
+  state.purchases = data || [];
+  renderPurchaseList();
+  renderMoldSummary();
+}
+
+// ===========================================
+// 발주현황 탭 - 외주업체별/금형별 검색
+// ===========================================
+const PO_COLS = [
+  { key:'po_no',           label:'발주번호' },
+  { key:'po_date',         label:'발주일' },
+  { key:'delivery_date',   label:'입고예정' },
+  { key:'vendor_outsource',label:'외주업체' },
+  { key:'purchase_type',   label:'발주종류' },
+  { key:'pr_no',           label:'의뢰번호' },
+  { key:'customer',        label:'고객사' },
+  { key:'mold_no',         label:'금형제번' },
+  { key:'part_name',       label:'부품명' },
+  { key:'part_no',         label:'부품번호' },
+  { key:'qty',             label:'수량' },
+  { key:'qty_unit',        label:'단위' },
+  { key:'unit_price',      label:'단가' },
+  { key:'total_price',     label:'합계' },
+  { key:'status',          label:'상태' },
+  { key:'note',            label:'비고' },
+];
+
+function searchPurchases() {
+  reloadPurchases();
+}
+
+function joinedPurchases() {
+  // 발주 + 구매의뢰 정보 결합
+  const prMap = {};
+  state.rows.forEach(r => prMap[r.id] = r);
+  return state.purchases.map(p => {
+    const pr = prMap[p.pr_order_id] || {};
+    return {
+      ...p,
+      pr_no: pr.pr_no || '',
+      customer: pr.customer || '',
+      mold_no: pr.mold_no || '',
+      part_name: pr.part_name || '',
+      part_no: pr.part_no || '',
+      product_no: pr.product_no || '',
+    };
+  });
+}
+
+function renderPurchaseList() {
+  const head = document.getElementById('poHead');
+  let h = '<th style="width:40px">No</th>';
+  PO_COLS.forEach(c => h += `<th>${escapeHtml(c.label)}</th>`);
+  h += '<th style="width:80px">관리</th>';
+  head.innerHTML = h;
+
+  const fv = document.getElementById('poFilterVendor').value;
+  const ft = document.getElementById('poFilterType').value;
+  const fs = document.getElementById('poFilterStatus').value;
+  const q = document.getElementById('poSearchBox').value.trim().toLowerCase();
+  const start = document.getElementById('poStart').value;
+  const end = document.getElementById('poEnd').value;
+
+  const all = joinedPurchases();
+  const filtered = all.filter(p => {
+    if (fv && p.vendor_outsource !== fv) return false;
+    if (ft && p.purchase_type !== ft) return false;
+    if (fs && p.status !== fs) return false;
+    if (start && p.po_date && p.po_date < start) return false;
+    if (end && p.po_date && p.po_date > end) return false;
+    if (q) {
+      const blob = PO_COLS.map(c => p[c.key] ?? '').join(' ').toLowerCase();
+      if (!blob.includes(q)) return false;
+    }
+    return true;
+  });
+  state.poFilteredRows = filtered;
+
+  // 외주업체별 요약
+  renderVendorSummary(filtered);
+
+  const body = document.getElementById('poBody');
+  if (filtered.length === 0) {
+    body.innerHTML = `<tr><td colspan="${PO_COLS.length + 2}" class="empty">발주 데이터 없음</td></tr>`;
+  } else {
+    body.innerHTML = filtered.map((p, i) => {
+      let html = `<tr><td>${i+1}</td>`;
+      PO_COLS.forEach(c => {
+        let v = p[c.key];
+        if (c.key === 'po_date' || c.key === 'delivery_date') v = formatDate(v);
+        html += `<td>${escapeHtml(v ?? '')}</td>`;
+      });
+      html += `<td class="actions" style="white-space:nowrap;">
+        <button class="btn-p btn-sm" onclick="openPurchaseModal(${p.pr_order_id})">수정</button>
+      </td></tr>`;
+      return html;
+    }).join('');
+  }
+  document.getElementById('poCount').textContent = `총 ${filtered.length}건 / 전체 ${state.purchases.length}건`;
+}
+
+function renderVendorSummary(rows) {
+  const sum = document.getElementById('poVendorSummary');
+  if (!rows || rows.length === 0) { sum.innerHTML = ''; return; }
+  // 외주업체별 그룹
+  const grp = {};
+  rows.forEach(p => {
+    const v = p.vendor_outsource || '미지정';
+    if (!grp[v]) grp[v] = { count: 0, qty: 0, total: 0, types: new Set(), molds: new Set(), statuses: {} };
+    grp[v].count++;
+    grp[v].qty += parseFloat(p.qty) || 0;
+    grp[v].total += parseFloat(p.total_price) || 0;
+    if (p.purchase_type) grp[v].types.add(p.purchase_type);
+    if (p.mold_no) grp[v].molds.add(p.mold_no);
+    grp[v].statuses[p.status || '발주'] = (grp[v].statuses[p.status || '발주'] || 0) + 1;
+  });
+  const sorted = Object.entries(grp).sort((a,b) => b[1].count - a[1].count);
+  sum.innerHTML = `
+    <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap:8px;">
+      ${sorted.map(([v, info]) => `
+        <div style="border:1px solid #e9d5ff; border-radius:8px; padding:10px; background:#faf5ff; cursor:pointer;" onclick="document.getElementById('poFilterVendor').value='${escapeHtml(v)}'; renderPurchaseList();">
+          <div style="font-weight:700; color:#7c3aed; font-size:14px;">🏭 ${escapeHtml(v)}</div>
+          <div style="font-size:11px; color:#6b7280; margin-top:4px;">
+            발주 ${info.count}건 · 수량 ${info.qty.toLocaleString()} · 금액 ${info.total.toLocaleString()}원<br>
+            금형 ${info.molds.size}종 · 종류 ${info.types.size}개<br>
+            ${Object.entries(info.statuses).map(([s,c]) => `<span style="display:inline-block; padding:1px 6px; border-radius:8px; background:#fff; border:1px solid #e5e7eb; margin-right:3px; margin-top:2px;">${s}: ${c}</span>`).join('')}
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+async function exportPurchaseExcel() {
+  if (state.poFilteredRows.length === 0) { alert('조회된 데이터 없음'); return; }
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('발주현황');
+  ws.columns = PO_COLS.map(c => ({ header: c.label, key: c.key, width: c.key === 'note' ? 25 : 14 }));
+  state.poFilteredRows.forEach(p => {
+    const row = {};
+    PO_COLS.forEach(c => {
+      let v = p[c.key];
+      if (c.key === 'po_date' || c.key === 'delivery_date') v = formatDate(v);
+      row[c.key] = v ?? '';
+    });
+    ws.addRow(row);
+  });
+  ws.getRow(1).eachCell(cell => {
+    cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF7C3AED' } };
+    cell.alignment = { horizontal: 'center', vertical: 'middle' };
+    cell.border = { top:{style:'thin'},left:{style:'thin'},right:{style:'thin'},bottom:{style:'thin'} };
+  });
+  for (let i = 2; i <= ws.rowCount; i++) {
+    ws.getRow(i).eachCell(cell => {
+      cell.border = { top:{style:'thin'},left:{style:'thin'},right:{style:'thin'},bottom:{style:'thin'} };
+    });
+  }
+  const buf = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `발주현황_${todayStr().replace(/-/g,'')}.xlsx`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// 금형별 발주현황
+function renderMoldSummary() {
+  const c = document.getElementById('moldSummary');
+  const q = (document.getElementById('moldSearchBox').value || '').trim().toLowerCase();
+  const all = joinedPurchases();
+  const filtered = q ? all.filter(p => (p.mold_no || '').toLowerCase().includes(q)) : all;
+
+  // 금형제번별 그룹
+  const grp = {};
+  filtered.forEach(p => {
+    const m = p.mold_no || '미지정';
+    if (!grp[m]) grp[m] = { items: [], customers: new Set(), parts: new Set(), vendors: new Set() };
+    grp[m].items.push(p);
+    if (p.customer) grp[m].customers.add(p.customer);
+    if (p.part_name) grp[m].parts.add(p.part_name);
+    if (p.vendor_outsource) grp[m].vendors.add(p.vendor_outsource);
+  });
+
+  document.getElementById('moldCount').textContent = `금형 ${Object.keys(grp).length}개`;
+
+  if (Object.keys(grp).length === 0) {
+    c.innerHTML = '<div class="empty">발주 데이터 없음</div>';
+    return;
+  }
+
+  const sorted = Object.entries(grp).sort((a,b) => a[0].localeCompare(b[0]));
+  c.innerHTML = sorted.map(([mold, info]) => {
+    const totalAmt = info.items.reduce((s,p) => s + (parseFloat(p.total_price)||0), 0);
+    return `
+      <div style="border:1px solid #cffafe; border-radius:8px; margin-bottom:10px; background:#f0fdfa;">
+        <div style="padding:10px 14px; background:#ccfbf1; border-bottom:1px solid #99f6e4; display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <span style="font-weight:700; font-size:14px; color:#0f766e;">🔧 ${escapeHtml(mold)}</span>
+            <span style="font-size:11px; color:#0f766e; margin-left:8px;">
+              발주 ${info.items.length}건 · 부품 ${info.parts.size}종 · 외주업체 ${info.vendors.size}곳 · 합계 ${totalAmt.toLocaleString()}원
+            </span>
+          </div>
+          <div style="font-size:11px; color:#0d9488;">${[...info.customers].join(', ') || '-'}</div>
+        </div>
+        <div style="padding:6px 10px; max-height:240px; overflow-y:auto;">
+          <table style="width:100%; font-size:11px;">
+            <thead><tr style="background:#fff;">
+              <th style="padding:4px;">부품명</th>
+              <th style="padding:4px;">부품번호</th>
+              <th style="padding:4px;">외주업체</th>
+              <th style="padding:4px;">발주종류</th>
+              <th style="padding:4px;">수량</th>
+              <th style="padding:4px;">발주일</th>
+              <th style="padding:4px;">상태</th>
+            </tr></thead>
+            <tbody>
+              ${info.items.map(p => `
+                <tr style="background:#fff;">
+                  <td style="padding:4px;">${escapeHtml(p.part_name || '-')}</td>
+                  <td style="padding:4px;">${escapeHtml(p.part_no || '-')}</td>
+                  <td style="padding:4px; color:#7c3aed; font-weight:600;">${escapeHtml(p.vendor_outsource || '-')}</td>
+                  <td style="padding:4px;">${escapeHtml(p.purchase_type || '-')}</td>
+                  <td style="padding:4px; text-align:right;">${escapeHtml((p.qty ?? '') + ' ' + (p.qty_unit || ''))}</td>
+                  <td style="padding:4px;">${escapeHtml(formatDate(p.po_date) || '-')}</td>
+                  <td style="padding:4px;"><span style="padding:1px 6px; border-radius:8px; background:#dbeafe; color:#1e40af; font-size:10px;">${escapeHtml(p.status || '-')}</span></td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  }).join('');
 }
 
 // ===========================================
@@ -1421,7 +2045,8 @@ INSERT INTO master_categories (category_key, category_label, sort_order) VALUES
     ('category','구분',1),('customer','고객사',2),('request_type','의뢰품명',3),
     ('location','위치',4),('detail','세부',5),('unit_dim','치수단위',6),
     ('unit','수량단위',7),('requester','구매의뢰자',8),('approver','구매의뢰승인자',9),
-    ('reviewer','검토자',10),('status','진행상태',11),('part_name','금형부품명칭',12)
+    ('reviewer','검토자',10),('status','진행상태',11),('part_name','금형부품명칭',12),
+    ('vendor_outsource','외주업체',13),('purchase_type','발주종류',14)
 ON CONFLICT (category_key) DO NOTHING;
 
 -- 3. 기초DB 기본값 (첨부파일에서 추출)
@@ -1513,25 +2138,77 @@ INSERT INTO master_options (category_key, option_value, sort_order) VALUES
 ('part_name','앤드밀|지그',197),('part_name','치구|A01',198),('part_name','지그|A04',199),('part_name','공구|B07',200)
 ON CONFLICT (category_key, option_value) DO NOTHING;
 
--- 4. RLS
+-- 3-1. 외주업체 + 발주종류 옵션
+INSERT INTO master_options (category_key, option_value, sort_order) VALUES
+('vendor_outsource','한양물산',1),('vendor_outsource','명진정밀',2),('vendor_outsource','삼성특수강',3),
+('vendor_outsource','일광기계',4),('vendor_outsource','덕포금기',5),('vendor_outsource','우창정밀',6),
+('vendor_outsource','올리콘발저스',7),('vendor_outsource','대경진공열처리',8),('vendor_outsource','동아테크',9),
+('vendor_outsource','동양정공',10),('vendor_outsource','동화기업',11),('vendor_outsource','성광정밀',12),
+('vendor_outsource','보람테크',13),('vendor_outsource','미래써모텍',14),('vendor_outsource','주광레이저',15),
+('vendor_outsource','썬필',16),('vendor_outsource','LC레이져',17),('vendor_outsource','제일금속',18),
+('vendor_outsource','창원레이저용접',19),('vendor_outsource','금호정밀',20),('vendor_outsource','경남삼양연마',21),
+('vendor_outsource','사내가공',22),('vendor_outsource','민성하이텍',23),('vendor_outsource','승지금속',24),
+('vendor_outsource','신성금속',25),('vendor_outsource','성보테크',26),('vendor_outsource','명신하이테크',27),
+('vendor_outsource','신원티앤씨',28),
+('purchase_type','세척류',1),('purchase_type','원통연마가공',2),('purchase_type','와이어가공',3),
+('purchase_type','밀링가공',4),('purchase_type','고속가공',5),('purchase_type','방전가공',6),
+('purchase_type','코팅',7),('purchase_type','열처리',8),('purchase_type','특수코팅',9),
+('purchase_type','용접',10),('purchase_type','평면연마',11),('purchase_type','NC선반',12),
+('purchase_type','초경펀치',13),('purchase_type','원소재',14),('purchase_type','환봉',15),
+('purchase_type','금형부품소재(판재)',16),('purchase_type','라이너',17),('purchase_type','가공비',18),
+('purchase_type','절단비',19),('purchase_type','CNC치구',20),('purchase_type','공구',21),
+('purchase_type','수리비',22),('purchase_type','와이어부자재',23),('purchase_type','프로파일',24),
+('purchase_type','부자재',25),('purchase_type','MCT가공',26),('purchase_type','연삭유',27)
+ON CONFLICT (category_key, option_value) DO NOTHING;
+
+-- 4. 발주 테이블 (구매의뢰 1:N 발주)
+CREATE TABLE IF NOT EXISTS pr_purchases (
+    id BIGSERIAL PRIMARY KEY,
+    pr_order_id BIGINT REFERENCES pr_orders(id) ON DELETE CASCADE,
+    po_no TEXT,                  -- 발주번호 (수동/자동)
+    po_date DATE,                -- 발주일자
+    delivery_date DATE,          -- 입고예정일
+    vendor_outsource TEXT,       -- 외주업체명
+    purchase_type TEXT,          -- 발주종류
+    qty NUMERIC,                 -- 발주수량 (분할발주 가능)
+    qty_unit TEXT,               -- 단위
+    unit_price NUMERIC,          -- 단가
+    total_price NUMERIC,         -- 합계금액
+    status TEXT DEFAULT '발주',   -- 발주/입고대기/일부입고/입고완료/취소
+    note TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_pr_purchases_order  ON pr_purchases(pr_order_id);
+CREATE INDEX IF NOT EXISTS idx_pr_purchases_vendor ON pr_purchases(vendor_outsource);
+CREATE INDEX IF NOT EXISTS idx_pr_purchases_type   ON pr_purchases(purchase_type);
+CREATE INDEX IF NOT EXISTS idx_pr_purchases_date   ON pr_purchases(po_date);
+
+-- 5. RLS
 ALTER TABLE pr_orders         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE pr_purchases      ENABLE ROW LEVEL SECURITY;
 ALTER TABLE master_options    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE master_categories ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "anon_all_pr"    ON pr_orders;
 CREATE POLICY "anon_all_pr"    ON pr_orders         FOR ALL USING (TRUE) WITH CHECK (TRUE);
+DROP POLICY IF EXISTS "anon_all_pp"    ON pr_purchases;
+CREATE POLICY "anon_all_pp"    ON pr_purchases      FOR ALL USING (TRUE) WITH CHECK (TRUE);
 DROP POLICY IF EXISTS "anon_all_mopts" ON master_options;
 CREATE POLICY "anon_all_mopts" ON master_options    FOR ALL USING (TRUE) WITH CHECK (TRUE);
 DROP POLICY IF EXISTS "anon_all_mcats" ON master_categories;
 CREATE POLICY "anon_all_mcats" ON master_categories FOR ALL USING (TRUE) WITH CHECK (TRUE);
 
--- 5. updated_at 트리거
+-- 6. updated_at 트리거
 CREATE OR REPLACE FUNCTION trg_set_updated_at()
 RETURNS TRIGGER AS $$ BEGIN NEW.updated_at = NOW(); RETURN NEW; END; $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS set_updated_at ON pr_orders;
 CREATE TRIGGER set_updated_at BEFORE UPDATE ON pr_orders
 FOR EACH ROW EXECUTE FUNCTION trg_set_updated_at();
+DROP TRIGGER IF EXISTS set_updated_at_pp ON pr_purchases;
+CREATE TRIGGER set_updated_at_pp BEFORE UPDATE ON pr_purchases
+FOR EACH ROW EXECUTE FUNCTION trg_set_updated_at();
 
-SELECT category_key, COUNT(*) FROM master_options GROUP BY category_key;
+SELECT category_key, COUNT(*) FROM master_options GROUP BY category_key ORDER BY category_key;
 `;
 
 async function copySQL() {
