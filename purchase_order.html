@@ -5,6 +5,7 @@
 <title>금형부품 발주관리 v3</title>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
   * { box-sizing: border-box; }
   body { font-family: 'Malgun Gothic','맑은 고딕',sans-serif; margin: 0; padding: 14px; background: #f4f6fa; color: #1f2937; }
@@ -119,6 +120,34 @@
   .opt-add { display: flex; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid #e5e7eb; }
   .opt-add input { flex: 1; padding: 6px 10px; font-size: 13px; }
 
+  /* 분석 탭 - 서브탭 */
+  .subtabs { display: flex; gap: 4px; margin-bottom: 14px; flex-wrap: wrap; }
+  .subtab { padding: 8px 16px; cursor: pointer; background: #f3f4f6; color: #6b7280; border-radius: 6px; font-size: 13px; font-weight: 500; border: 1px solid #e5e7eb; }
+  .subtab:hover { background: #e0e7ff; color: #1e40af; }
+  .subtab.active { background: #1e40af; color: #fff; border-color: #1e40af; }
+  .subpanel { display: none; }
+  .subpanel.active { display: block; }
+  .chart-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; margin-bottom: 14px; box-shadow: 0 1px 3px rgba(0,0,0,.04); }
+  .chart-card h3 { margin: 0 0 12px; font-size: 14px; color: #1e40af; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+  .chart-wrap { position: relative; height: 320px; }
+  .chart-wrap.tall { height: 400px; }
+  .chart-wrap.short { height: 220px; }
+  .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 14px; }
+  .kpi-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px; border-left: 4px solid #1e40af; }
+  .kpi-card.green { border-left-color: #10b981; }
+  .kpi-card.amber { border-left-color: #f59e0b; }
+  .kpi-card.purple { border-left-color: #7c3aed; }
+  .kpi-card.cyan { border-left-color: #06b6d4; }
+  .kpi-label { font-size: 11px; color: #6b7280; font-weight: 500; }
+  .kpi-value { font-size: 22px; font-weight: 800; color: #1f2937; margin-top: 4px; }
+  .kpi-sub { font-size: 11px; color: #9ca3af; margin-top: 2px; }
+  .ana-toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; margin-bottom: 14px; padding: 12px; background: #f8fafc; border-radius: 8px; border: 1px solid #e5e7eb; }
+  .rank-table { width: 100%; font-size: 12px; }
+  .rank-table th { background: #1e40af; color: #fff; padding: 6px 8px; text-align: left; font-weight: 500; }
+  .rank-table td { padding: 5px 8px; border-bottom: 1px solid #f1f5f9; }
+  .rank-table tr:hover td { background: #f0f9ff; }
+  .rank-bar { display: inline-block; height: 6px; background: linear-gradient(90deg, #3b82f6, #1e40af); border-radius: 3px; vertical-align: middle; margin-right: 6px; }
+
   /* 잠긴 입력칸(URL/Key) */
   .locked-input { background: #f3f4f6 !important; color: #9ca3af !important; cursor: not-allowed !important; pointer-events: none !important; user-select: none !important; }
   /* SQL 박스 (코드 영역만 다크 유지) */
@@ -159,6 +188,7 @@
 <div class="tabs">
   <div class="tab active" data-tab="main">📝 입력 / 조회</div>
   <div class="tab" data-tab="purchase">🚚 발주현황</div>
+  <div class="tab" data-tab="analysis">📈 분석</div>
   <div class="tab" data-tab="history">📊 이력 / 출력</div>
   <div class="tab" data-tab="settings">⚙ 설정</div>
 </div>
@@ -236,9 +266,6 @@
       <span class="stat" id="poCount">총 0건</span>
     </div>
 
-    <!-- 외주업체별 요약 -->
-    <div id="poVendorSummary" style="margin-bottom:14px;"></div>
-
     <!-- 발주 상세 목록 -->
     <div class="table-wrap">
       <table id="poTable">
@@ -266,23 +293,169 @@
   </div>
 </div>
 
-<!-- ========== 탭3: 이력/출력 ========== -->
+<!-- ========== 탭3: 분석 ========== -->
+<div class="panel" id="panel-analysis">
+  <div class="card" style="border-left-color:#7c3aed;">
+    <h2 style="color:#7c3aed; justify-content:space-between; display:flex; width:100%;">
+      <span>📈 발주 분석 대시보드</span>
+      <button class="btn-sm btn-i" onclick="reloadAnalysis()">↻ 새로고침</button>
+    </h2>
+
+    <!-- 공통 필터 -->
+    <div class="ana-toolbar">
+      <div>
+        <label>시작일</label>
+        <input type="date" id="anaStart" onchange="renderAnalysis()">
+      </div>
+      <div>
+        <label>종료일</label>
+        <input type="date" id="anaEnd" onchange="renderAnalysis()">
+      </div>
+      <div>
+        <label>고객사</label>
+        <select id="anaCustomer" onchange="renderAnalysis()" style="min-width:140px"><option value="">전체</option></select>
+      </div>
+      <div>
+        <label>외주업체</label>
+        <select id="anaVendor" onchange="renderAnalysis()" style="min-width:140px"><option value="">전체</option></select>
+      </div>
+      <div>
+        <label>발주종류</label>
+        <select id="anaType" onchange="renderAnalysis()" style="min-width:140px"><option value="">전체</option></select>
+      </div>
+      <div>
+        <label>금형제번</label>
+        <input type="text" id="anaMold" list="anaMoldList" placeholder="-- 전체 --" onchange="renderAnalysis()" autocomplete="off" style="min-width:180px">
+        <datalist id="anaMoldList"></datalist>
+      </div>
+      <button class="btn-g btn-sm" onclick="resetAnaFilter()" style="height:32px;">↺ 초기화</button>
+    </div>
+
+    <!-- KPI 카드 -->
+    <div class="kpi-grid" id="anaKpi"></div>
+
+    <!-- 서브탭 -->
+    <div class="subtabs">
+      <div class="subtab active" data-subtab="ana-monthly">📅 월별 추이</div>
+      <div class="subtab" data-subtab="ana-vendor">🏭 외주·구분 분석</div>
+      <div class="subtab" data-subtab="ana-mold">🔧 금형·부품 분석</div>
+      <div class="subtab" data-subtab="ana-price">💰 단가·리드타임</div>
+    </div>
+
+    <!-- 서브패널 1: 월별 추이 -->
+    <div class="subpanel active" id="sub-ana-monthly">
+      <div class="chart-card">
+        <h3>📅 월별 구매액 추이 (전체 합계)</h3>
+        <div class="chart-wrap"><canvas id="chartMonthly"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <h3>📊 월별 발주건수 / 금형종수</h3>
+        <div class="chart-wrap"><canvas id="chartMonthlyCount"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <h3>🥧 상태별 발주 현황 (선택 기간)</h3>
+        <div class="chart-wrap short"><canvas id="chartStatus"></canvas></div>
+      </div>
+    </div>
+
+    <!-- 서브패널 2: 외주·구분 분석 -->
+    <div class="subpanel" id="sub-ana-vendor">
+      <div class="chart-card">
+        <h3>🏭 외주업체별 구매액 TOP 10</h3>
+        <div class="chart-wrap tall"><canvas id="chartVendorTop"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <h3>📋 외주업체 전체 리스트 (구매액 순)</h3>
+        <div style="max-height:400px; overflow-y:auto;">
+          <table class="rank-table" id="vendorRankTable"></table>
+        </div>
+      </div>
+      <div class="chart-card">
+        <h3>🏷 발주종류별 비용 분포</h3>
+        <div class="chart-wrap tall"><canvas id="chartType"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <h3>🏢 고객사별 구매액 (의뢰의 고객사 기준)</h3>
+        <div class="chart-wrap"><canvas id="chartCustomer"></canvas></div>
+      </div>
+    </div>
+
+    <!-- 서브패널 3: 금형·부품 분석 -->
+    <div class="subpanel" id="sub-ana-mold">
+      <div class="chart-card">
+        <h3>🔧 금형별 구매 비용 TOP 15 (부품 교체 비용 추적)</h3>
+        <div class="chart-wrap tall"><canvas id="chartMoldTop"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <h3>📋 금형별 상세 리스트</h3>
+        <div style="max-height:400px; overflow-y:auto;">
+          <table class="rank-table" id="moldRankTable"></table>
+        </div>
+      </div>
+      <div class="chart-card">
+        <h3>🔩 부품류별 비용 분포 (구분 기준)</h3>
+        <div class="chart-wrap"><canvas id="chartCategory"></canvas></div>
+      </div>
+    </div>
+
+    <!-- 서브패널 4: 단가·리드타임 -->
+    <div class="subpanel" id="sub-ana-price">
+      <div class="chart-card">
+        <h3>💰 부품별 단가 추이 (외주업체별 비교)</h3>
+        <div style="margin-bottom:8px; display:flex; gap:8px; align-items:end;">
+          <div>
+            <label>부품명 선택</label>
+            <select id="priceTrendPart" onchange="renderPriceTrendChart()" style="min-width:240px;"><option value="">-- 부품명 선택 --</option></select>
+          </div>
+          <span style="font-size:11px; color:#6b7280;">※ 같은 부품을 여러 외주업체에 발주한 경우 비교 가능</span>
+        </div>
+        <div class="chart-wrap"><canvas id="chartPriceTrend"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <h3>⏱ 입고 리드타임 - 외주업체별 평균 (발주일→입고예정일)</h3>
+        <div class="chart-wrap"><canvas id="chartLeadTime"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <h3>📋 외주업체 평가 (건수·금액·리드타임·상태)</h3>
+        <div style="max-height:400px; overflow-y:auto;">
+          <table class="rank-table" id="vendorEvalTable"></table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========== 탭4: 이력/출력 ==========-->
 <div class="panel" id="panel-history">
   <div class="card green">
-    <h2>📊 이력 관리 (날짜 / 고객사 필터)</h2>
+    <h2>📊 이력 관리 (날짜 / 고객사 / 금형 / 외주업체 필터)</h2>
     <div class="grid-4">
       <div><label>시작일 (의뢰일자)</label><input type="date" id="histStart"></div>
       <div><label>종료일 (의뢰일자)</label><input type="date" id="histEnd"></div>
       <div><label>고객사</label><select id="histCustomer"><option value="">전체</option></select></div>
+      <div><label>외주업체 (발주처)</label><select id="histVendor"><option value="">전체</option></select></div>
+    </div>
+    <div class="grid-3" style="margin-top:8px;">
+      <div>
+        <label>금형제번 <span style="color:#0e7490;">(자동완성·부분검색)</span></label>
+        <input type="text" id="histMold" list="histMoldList" placeholder="-- 전체 또는 금형 선택 --" autocomplete="off">
+        <datalist id="histMoldList"></datalist>
+      </div>
+      <div>
+        <label>키워드 검색</label>
+        <input type="search" id="histKeyword" placeholder="품명/품번/제번/기타사항...">
+      </div>
       <div style="display:flex; gap:6px; align-items:end;">
-        <button class="btn-w" onclick="searchHistory()">🔍 조회</button>
-        <button class="btn-s" onclick="exportHistoryExcel()">📊 엑셀</button>
+        <button class="btn-w" onclick="searchHistory()" style="flex:1;">🔍 조회</button>
+        <button class="btn-s" onclick="exportHistoryExcel()" style="flex:1;">📊 엑셀</button>
+        <button class="btn-g btn-sm" onclick="resetHistFilter()" title="필터 초기화">↺</button>
       </div>
     </div>
     <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
       <button class="btn-d btn-sm" onclick="deleteHistorySelected()">🗑 선택삭제</button>
       <span class="stat" id="histCount">총 0건</span>
       <span style="flex:1"></span>
+      <span style="font-size:12px; color:#6b7280;" id="histSummary"></span>
     </div>
     <div class="table-wrap" style="margin-top:10px;">
       <table id="histTable">
@@ -552,7 +725,7 @@ const COLS = [
 // 마스터 카테고리 → 폼의 select 매핑
 const MASTER_TO_SELECTS = {
   category:        ['of_category', 'filter_category'],
-  customer:        ['of_customer', 'filterCustomer', 'histCustomer'],
+  customer:        ['of_customer', 'filterCustomer', 'histCustomer', 'anaCustomer'],
   request_type:    ['of_request_type'],
   location:        ['of_location'],
   detail:          ['of_detail'],
@@ -562,8 +735,8 @@ const MASTER_TO_SELECTS = {
   approver:        ['of_approver'],
   reviewer:        ['of_reviewer'],
   status:          ['of_status', 'filterStatus'],
-  vendor_outsource:['poFilterVendor'],   // 발주현황 필터용
-  purchase_type:   ['poFilterType'],
+  vendor_outsource:['poFilterVendor', 'histVendor', 'anaVendor'],
+  purchase_type:   ['poFilterType', 'anaType'],
 };
 
 let state = {
@@ -621,7 +794,26 @@ document.querySelectorAll('.tab').forEach(t => {
     document.querySelectorAll('.panel').forEach(x => x.classList.remove('active'));
     t.classList.add('active');
     document.getElementById('panel-' + t.dataset.tab).classList.add('active');
+    // 분석 탭 활성화 시 차트 렌더링
+    if (t.dataset.tab === 'analysis') {
+      setTimeout(() => renderAnalysis(), 50);
+    }
   });
+});
+
+// 서브탭 전환 (분석 탭 내부)
+document.addEventListener('click', e => {
+  const st = e.target.closest('.subtab');
+  if (!st) return;
+  const targetId = st.dataset.subtab;
+  if (!targetId) return;
+  // 같은 부모 안의 subtab/subpanel만 토글
+  const parent = st.closest('.card') || document;
+  parent.querySelectorAll('.subtab').forEach(x => x.classList.remove('active'));
+  parent.querySelectorAll('.subpanel').forEach(x => x.classList.remove('active'));
+  st.classList.add('active');
+  const panel = document.getElementById('sub-' + targetId);
+  if (panel) panel.classList.add('active');
 });
 
 // ===========================================
@@ -670,6 +862,8 @@ async function testExtConnection() {
     _moldInfoCache = data;
     fillMoldNoSelect();
     fillMoldSearchList();
+    fillHistMoldList();
+    fillAnaMoldList();
     showStatus('extConnStatus', 'ok', `✅ 마스터DB 연결 성공 — 금형정보 ${data.length}건 로드`);
   } catch(e) {
     showStatus('extConnStatus', 'err', '❌ 마스터DB 연결 실패: ' + (e.message || e));
@@ -689,6 +883,8 @@ async function reloadMoldSearchMaster() {
     _moldInfoCache = data;
     fillMoldSearchList();
     fillMoldNoSelect();
+    fillHistMoldList();
+    fillAnaMoldList();
     toast(`✅ 마스터DB ${data.length}건 로드`, 'ok');
   } catch(e) {
     if (inp) inp.placeholder = '⚠ 마스터DB 조회실패 (현재 발주데이터에서만 검색)';
@@ -798,10 +994,14 @@ window.addEventListener('DOMContentLoaded', () => {
   const today = new Date();
   const end = today.toISOString().slice(0,10);
   const start = new Date(today.getTime() - 90*86400000).toISOString().slice(0,10);
+  const yearStart = new Date(today.getTime() - 365*86400000).toISOString().slice(0,10);
   document.getElementById('histStart').value = start;
   document.getElementById('histEnd').value = end;
   document.getElementById('poStart').value = start;
   document.getElementById('poEnd').value = end;
+  // 분석은 기본 1년
+  document.getElementById('anaStart').value = yearStart;
+  document.getElementById('anaEnd').value = end;
 
   // SQL 박스 초기화
   document.getElementById('sqlText').value = CREATE_TABLE_SQL;
@@ -884,6 +1084,10 @@ function renderAll() {
   renderMasterContainer();
   renderPurchaseList();
   renderMoldSummary();
+  // 분석 탭이 활성 상태면 차트 갱신
+  if (document.getElementById('panel-analysis')?.classList.contains('active')) {
+    renderAnalysis();
+  }
 }
 
 // ===========================================
@@ -1463,9 +1667,6 @@ function renderPurchaseList() {
   });
   state.poFilteredRows = filtered;
 
-  // 외주업체별 요약
-  renderVendorSummary(filtered);
-
   const body = document.getElementById('poBody');
   if (filtered.length === 0) {
     body.innerHTML = `<tr><td colspan="${PO_COLS.length + 2}" class="empty">발주 데이터 없음</td></tr>`;
@@ -1483,39 +1684,13 @@ function renderPurchaseList() {
       return html;
     }).join('');
   }
-  document.getElementById('poCount').textContent = `총 ${filtered.length}건 / 전체 ${state.purchases.length}건`;
-}
 
-function renderVendorSummary(rows) {
-  const sum = document.getElementById('poVendorSummary');
-  if (!rows || rows.length === 0) { sum.innerHTML = ''; return; }
-  // 외주업체별 그룹
-  const grp = {};
-  rows.forEach(p => {
-    const v = p.vendor_outsource || '미지정';
-    if (!grp[v]) grp[v] = { count: 0, qty: 0, total: 0, types: new Set(), molds: new Set(), statuses: {} };
-    grp[v].count++;
-    grp[v].qty += parseFloat(p.qty) || 0;
-    grp[v].total += parseFloat(p.total_price) || 0;
-    if (p.purchase_type) grp[v].types.add(p.purchase_type);
-    if (p.mold_no) grp[v].molds.add(p.mold_no);
-    grp[v].statuses[p.status || '발주'] = (grp[v].statuses[p.status || '발주'] || 0) + 1;
-  });
-  const sorted = Object.entries(grp).sort((a,b) => b[1].count - a[1].count);
-  sum.innerHTML = `
-    <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap:8px;">
-      ${sorted.map(([v, info]) => `
-        <div style="border:1px solid #e9d5ff; border-radius:8px; padding:10px; background:#faf5ff; cursor:pointer;" onclick="document.getElementById('poFilterVendor').value='${escapeHtml(v)}'; renderPurchaseList();">
-          <div style="font-weight:700; color:#7c3aed; font-size:14px;">🏭 ${escapeHtml(v)}</div>
-          <div style="font-size:11px; color:#6b7280; margin-top:4px;">
-            발주 ${info.count}건 · 수량 ${info.qty.toLocaleString()} · 금액 ${info.total.toLocaleString()}원<br>
-            금형 ${info.molds.size}종 · 종류 ${info.types.size}개<br>
-            ${Object.entries(info.statuses).map(([s,c]) => `<span style="display:inline-block; padding:1px 6px; border-radius:8px; background:#fff; border:1px solid #e5e7eb; margin-right:3px; margin-top:2px;">${s}: ${c}</span>`).join('')}
-          </div>
-        </div>
-      `).join('')}
-    </div>
-  `;
+  // 합계 정보
+  const totalQty = filtered.reduce((s, p) => s + (parseFloat(p.qty) || 0), 0);
+  const totalAmt = filtered.reduce((s, p) => s + (parseFloat(p.total_price) || 0), 0);
+  document.getElementById('poCount').innerHTML =
+    `총 ${filtered.length}건 / 전체 ${state.purchases.length}건` +
+    (filtered.length > 0 ? ` · 수량 <b>${totalQty.toLocaleString()}</b> · 금액 <b>${totalAmt.toLocaleString()}원</b>` : '');
 }
 
 async function exportPurchaseExcel() {
@@ -1982,6 +2157,654 @@ async function reloadMaster() {
 }
 
 // ===========================================
+// 분석 탭 (대시보드)
+// ===========================================
+let _anaCharts = {}; // Chart 인스턴스 보관 (재렌더 시 destroy 위해)
+
+function destroyAnaChart(id) {
+  if (_anaCharts[id]) { _anaCharts[id].destroy(); _anaCharts[id] = null; }
+}
+
+function fillAnaMoldList() {
+  const dl = document.getElementById('anaMoldList');
+  if (!dl) return;
+  if (!_moldInfoCache || _moldInfoCache.length === 0) { dl.innerHTML = ''; return; }
+  dl.innerHTML = _moldInfoCache.map(m => {
+    const label = m.model_name ? `${m.mold_no} (${m.model_name})` : m.mold_no;
+    return `<option value="${escapeHtml(label)}"></option>`;
+  }).join('');
+}
+
+function resetAnaFilter() {
+  const today = new Date();
+  const end = today.toISOString().slice(0,10);
+  const start = new Date(today.getTime() - 365*86400000).toISOString().slice(0,10);
+  document.getElementById('anaStart').value = start;
+  document.getElementById('anaEnd').value = end;
+  document.getElementById('anaCustomer').value = '';
+  document.getElementById('anaVendor').value = '';
+  document.getElementById('anaType').value = '';
+  document.getElementById('anaMold').value = '';
+  renderAnalysis();
+}
+
+async function reloadAnalysis() {
+  await reloadPurchases();
+  renderAnalysis();
+  toast('분석 데이터 새로고침','ok');
+}
+
+function getAnaFilteredData() {
+  const start = document.getElementById('anaStart').value;
+  const end = document.getElementById('anaEnd').value;
+  const cust = document.getElementById('anaCustomer').value;
+  const vendor = document.getElementById('anaVendor').value;
+  const type = document.getElementById('anaType').value;
+  let moldRaw = document.getElementById('anaMold').value.trim();
+  let moldQuery = moldRaw;
+  const m = moldRaw.match(/^(.+?)\s*\(([^)]+)\)\s*$/);
+  if (m) moldQuery = m[1].trim();
+
+  const all = joinedPurchases();
+  return all.filter(p => {
+    if (start && p.po_date && p.po_date < start) return false;
+    if (end && p.po_date && p.po_date > end) return false;
+    if (cust && p.customer !== cust) return false;
+    if (vendor && p.vendor_outsource !== vendor) return false;
+    if (type && p.purchase_type !== type) return false;
+    if (moldQuery) {
+      const moldNo = (p.mold_no || '').toLowerCase();
+      const productNo = (p.product_no || '').toLowerCase();
+      const q = moldQuery.toLowerCase();
+      if (!moldNo.includes(q) && !productNo.includes(q)) return false;
+    }
+    // po_date 없는건 분석에서 제외
+    if (!p.po_date) return false;
+    return true;
+  });
+}
+
+function renderAnalysis() {
+  if (typeof Chart === 'undefined') return; // Chart.js 로딩 전
+  const data = getAnaFilteredData();
+  renderAnaKpi(data);
+  renderMonthlyChart(data);
+  renderMonthlyCountChart(data);
+  renderStatusChart(data);
+  renderVendorTopChart(data);
+  renderVendorRankTable(data);
+  renderTypeChart(data);
+  renderCustomerChart(data);
+  renderMoldTopChart(data);
+  renderMoldRankTable(data);
+  renderCategoryChart(data);
+  fillPriceTrendPartSelect(data);
+  renderPriceTrendChart();
+  renderLeadTimeChart(data);
+  renderVendorEvalTable(data);
+}
+
+// KPI 카드
+function renderAnaKpi(data) {
+  const totalAmt = data.reduce((s, p) => s + (parseFloat(p.total_price) || 0), 0);
+  const totalCnt = data.length;
+  const vendorCnt = new Set(data.map(p => p.vendor_outsource).filter(Boolean)).size;
+  const moldCnt = new Set(data.map(p => p.mold_no).filter(Boolean)).size;
+  const partCnt = new Set(data.map(p => p.part_name).filter(Boolean)).size;
+  const avgAmt = totalCnt > 0 ? totalAmt / totalCnt : 0;
+  const completedCnt = data.filter(p => p.status === '입고완료').length;
+  const completedRate = totalCnt > 0 ? (completedCnt / totalCnt * 100) : 0;
+
+  document.getElementById('anaKpi').innerHTML = `
+    <div class="kpi-card">
+      <div class="kpi-label">총 구매액</div>
+      <div class="kpi-value">${totalAmt.toLocaleString()}원</div>
+      <div class="kpi-sub">건당 평균 ${Math.round(avgAmt).toLocaleString()}원</div>
+    </div>
+    <div class="kpi-card green">
+      <div class="kpi-label">총 발주건수</div>
+      <div class="kpi-value">${totalCnt.toLocaleString()}건</div>
+      <div class="kpi-sub">입고완료 ${completedCnt}건 (${completedRate.toFixed(1)}%)</div>
+    </div>
+    <div class="kpi-card purple">
+      <div class="kpi-label">활성 외주업체</div>
+      <div class="kpi-value">${vendorCnt}곳</div>
+      <div class="kpi-sub">평균 ${vendorCnt > 0 ? (totalAmt/vendorCnt/10000).toFixed(0) : 0}만원/곳</div>
+    </div>
+    <div class="kpi-card cyan">
+      <div class="kpi-label">금형 종수</div>
+      <div class="kpi-value">${moldCnt}종</div>
+      <div class="kpi-sub">부품 ${partCnt}종</div>
+    </div>
+  `;
+}
+
+// === 월별 추이 ===
+function groupByMonth(data) {
+  const grp = {};
+  data.forEach(p => {
+    if (!p.po_date) return;
+    const ym = p.po_date.slice(0, 7); // YYYY-MM
+    if (!grp[ym]) grp[ym] = { amount: 0, count: 0, molds: new Set() };
+    grp[ym].amount += parseFloat(p.total_price) || 0;
+    grp[ym].count++;
+    if (p.mold_no) grp[ym].molds.add(p.mold_no);
+  });
+  return Object.entries(grp).sort(([a],[b]) => a.localeCompare(b));
+}
+
+function renderMonthlyChart(data) {
+  destroyAnaChart('chartMonthly');
+  const months = groupByMonth(data);
+  const ctx = document.getElementById('chartMonthly');
+  if (!ctx) return;
+  _anaCharts['chartMonthly'] = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: months.map(([m]) => m),
+      datasets: [{
+        label: '구매액 (원)',
+        data: months.map(([,v]) => v.amount),
+        backgroundColor: 'rgba(30, 64, 175, 0.7)',
+        borderColor: '#1e40af',
+        borderWidth: 1,
+        borderRadius: 4,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: c => `${c.parsed.y.toLocaleString()}원` } }
+      },
+      scales: {
+        y: { ticks: { callback: v => (v/10000).toLocaleString() + '만' } }
+      }
+    }
+  });
+}
+
+function renderMonthlyCountChart(data) {
+  destroyAnaChart('chartMonthlyCount');
+  const months = groupByMonth(data);
+  const ctx = document.getElementById('chartMonthlyCount');
+  if (!ctx) return;
+  _anaCharts['chartMonthlyCount'] = new Chart(ctx, {
+    data: {
+      labels: months.map(([m]) => m),
+      datasets: [
+        {
+          type: 'bar',
+          label: '발주건수',
+          data: months.map(([,v]) => v.count),
+          backgroundColor: 'rgba(124, 58, 237, 0.6)',
+          borderColor: '#7c3aed', borderWidth: 1, borderRadius: 4,
+          yAxisID: 'y',
+        },
+        {
+          type: 'line',
+          label: '금형 종수',
+          data: months.map(([,v]) => v.molds.size),
+          borderColor: '#f59e0b',
+          backgroundColor: 'rgba(245,158,11,0.2)',
+          tension: 0.3, borderWidth: 2,
+          yAxisID: 'y1',
+        }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {
+        y:  { type: 'linear', position: 'left',  title: { display: true, text: '발주건수' } },
+        y1: { type: 'linear', position: 'right', title: { display: true, text: '금형종수' }, grid: { drawOnChartArea: false } }
+      }
+    }
+  });
+}
+
+// === 상태별 ===
+function renderStatusChart(data) {
+  destroyAnaChart('chartStatus');
+  const grp = {};
+  data.forEach(p => {
+    const s = p.status || '발주';
+    grp[s] = (grp[s] || 0) + 1;
+  });
+  const labels = Object.keys(grp);
+  const counts = labels.map(k => grp[k]);
+  const colors = { '발주':'#3b82f6', '입고대기':'#f59e0b', '일부입고':'#8b5cf6', '입고완료':'#10b981', '취소':'#9ca3af' };
+  const bg = labels.map(l => colors[l] || '#6b7280');
+  const ctx = document.getElementById('chartStatus');
+  if (!ctx) return;
+  _anaCharts['chartStatus'] = new Chart(ctx, {
+    type: 'doughnut',
+    data: { labels, datasets: [{ data: counts, backgroundColor: bg, borderWidth: 2, borderColor: '#fff' }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'right' },
+        tooltip: { callbacks: { label: c => {
+          const total = counts.reduce((a,b)=>a+b,0);
+          const pct = total > 0 ? (c.parsed / total * 100).toFixed(1) : 0;
+          return `${c.label}: ${c.parsed}건 (${pct}%)`;
+        }}}
+      }
+    }
+  });
+}
+
+// === 외주업체 ===
+function aggregateVendors(data) {
+  const grp = {};
+  data.forEach(p => {
+    const v = p.vendor_outsource || '미지정';
+    if (!grp[v]) grp[v] = { count: 0, amount: 0, molds: new Set(), types: new Set() };
+    grp[v].count++;
+    grp[v].amount += parseFloat(p.total_price) || 0;
+    if (p.mold_no) grp[v].molds.add(p.mold_no);
+    if (p.purchase_type) grp[v].types.add(p.purchase_type);
+  });
+  return Object.entries(grp).sort((a,b) => b[1].amount - a[1].amount);
+}
+
+function renderVendorTopChart(data) {
+  destroyAnaChart('chartVendorTop');
+  const all = aggregateVendors(data);
+  const top10 = all.slice(0, 10);
+  const ctx = document.getElementById('chartVendorTop');
+  if (!ctx) return;
+  _anaCharts['chartVendorTop'] = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: top10.map(([v]) => v),
+      datasets: [{
+        label: '구매액 (원)',
+        data: top10.map(([,v]) => v.amount),
+        backgroundColor: 'rgba(124, 58, 237, 0.7)',
+        borderColor: '#7c3aed', borderWidth: 1, borderRadius: 4,
+      }]
+    },
+    options: {
+      indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: c => `${c.parsed.x.toLocaleString()}원` } }
+      },
+      scales: {
+        x: { ticks: { callback: v => (v/10000).toLocaleString() + '만' } }
+      }
+    }
+  });
+}
+
+function renderVendorRankTable(data) {
+  const all = aggregateVendors(data);
+  const maxAmt = all.length > 0 ? all[0][1].amount : 1;
+  const tbl = document.getElementById('vendorRankTable');
+  tbl.innerHTML = `
+    <thead><tr>
+      <th style="width:40px">#</th><th>외주업체</th><th style="width:140px">구매액</th>
+      <th style="width:60px">건수</th><th style="width:60px">금형</th><th style="width:60px">종류</th>
+      <th>비중</th>
+    </tr></thead>
+    <tbody>
+      ${all.map(([v, info], i) => {
+        const pct = maxAmt > 0 ? (info.amount / maxAmt * 100) : 0;
+        return `<tr>
+          <td>${i+1}</td>
+          <td><b>${escapeHtml(v)}</b></td>
+          <td style="text-align:right;">${info.amount.toLocaleString()}</td>
+          <td style="text-align:right;">${info.count}</td>
+          <td style="text-align:right;">${info.molds.size}</td>
+          <td style="text-align:right;">${info.types.size}</td>
+          <td><span class="rank-bar" style="width:${pct.toFixed(0)}%"></span> ${pct.toFixed(1)}%</td>
+        </tr>`;
+      }).join('')}
+    </tbody>
+  `;
+}
+
+// === 발주종류별 ===
+function renderTypeChart(data) {
+  destroyAnaChart('chartType');
+  const grp = {};
+  data.forEach(p => {
+    const t = p.purchase_type || '미지정';
+    grp[t] = (grp[t] || 0) + (parseFloat(p.total_price) || 0);
+  });
+  const sorted = Object.entries(grp).sort((a,b) => b[1] - a[1]);
+  const palette = ['#3b82f6','#10b981','#f59e0b','#7c3aed','#06b6d4','#ec4899','#8b5cf6','#ef4444','#84cc16','#14b8a6','#f97316','#6366f1','#a855f7','#22c55e','#eab308'];
+  const ctx = document.getElementById('chartType');
+  if (!ctx) return;
+  _anaCharts['chartType'] = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: sorted.map(([t]) => t),
+      datasets: [{
+        label: '구매액 (원)',
+        data: sorted.map(([,v]) => v),
+        backgroundColor: sorted.map((_, i) => palette[i % palette.length]),
+        borderWidth: 0, borderRadius: 4,
+      }]
+    },
+    options: {
+      indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: c => `${c.parsed.x.toLocaleString()}원` } }
+      },
+      scales: {
+        x: { ticks: { callback: v => (v/10000).toLocaleString() + '만' } }
+      }
+    }
+  });
+}
+
+// === 고객사별 ===
+function renderCustomerChart(data) {
+  destroyAnaChart('chartCustomer');
+  const grp = {};
+  data.forEach(p => {
+    const c = p.customer || '미지정';
+    grp[c] = (grp[c] || 0) + (parseFloat(p.total_price) || 0);
+  });
+  const sorted = Object.entries(grp).sort((a,b) => b[1] - a[1]);
+  const ctx = document.getElementById('chartCustomer');
+  if (!ctx) return;
+  _anaCharts['chartCustomer'] = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: sorted.map(([c]) => c),
+      datasets: [{
+        label: '구매액 (원)',
+        data: sorted.map(([,v]) => v),
+        backgroundColor: 'rgba(6, 182, 212, 0.7)',
+        borderColor: '#06b6d4', borderWidth: 1, borderRadius: 4,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: c => `${c.parsed.y.toLocaleString()}원` } }
+      },
+      scales: {
+        y: { ticks: { callback: v => (v/10000).toLocaleString() + '만' } }
+      }
+    }
+  });
+}
+
+// === 금형별 ===
+function aggregateMolds(data) {
+  const grp = {};
+  data.forEach(p => {
+    const m = p.mold_no || '미지정';
+    if (!grp[m]) grp[m] = { count: 0, amount: 0, parts: new Set(), vendors: new Set(), customer: p.customer || '' };
+    grp[m].count++;
+    grp[m].amount += parseFloat(p.total_price) || 0;
+    if (p.part_name) grp[m].parts.add(p.part_name);
+    if (p.vendor_outsource) grp[m].vendors.add(p.vendor_outsource);
+  });
+  return Object.entries(grp).sort((a,b) => b[1].amount - a[1].amount);
+}
+
+function renderMoldTopChart(data) {
+  destroyAnaChart('chartMoldTop');
+  const all = aggregateMolds(data);
+  const top15 = all.slice(0, 15);
+  const ctx = document.getElementById('chartMoldTop');
+  if (!ctx) return;
+  _anaCharts['chartMoldTop'] = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: top15.map(([m]) => m),
+      datasets: [{
+        label: '구매액 (원)',
+        data: top15.map(([,v]) => v.amount),
+        backgroundColor: 'rgba(8, 145, 178, 0.7)',
+        borderColor: '#0891b2', borderWidth: 1, borderRadius: 4,
+      }]
+    },
+    options: {
+      indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: c => `${c.parsed.x.toLocaleString()}원` } }
+      },
+      scales: {
+        x: { ticks: { callback: v => (v/10000).toLocaleString() + '만' } }
+      }
+    }
+  });
+}
+
+function renderMoldRankTable(data) {
+  const all = aggregateMolds(data);
+  const maxAmt = all.length > 0 ? all[0][1].amount : 1;
+  const tbl = document.getElementById('moldRankTable');
+  tbl.innerHTML = `
+    <thead><tr>
+      <th style="width:40px">#</th><th>금형제번</th><th>고객사</th>
+      <th style="width:140px">구매액</th><th style="width:60px">건수</th>
+      <th style="width:60px">부품</th><th style="width:60px">외주</th><th>비중</th>
+    </tr></thead>
+    <tbody>
+      ${all.map(([m, info], i) => {
+        const pct = maxAmt > 0 ? (info.amount / maxAmt * 100) : 0;
+        return `<tr>
+          <td>${i+1}</td>
+          <td><b>${escapeHtml(m)}</b></td>
+          <td>${escapeHtml(info.customer || '-')}</td>
+          <td style="text-align:right;">${info.amount.toLocaleString()}</td>
+          <td style="text-align:right;">${info.count}</td>
+          <td style="text-align:right;">${info.parts.size}</td>
+          <td style="text-align:right;">${info.vendors.size}</td>
+          <td><span class="rank-bar" style="width:${pct.toFixed(0)}%"></span> ${pct.toFixed(1)}%</td>
+        </tr>`;
+      }).join('')}
+    </tbody>
+  `;
+}
+
+// === 부품류별 (구분 기준) ===
+function renderCategoryChart(data) {
+  destroyAnaChart('chartCategory');
+  const grp = {};
+  data.forEach(p => {
+    const c = p.category || '미지정';
+    grp[c] = (grp[c] || 0) + (parseFloat(p.total_price) || 0);
+  });
+  const sorted = Object.entries(grp).sort((a,b) => b[1] - a[1]);
+  const palette = ['#3b82f6','#10b981','#f59e0b','#7c3aed','#06b6d4','#ec4899','#ef4444','#84cc16'];
+  const ctx = document.getElementById('chartCategory');
+  if (!ctx) return;
+  _anaCharts['chartCategory'] = new Chart(ctx, {
+    type: 'pie',
+    data: {
+      labels: sorted.map(([c]) => c),
+      datasets: [{
+        data: sorted.map(([,v]) => v),
+        backgroundColor: sorted.map((_, i) => palette[i % palette.length]),
+        borderWidth: 2, borderColor: '#fff'
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'right' },
+        tooltip: { callbacks: { label: c => {
+          const total = sorted.reduce((a,b)=>a+b[1],0);
+          const pct = total > 0 ? (c.parsed / total * 100).toFixed(1) : 0;
+          return `${c.label}: ${c.parsed.toLocaleString()}원 (${pct}%)`;
+        }}}
+      }
+    }
+  });
+}
+
+// === 부품별 단가 추이 ===
+function fillPriceTrendPartSelect(data) {
+  const sel = document.getElementById('priceTrendPart');
+  if (!sel) return;
+  // unit_price 있는 부품만
+  const parts = new Set();
+  data.forEach(p => {
+    if (p.part_name && p.unit_price && parseFloat(p.unit_price) > 0) parts.add(p.part_name);
+  });
+  const sorted = [...parts].sort();
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">-- 부품명 선택 --</option>' +
+    sorted.map(p => `<option value="${escapeHtml(p)}" ${p === cur ? 'selected' : ''}>${escapeHtml(p)}</option>`).join('');
+}
+
+function renderPriceTrendChart() {
+  destroyAnaChart('chartPriceTrend');
+  const sel = document.getElementById('priceTrendPart');
+  if (!sel) return;
+  const partName = sel.value;
+  const ctx = document.getElementById('chartPriceTrend');
+  if (!ctx) return;
+  if (!partName) {
+    // 부품 선택 안 했을 때 빈 차트
+    _anaCharts['chartPriceTrend'] = new Chart(ctx, {
+      type: 'line',
+      data: { labels: [], datasets: [] },
+      options: { responsive: true, maintainAspectRatio: false,
+        plugins: { title: { display: true, text: '부품명을 선택하세요' } } }
+    });
+    return;
+  }
+
+  const data = getAnaFilteredData().filter(p => p.part_name === partName && p.unit_price && parseFloat(p.unit_price) > 0);
+  // 외주업체별로 그룹 → 시계열
+  const vendorMap = {};
+  data.forEach(p => {
+    const v = p.vendor_outsource || '미지정';
+    if (!vendorMap[v]) vendorMap[v] = [];
+    vendorMap[v].push({ x: p.po_date, y: parseFloat(p.unit_price) });
+  });
+  Object.values(vendorMap).forEach(arr => arr.sort((a,b) => a.x.localeCompare(b.x)));
+
+  const palette = ['#3b82f6','#10b981','#f59e0b','#7c3aed','#06b6d4','#ec4899','#ef4444','#84cc16','#14b8a6','#a855f7'];
+  const datasets = Object.entries(vendorMap).map(([v, points], i) => ({
+    label: v,
+    data: points,
+    borderColor: palette[i % palette.length],
+    backgroundColor: palette[i % palette.length] + '33',
+    tension: 0.3, borderWidth: 2,
+    pointRadius: 4, pointHoverRadius: 6,
+  }));
+
+  _anaCharts['chartPriceTrend'] = new Chart(ctx, {
+    type: 'line',
+    data: { datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      parsing: false,
+      plugins: {
+        legend: { position: 'bottom' },
+        tooltip: { callbacks: { label: c => `${c.dataset.label}: ${c.parsed.y.toLocaleString()}원` } }
+      },
+      scales: {
+        x: { type: 'category', title: { display: true, text: '발주일' } },
+        y: { title: { display: true, text: '단가 (원)' }, ticks: { callback: v => v.toLocaleString() } }
+      }
+    }
+  });
+}
+
+// === 리드타임 ===
+function renderLeadTimeChart(data) {
+  destroyAnaChart('chartLeadTime');
+  const grp = {};
+  data.forEach(p => {
+    if (!p.po_date || !p.delivery_date) return;
+    const days = (new Date(p.delivery_date) - new Date(p.po_date)) / 86400000;
+    if (days < 0 || days > 365) return; // 비정상값 제외
+    const v = p.vendor_outsource || '미지정';
+    if (!grp[v]) grp[v] = [];
+    grp[v].push(days);
+  });
+  const arr = Object.entries(grp)
+    .map(([v, days]) => ({ vendor: v, avg: days.reduce((a,b)=>a+b,0)/days.length, count: days.length }))
+    .sort((a,b) => b.avg - a.avg);
+
+  const ctx = document.getElementById('chartLeadTime');
+  if (!ctx) return;
+  _anaCharts['chartLeadTime'] = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: arr.map(x => x.vendor),
+      datasets: [{
+        label: '평균 리드타임 (일)',
+        data: arr.map(x => +x.avg.toFixed(1)),
+        backgroundColor: arr.map(x =>
+          x.avg > 30 ? 'rgba(239, 68, 68, 0.7)' :
+          x.avg > 14 ? 'rgba(245, 158, 11, 0.7)' :
+                       'rgba(16, 185, 129, 0.7)'),
+        borderWidth: 0, borderRadius: 4,
+      }]
+    },
+    options: {
+      indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: c => {
+          const v = arr[c.dataIndex];
+          return `${v.avg.toFixed(1)}일 (${v.count}건 평균)`;
+        }}}
+      },
+      scales: { x: { title: { display: true, text: '일수 (녹색≤14, 황색≤30, 적색>30)' } } }
+    }
+  });
+}
+
+// === 외주업체 평가 ===
+function renderVendorEvalTable(data) {
+  const grp = {};
+  data.forEach(p => {
+    const v = p.vendor_outsource || '미지정';
+    if (!grp[v]) grp[v] = { count: 0, amount: 0, leadDays: [], statuses: {} };
+    grp[v].count++;
+    grp[v].amount += parseFloat(p.total_price) || 0;
+    if (p.po_date && p.delivery_date) {
+      const d = (new Date(p.delivery_date) - new Date(p.po_date)) / 86400000;
+      if (d >= 0 && d <= 365) grp[v].leadDays.push(d);
+    }
+    const s = p.status || '발주';
+    grp[v].statuses[s] = (grp[v].statuses[s] || 0) + 1;
+  });
+  const arr = Object.entries(grp).sort((a,b) => b[1].amount - a[1].amount);
+
+  const tbl = document.getElementById('vendorEvalTable');
+  tbl.innerHTML = `
+    <thead><tr>
+      <th style="width:40px">#</th><th>외주업체</th><th style="width:60px">건수</th>
+      <th style="width:140px">구매액</th><th style="width:100px">평균리드</th><th>상태분포</th>
+    </tr></thead>
+    <tbody>
+      ${arr.map(([v, info], i) => {
+        const avgLead = info.leadDays.length > 0 ? (info.leadDays.reduce((a,b)=>a+b,0)/info.leadDays.length).toFixed(1) : '-';
+        const leadColor = info.leadDays.length === 0 ? '#9ca3af' :
+                          avgLead > 30 ? '#ef4444' : avgLead > 14 ? '#f59e0b' : '#10b981';
+        const statusBadges = Object.entries(info.statuses).map(([s,c]) =>
+          `<span style="display:inline-block; padding:1px 6px; border-radius:8px; background:#f3f4f6; border:1px solid #e5e7eb; margin-right:3px; font-size:11px;">${s}: ${c}</span>`
+        ).join('');
+        return `<tr>
+          <td>${i+1}</td>
+          <td><b>${escapeHtml(v)}</b></td>
+          <td style="text-align:right;">${info.count}</td>
+          <td style="text-align:right;">${info.amount.toLocaleString()}</td>
+          <td style="text-align:right; color:${leadColor}; font-weight:600;">${avgLead}${avgLead !== '-' ? '일' : ''}</td>
+          <td>${statusBadges}</td>
+        </tr>`;
+      }).join('')}
+    </tbody>
+  `;
+}
+
+// ===========================================
 // 이력/출력
 // ===========================================
 async function searchHistory() {
@@ -1989,16 +2812,74 @@ async function searchHistory() {
   const start = document.getElementById('histStart').value;
   const end = document.getElementById('histEnd').value;
   const cust = document.getElementById('histCustomer').value;
+  const vendor = document.getElementById('histVendor').value;
+  let moldRaw = document.getElementById('histMold').value.trim();
+  const keyword = document.getElementById('histKeyword').value.trim().toLowerCase();
+
+  // datalist 입력값 "9DHA034A (1560-006)" → "9DHA034A"만 추출
+  let moldQuery = moldRaw;
+  const m = moldRaw.match(/^(.+?)\s*\(([^)]+)\)\s*$/);
+  if (m) moldQuery = m[1].trim();
+
+  // pr_orders 조회 (날짜/고객사/금형 필터 서버 적용)
   let q = supaClient.from('pr_orders').select('*').order('pr_date', { ascending: false });
   if (start) q = q.gte('pr_date', start);
   if (end)   q = q.lte('pr_date', end);
   if (cust)  q = q.eq('customer', cust);
+  if (moldQuery) q = q.ilike('mold_no', `%${moldQuery}%`);
+
   try {
     const { data, error } = await q;
     if (error) throw error;
-    state.histRows = data || [];
+    let rows = data || [];
+
+    // 외주업체 필터 - pr_purchases 조인 필요
+    if (vendor) {
+      // 해당 외주업체에 발주된 pr_order_id 목록 추출
+      const matchedPrIds = new Set(
+        state.purchases
+          .filter(p => p.vendor_outsource === vendor)
+          .map(p => p.pr_order_id)
+      );
+      rows = rows.filter(r => matchedPrIds.has(r.id));
+    }
+
+    // 키워드 필터 (클라이언트)
+    if (keyword) {
+      rows = rows.filter(r => {
+        const blob = [r.pr_no, r.part_name, r.part_no, r.mold_no, r.product_no, r.note, r.requester]
+          .map(v => String(v || '').toLowerCase()).join(' ');
+        return blob.includes(keyword);
+      });
+    }
+
+    state.histRows = rows;
     renderHistTable();
   } catch(e) { alert('조회 실패: ' + (e.message || e)); }
+}
+
+function resetHistFilter() {
+  const today = new Date();
+  const end = today.toISOString().slice(0,10);
+  const start = new Date(today.getTime() - 90*86400000).toISOString().slice(0,10);
+  document.getElementById('histStart').value = start;
+  document.getElementById('histEnd').value = end;
+  document.getElementById('histCustomer').value = '';
+  document.getElementById('histVendor').value = '';
+  document.getElementById('histMold').value = '';
+  document.getElementById('histKeyword').value = '';
+  searchHistory();
+}
+
+// 이력 탭 - 금형 datalist 채우기
+function fillHistMoldList() {
+  const dl = document.getElementById('histMoldList');
+  if (!dl) return;
+  if (!_moldInfoCache || _moldInfoCache.length === 0) { dl.innerHTML = ''; return; }
+  dl.innerHTML = _moldInfoCache.map(m => {
+    const label = m.model_name ? `${m.mold_no} (${m.model_name})` : m.mold_no;
+    return `<option value="${escapeHtml(label)}"></option>`;
+  }).join('');
 }
 
 function renderHistTable() {
@@ -2025,6 +2906,26 @@ function renderHistTable() {
     return html;
   }).join('');
   document.getElementById('histCount').textContent = `총 ${state.histRows.length}건`;
+
+  // 요약 정보: 의뢰건수의 발주처 분포
+  const sumEl = document.getElementById('histSummary');
+  if (sumEl && state.histRows.length > 0) {
+    const prIds = new Set(state.histRows.map(r => r.id));
+    const pps = state.purchases.filter(p => prIds.has(p.pr_order_id));
+    const vendorCnt = {};
+    pps.forEach(p => {
+      const v = p.vendor_outsource || '미발주';
+      vendorCnt[v] = (vendorCnt[v] || 0) + 1;
+    });
+    const top3 = Object.entries(vendorCnt).sort((a,b) => b[1]-a[1]).slice(0,3);
+    if (top3.length > 0) {
+      sumEl.innerHTML = `🚚 발주처: ${top3.map(([v,c]) => `${escapeHtml(v)}(${c})`).join(', ')}${Object.keys(vendorCnt).length > 3 ? ` 외 ${Object.keys(vendorCnt).length - 3}곳` : ''}`;
+    } else {
+      sumEl.textContent = '발주 없음';
+    }
+  } else if (sumEl) {
+    sumEl.textContent = '';
+  }
 }
 
 function toggleHistAll(checked) {
