@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>소재입고 등록 (Rev2.9)</title>
+  <title>소재입고 등록 (Rev3.0)</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&display=swap');
@@ -62,7 +62,6 @@
       overflow-x:auto;
       -webkit-overflow-scrolling:touch;
       margin-bottom:18px;
-      border-radius:6px;
     }
     .cert-table-wrap #certMeasTable{
       min-width:520px;
@@ -80,9 +79,9 @@
       #certModal > div > div{padding:14px 16px !important}
       /* 측정값 표 - 모바일에서 더 컴팩트 */
       .cert-table-wrap #certMeasTable{min-width:480px}
-      #certMeasTable th{padding:6px 3px !important;font-size:11px !important}
+      #certMeasTable th{padding:6px 3px !important;font-size:12px !important}
       #certMeasTable td{font-size:12px !important}
-      #certMeasTable td:first-child{font-size:11px !important;padding:4px 6px !important}
+      #certMeasTable td:first-child{font-size:12px !important;padding:4px 6px !important}
       #certMeasTable input[type="text"],
       #certMeasTable input[type="number"]{
         padding:6px 4px !important;font-size:12px !important;min-width:50px;
@@ -100,7 +99,7 @@
 </head>
 <body>
 <div class="hdr">
-  <h1>📤 소재입고 등록 (Rev2.9)</h1>
+  <h1>📤 소재입고 등록 (Rev3.0)</h1>
   <p>소재업체 템플릿 업로드 → DB 저장 · <span style="color:#ffeb3b;font-weight:700">성적서, 밀시트 첨부 가능</span></p>
 </div>
 <div class="tabs">
@@ -322,7 +321,6 @@ CREATE POLICY "anon_all" ON move_history_tj FOR ALL TO anon USING (true) WITH CH
 function getKST(d){const utc=d.getTime()+d.getTimezoneOffset()*60000;return new Date(utc+9*3600000)}
 function kstDateStr(d){const k=getKST(d||new Date());return k.getFullYear()+'-'+String(k.getMonth()+1).padStart(2,'0')+'-'+String(k.getDate()).padStart(2,'0')}
 function kstTimeStr(d){const k=getKST(d||new Date());return String(k.getHours()).padStart(2,'0')+':'+String(k.getMinutes()).padStart(2,'0')+':'+String(k.getSeconds()).padStart(2,'0')}
-/* ★★★ KST ISO 8601 문자열 (+09:00 오프셋 포함) - Supabase timestamptz에 KST 로 저장 ★★★ */
 function kstISOString(d){
   const dt=d||new Date();
   const utc=dt.getTime()+dt.getTimezoneOffset()*60000;
@@ -354,7 +352,6 @@ const _PIN_MAX_FAIL=5;
 const _PIN_LOCKOUT_SEC=60;
 const _PIN_LK_FAIL='material_pin_fail';
 
-/* SHA-256 해싱 (user_pin 테이블의 pin_hash 비교용) */
 async function _sha256hex(s){
   const b=new TextEncoder().encode(s);
   const h=await crypto.subtle.digest('SHA-256',b);
@@ -420,7 +417,6 @@ function _pinDel(){
 async function _pinComplete(){
   _pinBusy=true;
   try{
-    /* ★ 마스터 PIN: 2480 — DB 응답과 무관하게 즉시 통과 (관리자/긴급용) */
     if(_pinCur==='2480'){
       _clearPinFail();
       _settingsUnlocked=true;
@@ -445,11 +441,9 @@ async function _pinComplete(){
       _clearPinFail();
       _settingsUnlocked=true;
       _settingsUnlockedBy=name;
-      /* 10분 후 자동 잠금 */
       setTimeout(()=>{_settingsUnlocked=false;_settingsUnlockedBy=''},600000);
       closePinLock();
       showToast('✅ '+name+' 님 인증 완료');
-      /* 설정 탭 활성화 */
       document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('on',i===1));
       document.querySelectorAll('.main-pnl').forEach((p,i)=>p.classList.toggle('on',i===1));
       loadSettingsUI();
@@ -487,7 +481,6 @@ function openPinLock(){
 }
 
 function swMainTab(n){
-  /* 설정 탭(1) 진입 시 PIN 키패드 표시 */
   if(n===1&&!_settingsUnlocked){
     openPinLock();
     return;
@@ -571,19 +564,16 @@ document.addEventListener('DOMContentLoaded',()=>{const drop=document.getElement
 function handleFile(input){const f=input.files[0];if(f)parseFile(f);input.value=''}
 
 function parseFile(file){const reader=new FileReader();reader.onload=function(e){try{const wb=XLSX.read(e.target.result,{type:'array',cellDates:true});const sheetName=wb.SheetNames.find(n=>n==='입고등록')||wb.SheetNames[0];const ws=wb.Sheets[sheetName];const allRows=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});_batchCompany='';_batchDate='';if(allRows.length>=1){const r1=allRows[0];if(r1[1])_batchCompany=String(r1[1]).trim();let dv=r1[4];if(dv instanceof Date)_batchDate=kstDateStr(dv);else if(dv)_batchDate=String(dv).trim()}let raw=XLSX.utils.sheet_to_json(ws,{range:2,defval:''});raw=raw.filter(r=>Object.values(r).some(v=>v!==''));raw.forEach(r=>{if(_batchCompany&&!r['업체명'])r['업체명']=_batchCompany;if(_batchDate&&!r['입고일자'])r['입고일자']=_batchDate});if(!raw.length){showToast('데이터가 없습니다');return}_batchData=raw;
-/* ★★★ LOT 20자 초과 사전 검증 (Oracle HEAT_NO VARCHAR2(20) 한계) ★★★ */
 const longLots=[];raw.forEach((r,i)=>{const lot=String(r['로트']||r['lot']||r['로트번호']||'').trim();const lotClean=lot.replace(/^LOT[-_\s]*/i,'');if(lotClean.length>20)longLots.push({row:i+4,lot:lotClean,len:lotClean.length})});if(longLots.length){const list=longLots.slice(0,5).map(x=>`  • ${x.row}행: ${x.lot} (${x.len}자)`).join('\n');alert('⚠️ LOT 길이 초과 경고\n\nOracle MES의 HEAT_NO 컬럼은 최대 20자까지만 저장됩니다.\n다음 '+longLots.length+'건이 20자를 초과합니다:\n\n'+list+(longLots.length>5?`\n  ... 외 ${longLots.length-5}건`:'')+'\n\n→ 그대로 등록 시 MES 동기화에서 ORA-12899 오류가 발생합니다.\n→ LOT를 수정한 후 다시 업로드하세요.')}
 document.getElementById('fileInfo').style.display='block';document.getElementById('fileInfoText').innerHTML='✅ <b>'+file.name+'</b> 읽기 완료<br>업체: <b>'+(_batchCompany||'미기입')+'</b> · 입고일: <b>'+(_batchDate||'미기입')+'</b> · <b>'+raw.length+'건</b>'+(longLots.length?'<br><span style="color:#c62828;font-weight:700">⚠️ LOT 20자 초과 '+longLots.length+'건 — 수정 권장</span>':'');document.getElementById('btnToStep3').disabled=false;showToast('✅ '+raw.length+'건 읽기 완료'+(longLots.length?' (LOT 초과 '+longLots.length+'건)':''))}catch(err){showToast('파일 읽기 오류: '+err.message)}};reader.readAsArrayBuffer(file)}
 
 function renderPreview(){const vi=getVendorInfo();const cfg={from:vi.name,fromCode:vi.code,to:document.getElementById('cfgTo').value.trim(),worker:document.getElementById('cfgWorker').value.trim()};document.getElementById('pvTotal').textContent=_batchData.length;document.getElementById('pvCompany').textContent=_batchCompany||vi.name||'-';document.getElementById('pvDate').textContent=_batchDate||'-';document.getElementById('pvRegCnt').textContent=_batchData.length;document.getElementById('pvSettings').innerHTML='출발지: <b>'+cfg.from+' ('+cfg.fromCode+')</b> → 도착지: <b>'+cfg.to+'</b>'+(cfg.worker?' · 담당자: <b>'+cfg.worker+'</b>':'')+'<br><span style="color:#2e7d32;font-weight:700">→ MES 등록: VENDOR_SITE_ID=<b>'+cfg.fromCode+'</b> (5분 주기 자동)</span>';const cols=Object.keys(_batchData[0]);const showRows=_batchData.slice(0,15);let html='<thead><tr>'+cols.map(c=>'<th>'+c+'</th>').join('')+'</tr></thead><tbody>';showRows.forEach(row=>{html+='<tr>'+cols.map(c=>{let v=row[c];if(v instanceof Date)v=kstDateStr(v);return'<td>'+(v||'')+'</td>'}).join('')+'</tr>'});html+='</tbody>';document.getElementById('pvTable').innerHTML=html;document.getElementById('pvMore').textContent=_batchData.length>15?'... 외 '+(_batchData.length-15)+'건':''}
 
-/* ★★★ doRegister - Supabase raw_material_receipt 저장 + 알림 발송 (5분 주기로 오라클 MES 자동 등록) ★★★ */
 async function doRegister(){
   if(!_batchData.length){showToast('데이터 없음');return}
   const vi=getVendorInfo();
   if(!vi.code){showToast('⚠ 출발지(소재업체)를 선택해주세요');return}
 
-  /* ★★★ LOT 20자 초과 최종 차단 (Oracle HEAT_NO VARCHAR2(20)) ★★★ */
   const longLots=[];
   _batchData.forEach((r,i)=>{
     const lot=String(r['로트']||r['lot']||r['로트번호']||'').trim();
@@ -605,12 +595,10 @@ async function doRegister(){
 
   const cfg={from:vi.name,fromCode:vi.code,to:document.getElementById('cfgTo').value.trim(),worker:document.getElementById('cfgWorker').value.trim()};
   const now=new Date();const todayStr=kstDateStr(now);const timeStr=kstTimeStr(now);
-  /* ★★★ 한국시간 기준 ISO 문자열 (uploaded_at에 사용) ★★★ */
   const nowKstIso=kstISOString(now);
 
-  /* 알림용 + DB용 rows 데이터 구성 */
   const rows=[];
-  const dbRows=[];  /* Supabase INSERT용 */
+  const dbRows=[];
   const srcCols=Object.keys(_batchData[0]);
   const colMap={};
   srcCols.forEach(sc=>{const key=sc.trim().toLowerCase().replace(/\s+/g,'');if(COL_MAP[key])colMap[sc]=COL_MAP[key]});
@@ -623,7 +611,6 @@ async function doRegister(){
     if(matParts.length)row.material_info=matParts.join(' // ');
     rows.push(row);
 
-    /* Supabase raw_material_receipt용 레코드 */
     if(_mType&&_mThick&&_mWidth&&row.lot&&row.weight){
       const lotClean=(row.lot||'').replace(/^LOT[-_\s]*/i,'');
       const itemCode=_mType+'_'+_mThick+'X'+_mWidth;
@@ -641,7 +628,6 @@ async function doRegister(){
         note: row.note||'',
         status: 'pending',
         uploaded_by: cfg.worker||'',
-        /* ★★★ 한국시간 기준 ISO 문자열로 저장 (기존 toISOString()은 UTC 기준이라 미국시간처럼 보였음) ★★★ */
         uploaded_at: nowKstIso
       });
     }
@@ -649,24 +635,21 @@ async function doRegister(){
 
   const ok=rows.length;
 
-  /* ★★★ 즉시 완료 화면으로 전환 → Supabase 저장/알림은 모두 백그라운드 ★★★ */
   document.getElementById('doneTitle').textContent='✅ '+ok+'건 처리 시작';
   let summary='업체: <b>'+(_batchCompany||cfg.from||'-')+' ('+cfg.fromCode+')</b> · 입고일: <b>'+(_batchDate||todayStr)+'</b><br>출발지: '+cfg.from+' → 도착지: '+cfg.to+(cfg.worker?' · 담당자: '+cfg.worker:'');
   summary+='<br><br><span id="sbStatusLive" style="color:#1565c0;font-weight:700">💾 Supabase 저장 중... (백그라운드)</span>';
   summary+='<br><span id="ntfyStatusLive" style="color:#888;font-size:11px">📧 알림 발송 대기중</span>';
   document.getElementById('doneSummary').innerHTML=summary;
   document.getElementById('btnRegister').disabled=false;
-  goStep(4);  /* ★ 즉시 화면 전환 */
-  startAutoReturn(10);  /* 10초 후 등록 화면 자동 복귀 */
+  goStep(4);
+  startAutoReturn(10);
 
-  /* 백그라운드 실행: Supabase 저장 */
   const matSummary=rows.slice(0,5).map(r=>r.material_info||'-').join('\n  ');
   (async()=>{
     let sbOk=0,sbFail=0;
     if(dbRows.length){
       const SB_URL=getSbUrl(),SB_KEY=getSbKey();
       try{
-        /* 100건씩 배치 저장, 각 배치에 15초 타임아웃 */
         for(let i=0;i<dbRows.length;i+=100){
           const batch=dbRows.slice(i,i+100);
           const ctrl=new AbortController();
@@ -702,10 +685,6 @@ async function doRegister(){
       }
     }
 
-    /* ★★★ inspection_certs에 빈 성적서 자동 생성 (그룹핑된 단위로) ★★★
-       사용자가 [성적서 작성하기]를 안 누르고 [최종등록]만 해도
-       IQC 화면에 카드가 자동 표시되도록 빈 성적서를 미리 생성한다.
-       이미 성적서를 작성한 그룹은 done=true이므로 제외한다. */
     let certAutoOk=0,certAutoFail=0;
     if(_certBatch&&_certBatch.length){
       const SB_URL=getSbUrl(),SB_KEY=getSbKey();
@@ -721,9 +700,9 @@ async function doRegister(){
         coil_count:c.coil_count||1,
         lots_detail:(c.lots_all&&c.lots_all.length)?c.lots_all.join(','):c.lot,
         receipt_date:c.receipt_date,
-        cert_data:null,           /* 측정값 없음 (수입검사 시 입력) */
+        cert_data:null,
         has_millsheet:false,
-        final_judge:'미검사',     /* 입고 전 → 검사 미완료 */
+        final_judge:'미검사',
         charge:'',
         sign:'',
         created_at:kstISOString(new Date())
@@ -742,7 +721,6 @@ async function doRegister(){
           });
           if(res.ok){
             certAutoOk=emptyPayloads.length;
-            /* _certBatch에도 done=true 표시 (재등록 방지) */
             _certBatch.forEach(c=>{if(!c.done)c.autoCreated=true});
           }else{
             certAutoFail=emptyPayloads.length;
@@ -756,7 +734,6 @@ async function doRegister(){
       }
     }
 
-    /* 저장 결과 UI 업데이트 */
     const sbEl=document.getElementById('sbStatusLive');
     if(sbEl){
       let extra='';
@@ -773,7 +750,6 @@ async function doRegister(){
       }
     }
 
-    /* 저장 완료 후 알림 발송 */
     const ntfyEl=document.getElementById('ntfyStatusLive');
     if(ntfyEl){ntfyEl.textContent='📧 알림 발송 중...';ntfyEl.style.color='#1565c0'}
 
@@ -789,7 +765,6 @@ async function doRegister(){
       ntfyEl.style.color='#2e7d32';
     }
 
-    /* 완료 제목 업데이트 */
     const titleEl=document.getElementById('doneTitle');
     if(titleEl&&sbOk>0){
       titleEl.textContent='✅ '+sbOk+'건 처리 완료';
@@ -821,7 +796,6 @@ function resetAll(){
   document.getElementById('btnToStep3').disabled=true;
   document.getElementById('regStatus').style.display='none';
   document.getElementById('fileInput').value='';
-  /* 담당자/업체 필드는 유지 (연속 업로드 편의) */
   goStep(1);
 }
 
@@ -847,7 +821,6 @@ function renderNtfyRules(){const rules=getNtfyRules();const c=document.getElemen
 function addNtfyRule(){const topic=document.getElementById('ntfyNewTopic').value.trim().replace(/\s/g,'-');if(!topic){document.getElementById('ntfyStatus').textContent='⚠ 방이름 입력';document.getElementById('ntfyStatus').style.color='#e65100';return}const rules=getNtfyRules();if(rules.find(r=>r.topic===topic)){document.getElementById('ntfyStatus').textContent='⚠ 이미 존재';document.getElementById('ntfyStatus').style.color='#e65100';return}rules.push({topic});saveNtfyRules(rules);document.getElementById('ntfyNewTopic').value='';document.getElementById('ntfyStatus').textContent='✅ #'+topic;document.getElementById('ntfyStatus').style.color='#2e7d32';renderNtfyRules()}
 function delNtfyRule(i){const r=getNtfyRules();r.splice(i,1);saveNtfyRules(r);renderNtfyRules()}
 async function sendNtfyUploadComplete(body){
-  /* 소재업체 파일 업로드 완료 시 등록된 모든 ntfy 방으로 발송 */
   const rules=getNtfyRules();
   if(!rules.length)return;
   for(const r of rules){
@@ -864,7 +837,6 @@ async function testNtfyAll(){const rules=getNtfyRules();if(!rules.length){docume
 
 async function saveAllSettings(){const st=document.getElementById('stgSaveStatus');st.textContent='서버 저장 중...';st.style.color='#1565c0';try{await _saveAllRulesToServer();st.textContent='✅ 서버 저장 완료 ('+new Date().toLocaleTimeString()+')';st.style.color='#2e7d32';showToast('💾 서버 저장 완료')}catch(e){st.textContent='❌ '+e.message;st.style.color='#c62828'}updateConnStatus()}
 function loadSettingsUI(){
-  /* 접속자 이름 표시 */
   const bar=document.getElementById('settingsUserBar');
   const un=document.getElementById('settingsUserName');
   if(bar&&un&&_settingsUnlockedBy){
@@ -874,11 +846,9 @@ function loadSettingsUI(){
   loadMailGasCfg();loadMailRecipients();initHistDates();_loadAllRulesFromServer();renderNtfyRules();loadVendorsAndRender();updateConnStatus();
 }
 
-/* ========== 출발지(소재업체) 관리 ========== */
 let _vendorCache=[];
 async function loadVendorsFromServer(){
   try{
-    /* common_code 테이블의 실제 컬럼명은 description (note 아님) */
     const data=await sbSelect('common_code',{code_group:'eq.vendor_site',order:'sort_order.asc'},'id,code_value,sort_order,description');
     _vendorCache=(data||[]).map(r=>({
       id:r.id,
@@ -923,7 +893,6 @@ async function loadVendorsAndRender(){
   await loadVendorsFromServer();
   renderVendorList();
   populateVendorDropdown();
-  /* 배지 업데이트 */
   const badge=document.getElementById('vendorCountBadge');
   if(badge)badge.textContent=_vendorCache.length+'개';
 }
@@ -938,7 +907,6 @@ async function saveVendor(){
   const SB_URL=getSbUrl(),SB_KEY=getSbKey();
   try{
     if(editId){
-      /* 수정 */
       const dup=_vendorCache.find(v=>String(v.id)!==editId&&(v.code===code));
       if(dup){st.textContent='⚠ 동일 코드 존재: '+code;st.style.color='#e65100';return}
       await fetch(SB_URL+'/rest/v1/common_code?id=eq.'+editId,{
@@ -949,7 +917,6 @@ async function saveVendor(){
       st.textContent='✅ 수정 완료: '+name+' ('+code+')';
       st.style.color='#2e7d32';
     }else{
-      /* 추가 */
       if(_vendorCache.find(v=>v.code===code)){st.textContent='⚠ 이미 존재하는 코드: '+code;st.style.color='#e65100';return}
       const maxSort=_vendorCache.length?Math.max(..._vendorCache.map(v=>v.sort)):0;
       await fetch(SB_URL+'/rest/v1/common_code',{
@@ -1005,11 +972,8 @@ async function delVendor(idx){
 async function moveVendor(idx,dir){
   const newIdx=idx+dir;
   if(newIdx<0||newIdx>=_vendorCache.length)return;
-  const a=_vendorCache[idx],b=_vendorCache[newIdx];
-  /* sort_order 교환 */
   const SB_URL=getSbUrl(),SB_KEY=getSbKey();
   try{
-    /* 순서 전체 재할당 (안전) */
     const reordered=[..._vendorCache];
     [reordered[idx],reordered[newIdx]]=[reordered[newIdx],reordered[idx]];
     for(let i=0;i<reordered.length;i++){
@@ -1030,7 +994,6 @@ async function moveVendor(idx,dir){
 function updateConnStatus(){const c=document.getElementById('connStatusInfo');if(!c)return;const sbOk=!!(getSbUrl()&&getSbKey());const mailOk=!!_mailGasUrl;const ntfyCnt=getNtfyRules().length;c.innerHTML=(sbOk?'🟢':'🔴')+' Supabase: '+(sbOk?'설정됨':'미설정')+'<br>'+(mailOk?'🟢':'🔴')+' 메일 알림: '+(mailOk?'서버 설정됨':'미설정')+'<br>'+(ntfyCnt?'🟢':'🔴')+' ntfy: '+ntfyCnt+'개 방'+'<br>'+(_mailRecipients.length?'🟢':'🔴')+' 메일 수신자: '+(_mailRecipients.length?_mailRecipients.length+'명':'미설정')}
 
 document.addEventListener('DOMContentLoaded',()=>{
-  /* Supabase URL 마이그레이션 - 옛 프로젝트(omngtyewdaqpphnzeate) → 새 프로젝트(jgvikmakenpllwxwdugk) */
   try{
     const cur=JSON.parse(localStorage.getItem(SB_LS_KEY)||'{}');
     const isOld=!cur.url||/omngtyewdaqpphnzeate/.test(cur.url||'')||cur.url!==SB_DEFAULT_URL;
@@ -1051,26 +1014,15 @@ async function _loadRulesFromServer(cg,lsKey,renderFn){try{const res=await fetch
 async function _saveAllRulesToServer(){await _saveRulesToServer('mat_chk_ntfy',getNtfyRules())}
 async function _loadAllRulesFromServer(){await _loadRulesFromServer('mat_chk_ntfy','MAT_NTFY_RULES',renderNtfyRules)}
 
-/* ============================================================
-   ★★★ 성적서 자동 등록 기능 ★★★
-   소재 등록 후 각 행마다 검사성적서를 작성하고 밀시트를 첨부
-   재질·두께·폭·LOT·HEAT·중량은 자동 채움, 측정값·밀시트만 추가
-   ============================================================ */
-let _certBatch=[];  /* 성적서 작성 대상 */
+let _certBatch=[];
 let _certCurrentIdx=0;
-let _certMillsheets={};  /* idx별 밀시트 객체: {dataUrl, originalName, mimeType, fileSize} */
+let _certMillsheets={};
 
-/* ============================================================
-   ★★★ 규격(Spec) 자동완성 메모리 ★★★
-   각 검사항목(r1~r8)별로 사용자가 입력한 spec을 localStorage에 저장
-   다음 작성 시 클릭하면 datalist 드롭다운으로 선택 가능
-   ============================================================ */
 const SPEC_HIST_KEY='MATERIAL_CERT_SPEC_HISTORY';
-const SPEC_HIST_MAX=20;  /* 항목별 최대 보관 개수 */
+const SPEC_HIST_MAX=20;
 
-/* 기본 spec 후보 (초기 미입력 상태에도 선택지 제공) */
 const SPEC_DEFAULTS={
-  r1:['과도한 스크래치 및 오염, Burr 없을것','이물·결함 없을것'],
+  r1:['결함없을것','과도한 스크래치 및 오염, Burr 없을것','이물·결함 없을것'],
   r2:['SPCC','SUS304','SUS430','S55C','S70C','C55E','C67S'],
   r3:['33mm ±0.1','64mm ±0.1','90mm ±0.1','94mm ±0.1','102mm ±0.1','118mm ±0.1'],
   r4:['0.5T ±0.05','0.6T ±0.05','0.8T ±0.05','1.0T ±0.05','1.2T ±0.05'],
@@ -1087,7 +1039,6 @@ function getSpecHistory(key){
   const all=getSpecHistoryAll();
   const userSpecs=Array.isArray(all[key])?all[key]:[];
   const defaults=SPEC_DEFAULTS[key]||[];
-  /* 사용자 입력 우선 + 기본값 병합 (중복 제거) */
   const merged=[...new Set([...userSpecs,...defaults])];
   return merged;
 }
@@ -1097,16 +1048,13 @@ function saveSpecHistory(key,value){
   if(!v||v==='-')return;
   const all=getSpecHistoryAll();
   let arr=Array.isArray(all[key])?all[key]:[];
-  /* 이미 있으면 맨 앞으로 이동 (최근 사용 우선) */
   arr=arr.filter(x=>x!==v);
   arr.unshift(v);
-  /* 최대 개수 제한 */
   if(arr.length>SPEC_HIST_MAX)arr=arr.slice(0,SPEC_HIST_MAX);
   all[key]=arr;
   try{localStorage.setItem(SPEC_HIST_KEY,JSON.stringify(all))}catch(e){console.warn('spec 메모리 저장 실패:',e)}
 }
 
-/* 등록 완료 후 _batchData → _certBatch 변환 (doRegister 마지막에 호출) */
 function prepareCertBatch(){
   _certBatch=[];_certMillsheets={};
   if(!_batchData||!_batchData.length){updateCertBadge();return}
@@ -1116,7 +1064,6 @@ function prepareCertBatch(){
   const colMap={};
   srcCols.forEach(sc=>{const key=sc.trim().toLowerCase().replace(/\s+/g,'');if(COL_MAP[key])colMap[sc]=COL_MAP[key]});
   
-  /* 1차: 소재별 정보 추출 */
   const items=[];
   _batchData.forEach((raw,i)=>{
     let mt='',th='',w='',lot='',weight=null;
@@ -1125,29 +1072,10 @@ function prepareCertBatch(){
     items.push({idx:i,mt,th,w,lot,weight});
   });
   
-  /* 2차: 그룹핑 (재질+두께+폭+로트Base) — 로트 끝의 -1,-2,-3 등은 동일 그룹 */
   function getLotBase(lot){
     if(!lot)return '';
-    /* LOT 끝의 코일 번호 패턴 제거 (그룹핑용)
-       지원 패턴 (구분자 + 숫자):
-         -1, -2, -001, -002          (하이픈)
-         _1, _001                    (언더스코어)
-         /1, /001                    (슬래시)
-         .1, .001                    (점)
-         #1, #001                    (샵)
-         공백 + 1, 공백 + 001        (스페이스)
-         (1), (001), [1], [001]      (괄호)
-       예:
-         "DI0423B-5"   → "DI0423B"
-         "LOT/3"       → "LOT"
-         "LOT.001"     → "LOT"
-         "LOT 002"     → "LOT"
-         "LOT(3)"      → "LOT"
-    */
     let s=String(lot).trim();
-    /* (n) 또는 [n] 패턴 */
     s=s.replace(/\s*[\(\[]\s*\d+\s*[\)\]]\s*$/,'');
-    /* 구분자(- _ / . # 공백) + 숫자 */
     s=s.replace(/[\s\-_\/\.\#]+\d+$/,'');
     return s.trim();
   }
@@ -1155,7 +1083,6 @@ function prepareCertBatch(){
   const groups={};
   items.forEach(it=>{
     const lotBase=getLotBase(it.lot);
-    /* 재질·두께·폭 정규화 (소수점 처리: 0.6 == 0.60) */
     const mtKey=it.mt.toUpperCase().trim();
     const thKey=String(parseFloat(it.th)||it.th);
     const wKey=String(parseFloat(it.w)||it.w);
@@ -1166,10 +1093,10 @@ function prepareCertBatch(){
         thickness:it.th,
         width:it.w,
         lot_base:lotBase,
-        lots:[],          /* 모든 개별 로트 (예: ["DI0423B-1","DI0423B-2","DI0423B-3"]) */
-        coil_count:0,     /* 코일 수 */
-        total_weight:0,   /* 합산 중량 */
-        idxs:[]           /* 원본 행 인덱스들 */
+        lots:[],
+        coil_count:0,
+        total_weight:0,
+        idxs:[]
       };
     }
     const g=groups[key];
@@ -1179,9 +1106,7 @@ function prepareCertBatch(){
     g.idxs.push(it.idx);
   });
   
-  /* 3차: 그룹을 _certBatch로 변환 */
   Object.values(groups).forEach((g,i)=>{
-    /* 대표 LOT: 가장 짧은 것(보통 base) 또는 첫 번째 */
     const repLot=g.lot_base||g.lots[0]||'';
     const lotsDisplay=g.lots.length>1?g.lots.join(', '):repLot;
     _certBatch.push({
@@ -1191,13 +1116,13 @@ function prepareCertBatch(){
       material_type:g.material_type,
       thickness:g.thickness,
       width:g.width,
-      lot:repLot,                       /* 대표 LOT (DB 저장용) */
-      lot_base:g.lot_base,              /* LOT 베이스 */
-      lots_all:g.lots,                  /* 모든 개별 LOT 배열 */
-      lots_display:lotsDisplay,         /* 화면 표시용 */
+      lot:repLot,
+      lot_base:g.lot_base,
+      lots_all:g.lots,
+      lots_display:lotsDisplay,
       heat_no:(repLot||'').replace(/^LOT[-_\s]*/i,''),
-      weight:g.total_weight||null,      /* 합산 중량 */
-      coil_count:g.coil_count,          /* 코일 수 */
+      weight:g.total_weight||null,
+      coil_count:g.coil_count,
       receipt_date:_batchDate||today,
       done:false,
       certData:null
@@ -1216,7 +1141,6 @@ function updateCertBadge(){
 
 function openCertRegistration(){
   if(!_certBatch.length){alert('등록된 소재가 없습니다');return}
-  /* 작성 안 한 첫 항목으로 이동 */
   const next=_certBatch.findIndex(c=>!c.done);
   _certCurrentIdx=next>=0?next:0;
   renderCertModal();
@@ -1232,7 +1156,6 @@ function renderCertModal(){
   const isSUS=/SUS|STS|스테인|304|430/i.test(c.material_type);
   document.getElementById('certNavInfo').textContent=`${_certCurrentIdx+1} / ${_certBatch.length}`;
   
-  /* 그룹 정보 표시 */
   const totalWeight=c.weight?(Math.round(c.weight*100)/100).toLocaleString():'-';
   const coilBadge=c.coil_count>1?`<span style="display:inline-block;background:#3b82f6;color:#fff;padding:3px 10px;border-radius:12px;font-size:13px;font-weight:700;margin-left:6px">${c.coil_count}개 코일</span>`:'';
   const lotsHtml=(c.lots_all&&c.lots_all.length>1)?
@@ -1253,17 +1176,13 @@ function renderCertModal(){
       row('입고일',c.receipt_date)+
     `</div>`+lotsHtml;
   
-  /* IQC 양식과 동일한 8항목 (SUS는 r5~r8을 '-' 처리) */
   const widthSpec=c.width?`${c.width}mm ±0.1`:'';
   const thickSpec=c.thickness?`${c.thickness}T ±0.05`:'';
-  /* spec/x1~3 채움 규칙
-     - required(흰색): r2 재질, r3 폭, r4 두께 → spec 유지, x1~3은 빈 값 (사용자 측정값 입력)
-     - optional(회색): r1 표면, r5 경도, r6 연신율, r7 형곡, r8 평탄도 → spec/x1~3 모두 빈 값 (선택 입력) */
   const items=[
-    {k:'r1',n:'표면',         spec:'',          type:'text',   step:'',     ph:'',     optional:true},
+    {k:'r1',n:'표면',         spec:'결함없을것', type:'text',   step:'',     ph:''},
     {k:'r2',n:'재질',         spec:c.material_type||'', type:'text',   step:'',     ph:''},
-    {k:'r3',n:'폭 (mm)',      spec:widthSpec,           type:'number', step:'0.01', ph:''},
-    {k:'r4',n:'두께 (mm)',    spec:thickSpec,           type:'number', step:'0.001',ph:''},
+    {k:'r3',n:'폭(mm)',       spec:widthSpec,           type:'number', step:'0.01', ph:''},
+    {k:'r4',n:'두께(mm)',     spec:thickSpec,           type:'number', step:'0.001',ph:''},
     {k:'r5',n:'경도 HRB',     spec:'',          type:'text',   step:'',     ph:'',     optional:true},
     {k:'r6',n:'연신율 EL(%)', spec:'',          type:'text',   step:'',     ph:'',     optional:true},
     {k:'r7',n:'형곡',         spec:'',          type:'text',   step:'',     ph:'',     optional:true},
@@ -1271,16 +1190,15 @@ function renderCertModal(){
   ];
   
   let h='<thead><tr>'+
-    '<th style="width:90px">검사항목</th>'+
-    '<th style="min-width:200px">Specification</th>'+
-    '<th style="width:90px">X1</th>'+
-    '<th style="width:90px">X2</th>'+
-    '<th style="width:90px">X3</th>'+
+    '<th style="width:90px">항목</th>'+
+    '<th style="min-width:180px">규격</th>'+
+    '<th style="width:80px">X1</th>'+
+    '<th style="width:80px">X2</th>'+
+    '<th style="width:80px">X3</th>'+
     '<th style="width:90px">판정</th>'+
     '</tr></thead><tbody>';
   items.forEach(it=>{
     const saved=c.certData?.[it.k]||{};
-    /* 측정값(X1~X3): 사용자가 저장한 값이 있으면 사용, 없으면 빈 값으로 시작 */
     const specVal=saved.spec!==undefined?saved.spec:it.spec;
     const v1=saved.x1!==undefined?saved.x1:'';
     const v2=saved.x2!==undefined?saved.x2:'';
@@ -1288,24 +1206,21 @@ function renderCertModal(){
     const j=saved.j||'OK';
     const inputType=it.type==='number'?'number':'text';
     const stepAttr=it.step?` step="${it.step}"`:'';
-    /* optional 항목(r1, r5~r8): 회색 배경 (입력 안 해도 됨) */
-    const optStyle=it.optional?'background:#f1f5f9;color:#64748b;':'';
-    /* spec 자동완성 datalist - 항목별로 분리하여 같은 검사항목끼리만 옵션 제시 */
+    const optClass=it.optional?' optional':'';
     const specListId=`specList_${it.k}`;
     const specOpts=getSpecHistory(it.k).map(s=>`<option value="${String(s).replace(/"/g,'&quot;')}">`).join('');
     h+=`<tr><td><b>${it.n}</b></td>`+
-       `<td><input type="text" value="${String(specVal||'').replace(/"/g,'&quot;')}" data-cert-k="${it.k}" data-cert-x="spec" list="${specListId}" class="spec-input${it.optional?' optional':''}" style="width:100%${it.optional?';background:#f1f5f9;color:#64748b':''}" title="기준값 (클릭 시 이전에 입력한 값 선택 가능)" onchange="saveSpecHistory('${it.k}',this.value)" onblur="saveSpecHistory('${it.k}',this.value)"${it.optional?' placeholder="(선택)"':''}>`+
+       `<td><input type="text" value="${String(specVal||'').replace(/"/g,'&quot;')}" data-cert-k="${it.k}" data-cert-x="spec" list="${specListId}" class="spec-input${optClass}" title="기준값 (클릭 시 이전 입력값 선택)" onchange="saveSpecHistory('${it.k}',this.value)" onblur="saveSpecHistory('${it.k}',this.value)"${it.optional?' placeholder="(선택)"':''}>`+
        `<datalist id="${specListId}">${specOpts}</datalist></td>`+
-       `<td><input type="${inputType}"${stepAttr} data-cert-k="${it.k}" data-cert-x="x1" value="${v1}" style="${optStyle}text-align:center"${it.optional?' placeholder="-"':''}></td>`+
-       `<td><input type="${inputType}"${stepAttr} data-cert-k="${it.k}" data-cert-x="x2" value="${v2}" style="${optStyle}text-align:center"${it.optional?' placeholder="-"':''}></td>`+
-       `<td><input type="${inputType}"${stepAttr} data-cert-k="${it.k}" data-cert-x="x3" value="${v3}" style="${optStyle}text-align:center"${it.optional?' placeholder="-"':''}></td>`+
+       `<td><input type="${inputType}"${stepAttr} data-cert-k="${it.k}" data-cert-x="x1" value="${v1}" class="meas-input${optClass}"${it.optional?' placeholder="-"':''}></td>`+
+       `<td><input type="${inputType}"${stepAttr} data-cert-k="${it.k}" data-cert-x="x2" value="${v2}" class="meas-input${optClass}"${it.optional?' placeholder="-"':''}></td>`+
+       `<td><input type="${inputType}"${stepAttr} data-cert-k="${it.k}" data-cert-x="x3" value="${v3}" class="meas-input${optClass}"${it.optional?' placeholder="-"':''}></td>`+
        `<td><label><input type="radio" name="cert_${it.k}_j_${_certCurrentIdx}" value="OK" data-cert-k="${it.k}" data-cert-x="j"${j==='OK'?' checked':''}>OK</label>`+
        `<label><input type="radio" name="cert_${it.k}_j_${_certCurrentIdx}" value="NG" data-cert-k="${it.k}" data-cert-x="j"${j==='NG'?' checked':''}>NG</label></td>`+
        `</tr>`;
   });
   document.getElementById('certMeasTable').innerHTML=h+'</tbody>';
   
-  /* 밀시트 미리보기 (이미지: 썸네일 / PDF: 파일 정보) */
   const ms=_certMillsheets[_certCurrentIdx];
   const preview=document.getElementById('certMillPreview');
   if(ms){
@@ -1322,7 +1237,6 @@ function renderCertModal(){
     preview.innerHTML='<div style="padding:40px 20px;text-align:center;color:#94a3b8;border:2px dashed #cbd5e1;border-radius:10px;background:#fafbfc;font-size:14px;margin-top:10px">📷 밀시트 (사진 또는 PDF)를 첨부하세요<br><span style="font-size:12px;color:#cbd5e1">스마트폰 카메라 / 갤러리 / PDF 파일 모두 가능</span></div>';
   }
   
-  /* 담당자 / 최종판정 */
   const charge=c.certData?.charge||(isSUS?'허미정':'문수진');
   const sign=c.certData?.sign||'강병주';
   const finalJ=c.certData?.finalJ||'OK';
@@ -1330,7 +1244,6 @@ function renderCertModal(){
   document.getElementById('certSign').value=sign;
   document.getElementById('certFinalJ').value=finalJ;
   
-  /* 진행 상태 표시 */
   document.getElementById('certBtnPrev').disabled=_certCurrentIdx===0;
   document.getElementById('certBtnNext').disabled=_certCurrentIdx>=_certBatch.length-1;
   updateCertBadge();
@@ -1339,19 +1252,16 @@ function renderCertModal(){
 function readCertModalData(){
   const c=_certBatch[_certCurrentIdx];if(!c)return;
   const data={};
-  /* input/select은 기본 처리 */
   document.querySelectorAll('#certMeasTable input[data-cert-k][type="text"], #certMeasTable input[data-cert-k][type="number"]').forEach(el=>{
     const k=el.dataset.certK,x=el.dataset.certX;
     if(!data[k])data[k]={};
     data[k][x]=el.value;
   });
-  /* 라디오 (판정) */
   document.querySelectorAll('#certMeasTable input[type="radio"][data-cert-k]:checked').forEach(el=>{
     const k=el.dataset.certK;
     if(!data[k])data[k]={};
     data[k].j=el.value;
   });
-  /* dash 행 ('-') */
   document.querySelectorAll('#certMeasTable span[data-cert-k][data-cert-x="j"]').forEach(el=>{
     const k=el.dataset.certK;
     if(!data[k])data[k]={};
@@ -1365,7 +1275,6 @@ function readCertModalData(){
 
 function certMillsheetUpload(input){
   const f=input.files[0];if(!f)return;
-  /* 용량 제한 - GAS 메일은 25MB 한계, 안전하게 10MB로 제한 */
   const MAX=10*1024*1024;
   if(f.size>MAX){
     alert(`⚠ 파일 용량 초과: ${(f.size/1024/1024).toFixed(1)} MB\n10 MB 이하 파일만 첨부 가능합니다.\nPDF는 압축하거나, 사진은 해상도를 낮춰서 다시 첨부해 주세요.`);
@@ -1375,11 +1284,10 @@ function certMillsheetUpload(input){
   r.onload=e=>{
     _certMillsheets[_certCurrentIdx]={
       dataUrl:e.target.result,
-      originalName:f.name,                /* 사용자가 올린 원본 파일명 */
+      originalName:f.name,
       mimeType:f.type||(/\.pdf$/i.test(f.name)?'application/pdf':'image/jpeg'),
       fileSize:f.size
     };
-    /* 미리보기 갱신 (이미지/PDF 분기) */
     renderCertModal();
     showToast(`✅ 밀시트 첨부: ${f.name}`);
   };
@@ -1396,7 +1304,6 @@ function certNavPrev(){
     renderCertModal();
   }catch(e){
     console.error('이전 버튼 오류:',e);
-    /* 오류여도 일단 이동 */
     _certCurrentIdx--;
     if(_certCurrentIdx<0)_certCurrentIdx=0;
     renderCertModal();
@@ -1422,7 +1329,6 @@ async function certSaveCurrent(){
   c.done=true;
   const millsheetImg=_certMillsheets[_certCurrentIdx]||null;
   
-  /* Supabase에 성적서 저장 (밀시트 이미지는 제외 - 용량 부담) */
   try{
     const SB_URL=getSbUrl(),SB_KEY=getSbKey();
     const payload={
@@ -1454,7 +1360,6 @@ async function certSaveCurrent(){
     }else{
       const errText=await res.text().catch(()=>'');
       console.error('성적서 저장 실패:',res.status,errText);
-      /* PGRST205 = 테이블 없음, 42501 = 권한 없음 */
       let hint='';
       if(res.status===404||/PGRST205/.test(errText))hint='\n→ inspection_certs 테이블이 존재하지 않습니다. Supabase에서 테이블 생성 필요.';
       else if(res.status===401||res.status===403||/42501/.test(errText))hint='\n→ 권한 부족: GRANT ALL ON inspection_certs TO anon, authenticated; 필요.';
@@ -1466,13 +1371,11 @@ async function certSaveCurrent(){
     alert('⚠ 네트워크 오류로 성적서 저장 실패\n'+(e.message||e));
   }
   
-  /* 밀시트가 있으면 메일로 첨부 발송 (GAS 사용, Supabase에는 저장 안 함) */
   if(millsheetImg){
     sendMillsheetMail(c,millsheetImg).catch(e=>console.error('밀시트 메일 발송 실패:',e));
   }
   
   updateCertBadge();
-  /* 다음 미작성 항목으로 이동, 모두 완료면 닫기 */
   const next=_certBatch.findIndex(x=>!x.done);
   if(next>=0){_certCurrentIdx=next;renderCertModal()}
   else{alert('🎉 모든 성적서 작성 완료!');closeCertModal()}
@@ -1483,14 +1386,11 @@ function certSkipCurrent(){
   certNavNext();
 }
 
-/* 밀시트를 메일에 첨부하여 발송 (GAS 사용)
-   첨부파일: 사용자가 올린 원본 파일을 (이름/타입 그대로) 첨부 */
 async function sendMillsheetMail(c,millsheet){
   if(!_mailGasUrl){console.log('GAS URL 미설정 - 밀시트 메일 발송 스킵');return}
   const recipients=(_mailRecipients||[]).filter(v=>v&&v.includes('@'));
   if(!recipients.length){console.log('수신자 없음 - 밀시트 메일 발송 스킵');return}
   
-  /* millsheet는 객체({dataUrl,originalName,mimeType,fileSize}) 또는 (구버전) base64 문자열일 수 있음 */
   let dataUrl,originalName,mimeType;
   if(typeof millsheet==='string'){
     dataUrl=millsheet;
@@ -1502,11 +1402,9 @@ async function sendMillsheetMail(c,millsheet){
     originalName=millsheet.originalName||'millsheet';
   }
   
-  /* 파일명을 메타정보로 풍부하게 (확장자는 원본 유지) */
   const m=originalName.match(/^(.+?)(\.[^.]+)?$/);
   const baseName=(m&&m[1])||originalName;
   const ext=(m&&m[2])||(mimeType==='application/pdf'?'.pdf':(mimeType==='image/png'?'.png':'.jpg'));
-  /* 메타정보를 파일명 prefix로 (한글 포함 가능) */
   const meta=`${c.supplier||''}_${c.material_type||''}_${c.thickness||''}t${c.width||''}_LOT${c.lot||''}_${c.heat_no||''}`.replace(/[\\/:*?"<>|]/g,'_').replace(/\s+/g,'_').slice(0,80);
   const filename=`밀시트_${meta}_${baseName}${ext}`.replace(/[\\/:*?"<>|]/g,'_');
   
@@ -1542,7 +1440,6 @@ async function sendMillsheetMail(c,millsheet){
     </div>
   </div>
 </div>`;
-  /* base64 데이터 부분만 추출 */
   const base64Data=dataUrl.split(',')[1]||dataUrl;
   try{
     const res=await fetch(_mailGasUrl,{
@@ -1557,7 +1454,6 @@ async function sendMillsheetMail(c,millsheet){
         attachments:[{name:filename,base64:base64Data,mimeType:mimeType}]
       })
     });
-    /* GAS는 보통 200으로 응답 */
     if(res.ok){
       showToast(`📧 밀시트 메일 발송 (${fileTypeLabel})`);
     }else{
@@ -1570,7 +1466,6 @@ async function sendMillsheetMail(c,millsheet){
   }
 }
 
-/* goStep 후킹 - Step3와 Step4 진입 시 prepareCertBatch 자동 호출 */
 (function(){
   const _origGoStep=window.goStep;
   window.goStep=function(n){
@@ -1579,15 +1474,12 @@ async function sendMillsheetMail(c,millsheet){
   };
 })();
 
-/* Step3에서 성적서 작성 시작 (badge 동시 갱신) */
 function openCertRegistrationFromStep3(){
-  /* 데이터가 아직 준비 안 됐으면 즉시 준비 */
   if(!_certBatch||!_certBatch.length)prepareCertBatch();
   if(!_certBatch.length){alert('성적서 작성 대상이 없습니다.\n재질·두께·폭이 입력된 데이터가 있는지 확인하세요.');return}
   openCertRegistration();
 }
 
-/* updateCertBadge 확장 - Step3 뱃지도 함께 갱신 */
 const _origUpdateCertBadge=window.updateCertBadge;
 window.updateCertBadge=function(){
   if(_origUpdateCertBadge)_origUpdateCertBadge.apply(this,arguments);
@@ -1598,86 +1490,139 @@ window.updateCertBadge=function(){
 };
 </script>
 
-<!-- ===== 성적서 등록 모달 ===== -->
+<!-- ===== 성적서 등록 모달 (흑백 단순 표 스타일) ===== -->
 <div id="certModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(15,23,42,0.7);z-index:9999;align-items:center;justify-content:center;padding:14px;backdrop-filter:blur(3px)">
   <div style="background:#fff;border-radius:14px;max-width:980px;width:100%;max-height:95vh;overflow-y:auto;box-shadow:0 25px 60px rgba(0,0,0,0.4)">
-    <!-- 헤더 (그라데이션) -->
-    <div style="padding:20px 28px;background:linear-gradient(135deg,#1e3a8a 0%,#1e40af 60%,#3730a3 100%);color:#fff;display:flex;justify-content:space-between;align-items:center;border-radius:14px 14px 0 0">
-      <div style="font-size:20px;font-weight:700;letter-spacing:-0.3px">
-        📋 검사 성적서 작성
-        <span style="font-size:14px;font-weight:500;opacity:0.85;margin-left:10px;background:rgba(255,255,255,0.15);padding:4px 12px;border-radius:14px">
+    <!-- 헤더 -->
+    <div style="padding:18px 24px;background:#fff;color:#000;display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #000;border-radius:14px 14px 0 0">
+      <div style="font-size:18px;font-weight:700;letter-spacing:-0.3px;color:#000">
+        검사 성적서 작성
+        <span style="font-size:13px;font-weight:500;color:#555;margin-left:10px;border:1px solid #888;padding:3px 10px;border-radius:4px">
           <span id="certNavInfo">1 / 1</span>
         </span>
       </div>
-      <button onclick="closeCertModal()" style="background:rgba(255,255,255,0.15);border:none;color:#fff;font-size:24px;cursor:pointer;width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;transition:all 0.2s" onmouseover="this.style.background='rgba(255,255,255,0.3)'" onmouseout="this.style.background='rgba(255,255,255,0.15)'">×</button>
+      <button onclick="closeCertModal()" style="background:#fff;border:1px solid #888;color:#000;font-size:20px;cursor:pointer;width:32px;height:32px;border-radius:4px;display:flex;align-items:center;justify-content:center;transition:all 0.2s" onmouseover="this.style.background='#f0f0f0'" onmouseout="this.style.background='#fff'">×</button>
     </div>
     
-    <div style="padding:24px 28px">
-      <!-- 정보 박스 -->
-      <div id="certInfoBox" style="padding:18px 22px;background:linear-gradient(135deg,#eff6ff 0%,#dbeafe 100%);border-left:5px solid #1e40af;border-radius:10px;font-size:15px;line-height:1.85;color:#1e3a8a;margin-bottom:22px;box-shadow:0 2px 8px rgba(30,64,175,0.08)"></div>
+    <div style="padding:22px 26px">
+      <!-- 정보 박스 (단순화) -->
+      <div id="certInfoBox" style="padding:14px 18px;background:#fafafa;border:1px solid #ccc;border-radius:6px;font-size:14px;line-height:1.8;color:#000;margin-bottom:18px"></div>
       
-      <!-- 측정값 (공급자 측정치) -->
-      <div style="font-size:16px;font-weight:700;color:#1e3a8a;margin-bottom:10px;display:flex;align-items:center;gap:10px;padding-bottom:8px;border-bottom:2px solid #e0e7ff">
-        <span style="background:linear-gradient(135deg,#fb923c,#ea580c);color:#fff;padding:5px 14px;border-radius:14px;font-size:12px;font-weight:700;letter-spacing:0.3px;box-shadow:0 2px 6px rgba(234,88,12,0.3)">공급자 작성</span>
-        측정치 (공급자 측정값)
+      <!-- 측정값 표 제목 -->
+      <div style="font-size:15px;font-weight:700;color:#000;margin-bottom:8px">
+        측정값 (공급자 측정치)
       </div>
       <div class="cert-table-wrap">
-      <table id="certMeasTable" style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:24px">
+      <table id="certMeasTable" style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:20px">
         <style>
-          #certMeasTable{border:1px solid #c7d2fe}
+          /* ============ 첨부 이미지 스타일: 흑백 단순 표 ============ */
+          #certMeasTable{
+            border:1.5px solid #000;
+            background:#fff;
+          }
+          /* 헤더: 흰 배경 + 검정 테두리 + 검정 글씨 (그라데이션 X) */
           #certMeasTable th{
-            background:linear-gradient(135deg,#1e40af 0%,#3730a3 100%);
-            padding:8px 4px;border:1px solid #3730a3;text-align:center;color:#fff;
-            font-weight:700;font-size:13px;letter-spacing:0.3px;
+            background:#fff;
+            padding:9px 6px;
+            border:1.5px solid #000;
+            text-align:center;
+            color:#000;
+            font-weight:700;
+            font-size:14px;
           }
+          /* 셀: 흰 배경 + 검정 테두리 */
           #certMeasTable td{
-            padding:0;border:1px solid #c7d2fe;text-align:center;background:#fff;
-            font-size:14px;color:#1e293b;
+            padding:0;
+            border:1.5px solid #000;
+            text-align:center;
+            background:#fff;
+            font-size:14px;
+            color:#000;
           }
+          /* 첫 컬럼(항목명): 흰 배경 (파란 배경 X) */
           #certMeasTable td:first-child{
-            font-weight:700;color:#1e40af;background:#eff6ff;font-size:13px;
-            padding:6px 8px;
+            font-weight:700;
+            color:#000;
+            background:#fff;
+            font-size:14px;
+            padding:8px 10px;
+            text-align:center;
           }
-          /* input은 셀에 꽉 차게, 둥근 모서리/그림자 제거 */
+          /* input은 셀에 꽉 차게, 모든 장식 제거 */
           #certMeasTable input[type="text"],
           #certMeasTable input[type="number"]{
-            padding:8px 6px;border:none;border-radius:0;
-            font-size:14px;font-family:inherit;font-weight:500;color:#0f172a;
-            background:#fff;width:100%;box-sizing:border-box;
-            box-shadow:none;outline:none;display:block;
-            transition:background 0.15s;
+            padding:8px 6px;
+            border:none;
+            border-radius:0;
+            font-size:14px;
+            font-family:inherit;
+            font-weight:500;
+            color:#000;
+            background:#fff;
+            width:100%;
+            box-sizing:border-box;
+            box-shadow:none;
+            outline:none;
+            display:block;
+            text-align:center;
           }
           #certMeasTable input[type="text"]:hover,
           #certMeasTable input[type="number"]:hover{
-            background:#f8fafc;
+            background:#f5f5f5;
           }
           #certMeasTable input[type="text"]:focus,
           #certMeasTable input[type="number"]:focus{
-            background:#eff6ff;box-shadow:inset 0 0 0 2px #3b82f6;
+            background:#fffbe6;
+            box-shadow:inset 0 0 0 2px #000;
           }
-          /* Specification 전용 (좌측 정렬) */
+          /* 측정값(X1~X3) - 가운데 정렬 */
+          #certMeasTable input.meas-input{
+            text-align:center;
+            font-size:14px;
+            color:#000;
+            background:#fff;
+          }
+          /* Specification - 좌측 정렬 */
           #certMeasTable input.spec-input{
-            text-align:left;padding:8px 10px;font-size:13px;font-weight:600;
-            color:#1e3a8a;background:#fff;
-            border:none;letter-spacing:0.2px;
+            text-align:left;
+            padding:8px 10px;
+            font-size:13px;
+            font-weight:500;
+            color:#000;
+            background:#fff;
           }
-          #certMeasTable input.spec-input:hover{background:#f8fafc}
+          #certMeasTable input.spec-input:hover{background:#f5f5f5}
           #certMeasTable input.spec-input:focus{
-            background:#eff6ff;box-shadow:inset 0 0 0 2px #3b82f6;
+            background:#fffbe6;
+            box-shadow:inset 0 0 0 2px #000;
           }
-          /* optional 항목(회색 배경) - 입력 안 해도 됨 */
+          /* optional 항목: 살짝 회색 배경 (선택 입력 표시) */
           #certMeasTable input.optional{
-            background:#f1f5f9 !important;color:#64748b !important;
+            background:#fafafa !important;
+            color:#666 !important;
           }
-          #certMeasTable input.optional:hover{background:#e2e8f0 !important}
+          #certMeasTable input.optional:hover{background:#f0f0f0 !important}
+          /* 라디오 버튼 라벨 */
           #certMeasTable label{
-            cursor:pointer;display:inline-flex;align-items:center;gap:4px;
-            font-size:12px;font-weight:600;color:#334155;margin:0 3px;
-            padding:4px 6px;border-radius:4px;transition:background 0.15s;
+            cursor:pointer;
+            display:inline-flex;
+            align-items:center;
+            gap:4px;
+            font-size:13px;
+            font-weight:600;
+            color:#000;
+            margin:0 4px;
+            padding:4px 6px;
+            border-radius:3px;
+            transition:background 0.15s;
           }
-          #certMeasTable label:hover{background:#f1f5f9}
+          #certMeasTable label:hover{background:#f0f0f0}
           #certMeasTable input[type="radio"]{
-            width:14px;height:14px;cursor:pointer;accent-color:#1e40af;margin:0;
+            width:14px;
+            height:14px;
+            cursor:pointer;
+            accent-color:#000;
+            margin:0;
           }
         </style>
       </table>
@@ -1685,25 +1630,27 @@ window.updateCertBadge=function(){
 
       <style>
         #certBtnPrev:disabled, #certBtnNext:disabled{
-          opacity:0.4 !important;cursor:not-allowed !important;
-          background:#f1f5f9 !important;color:#cbd5e1 !important;
-          border-color:#e2e8f0 !important;
+          opacity:0.4 !important;
+          cursor:not-allowed !important;
+          background:#f5f5f5 !important;
+          color:#aaa !important;
+          border-color:#ccc !important;
         }
       </style>
       
-      <!-- 담당자 / 판정 -->
-      <div class="cert-charge-grid" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:24px">
+      <!-- 담당자 / 판정 (단순화) -->
+      <div class="cert-charge-grid" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:22px">
         <div>
-          <label style="font-size:13px;color:#475569;font-weight:600;display:block;margin-bottom:6px">담당자</label>
-          <input type="text" id="certCharge" style="width:100%;padding:10px 12px;border:1.5px solid #cbd5e1;border-radius:8px;font-size:15px;font-family:inherit;color:#0f172a;font-weight:500;transition:all 0.15s" onfocus="this.style.borderColor='#3b82f6';this.style.boxShadow='0 0 0 3px rgba(59,130,246,0.15)'" onblur="this.style.borderColor='#cbd5e1';this.style.boxShadow='none'">
+          <label style="font-size:13px;color:#000;font-weight:600;display:block;margin-bottom:5px">담당자</label>
+          <input type="text" id="certCharge" style="width:100%;padding:9px 12px;border:1.5px solid #000;border-radius:4px;font-size:14px;font-family:inherit;color:#000;font-weight:500;background:#fff" onfocus="this.style.background='#fffbe6'" onblur="this.style.background='#fff'">
         </div>
         <div>
-          <label style="font-size:13px;color:#475569;font-weight:600;display:block;margin-bottom:6px">공급자 서명자</label>
-          <input type="text" id="certSign" placeholder="작성/검토/승인자" style="width:100%;padding:10px 12px;border:1.5px solid #cbd5e1;border-radius:8px;font-size:15px;font-family:inherit;color:#0f172a;font-weight:500;transition:all 0.15s" onfocus="this.style.borderColor='#3b82f6';this.style.boxShadow='0 0 0 3px rgba(59,130,246,0.15)'" onblur="this.style.borderColor='#cbd5e1';this.style.boxShadow='none'">
+          <label style="font-size:13px;color:#000;font-weight:600;display:block;margin-bottom:5px">공급자 서명자</label>
+          <input type="text" id="certSign" placeholder="작성/검토/승인자" style="width:100%;padding:9px 12px;border:1.5px solid #000;border-radius:4px;font-size:14px;font-family:inherit;color:#000;font-weight:500;background:#fff" onfocus="this.style.background='#fffbe6'" onblur="this.style.background='#fff'">
         </div>
         <div>
-          <label style="font-size:13px;color:#475569;font-weight:600;display:block;margin-bottom:6px">공급자 판정</label>
-          <select id="certFinalJ" style="width:100%;padding:10px 12px;border:1.5px solid #cbd5e1;border-radius:8px;font-size:15px;font-family:inherit;font-weight:600;color:#0f172a;background:#fff;cursor:pointer">
+          <label style="font-size:13px;color:#000;font-weight:600;display:block;margin-bottom:5px">공급자 판정</label>
+          <select id="certFinalJ" style="width:100%;padding:9px 12px;border:1.5px solid #000;border-radius:4px;font-size:14px;font-family:inherit;font-weight:600;color:#000;background:#fff;cursor:pointer">
             <option>OK</option>
             <option>NG</option>
           </select>
@@ -1711,30 +1658,28 @@ window.updateCertBadge=function(){
       </div>
       
       <!-- 밀시트 첨부 -->
-      <div style="font-size:16px;font-weight:700;color:#1e3a8a;margin-bottom:10px;display:flex;align-items:center;gap:10px;padding-bottom:8px;border-bottom:2px solid #e0e7ff">
-        <span style="background:linear-gradient(135deg,#10b981,#059669);color:#fff;padding:5px 14px;border-radius:14px;font-size:12px;font-weight:700;letter-spacing:0.3px;box-shadow:0 2px 6px rgba(5,150,105,0.3)">선택</span>
-        📎 밀시트 첨부 (사진 / PDF)
+      <div style="font-size:15px;font-weight:700;color:#000;margin-bottom:8px;padding-bottom:6px;border-bottom:1.5px solid #000">
+        📎 밀시트 첨부 (선택)
       </div>
-      <div style="background:#f8fafc;padding:14px 16px;border-radius:10px;border:1px solid #e2e8f0;margin-bottom:8px">
+      <div style="background:#fafafa;padding:12px 14px;border:1px solid #ccc;border-radius:4px;margin-bottom:8px">
         <input type="file" id="certMillFile" accept="image/*,application/pdf,.pdf" onchange="certMillsheetUpload(this)" style="font-size:14px;font-family:inherit">
-        <div style="font-size:12px;color:#64748b;margin-top:6px">📌 사진(JPG/PNG) 또는 PDF 모두 가능 — <b>업로드한 원본 그대로 메일 첨부</b> (최대 10 MB, DB 저장 안 함)</div>
+        <div style="font-size:12px;color:#555;margin-top:5px">📌 사진(JPG/PNG) 또는 PDF — 업로드한 원본 그대로 메일 첨부 (최대 10 MB)</div>
       </div>
       <div id="certMillPreview"></div>
     </div>
     
-    <!-- 하단 버튼 -->
-    <div style="padding:18px 28px;background:linear-gradient(180deg,#f8fafc 0%,#f1f5f9 100%);border-radius:0 0 14px 14px;display:flex;gap:10px;flex-wrap:wrap;border-top:1px solid #e2e8f0">
-      <button id="certBtnPrev" onclick="certNavPrev()" style="padding:11px 20px;background:#fff;color:#475569;border:1.5px solid #cbd5e1;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.15s;font-family:inherit" onmouseover="if(!this.disabled){this.style.background='#f1f5f9';this.style.borderColor='#94a3b8'}" onmouseout="if(!this.disabled){this.style.background='#fff';this.style.borderColor='#cbd5e1'}">◀ 이전</button>
-      <button onclick="certSkipCurrent()" style="padding:11px 20px;background:#fff;color:#94a3b8;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px;font-weight:500;cursor:pointer;transition:all 0.15s;font-family:inherit" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background='#fff'">건너뛰기</button>
+    <!-- 하단 버튼 (단순화) -->
+    <div style="padding:16px 26px;background:#fafafa;border-radius:0 0 14px 14px;display:flex;gap:10px;flex-wrap:wrap;border-top:1.5px solid #000">
+      <button id="certBtnPrev" onclick="certNavPrev()" style="padding:10px 20px;background:#fff;color:#000;border:1.5px solid #000;border-radius:4px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.15s;font-family:inherit" onmouseover="if(!this.disabled)this.style.background='#f0f0f0'" onmouseout="if(!this.disabled)this.style.background='#fff'">◀ 이전</button>
+      <button onclick="certSkipCurrent()" style="padding:10px 20px;background:#fff;color:#666;border:1.5px solid #888;border-radius:4px;font-size:14px;font-weight:500;cursor:pointer;transition:all 0.15s;font-family:inherit" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='#fff'">건너뛰기</button>
       <div style="flex:1"></div>
-      <button onclick="certSaveCurrent()" style="padding:12px 28px;background:linear-gradient(135deg,#16a34a 0%,#15803d 100%);color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:700;cursor:pointer;transition:all 0.15s;font-family:inherit;box-shadow:0 3px 10px rgba(22,163,74,0.3);letter-spacing:0.3px" onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 5px 15px rgba(22,163,74,0.4)'" onmouseout="this.style.transform='translateY(0)';this.style.boxShadow='0 3px 10px rgba(22,163,74,0.3)'">💾 저장 후 다음</button>
-      <button id="certBtnNext" onclick="certNavNext()" style="padding:11px 20px;background:#fff;color:#475569;border:1.5px solid #cbd5e1;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.15s;font-family:inherit" onmouseover="if(!this.disabled){this.style.background='#f1f5f9';this.style.borderColor='#94a3b8'}" onmouseout="if(!this.disabled){this.style.background='#fff';this.style.borderColor='#cbd5e1'}">다음 ▶</button>
+      <button onclick="certSaveCurrent()" style="padding:11px 26px;background:#000;color:#fff;border:1.5px solid #000;border-radius:4px;font-size:15px;font-weight:700;cursor:pointer;transition:all 0.15s;font-family:inherit" onmouseover="this.style.background='#333'" onmouseout="this.style.background='#000'">💾 저장 후 다음</button>
+      <button id="certBtnNext" onclick="certNavNext()" style="padding:10px 20px;background:#fff;color:#000;border:1.5px solid #000;border-radius:4px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.15s;font-family:inherit" onmouseover="if(!this.disabled)this.style.background='#f0f0f0'" onmouseout="if(!this.disabled)this.style.background='#fff'">다음 ▶</button>
     </div>
   </div>
 </div>
 
 <script>
-/* 모달 외부 클릭 시 닫기 */
 document.getElementById('certModal').addEventListener('click',e=>{if(e.target.id==='certModal')closeCertModal()});
 </script>
 </body>
