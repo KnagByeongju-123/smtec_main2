@@ -1352,7 +1352,10 @@ function renderCert(){
 
   list.innerHTML = data.map(c=>{
     const idx = certData.indexOf(c);
-    const finalJudge = c.judge||'OK';
+    // 미검사 상태 판별 (upload에서 자동 생성된 빈 성적서 또는 judge가 '대기'/빈값)
+    const judgeRaw = String(c.judge||'').trim();
+    const isUninspected = c._uninspected===true || judgeRaw==='대기' || judgeRaw==='미검사' || judgeRaw==='';
+    const finalJudge = isUninspected ? '대기' : judgeRaw;
     const badgeClass = finalJudge==='OK'?'ok':(finalJudge==='NG'?'ng':'warn');
     const supplierJudge = c.supplier_judge||c.judge||'OK';
 
@@ -1361,8 +1364,8 @@ function renderCert(){
       ? `<div class="cert-scan-thumb" id="cert_thumb_${idx}" onclick="event.stopPropagation(); openCertScanViewer('${c.scan_id}')"><div style="display:flex; align-items:center; justify-content:center; height:100%; color:#64748b; font-size:11px;">로딩...</div></div>`
       : '';
 
-    // 최종 판정 뱃지 색상
-    const finalBg = finalJudge === 'OK' ? '#16a34a' : '#dc2626';
+    // 최종 판정 뱃지 색상 (OK=녹색, NG=빨강, 대기=주황)
+    const finalBg = finalJudge === 'OK' ? '#16a34a' : (finalJudge === 'NG' ? '#dc2626' : '#f59e0b');
 
     return `
     <div class="inspection-cert">
@@ -3874,7 +3877,10 @@ async function loadCertsFromSupabase(){
       // Supabase 형식 → certData 형식 변환
       const cd=rc.cert_data||{};
       const isSUS=/SUS|STS|스테인|304|430/i.test(rc.material_type||'');
-      const isUninspected=rc.final_judge==='미검사'||!rc.cert_data;  // 빈 성적서 (입고만 등록된 상태)
+      // 측정값(cert_data) 있고 + final_judge가 명확히 OK/NG일 때만 검사완료로 간주
+      // 그 외 (빈 문자열, null, '미검사', '대기', undefined 등)는 모두 미검사 처리
+      const fj=String(rc.final_judge||'').trim();
+      const isUninspected = !rc.cert_data || (fj!=='OK' && fj!=='NG');
       const remarkParts=[];
       if(isUninspected)remarkParts.push('⏳ 검사 대기 (입고만 등록)');
       if(rc.has_millsheet)remarkParts.push('📎 밀시트 메일 첨부됨');
