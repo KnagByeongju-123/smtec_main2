@@ -643,14 +643,70 @@ async function doRegister(){
       }
     }
 
+    /* ★★★ inspection_certs에 빈 성적서 자동 생성 (그룹핑된 단위로) ★★★
+       사용자가 [성적서 작성하기]를 안 누르고 [최종등록]만 해도
+       IQC 화면에 카드가 자동 표시되도록 빈 성적서를 미리 생성한다.
+       이미 성적서를 작성한 그룹은 done=true이므로 제외한다. */
+    let certAutoOk=0,certAutoFail=0;
+    if(_certBatch&&_certBatch.length){
+      const SB_URL=getSbUrl(),SB_KEY=getSbKey();
+      const emptyPayloads=_certBatch.filter(c=>!c.done).map(c=>({
+        supplier:c.supplier,
+        vendor_site_id:c.supplier_code,
+        material_type:c.material_type,
+        thickness:parseFloat(c.thickness)||null,
+        width_mm:parseFloat(c.width)||null,
+        lot_no:c.lot,
+        heat_no:c.heat_no,
+        weight:c.weight,
+        coil_count:c.coil_count||1,
+        lots_detail:(c.lots_all&&c.lots_all.length)?c.lots_all.join(','):c.lot,
+        receipt_date:c.receipt_date,
+        cert_data:null,           /* 측정값 없음 (수입검사 시 입력) */
+        has_millsheet:false,
+        final_judge:'미검사',     /* 입고 전 → 검사 미완료 */
+        charge:'',
+        sign:'',
+        created_at:kstISOString(new Date())
+      }));
+      if(emptyPayloads.length){
+        try{
+          const res=await fetch(SB_URL+'/rest/v1/inspection_certs',{
+            method:'POST',
+            headers:{
+              'Content-Type':'application/json',
+              'apikey':SB_KEY,
+              'Authorization':'Bearer '+SB_KEY,
+              'Prefer':'return=minimal'
+            },
+            body:JSON.stringify(emptyPayloads)
+          });
+          if(res.ok){
+            certAutoOk=emptyPayloads.length;
+            /* _certBatch에도 done=true 표시 (재등록 방지) */
+            _certBatch.forEach(c=>{if(!c.done)c.autoCreated=true});
+          }else{
+            certAutoFail=emptyPayloads.length;
+            const err=await res.text().catch(()=>'');
+            console.error('빈 성적서 자동 생성 실패:',res.status,err);
+          }
+        }catch(e){
+          console.error('빈 성적서 자동 생성 오류:',e);
+          certAutoFail=emptyPayloads.length;
+        }
+      }
+    }
+
     /* 저장 결과 UI 업데이트 */
     const sbEl=document.getElementById('sbStatusLive');
     if(sbEl){
+      let extra='';
+      if(certAutoOk>0)extra=`<br>📋 IQC 빈 성적서 ${certAutoOk}건 자동 생성 (수입검사 대기)`;
       if(sbOk>0&&sbFail===0){
-        sbEl.innerHTML='✅ Supabase 저장 완료: '+sbOk+'건 → 5분 이내 MES 자동등록 예정';
+        sbEl.innerHTML='✅ Supabase 저장 완료: '+sbOk+'건 → 5분 이내 MES 자동등록 예정'+extra;
         sbEl.style.color='#2e7d32';
       }else if(sbOk>0&&sbFail>0){
-        sbEl.innerHTML='⚠ Supabase: '+sbOk+'건 성공, '+sbFail+'건 실패';
+        sbEl.innerHTML='⚠ Supabase: '+sbOk+'건 성공, '+sbFail+'건 실패'+extra;
         sbEl.style.color='#e65100';
       }else{
         sbEl.innerHTML='❌ Supabase 저장 실패 (네트워크 확인 필요)';
