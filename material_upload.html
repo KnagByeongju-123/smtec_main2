@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>소재입고 등록 (Rev4.3)</title>
+  <title>소재입고 등록 (Rev4.4)</title>
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
@@ -102,7 +102,7 @@
 </head>
 <body>
 <div class="hdr">
-  <h1>📤 소재입고 등록 (Rev4.3)</h1>
+  <h1>📤 소재입고 등록 (Rev4.4)</h1>
   <p>소재업체 템플릿 업로드 → DB 저장 · <span style="color:#ffeb3b;font-weight:700">성적서, 밀시트 첨부 가능</span></p>
 </div>
 <div class="tabs">
@@ -1329,51 +1329,146 @@ function certNavNext(){
 async function certSaveCurrent(){
   readCertModalData();
   const c=_certBatch[_certCurrentIdx];
-  c.done=true;
   const millsheetImg=_certMillsheets[_certCurrentIdx]||null;
   
-  try{
-    const SB_URL=getSbUrl(),SB_KEY=getSbKey();
-    const payload={
-      supplier:c.supplier,
-      vendor_site_id:c.supplier_code,
-      material_type:c.material_type,
-      thickness:parseFloat(c.thickness)||null,
-      width_mm:parseFloat(c.width)||null,
-      lot_no:c.lot,
-      heat_no:c.heat_no,
-      weight:c.weight,
-      coil_count:c.coil_count||1,
-      lots_detail:(c.lots_all&&c.lots_all.length)?c.lots_all.join(','):c.lot,
-      receipt_date:c.receipt_date,
-      cert_data:c.certData,
-      has_millsheet:!!millsheetImg,
-      final_judge:c.certData?.finalJ||'OK',
-      charge:c.certData?.charge||'',
-      sign:c.certData?.sign||'',
-      created_at:kstISOString(new Date())
-    };
+  let saveOk=false, saveErr='';
+  const SB_URL=getSbUrl(),SB_KEY=getSbKey();
+  
+  /* 풀 페이로드 (모든 컬럼) */
+  const fullPayload={
+    supplier:c.supplier,
+    vendor_site_id:c.supplier_code,
+    material_type:c.material_type,
+    thickness:parseFloat(c.thickness)||null,
+    width_mm:parseFloat(c.width)||null,
+    lot_no:c.lot,
+    heat_no:c.heat_no,
+    weight:c.weight,
+    coil_count:c.coil_count||1,
+    lots_detail:(c.lots_all&&c.lots_all.length)?c.lots_all.join(','):c.lot,
+    receipt_date:c.receipt_date,
+    cert_data:c.certData,
+    has_millsheet:!!millsheetImg,
+    final_judge:c.certData?.finalJ||'OK',
+    charge:c.certData?.charge||'',
+    sign:c.certData?.sign||'',
+    created_at:kstISOString(new Date())
+  };
+  
+  /* 안전 페이로드 (기본 컬럼만 — 기존 테이블에 새 컬럼 없을 때 폴백) */
+  const safePayload={
+    supplier:c.supplier,
+    vendor_site_id:c.supplier_code,
+    material_type:c.material_type,
+    thickness:parseFloat(c.thickness)||null,
+    width_mm:parseFloat(c.width)||null,
+    lot_no:c.lot,
+    heat_no:c.heat_no,
+    weight:c.weight,
+    receipt_date:c.receipt_date,
+    cert_data:c.certData,
+    has_millsheet:!!millsheetImg,
+    final_judge:c.certData?.finalJ||'OK',
+    charge:c.certData?.charge||'',
+    sign:c.certData?.sign||'',
+    created_at:kstISOString(new Date())
+  };
+  
+  async function tryInsert(payload){
     const res=await fetch(SB_URL+'/rest/v1/inspection_certs',{
       method:'POST',
-      headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Prefer':'return=minimal'},
+      headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Prefer':'return=representation'},
       body:JSON.stringify(payload)
     });
-    if(res.ok){
-      showToast('✅ 성적서 저장 완료 (IQC 자동 표시 대상)');
-    }else{
-      const errText=await res.text().catch(()=>'');
-      console.error('성적서 저장 실패:',res.status,errText);
-      let hint='';
-      if(res.status===404||/PGRST205/.test(errText))hint='\n→ inspection_certs 테이블이 존재하지 않습니다. Supabase에서 테이블 생성 필요.';
-      else if(res.status===401||res.status===403||/42501/.test(errText))hint='\n→ 권한 부족: GRANT ALL ON inspection_certs TO anon, authenticated; 필요.';
-      else hint='\n→ 응답: '+errText.substring(0,200);
-      alert('⚠ 성적서 저장 실패 (HTTP '+res.status+')'+hint);
-    }
-  }catch(e){
-    console.error('성적서 저장 실패:',e);
-    alert('⚠ 네트워크 오류로 성적서 저장 실패\n'+(e.message||e));
+    const txt=await res.text().catch(()=>'');
+    return {ok:res.ok, status:res.status, text:txt};
   }
   
+  let lastResp=null;
+  try{
+    /* 1차: 풀 페이로드 시도 */
+    let r=await tryInsert(fullPayload);
+    if(r.ok){
+      saveOk=true;
+      lastResp=r;
+      console.log('[CERT] 저장 성공 (full):',r.text.substring(0,200));
+    }else if(/PGRST204|column.*does not exist|Could not find/i.test(r.text)){
+      /* 컬럼 없음 → 안전 페이로드로 재시도 */
+      console.warn('[CERT] 컬럼 누락 - 안전모드 재시도. 응답:',r.status,r.text);
+      r=await tryInsert(safePayload);
+      if(r.ok){
+        saveOk=true;
+        lastResp=r;
+        console.log('[CERT] 저장 성공 (safe):',r.text.substring(0,200));
+      }else{
+        saveErr=`HTTP ${r.status} (안전모드 재시도 실패)\n응답: ${r.text.substring(0,300)}`;
+      }
+    }else{
+      saveErr=`HTTP ${r.status}\n응답: ${r.text.substring(0,300)}`;
+    }
+  }catch(e){
+    saveErr='네트워크 오류: '+(e.message||e);
+    console.error('[CERT] 저장 실패:',e);
+  }
+  
+  if(saveOk){
+    c.done=true;
+    /* ★ 저장 직후 즉시 GET으로 검증 (return=representation으로 응답에 id가 있어야 함) */
+    let verifyMsg='';
+    try{
+      let savedId=null;
+      try{
+        const arr=JSON.parse(lastResp.text);
+        if(Array.isArray(arr)&&arr.length>0&&arr[0].id)savedId=arr[0].id;
+      }catch(_){}
+      
+      if(savedId){
+        /* id로 GET 검증 */
+        const vRes=await fetch(SB_URL+'/rest/v1/inspection_certs?id=eq.'+savedId+'&select=id,supplier,lot_no,created_at',{
+          headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY}
+        });
+        if(vRes.ok){
+          const vData=await vRes.json();
+          if(vData&&vData.length>0){
+            verifyMsg=`✅ 검증 OK (id=${savedId})`;
+            console.log('[CERT] DB 검증 성공:',vData[0]);
+          }else{
+            verifyMsg=`⚠ 저장 후 GET 빈 결과 (id=${savedId}) - RLS 가능성`;
+            console.warn('[CERT] DB 검증 실패: id로 조회되지 않음',savedId);
+          }
+        }
+      }else{
+        /* id 못 받음 → lot+heat로 GET 검증 */
+        const vRes=await fetch(SB_URL+'/rest/v1/inspection_certs?lot_no=eq.'+encodeURIComponent(c.lot)+'&heat_no=eq.'+encodeURIComponent(c.heat_no)+'&select=id,created_at&order=created_at.desc&limit=1',{
+          headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY}
+        });
+        if(vRes.ok){
+          const vData=await vRes.json();
+          if(vData&&vData.length>0){
+            verifyMsg=`✅ 검증 OK (id=${vData[0].id})`;
+            console.log('[CERT] DB 검증 성공 (lot+heat):',vData[0]);
+          }else{
+            verifyMsg=`⚠ POST 200 반환했지만 DB에 행 없음 - RLS 차단 의심`;
+            console.error('[CERT] POST 성공인데 DB에 없음! lot=',c.lot,'heat=',c.heat_no);
+            alert('⚠ 이상: POST는 성공인데 DB에 행이 없습니다.\n→ Supabase RLS 정책이 INSERT는 허용하지만 SELECT는 차단할 가능성.\n→ 또는 Trigger가 ROLLBACK 했을 수 있음.\n\n→ Supabase 콘솔에서 inspection_certs 테이블 직접 확인 필요.');
+          }
+        }
+      }
+    }catch(verifyErr){
+      console.warn('[CERT] 검증 단계 오류:',verifyErr);
+      verifyMsg='⚠ 검증 단계 오류';
+    }
+    showToast('✅ 성적서 저장 완료 '+verifyMsg);
+  }else{
+    /* 실패 시 done 표시 안 함 → 재시도 가능 */
+    /* 큰 모달로 에러 표시 (alert는 모바일에서 작아서 안 보일 수 있음) */
+    const errMsg='⚠ 성적서 저장 실패\n\n'+saveErr+'\n\n→ 다시 [저장 후 다음] 클릭 시 재시도됩니다.\n→ 계속 실패하면 캡처해서 관리자에게 전달하세요.';
+    console.error('[CERT] 최종 실패:',saveErr);
+    alert(errMsg);
+    return;  /* 실패하면 다음 카드로 안 넘어감 */
+  }
+  
+  /* 밀시트가 있으면 메일로 첨부 발송 */
   if(millsheetImg){
     sendMillsheetMail(c,millsheetImg).catch(e=>console.error('밀시트 메일 발송 실패:',e));
   }
