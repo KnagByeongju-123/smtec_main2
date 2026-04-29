@@ -3914,15 +3914,15 @@ async function loadCertsFromSupabase(){
         r6:isSUS?_dashRow():(isUninspected?_emptyRow('1000mm'):_certDataToRow(cd.r6,'1000mm')),
         r7:isSUS?_dashRow():(isUninspected?_emptyRow('0/+2'):_certDataToRow(cd.r7,'0/+2')),
         r8:isSUS?_dashRow():(isUninspected?_emptyRow('양호'):_certDataToRow(cd.r8,'양호')),
-        // 수요자 측정값 (입고 후 채움 - 일단 비움)
-        c_r1:_emptyRow('과도한 스크래치 및 오염, Burr 없을것'),
-        c_r2:_emptyRow(rc.material_type),
-        c_r3:_emptyRow((rc.width_mm||'')+'mm ±0.1'),
-        c_r4:_emptyRow((rc.thickness||'')+'T ±0.05'),
-        c_r5:isSUS?_dashRow():_emptyRow('65 이하'),
-        c_r6:isSUS?_dashRow():_emptyRow('1000mm'),
-        c_r7:isSUS?_dashRow():_emptyRow('0/+2'),
-        c_r8:isSUS?_dashRow():_emptyRow('양호'),
+        // 수요자 측정값 (입고 후 채움 - spec은 공급자와 동일, 측정값 X1~X3는 비움)
+        c_r1:_cusEmptyFromCert(cd.r1,'과도한 스크래치 및 오염, Burr 없을것'),
+        c_r2:_cusEmptyFromCert(cd.r2,rc.material_type),
+        c_r3:_cusEmptyFromCert(cd.r3,(rc.width_mm||'')+'mm ±0.1'),
+        c_r4:_cusEmptyFromCert(cd.r4,(rc.thickness||'')+'T ±0.05'),
+        c_r5:isSUS?_dashRow():_cusEmptyFromCert(cd.r5,'65 이하'),
+        c_r6:isSUS?_dashRow():_cusEmptyFromCert(cd.r6,'1000mm'),
+        c_r7:isSUS?_dashRow():_cusEmptyFromCert(cd.r7,'0/+2'),
+        c_r8:isSUS?_dashRow():_cusEmptyFromCert(cd.r8,'양호'),
         _from_supabase:true,
         _supabase_id:rc.id,
         _uninspected:isUninspected
@@ -3945,11 +3945,17 @@ async function loadCertsFromSupabase(){
 }
 
 // 보조 함수: cert_data의 한 항목 → 행 형식
+// 공급자가 입력한 spec을 최우선 (item.spec), 없으면 specDefault 사용
 function _certDataToRow(item,specDefault){
   if(!item)return{spec:specDefault||'',x1:'',x2:'',x3:'',j:'OK'};
-  return{spec:specDefault||'',x1:item.x1||'',x2:item.x2||'',x3:item.x3||'',j:item.j||'OK'};
+  return{spec:(item.spec!==undefined&&item.spec!=='')?item.spec:(specDefault||''),x1:item.x1||'',x2:item.x2||'',x3:item.x3||'',j:item.j||'OK'};
 }
 function _emptyRow(spec){return{spec:spec||'',x1:'',x2:'',x3:'',j:'OK'}}
+// 공급자 spec만 가져오고 측정값은 비움 (수요자 미검사 상태용)
+function _cusEmptyFromCert(item,specDefault){
+  if(!item)return{spec:specDefault||'',x1:'',x2:'',x3:'',j:'OK'};
+  return{spec:(item.spec!==undefined&&item.spec!=='')?item.spec:(specDefault||''),x1:'',x2:'',x3:'',j:'OK'};
+}
 function _dashRow(){return{spec:'-',x1:'-',x2:'-',x3:'-',j:'-'}}
 
 // 페이지 로드 후 자동 실행 (appSettings 로드 후)
