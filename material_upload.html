@@ -983,7 +983,7 @@ async function _loadAllRulesFromServer(){await _loadRulesFromServer('mat_chk_ntf
    ============================================================ */
 let _certBatch=[];  /* 성적서 작성 대상 */
 let _certCurrentIdx=0;
-let _certMillsheets={};  /* idx별 밀시트 base64 */
+let _certMillsheets={};  /* idx별 밀시트 객체: {dataUrl, originalName, mimeType, fileSize} */
 
 /* ============================================================
    ★★★ 규격(Spec) 자동완성 메모리 ★★★
@@ -1229,11 +1229,22 @@ function renderCertModal(){
   });
   document.getElementById('certMeasTable').innerHTML=h+'</tbody>';
   
-  /* 밀시트 미리보기 */
+  /* 밀시트 미리보기 (이미지: 썸네일 / PDF: 파일 정보) */
   const ms=_certMillsheets[_certCurrentIdx];
   const preview=document.getElementById('certMillPreview');
-  if(ms){preview.innerHTML=`<div style="margin-top:10px;padding:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;text-align:center"><img src="${ms}" style="max-width:100%;max-height:280px;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1)"><div style="margin-top:8px;font-size:12px;color:#16a34a;font-weight:600">✅ 밀시트 첨부됨</div></div>`}
-  else{preview.innerHTML='<div style="padding:40px 20px;text-align:center;color:#94a3b8;border:2px dashed #cbd5e1;border-radius:10px;background:#fafbfc;font-size:14px;margin-top:10px">📷 밀시트 사진을 첨부하세요<br><span style="font-size:12px;color:#cbd5e1">(스마트폰 카메라로 직접 촬영 가능)</span></div>'}
+  if(ms){
+    const fname=ms.originalName||'밀시트';
+    const sizeKB=ms.fileSize?(ms.fileSize/1024).toFixed(0)+' KB':'';
+    if((ms.mimeType||'').startsWith('image/')){
+      preview.innerHTML=`<div style="margin-top:10px;padding:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;text-align:center"><img src="${ms.dataUrl}" style="max-width:100%;max-height:280px;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1)"><div style="margin-top:8px;font-size:12px;color:#16a34a;font-weight:600">✅ ${fname} ${sizeKB?'('+sizeKB+')':''} 첨부됨</div></div>`;
+    }else if((ms.mimeType||'')==='application/pdf'){
+      preview.innerHTML=`<div style="margin-top:10px;padding:24px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;text-align:center"><div style="font-size:48px;margin-bottom:8px">📄</div><div style="font-size:14px;font-weight:700;color:#991b1b">${fname}</div><div style="margin-top:4px;font-size:12px;color:#7f1d1d">PDF · ${sizeKB}</div><div style="margin-top:10px;font-size:12px;color:#16a34a;font-weight:600">✅ 원본 그대로 메일 첨부됩니다</div></div>`;
+    }else{
+      preview.innerHTML=`<div style="margin-top:10px;padding:24px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;text-align:center"><div style="font-size:14px;font-weight:700">${fname}</div><div style="margin-top:4px;font-size:12px;color:#64748b">${ms.mimeType||''} · ${sizeKB}</div><div style="margin-top:8px;font-size:12px;color:#16a34a;font-weight:600">✅ 첨부됨</div></div>`;
+    }
+  }else{
+    preview.innerHTML='<div style="padding:40px 20px;text-align:center;color:#94a3b8;border:2px dashed #cbd5e1;border-radius:10px;background:#fafbfc;font-size:14px;margin-top:10px">📷 밀시트 (사진 또는 PDF)를 첨부하세요<br><span style="font-size:12px;color:#cbd5e1">스마트폰 카메라 / 갤러리 / PDF 파일 모두 가능</span></div>';
+  }
   
   /* 담당자 / 최종판정 */
   const charge=c.certData?.charge||(isSUS?'허미정':'문수진');
@@ -1278,12 +1289,25 @@ function readCertModalData(){
 
 function certMillsheetUpload(input){
   const f=input.files[0];if(!f)return;
+  /* 용량 제한 - GAS 메일은 25MB 한계, 안전하게 10MB로 제한 */
+  const MAX=10*1024*1024;
+  if(f.size>MAX){
+    alert(`⚠ 파일 용량 초과: ${(f.size/1024/1024).toFixed(1)} MB\n10 MB 이하 파일만 첨부 가능합니다.\nPDF는 압축하거나, 사진은 해상도를 낮춰서 다시 첨부해 주세요.`);
+    input.value='';return;
+  }
   const r=new FileReader();
   r.onload=e=>{
-    _certMillsheets[_certCurrentIdx]=e.target.result;
-    document.getElementById('certMillPreview').innerHTML=`<img src="${e.target.result}" style="max-width:100%;max-height:200px;border-radius:6px;border:1px solid #ddd">`;
-    showToast('✅ 밀시트 첨부 완료');
+    _certMillsheets[_certCurrentIdx]={
+      dataUrl:e.target.result,
+      originalName:f.name,                /* 사용자가 올린 원본 파일명 */
+      mimeType:f.type||(/\.pdf$/i.test(f.name)?'application/pdf':'image/jpeg'),
+      fileSize:f.size
+    };
+    /* 미리보기 갱신 (이미지/PDF 분기) */
+    renderCertModal();
+    showToast(`✅ 밀시트 첨부: ${f.name}`);
   };
+  r.onerror=()=>{showToast('⚠ 파일 읽기 실패');};
   r.readAsDataURL(f);
   input.value='';
 }
@@ -1344,15 +1368,26 @@ async function certSaveCurrent(){
       sign:c.certData?.sign||'',
       created_at:kstISOString(new Date())
     };
-    await fetch(SB_URL+'/rest/v1/inspection_certs',{
+    const res=await fetch(SB_URL+'/rest/v1/inspection_certs',{
       method:'POST',
       headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Prefer':'return=minimal'},
       body:JSON.stringify(payload)
     });
-    showToast('✅ 성적서 저장 완료');
+    if(res.ok){
+      showToast('✅ 성적서 저장 완료 (IQC 자동 표시 대상)');
+    }else{
+      const errText=await res.text().catch(()=>'');
+      console.error('성적서 저장 실패:',res.status,errText);
+      /* PGRST205 = 테이블 없음, 42501 = 권한 없음 */
+      let hint='';
+      if(res.status===404||/PGRST205/.test(errText))hint='\n→ inspection_certs 테이블이 존재하지 않습니다. Supabase에서 테이블 생성 필요.';
+      else if(res.status===401||res.status===403||/42501/.test(errText))hint='\n→ 권한 부족: GRANT ALL ON inspection_certs TO anon, authenticated; 필요.';
+      else hint='\n→ 응답: '+errText.substring(0,200);
+      alert('⚠ 성적서 저장 실패 (HTTP '+res.status+')'+hint);
+    }
   }catch(e){
     console.error('성적서 저장 실패:',e);
-    showToast('⚠ 로컬 저장됨 (서버 동기화 실패)');
+    alert('⚠ 네트워크 오류로 성적서 저장 실패\n'+(e.message||e));
   }
   
   /* 밀시트가 있으면 메일로 첨부 발송 (GAS 사용, Supabase에는 저장 안 함) */
@@ -1372,17 +1407,40 @@ function certSkipCurrent(){
   certNavNext();
 }
 
-/* 밀시트를 메일에 첨부하여 발송 (GAS 사용) */
-async function sendMillsheetMail(c,imgBase64){
+/* 밀시트를 메일에 첨부하여 발송 (GAS 사용)
+   첨부파일: 사용자가 올린 원본 파일을 (이름/타입 그대로) 첨부 */
+async function sendMillsheetMail(c,millsheet){
   if(!_mailGasUrl){console.log('GAS URL 미설정 - 밀시트 메일 발송 스킵');return}
   const recipients=(_mailRecipients||[]).filter(v=>v&&v.includes('@'));
   if(!recipients.length){console.log('수신자 없음 - 밀시트 메일 발송 스킵');return}
+  
+  /* millsheet는 객체({dataUrl,originalName,mimeType,fileSize}) 또는 (구버전) base64 문자열일 수 있음 */
+  let dataUrl,originalName,mimeType;
+  if(typeof millsheet==='string'){
+    dataUrl=millsheet;
+    mimeType=dataUrl.match(/data:([^;]+)/)?.[1]||'image/jpeg';
+    originalName='millsheet.'+(mimeType==='application/pdf'?'pdf':(mimeType==='image/png'?'png':'jpg'));
+  }else{
+    dataUrl=millsheet.dataUrl;
+    mimeType=millsheet.mimeType||'application/octet-stream';
+    originalName=millsheet.originalName||'millsheet';
+  }
+  
+  /* 파일명을 메타정보로 풍부하게 (확장자는 원본 유지) */
+  const m=originalName.match(/^(.+?)(\.[^.]+)?$/);
+  const baseName=(m&&m[1])||originalName;
+  const ext=(m&&m[2])||(mimeType==='application/pdf'?'.pdf':(mimeType==='image/png'?'.png':'.jpg'));
+  /* 메타정보를 파일명 prefix로 (한글 포함 가능) */
+  const meta=`${c.supplier||''}_${c.material_type||''}_${c.thickness||''}t${c.width||''}_LOT${c.lot||''}_${c.heat_no||''}`.replace(/[\\/:*?"<>|]/g,'_').replace(/\s+/g,'_').slice(0,80);
+  const filename=`밀시트_${meta}_${baseName}${ext}`.replace(/[\\/:*?"<>|]/g,'_');
+  
   const subject=`📎 밀시트 — ${c.supplier} / ${c.material_type} ${c.thickness}t × ${c.width}mm / LOT ${c.lot}`;
   const totalWeightDisp=c.weight?(Math.round(c.weight*100)/100).toLocaleString():'-';
   const coilLine=(c.coil_count&&c.coil_count>1)?
     `<tr><td style="padding:5px 0;color:#888">코일수</td><td><b>${c.coil_count}개</b></td></tr>`:'';
   const lotsLine=(c.lots_all&&c.lots_all.length>1)?
     `<tr><td style="padding:5px 0;color:#888">개별 LOT</td><td style="font-size:11px;color:#1565c0">${c.lots_all.join(', ')}</td></tr>`:'';
+  const fileTypeLabel=mimeType==='application/pdf'?'PDF':(mimeType.startsWith('image/')?'이미지':mimeType);
   const html=`
 <div style="font-family:sans-serif;max-width:600px">
   <div style="background:#1a237e;color:#fff;padding:14px 20px;border-radius:8px 8px 0 0">
@@ -1400,19 +1458,18 @@ async function sendMillsheetMail(c,imgBase64){
       <tr><td style="padding:5px 0;color:#888">합계 중량</td><td><b>${totalWeightDisp} KG</b></td></tr>
       <tr><td style="padding:5px 0;color:#888">입고일</td><td>${c.receipt_date}</td></tr>
       <tr><td style="padding:5px 0;color:#888">최종판정</td><td style="font-weight:700;color:${(c.certData?.finalJ==='NG')?'#c62828':'#2e7d32'}">${c.certData?.finalJ||'OK'}</td></tr>
+      <tr><td style="padding:5px 0;color:#888">첨부파일</td><td>${filename} <span style="color:#64748b">(${fileTypeLabel})</span></td></tr>
     </table>
     <div style="margin-top:12px;padding:10px;background:#fff3e0;border-radius:4px;font-size:12px;color:#e65100">
-      📌 첨부파일: 밀시트 원본 이미지<br>
+      📌 첨부파일: 밀시트 원본 (${fileTypeLabel}) — 업로드한 파일이 그대로 첨부됩니다<br>
       📌 성적서 데이터는 시스템에 자동 등록되어 있습니다 (material_IQC.html)
     </div>
   </div>
 </div>`;
-  /* base64를 첨부파일로 GAS에 전달 */
-  const filename=`millsheet_${c.supplier}_${c.lot}_${(c.heat_no||'').substring(0,15)}.${imgBase64.includes('image/png')?'png':'jpg'}`.replace(/[^\w가-힣.\-_]/g,'_');
-  const base64Data=imgBase64.split(',')[1]||imgBase64;
-  const mimeType=imgBase64.match(/data:([^;]+)/)?.[1]||'image/jpeg';
+  /* base64 데이터 부분만 추출 */
+  const base64Data=dataUrl.split(',')[1]||dataUrl;
   try{
-    await fetch(_mailGasUrl,{
+    const res=await fetch(_mailGasUrl,{
       method:'POST',
       headers:{'Content-Type':'text/plain;charset=utf-8'},
       body:JSON.stringify({
@@ -1424,7 +1481,13 @@ async function sendMillsheetMail(c,imgBase64){
         attachments:[{name:filename,base64:base64Data,mimeType:mimeType}]
       })
     });
-    showToast('📧 밀시트 메일 발송 요청');
+    /* GAS는 보통 200으로 응답 */
+    if(res.ok){
+      showToast(`📧 밀시트 메일 발송 (${fileTypeLabel})`);
+    }else{
+      console.error('GAS 메일 실패 status:',res.status);
+      showToast('⚠ 메일 발송 실패 (HTTP '+res.status+')');
+    }
   }catch(e){
     console.error('GAS 메일 실패:',e);
     showToast('⚠ 메일 발송 실패');
@@ -1571,11 +1634,11 @@ window.updateCertBadge=function(){
       <!-- 밀시트 첨부 -->
       <div style="font-size:16px;font-weight:700;color:#1e3a8a;margin-bottom:10px;display:flex;align-items:center;gap:10px;padding-bottom:8px;border-bottom:2px solid #e0e7ff">
         <span style="background:linear-gradient(135deg,#10b981,#059669);color:#fff;padding:5px 14px;border-radius:14px;font-size:12px;font-weight:700;letter-spacing:0.3px;box-shadow:0 2px 6px rgba(5,150,105,0.3)">선택</span>
-        📎 밀시트 첨부 (사진/스캔)
+        📎 밀시트 첨부 (사진 / PDF)
       </div>
       <div style="background:#f8fafc;padding:14px 16px;border-radius:10px;border:1px solid #e2e8f0;margin-bottom:8px">
-        <input type="file" id="certMillFile" accept="image/*" capture="environment" onchange="certMillsheetUpload(this)" style="font-size:14px;font-family:inherit">
-        <div style="font-size:12px;color:#64748b;margin-top:6px">📌 밀시트는 메일 첨부로만 발송됩니다 (DB 저장 안 함)</div>
+        <input type="file" id="certMillFile" accept="image/*,application/pdf,.pdf" onchange="certMillsheetUpload(this)" style="font-size:14px;font-family:inherit">
+        <div style="font-size:12px;color:#64748b;margin-top:6px">📌 사진(JPG/PNG) 또는 PDF 모두 가능 — <b>업로드한 원본 그대로 메일 첨부</b> (최대 10 MB, DB 저장 안 함)</div>
       </div>
       <div id="certMillPreview"></div>
     </div>
