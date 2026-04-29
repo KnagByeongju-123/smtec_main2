@@ -73,6 +73,9 @@ input:checked+.slider:before{transform:translateX(22px)}
   <button class="tab" onclick="showTab('settings')">⚙️ 설정</button>
 </div>
 
+<!-- ★ 모든 탭에서 보이는 공통 메시지 영역 ★ -->
+<div id="statusMsg" class="status-msg" style="position:fixed;top:20px;right:20px;left:auto;max-width:400px;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.2)"></div>
+
 <!-- ========== 오류 목록 패널 ========== -->
 <div id="panel-list" class="panel on">
 <div class="toolbar">
@@ -88,8 +91,6 @@ input:checked+.slider:before{transform:translateX(22px)}
   <div class="stat-card"><div class="v" id="cntSynced">-</div><div class="l">완료</div></div>
   <div class="stat-card"><div class="v" id="cntDup">-</div><div class="l">중복</div></div>
 </div>
-
-<div id="statusMsg" class="status-msg"></div>
 
 <div id="errorList"></div>
 </div>
@@ -351,25 +352,30 @@ function loadSettings(){
 }
 
 function updateAutoStatus(){
-  const el=document.getElementById('autoStatus');
-  if(!el)return;
-  const s=getSettings();
-  const lastSent=parseInt(localStorage.getItem('lastMailSent')||'0');
-  const sentIds=JSON.parse(localStorage.getItem('sentErrorIds')||'[]');
-  let txt='';
-  if(!s.autoSend){
-    txt='⏸ OFF (수동 발송 모드)';
-    el.style.color='#c62828';
-    document.getElementById('autoStatusRow').style.background='#ffebee';
-    document.getElementById('autoStatusRow').style.borderLeftColor='#c62828';
-  }else{
-    const lastTxt=lastSent?new Date(lastSent).toLocaleString('ko-KR',{timeZone:'Asia/Seoul'}):'없음';
-    txt=`✅ ON · 마지막 발송: ${lastTxt} · 발송이력 ${sentIds.length}건`;
-    el.style.color='#2e7d32';
-    document.getElementById('autoStatusRow').style.background='#e8f5e9';
-    document.getElementById('autoStatusRow').style.borderLeftColor='#2e7d32';
+  try{
+    const el=document.getElementById('autoStatus');
+    const row=document.getElementById('autoStatusRow');
+    if(!el||!row)return;  // 설정 탭이 활성화되지 않았으면 종료
+    const s=getSettings();
+    const lastSent=parseInt(localStorage.getItem('lastMailSent')||'0');
+    const sentIds=JSON.parse(localStorage.getItem('sentErrorIds')||'[]');
+    let txt='';
+    if(!s.autoSend){
+      txt='⏸ OFF (수동 발송 모드)';
+      el.style.color='#c62828';
+      row.style.background='#ffebee';
+      row.style.borderLeftColor='#c62828';
+    }else{
+      const lastTxt=lastSent?new Date(lastSent).toLocaleString('ko-KR',{timeZone:'Asia/Seoul'}):'없음';
+      txt=`✅ ON · 마지막 발송: ${lastTxt} · 발송이력 ${sentIds.length}건`;
+      el.style.color='#2e7d32';
+      row.style.background='#e8f5e9';
+      row.style.borderLeftColor='#2e7d32';
+    }
+    el.textContent=txt;
+  }catch(e){
+    console.error('updateAutoStatus error:',e);
   }
-  el.textContent=txt;
 }
 
 function resetSentIds(){
@@ -408,15 +414,27 @@ function removeRecipient(idx){
 }
 
 function saveSettings(){
-  const s=getSettings();
-  s.autoSend=document.getElementById('autoSend').checked;
-  s.threshold=parseInt(document.getElementById('threshold').value)||3;
-  s.interval=parseInt(document.getElementById('interval').value)||60;
-  s.subjPrefix=document.getElementById('subjPrefix').value.trim()||'[태진다이텍 MES 오류]';
-  s.gasUrl=document.getElementById('gasUrl').value.trim();
-  s.mailBody=document.getElementById('mailBody').value;
-  localStorage.setItem(SET_KEY,JSON.stringify(s));
-  showMsg('💾 설정 저장 완료');
+  try{
+    const s=getSettings();
+    const elAuto=document.getElementById('autoSend');
+    const elTh=document.getElementById('threshold');
+    const elIv=document.getElementById('interval');
+    const elSp=document.getElementById('subjPrefix');
+    const elGu=document.getElementById('gasUrl');
+    const elMb=document.getElementById('mailBody');
+    if(elAuto)s.autoSend=elAuto.checked;
+    if(elTh)s.threshold=parseInt(elTh.value)||1;
+    if(elIv)s.interval=parseInt(elIv.value)||30;
+    if(elSp)s.subjPrefix=elSp.value.trim()||'[태진다이텍 MES 오류]';
+    if(elGu)s.gasUrl=elGu.value.trim();
+    if(elMb)s.mailBody=elMb.value;
+    localStorage.setItem(SET_KEY,JSON.stringify(s));
+    showMsg('💾 설정 저장 완료');
+    if(typeof updateAutoStatus==='function')updateAutoStatus();
+  }catch(e){
+    console.error('saveSettings error:',e);
+    alert('설정 저장 오류: '+e.message);
+  }
 }
 
 // ====================================================
@@ -511,30 +529,44 @@ async function sendErrorMail(auto=false){
 }
 
 async function testMail(){
-  const s=getSettings();
-  if(!s.recipients.length){showMsg('수신자가 없습니다',false);return;}
-  const subject=`${s.subjPrefix} 테스트 메일`;
-  const body=`테스트 메일입니다.\n\n수신자: ${s.recipients.join(', ')}\n발송 시각: ${new Date().toLocaleString('ko-KR')}\n\n본 메일이 정상 수신되면 설정이 완료된 것입니다.`;
-  
-  if(s.gasUrl){
-    try{
-      const r=await fetch(s.gasUrl,{
-        method:'POST',
-        headers:{'Content-Type':'text/plain;charset=utf-8'},
-        body:JSON.stringify({to:s.recipients.join(','),subject:subject,body:body}),
-        redirect:'follow'
-      });
-      let extra='';
-      try{
-        const j=await r.json();
-        extra=j.success?` (잔여 ${j.remainingQuota}통)`:` ❌ ${j.message}`;
-      }catch(e){}
-      showMsg(`✅ 테스트 메일 발송 (${s.recipients.length}명)${extra}`);
+  try{
+    const s=getSettings();
+    if(!s.recipients||!s.recipients.length){
+      alert('수신자가 없습니다.\n위에서 수신자를 먼저 등록하세요.');
       return;
-    }catch(e){showMsg('GAS 실패, mailto로 대체: '+e.message,false);}
+    }
+    const subject=`${s.subjPrefix||'[테스트]'} 테스트 메일`;
+    const body=`테스트 메일입니다.\n\n수신자: ${s.recipients.join(', ')}\n발송 시각: ${new Date().toLocaleString('ko-KR')}\n\n본 메일이 정상 수신되면 설정이 완료된 것입니다.`;
+    
+    if(s.gasUrl){
+      showMsg('⏳ GAS Webhook으로 메일 발송 중...');
+      try{
+        const r=await fetch(s.gasUrl,{
+          method:'POST',
+          headers:{'Content-Type':'text/plain;charset=utf-8'},
+          body:JSON.stringify({to:s.recipients.join(','),subject:subject,body:body}),
+          redirect:'follow'
+        });
+        let extra='';
+        try{
+          const j=await r.json();
+          extra=j.success?` (잔여 ${j.remainingQuota}통)`:` ❌ ${j.message||''}`;
+        }catch(e){extra=' (응답 파싱 실패 - 발송은 시도됨)';}
+        showMsg(`✅ 테스트 메일 발송 (${s.recipients.length}명)${extra}`);
+        return;
+      }catch(e){
+        console.error('GAS error:',e);
+        showMsg('❌ GAS 실패, mailto로 대체: '+e.message,false);
+      }
+    }else{
+      showMsg('⚠ GAS URL 없음 - mailto로 발송',false);
+    }
+    const mailto=`mailto:${s.recipients.join(',')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    window.location.href=mailto;
+  }catch(e){
+    console.error('testMail error:',e);
+    alert('테스트 메일 오류: '+e.message);
   }
-  const mailto=`mailto:${s.recipients.join(',')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-  window.location.href=mailto;
 }
 
 // 자동 발송 체크 (30초마다 + 페이지 로드 5초 후 즉시 1회)
