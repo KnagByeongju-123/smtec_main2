@@ -621,7 +621,7 @@ function exportLog(){
 
 // 검사 항목 정의 (수치형 vs 텍스트형)
 const MEAS_ITEMS = [
-  { key:'r1', label:'표면',        defaultSpec:'과도한 스크래치 및 오염, Burr 없을것', type:'text',   placeholder:'양호' },
+  { key:'r1', label:'표면',        defaultSpec:'결함없을것', type:'text',   placeholder:'양호' },
   { key:'r2', label:'재질',        defaultSpec:'SPCC',               type:'text',   placeholder:'양호' },
   { key:'r3', label:'폭 (mm)',     defaultSpec:'',                   type:'number', step:'0.01', placeholder:'90.00', specPlaceholder:'예: 90mm ±0.1' },
   { key:'r4', label:'두께 (mm)',   defaultSpec:'0.6T ±0.05',         type:'number', step:'0.001', placeholder:'0.594' },
@@ -2797,7 +2797,7 @@ function autoFillMeasSpecsByMaterial(material, thick, width){
 // 재질별 SPEC 템플릿 (검사 기준서 기반)
 const MATERIAL_SPEC_TEMPLATES = {
   'SPCC': {
-    r1: '과도한 스크래치 및 오염 없을 것',
+    r1: '결함없을것',
     r2: 'SPCC',
     r3: '{width} ±0.1',
     r4: '{thick} ±0.05',
@@ -2807,7 +2807,7 @@ const MATERIAL_SPEC_TEMPLATES = {
     r8: '0/+12, 0/+8, 0/+6'
   },
   'SUS304': {
-    r1: '과도한 스크래치 및 오염 없을 것',
+    r1: '결함없을것',
     r2: 'SUS304',
     r3: '{width} ±0.1',
     r4: '{thick} ±0.02',
@@ -2817,7 +2817,7 @@ const MATERIAL_SPEC_TEMPLATES = {
     r8: '0/+12, 0/+8, 0/+6'
   },
   'SUS430': {
-    r1: '과도한 스크래치 및 오염 없을 것',
+    r1: '결함없을것',
     r2: 'SUS430',
     r3: '{width} ±0.1',
     r4: '{thick} ±0.02',
@@ -3906,7 +3906,7 @@ async function loadCertsFromSupabase(){
         label:'미부착',  // 입고 전 상태
         remark:remarkParts.join(' / '),
         // 공급자 측정값 (cert_data로부터, 미검사면 빈 값)
-        r1:isUninspected?_emptyRow('과도한 스크래치 및 오염, Burr 없을것'):_certDataToRow(cd.r1,'과도한 스크래치 및 오염, Burr 없을것'),
+        r1:isUninspected?_emptyRow('결함없을것'):_certDataToRow(cd.r1,'결함없을것'),
         r2:isUninspected?_emptyRow(rc.material_type):_certDataToRow(cd.r2,rc.material_type),
         r3:isUninspected?_emptyRow((rc.width_mm||'')+'mm ±0.1'):_certDataToRow(cd.r3,(rc.width_mm||'')+'mm ±0.1'),
         r4:isUninspected?_emptyRow((rc.thickness||'')+'T ±0.05'):_certDataToRow(cd.r4,(rc.thickness||'')+'T ±0.05'),
@@ -3915,7 +3915,7 @@ async function loadCertsFromSupabase(){
         r7:isSUS?_dashRow():(isUninspected?_emptyRow('0/+2'):_certDataToRow(cd.r7,'0/+2')),
         r8:isSUS?_dashRow():(isUninspected?_emptyRow('양호'):_certDataToRow(cd.r8,'양호')),
         // 수요자 측정값 (입고 후 채움 - spec은 공급자와 동일, 측정값 X1~X3는 비움)
-        c_r1:_cusEmptyFromCert(cd.r1,'과도한 스크래치 및 오염, Burr 없을것'),
+        c_r1:_cusEmptyFromCert(cd.r1,'결함없을것'),
         c_r2:_cusEmptyFromCert(cd.r2,rc.material_type),
         c_r3:_cusEmptyFromCert(cd.r3,(rc.width_mm||'')+'mm ±0.1'),
         c_r4:_cusEmptyFromCert(cd.r4,(rc.thickness||'')+'T ±0.05'),
