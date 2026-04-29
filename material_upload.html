@@ -492,7 +492,10 @@ document.addEventListener('DOMContentLoaded',()=>{const drop=document.getElement
 
 function handleFile(input){const f=input.files[0];if(f)parseFile(f);input.value=''}
 
-function parseFile(file){const reader=new FileReader();reader.onload=function(e){try{const wb=XLSX.read(e.target.result,{type:'array',cellDates:true});const sheetName=wb.SheetNames.find(n=>n==='입고등록')||wb.SheetNames[0];const ws=wb.Sheets[sheetName];const allRows=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});_batchCompany='';_batchDate='';if(allRows.length>=1){const r1=allRows[0];if(r1[1])_batchCompany=String(r1[1]).trim();let dv=r1[4];if(dv instanceof Date)_batchDate=kstDateStr(dv);else if(dv)_batchDate=String(dv).trim()}let raw=XLSX.utils.sheet_to_json(ws,{range:2,defval:''});raw=raw.filter(r=>Object.values(r).some(v=>v!==''));raw.forEach(r=>{if(_batchCompany&&!r['업체명'])r['업체명']=_batchCompany;if(_batchDate&&!r['입고일자'])r['입고일자']=_batchDate});if(!raw.length){showToast('데이터가 없습니다');return}_batchData=raw;document.getElementById('fileInfo').style.display='block';document.getElementById('fileInfoText').innerHTML='✅ <b>'+file.name+'</b> 읽기 완료<br>업체: <b>'+(_batchCompany||'미기입')+'</b> · 입고일: <b>'+(_batchDate||'미기입')+'</b> · <b>'+raw.length+'건</b>';document.getElementById('btnToStep3').disabled=false;showToast('✅ '+raw.length+'건 읽기 완료')}catch(err){showToast('파일 읽기 오류: '+err.message)}};reader.readAsArrayBuffer(file)}
+function parseFile(file){const reader=new FileReader();reader.onload=function(e){try{const wb=XLSX.read(e.target.result,{type:'array',cellDates:true});const sheetName=wb.SheetNames.find(n=>n==='입고등록')||wb.SheetNames[0];const ws=wb.Sheets[sheetName];const allRows=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});_batchCompany='';_batchDate='';if(allRows.length>=1){const r1=allRows[0];if(r1[1])_batchCompany=String(r1[1]).trim();let dv=r1[4];if(dv instanceof Date)_batchDate=kstDateStr(dv);else if(dv)_batchDate=String(dv).trim()}let raw=XLSX.utils.sheet_to_json(ws,{range:2,defval:''});raw=raw.filter(r=>Object.values(r).some(v=>v!==''));raw.forEach(r=>{if(_batchCompany&&!r['업체명'])r['업체명']=_batchCompany;if(_batchDate&&!r['입고일자'])r['입고일자']=_batchDate});if(!raw.length){showToast('데이터가 없습니다');return}_batchData=raw;
+/* ★★★ LOT 20자 초과 사전 검증 (Oracle HEAT_NO VARCHAR2(20) 한계) ★★★ */
+const longLots=[];raw.forEach((r,i)=>{const lot=String(r['로트']||r['lot']||r['로트번호']||'').trim();const lotClean=lot.replace(/^LOT[-_\s]*/i,'');if(lotClean.length>20)longLots.push({row:i+4,lot:lotClean,len:lotClean.length})});if(longLots.length){const list=longLots.slice(0,5).map(x=>`  • ${x.row}행: ${x.lot} (${x.len}자)`).join('\n');alert('⚠️ LOT 길이 초과 경고\n\nOracle MES의 HEAT_NO 컬럼은 최대 20자까지만 저장됩니다.\n다음 '+longLots.length+'건이 20자를 초과합니다:\n\n'+list+(longLots.length>5?`\n  ... 외 ${longLots.length-5}건`:'')+'\n\n→ 그대로 등록 시 MES 동기화에서 ORA-12899 오류가 발생합니다.\n→ LOT를 수정한 후 다시 업로드하세요.')}
+document.getElementById('fileInfo').style.display='block';document.getElementById('fileInfoText').innerHTML='✅ <b>'+file.name+'</b> 읽기 완료<br>업체: <b>'+(_batchCompany||'미기입')+'</b> · 입고일: <b>'+(_batchDate||'미기입')+'</b> · <b>'+raw.length+'건</b>'+(longLots.length?'<br><span style="color:#c62828;font-weight:700">⚠️ LOT 20자 초과 '+longLots.length+'건 — 수정 권장</span>':'');document.getElementById('btnToStep3').disabled=false;showToast('✅ '+raw.length+'건 읽기 완료'+(longLots.length?' (LOT 초과 '+longLots.length+'건)':''))}catch(err){showToast('파일 읽기 오류: '+err.message)}};reader.readAsArrayBuffer(file)}
 
 function renderPreview(){const vi=getVendorInfo();const cfg={from:vi.name,fromCode:vi.code,to:document.getElementById('cfgTo').value.trim(),worker:document.getElementById('cfgWorker').value.trim()};document.getElementById('pvTotal').textContent=_batchData.length;document.getElementById('pvCompany').textContent=_batchCompany||vi.name||'-';document.getElementById('pvDate').textContent=_batchDate||'-';document.getElementById('pvRegCnt').textContent=_batchData.length;document.getElementById('pvSettings').innerHTML='출발지: <b>'+cfg.from+' ('+cfg.fromCode+')</b> → 도착지: <b>'+cfg.to+'</b>'+(cfg.worker?' · 담당자: <b>'+cfg.worker+'</b>':'')+'<br><span style="color:#2e7d32;font-weight:700">→ MES 등록: VENDOR_SITE_ID=<b>'+cfg.fromCode+'</b> (5분 주기 자동)</span>';const cols=Object.keys(_batchData[0]);const showRows=_batchData.slice(0,15);let html='<thead><tr>'+cols.map(c=>'<th>'+c+'</th>').join('')+'</tr></thead><tbody>';showRows.forEach(row=>{html+='<tr>'+cols.map(c=>{let v=row[c];if(v instanceof Date)v=kstDateStr(v);return'<td>'+(v||'')+'</td>'}).join('')+'</tr>'});html+='</tbody>';document.getElementById('pvTable').innerHTML=html;document.getElementById('pvMore').textContent=_batchData.length>15?'... 외 '+(_batchData.length-15)+'건':''}
 
@@ -501,6 +504,20 @@ async function doRegister(){
   if(!_batchData.length){showToast('데이터 없음');return}
   const vi=getVendorInfo();
   if(!vi.code){showToast('⚠ 출발지(소재업체)를 선택해주세요');return}
+
+  /* ★★★ LOT 20자 초과 최종 차단 (Oracle HEAT_NO VARCHAR2(20)) ★★★ */
+  const longLots=[];
+  _batchData.forEach((r,i)=>{
+    const lot=String(r['로트']||r['lot']||r['로트번호']||'').trim();
+    const lotClean=lot.replace(/^LOT[-_\s]*/i,'');
+    if(lotClean.length>20)longLots.push({row:i+4,lot:lotClean,len:lotClean.length});
+  });
+  if(longLots.length){
+    const list=longLots.slice(0,10).map(x=>`  • ${x.row}행: ${x.lot} (${x.len}자)`).join('\n');
+    alert('🚫 등록 차단 — LOT 길이 초과\n\nOracle MES의 HEAT_NO 컬럼 최대 길이는 20자입니다.\n다음 '+longLots.length+'건의 LOT가 20자를 초과하여 등록할 수 없습니다:\n\n'+list+(longLots.length>10?`\n  ... 외 ${longLots.length-10}건`:'')+'\n\n→ 엑셀 파일에서 LOT를 20자 이내로 수정한 후 다시 업로드하세요.\n→ 또는 DBA에게 HEAT_NO 컬럼 확장(VARCHAR2(50))을 요청하세요.');
+    return;
+  }
+
   if(!confirm(_batchData.length+'건을 Supabase에 저장하고 MES에 자동 등록됩니다.\n(5분 이내 자동 처리)\n\n계속하시겠습니까?'))return;
 
   const st=document.getElementById('regStatus');
