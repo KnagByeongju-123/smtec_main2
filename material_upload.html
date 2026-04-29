@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>소재입고 등록 (Rev4.6.1)</title>
+  <title>소재입고 등록 (Rev4.6.2)</title>
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
@@ -102,7 +102,7 @@
 </head>
 <body>
 <div class="hdr">
-  <h1>📤 소재입고 등록 (Rev4.6.1)</h1>
+  <h1>📤 소재입고 등록 (Rev4.6.2)</h1>
   <p>소재업체 템플릿 업로드 → DB 저장 · <span style="color:#ffeb3b;font-weight:700">성적서, 밀시트 첨부 가능</span></p>
 </div>
 <div class="tabs">
@@ -927,29 +927,56 @@ async function saveVendor(){
     if(editId){
       const dup=_vendorCache.find(v=>String(v.id)!==editId&&(v.code===code));
       if(dup){st.textContent='⚠ 동일 코드 존재: '+code;st.style.color='#e65100';return}
-      await fetch(SB_URL+'/rest/v1/common_code?id=eq.'+editId,{
+      const r=await fetch(SB_URL+'/rest/v1/common_code?id=eq.'+editId,{
         method:'PATCH',
         headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY},
         body:JSON.stringify({code_value:code,description:name})
       });
+      if(!r.ok){
+        const txt=await r.text().catch(()=>'');
+        st.textContent='❌ 수정 실패 HTTP '+r.status+(txt?': '+txt.substring(0,100):'');
+        st.style.color='#c62828';
+        console.error('[VENDOR] PATCH 실패:',r.status,txt);
+        return;
+      }
       st.textContent='✅ 수정 완료: '+name+' ('+code+')';
       st.style.color='#2e7d32';
     }else{
       if(_vendorCache.find(v=>v.code===code)){st.textContent='⚠ 이미 존재하는 코드: '+code;st.style.color='#e65100';return}
       const maxSort=_vendorCache.length?Math.max(..._vendorCache.map(v=>v.sort)):0;
-      await fetch(SB_URL+'/rest/v1/common_code',{
+      const r=await fetch(SB_URL+'/rest/v1/common_code',{
         method:'POST',
-        headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Prefer':'return=minimal'},
+        headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Prefer':'return=representation'},
         body:JSON.stringify({code_group:'vendor_site',code_value:code,description:name,sort_order:maxSort+1})
       });
-      st.textContent='✅ 추가 완료: '+name+' ('+code+')';
+      if(!r.ok){
+        const txt=await r.text().catch(()=>'');
+        let msg='❌ 추가 실패 HTTP '+r.status;
+        if(r.status===401||r.status===403)msg+=' (RLS 권한 차단 - Supabase에서 common_code 테이블 RLS 비활성화 필요)';
+        else if(txt)msg+=': '+txt.substring(0,150);
+        st.textContent=msg;
+        st.style.color='#c62828';
+        console.error('[VENDOR] POST 실패:',r.status,txt);
+        return;
+      }
+      // 응답 검증 — 실제로 INSERT 됐는지 확인
+      const saved=await r.json().catch(()=>null);
+      if(!saved||!saved.length||!saved[0].id){
+        st.textContent='⚠ POST 200이지만 응답에 id 없음 - DB 확인 필요';
+        st.style.color='#e65100';
+        console.warn('[VENDOR] 응답 비정상:',saved);
+        return;
+      }
+      st.textContent='✅ 추가 완료: '+name+' ('+code+') id='+saved[0].id;
       st.style.color='#2e7d32';
+      console.log('[VENDOR] 저장 성공:',saved[0]);
     }
     cancelVendorEdit();
     await loadVendorsAndRender();
     showToast('💾 업체 저장 완료');
   }catch(e){
-    st.textContent='❌ '+e.message;st.style.color='#c62828';
+    st.textContent='❌ 네트워크 오류: '+e.message;st.style.color='#c62828';
+    console.error('[VENDOR] 예외:',e);
   }
 }
 function editVendor(idx){
