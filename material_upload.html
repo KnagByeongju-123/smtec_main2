@@ -929,6 +929,52 @@ let _certBatch=[];  /* 성적서 작성 대상 */
 let _certCurrentIdx=0;
 let _certMillsheets={};  /* idx별 밀시트 base64 */
 
+/* ============================================================
+   ★★★ 규격(Spec) 자동완성 메모리 ★★★
+   각 검사항목(r1~r8)별로 사용자가 입력한 spec을 localStorage에 저장
+   다음 작성 시 클릭하면 datalist 드롭다운으로 선택 가능
+   ============================================================ */
+const SPEC_HIST_KEY='MATERIAL_CERT_SPEC_HISTORY';
+const SPEC_HIST_MAX=20;  /* 항목별 최대 보관 개수 */
+
+/* 기본 spec 후보 (초기 미입력 상태에도 선택지 제공) */
+const SPEC_DEFAULTS={
+  r1:['과도한 스크래치 및 오염, Burr 없을것','이물·결함 없을것'],
+  r2:['SPCC','SUS304','SUS430','S55C','S70C','C55E','C67S'],
+  r3:['33mm ±0.1','64mm ±0.1','90mm ±0.1','94mm ±0.1','102mm ±0.1','118mm ±0.1'],
+  r4:['0.5T ±0.05','0.6T ±0.05','0.8T ±0.05','1.0T ±0.05','1.2T ±0.05'],
+  r5:['65 이하','60 이하','55 이하'],
+  r6:['1000mm','EL 35% 이상','EL 40% 이상'],
+  r7:['0/+2','±1','±2'],
+  r8:['양호','평탄','-'],
+};
+
+function getSpecHistoryAll(){
+  try{return JSON.parse(localStorage.getItem(SPEC_HIST_KEY)||'{}')}catch(e){return{}}
+}
+function getSpecHistory(key){
+  const all=getSpecHistoryAll();
+  const userSpecs=Array.isArray(all[key])?all[key]:[];
+  const defaults=SPEC_DEFAULTS[key]||[];
+  /* 사용자 입력 우선 + 기본값 병합 (중복 제거) */
+  const merged=[...new Set([...userSpecs,...defaults])];
+  return merged;
+}
+function saveSpecHistory(key,value){
+  if(!key||!value)return;
+  const v=String(value).trim();
+  if(!v||v==='-')return;
+  const all=getSpecHistoryAll();
+  let arr=Array.isArray(all[key])?all[key]:[];
+  /* 이미 있으면 맨 앞으로 이동 (최근 사용 우선) */
+  arr=arr.filter(x=>x!==v);
+  arr.unshift(v);
+  /* 최대 개수 제한 */
+  if(arr.length>SPEC_HIST_MAX)arr=arr.slice(0,SPEC_HIST_MAX);
+  all[key]=arr;
+  try{localStorage.setItem(SPEC_HIST_KEY,JSON.stringify(all))}catch(e){console.warn('spec 메모리 저장 실패:',e)}
+}
+
 /* 등록 완료 후 _batchData → _certBatch 변환 (doRegister 마지막에 호출) */
 function prepareCertBatch(){
   _certBatch=[];_certMillsheets={};
@@ -1102,6 +1148,7 @@ function renderCertModal(){
     const saved=c.certData?.[it.k]||{};
     /* 신규: placeholder가 아닌 실제 값으로 자동 채움 (저장됨, 사용자가 수정 가능) */
     const defaultVal=it.dash?'-':it.ph;
+    const specVal=saved.spec!==undefined&&saved.spec!==''?saved.spec:it.spec;
     const v1=saved.x1!==undefined&&saved.x1!==''?saved.x1:defaultVal;
     const v2=saved.x2!==undefined&&saved.x2!==''?saved.x2:defaultVal;
     const v3=saved.x3!==undefined&&saved.x3!==''?saved.x3:defaultVal;
@@ -1109,11 +1156,15 @@ function renderCertModal(){
     const inputType=it.type==='number'&&!it.dash?'number':'text';
     const stepAttr=it.step&&!it.dash?` step="${it.step}"`:'';
     const dashStyle=it.dash?'background:#f5f5f5;color:#999;':'';
+    /* spec 자동완성 datalist - 항목별로 분리하여 같은 검사항목끼리만 옵션 제시 */
+    const specListId=`specList_${it.k}`;
+    const specOpts=getSpecHistory(it.k).map(s=>`<option value="${String(s).replace(/"/g,'&quot;')}">`).join('');
     h+=`<tr><td><b>${it.n}</b></td>`+
-       `<td><input type="text" value="${it.spec.replace(/"/g,'&quot;')}" readonly class="spec-input" style="width:100%"></td>`+
-       `<td><input type="${inputType}"${stepAttr} data-cert-k="${it.k}" data-cert-x="x1" value="${v1}" style="${dashStyle}width:100%;text-align:center"${it.dash?' readonly':''}></td>`+
-       `<td><input type="${inputType}"${stepAttr} data-cert-k="${it.k}" data-cert-x="x2" value="${v2}" style="${dashStyle}width:100%;text-align:center"${it.dash?' readonly':''}></td>`+
-       `<td><input type="${inputType}"${stepAttr} data-cert-k="${it.k}" data-cert-x="x3" value="${v3}" style="${dashStyle}width:100%;text-align:center"${it.dash?' readonly':''}></td>`+
+       `<td><input type="text" value="${String(specVal).replace(/"/g,'&quot;')}" data-cert-k="${it.k}" data-cert-x="spec" list="${specListId}" class="spec-input" style="width:100%" title="기준값 (클릭 시 이전에 입력한 값 선택 가능)" onchange="saveSpecHistory('${it.k}',this.value)" onblur="saveSpecHistory('${it.k}',this.value)">`+
+       `<datalist id="${specListId}">${specOpts}</datalist></td>`+
+       `<td><input type="${inputType}"${stepAttr} data-cert-k="${it.k}" data-cert-x="x1" value="${v1}" style="${dashStyle}text-align:center"${it.dash?' readonly':''}></td>`+
+       `<td><input type="${inputType}"${stepAttr} data-cert-k="${it.k}" data-cert-x="x2" value="${v2}" style="${dashStyle}text-align:center"${it.dash?' readonly':''}></td>`+
+       `<td><input type="${inputType}"${stepAttr} data-cert-k="${it.k}" data-cert-x="x3" value="${v3}" style="${dashStyle}text-align:center"${it.dash?' readonly':''}></td>`+
        (it.dash?
          `<td style="text-align:center;color:#94a3b8;font-weight:600"><span data-cert-k="${it.k}" data-cert-x="j" data-val="-">—</span></td>`:
          `<td><label><input type="radio" name="cert_${it.k}_j_${_certCurrentIdx}" value="OK" data-cert-k="${it.k}" data-cert-x="j"${j==='OK'?' checked':''}>OK</label>`+
@@ -1385,37 +1436,49 @@ window.updateCertBadge=function(){
           #certMeasTable th:first-child{border-radius:8px 0 0 0}
           #certMeasTable th:last-child{border-radius:0 8px 0 0}
           #certMeasTable td{
-            padding:10px 8px;border:1px solid #e2e8f0;text-align:center;background:#fff;
+            padding:8px 6px;border:none;text-align:center;background:#fff;
             font-size:14px;color:#1e293b;
           }
-          #certMeasTable td:first-child{font-weight:700;color:#1e40af;background:#f8fafc;font-size:14px}
-          #certMeasTable tr:nth-child(even) td{background:#fafbff}
-          #certMeasTable tr:nth-child(even) td:first-child{background:#f1f5f9}
-          #certMeasTable tr:hover td{background:#eff6ff !important}
+          #certMeasTable td:first-child{font-weight:700;color:#1e40af;background:transparent;font-size:14px}
+          #certMeasTable tr{border-bottom:1px solid #f1f5f9}
+          #certMeasTable tr:last-child{border-bottom:none}
           #certMeasTable input[type="text"],
           #certMeasTable input[type="number"]{
-            padding:8px 10px;border:1.5px solid #cbd5e1;border-radius:6px;
+            padding:11px 14px;border:1.5px solid #cbd5e1;border-radius:10px;
             font-size:14px;font-family:inherit;font-weight:500;color:#0f172a;
-            transition:all 0.15s;background:#fff;
+            transition:all 0.2s;background:#fff;width:100%;box-sizing:border-box;
+            box-shadow:0 1px 2px rgba(0,0,0,0.04);
+          }
+          #certMeasTable input[type="text"]:hover,
+          #certMeasTable input[type="number"]:hover{
+            border-color:#94a3b8;
           }
           #certMeasTable input[type="text"]:focus,
           #certMeasTable input[type="number"]:focus{
-            outline:none;border-color:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,0.15);
+            outline:none;border-color:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,0.18);
           }
           #certMeasTable input[readonly]{
-            cursor:default;background:#f1f5f9;color:#475569;font-size:13px;
+            cursor:default;background:#f8fafc;color:#64748b;
             border-color:#e2e8f0;
           }
-          /* Specification 전용 (좌측 정렬, 가독성) */
+          /* Specification 전용 (좌측 정렬, 편집 가능) */
           #certMeasTable input.spec-input{
-            text-align:left;padding:8px 12px;font-size:13px;font-weight:600;
-            color:#1e3a8a;background:linear-gradient(135deg,#f1f5f9 0%,#e2e8f0 100%);
+            text-align:left;padding:11px 14px;font-size:13px;font-weight:600;
+            color:#1e3a8a;background:#fff;
             border:1.5px solid #cbd5e1;letter-spacing:0.2px;
           }
-          #certMeasTable label{
-            cursor:pointer;display:inline-flex;align-items:center;gap:4px;
-            font-size:13px;font-weight:600;color:#334155;margin:0 4px;
+          #certMeasTable input.spec-input:hover{
+            background:#f8fafc;border-color:#94a3b8;
           }
+          #certMeasTable input.spec-input:focus{
+            background:#fff;border-color:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,0.18);
+          }
+          #certMeasTable label{
+            cursor:pointer;display:inline-flex;align-items:center;gap:5px;
+            font-size:13px;font-weight:600;color:#334155;margin:0 6px;
+            padding:6px 10px;border-radius:8px;transition:background 0.15s;
+          }
+          #certMeasTable label:hover{background:#f1f5f9}
           #certMeasTable input[type="radio"]{
             width:16px;height:16px;cursor:pointer;accent-color:#1e40af;
           }
