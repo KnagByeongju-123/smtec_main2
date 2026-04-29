@@ -3988,3 +3988,57 @@ async function loadLogFromSupabase(){
 document.addEventListener('DOMContentLoaded',()=>setTimeout(loadLogFromSupabase,400));
 setTimeout(loadLogFromSupabase,1700);
 setInterval(loadLogFromSupabase,5*60*1000);
+// ==================================================================
+// [Rev2.7] 모바일 모달 스크롤 패치
+// 모달 내부의 측정값 테이블(.meas-table)이 작은 화면에서 잘리는 문제 해결
+// ==================================================================
+(function injectMobileScrollFix(){
+  if(document.getElementById('iqc-mobile-scroll-fix'))return;
+  const css = `
+    /* 모달 본문 자체에 가로 스크롤 허용 (좁은 화면 대응) */
+    .modal-body{
+      overflow-x:auto !important;
+      -webkit-overflow-scrolling:touch;
+    }
+    /* 측정값 테이블은 좁은 화면에서도 가로로 펼치도록 최소폭 보장 */
+    .modal-body .meas-table,
+    .modal-body table.meas-table{
+      min-width:600px;
+    }
+    /* 카드 내 카드(검사항목/판정 박스)도 가로 스크롤 가능하게 */
+    .cert-section-box{
+      overflow-x:auto;
+      -webkit-overflow-scrolling:touch;
+    }
+    /* 검사성적서 카드(렌더링된 결과)에도 적용 */
+    #certList .cert-card,
+    #certList table{
+      max-width:100%;
+    }
+    #certList table{
+      display:block;
+      overflow-x:auto;
+      -webkit-overflow-scrolling:touch;
+      white-space:nowrap;
+    }
+    /* 좁은 화면일수록 표 안의 셀 패딩 축소 */
+    @media (max-width:768px){
+      .modal-body .meas-table th,
+      .modal-body .meas-table td{
+        padding:4px 6px !important;
+        font-size:12px;
+      }
+      .modal-body .meas-table input[type=text],
+      .modal-body .meas-table input[type=number]{
+        font-size:12px;
+        padding:4px 6px;
+        min-width:60px;
+      }
+    }
+  `;
+  const s = document.createElement('style');
+  s.id = 'iqc-mobile-scroll-fix';
+  s.textContent = css;
+  document.head.appendChild(s);
+  console.log('[IQC] 모바일 스크롤 패치 적용됨');
+})();
