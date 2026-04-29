@@ -12125,6 +12125,10 @@ async function loadCertsFromSupabase(){
       // Supabase 형식 → certData 형식 변환
       const cd=rc.cert_data||{};
       const isSUS=/SUS|STS|스테인|304|430/i.test(rc.material_type||'');
+      const isUninspected=rc.final_judge==='미검사'||!rc.cert_data;  // 빈 성적서 (입고만 등록된 상태)
+      const remarkParts=[];
+      if(isUninspected)remarkParts.push('⏳ 검사 대기 (입고만 등록)');
+      if(rc.has_millsheet)remarkParts.push('📎 밀시트 메일 첨부됨');
       const newCert={
         commodity:isSUS?'STS CR COIL':'CR COIL (SPCC)',
         spec:rc.material_type||'',
@@ -12138,34 +12142,35 @@ async function loadCertsFromSupabase(){
         lots_detail:rc.lots_detail||'',
         lot:rc.lot_no||'',
         heat:rc.heat_no||'',
-        supplier_judge:'OK',
-        supplier_sign:rc.supplier||'',
+        supplier_judge:isUninspected?'대기':'OK',
+        supplier_sign:isUninspected?'':rc.supplier||'',
         recv_date:'',  // 수입검사 시점 채움
         recv_charge:rc.charge||'',
-        judge:rc.final_judge||'OK',
-        customer_sign:rc.sign||'강병주',
+        judge:isUninspected?'대기':(rc.final_judge||'OK'),  // 미검사 → '대기' 표시
+        customer_sign:rc.sign||(isUninspected?'':'강병주'),
         label:'미부착',  // 입고 전 상태
-        remark:rc.has_millsheet?'(밀시트 메일 첨부됨)':'',
-        // 공급자 측정값 (cert_data로부터)
-        r1:_certDataToRow(cd.r1,'과도한 스크래치 및 오염, Burr 없을것'),
-        r2:_certDataToRow(cd.r2,rc.material_type),
-        r3:_certDataToRow(cd.r3,(rc.width_mm||'')+'mm ±0.1'),
-        r4:_certDataToRow(cd.r4,(rc.thickness||'')+'T ±0.05'),
-        r5:isSUS?_dashRow():_certDataToRow(cd.r5,'65 이하'),
-        r6:isSUS?_dashRow():_certDataToRow(cd.r6,'1000mm'),
-        r7:isSUS?_dashRow():_certDataToRow(cd.r7,'0/+2'),
-        r8:isSUS?_dashRow():_certDataToRow(cd.r8,'양호'),
+        remark:remarkParts.join(' / '),
+        // 공급자 측정값 (cert_data로부터, 미검사면 빈 값)
+        r1:isUninspected?_emptyRow('과도한 스크래치 및 오염, Burr 없을것'):_certDataToRow(cd.r1,'과도한 스크래치 및 오염, Burr 없을것'),
+        r2:isUninspected?_emptyRow(rc.material_type):_certDataToRow(cd.r2,rc.material_type),
+        r3:isUninspected?_emptyRow((rc.width_mm||'')+'mm ±0.1'):_certDataToRow(cd.r3,(rc.width_mm||'')+'mm ±0.1'),
+        r4:isUninspected?_emptyRow((rc.thickness||'')+'T ±0.05'):_certDataToRow(cd.r4,(rc.thickness||'')+'T ±0.05'),
+        r5:isSUS?_dashRow():(isUninspected?_emptyRow('65 이하'):_certDataToRow(cd.r5,'65 이하')),
+        r6:isSUS?_dashRow():(isUninspected?_emptyRow('1000mm'):_certDataToRow(cd.r6,'1000mm')),
+        r7:isSUS?_dashRow():(isUninspected?_emptyRow('0/+2'):_certDataToRow(cd.r7,'0/+2')),
+        r8:isSUS?_dashRow():(isUninspected?_emptyRow('양호'):_certDataToRow(cd.r8,'양호')),
         // 수요자 측정값 (입고 후 채움 - 일단 비움)
-        c_r1:_emptyRow('스크래치/오염/Burr 없을것'),
+        c_r1:_emptyRow('과도한 스크래치 및 오염, Burr 없을것'),
         c_r2:_emptyRow(rc.material_type),
-        c_r3:_emptyRow(rc.width_mm+'mm ±0.1'),
-        c_r4:_emptyRow(rc.thickness+'T ±0.05'),
+        c_r3:_emptyRow((rc.width_mm||'')+'mm ±0.1'),
+        c_r4:_emptyRow((rc.thickness||'')+'T ±0.05'),
         c_r5:isSUS?_dashRow():_emptyRow('65 이하'),
         c_r6:isSUS?_dashRow():_emptyRow('1000mm'),
         c_r7:isSUS?_dashRow():_emptyRow('0/+2'),
         c_r8:isSUS?_dashRow():_emptyRow('양호'),
         _from_supabase:true,
-        _supabase_id:rc.id
+        _supabase_id:rc.id,
+        _uninspected:isUninspected
       };
       certData.push(newCert);
       added++;
