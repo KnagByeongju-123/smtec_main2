@@ -122,7 +122,12 @@ input:checked+.slider:before{transform:translateX(22px)}
         <input type="checkbox" id="autoSend">
         <span class="slider"></span>
       </label>
-      <span style="font-size:11px;color:#888;margin-left:8px">오류 발생 시 자동 메일</span>
+      <span style="font-size:11px;color:#888;margin-left:8px">오류 발생 시 자동 메일 (30초 주기 체크)</span>
+    </div>
+    <div class="setrow" id="autoStatusRow" style="background:#e8f5e9;padding:8px 12px;border-radius:6px;border-left:3px solid #2e7d32">
+      <label style="color:#2e7d32">📡 자동발송 상태:</label>
+      <span id="autoStatus" style="font-size:12px;color:#2e7d32;font-weight:600">확인 중...</span>
+      <button class="btn btn-sm btn-blue" onclick="resetSentIds()" style="margin-left:auto;font-size:10px">발송이력 초기화</button>
     </div>
     <div class="setrow">
       <label>발송 임계값:</label>
@@ -324,11 +329,11 @@ function getSettings(){
   if(s){try{return JSON.parse(s)}catch(e){}}
   return {
     recipients:[...DEFAULT_RECIPIENTS],
-    autoSend:false,
-    threshold:3,
-    interval:60,
+    autoSend:true,
+    threshold:1,
+    interval:30,
     subjPrefix:'[태진다이텍 MES 오류]',
-    gasUrl:'',
+    gasUrl:'https://script.google.com/macros/s/AKfycbyKbjrxk2HyYHpHCGbEGQA0zLle9pmkZHAJyTVUdW4aHN1oFUu_6av0VXSx11bliI9Y/exec',
     mailBody:'안녕하세요.\n\n{date} 소재입고 동기화 중 오류가 {count}건 발생했습니다.\n\n=== 오류 내역 ===\n{errorDetails}\n\n확인 부탁드립니다.\n\n— 태진다이텍 품질관리팀'
   };
 }
@@ -342,6 +347,37 @@ function loadSettings(){
   document.getElementById('gasUrl').value=s.gasUrl||'';
   document.getElementById('mailBody').value=s.mailBody;
   renderRecipients(s.recipients);
+  updateAutoStatus();
+}
+
+function updateAutoStatus(){
+  const el=document.getElementById('autoStatus');
+  if(!el)return;
+  const s=getSettings();
+  const lastSent=parseInt(localStorage.getItem('lastMailSent')||'0');
+  const sentIds=JSON.parse(localStorage.getItem('sentErrorIds')||'[]');
+  let txt='';
+  if(!s.autoSend){
+    txt='⏸ OFF (수동 발송 모드)';
+    el.style.color='#c62828';
+    document.getElementById('autoStatusRow').style.background='#ffebee';
+    document.getElementById('autoStatusRow').style.borderLeftColor='#c62828';
+  }else{
+    const lastTxt=lastSent?new Date(lastSent).toLocaleString('ko-KR',{timeZone:'Asia/Seoul'}):'없음';
+    txt=`✅ ON · 마지막 발송: ${lastTxt} · 발송이력 ${sentIds.length}건`;
+    el.style.color='#2e7d32';
+    document.getElementById('autoStatusRow').style.background='#e8f5e9';
+    document.getElementById('autoStatusRow').style.borderLeftColor='#2e7d32';
+  }
+  el.textContent=txt;
+}
+
+function resetSentIds(){
+  if(!confirm('발송 이력을 초기화하시겠습니까?\n초기화 후 기존 오류 레코드가 임계값 이상이면 다시 메일이 발송됩니다.'))return;
+  localStorage.removeItem('sentErrorIds');
+  localStorage.removeItem('lastMailSent');
+  showMsg('✅ 발송 이력 초기화 완료');
+  updateAutoStatus();
 }
 
 function renderRecipients(list){
@@ -388,7 +424,7 @@ function saveSettings(){
 // ====================================================
 async function sendErrorMail(auto=false){
   const s=getSettings();
-  if(!s.recipients.length){showMsg('수신자가 없습니다. 설정 탭에서 등록하세요.',false);return;}
+  if(!s.recipients.length){if(!auto)showMsg('수신자가 없습니다. 설정 탭에서 등록하세요.',false);return;}
   
   // 오류 레코드 조회
   let errors=[];
@@ -396,52 +432,78 @@ async function sendErrorMail(auto=false){
     const r=await fetch(`${SB_URL}/rest/v1/raw_material_receipt?select=*&status=eq.error&order=id.desc&limit=50`,
       {headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY}});
     errors=await r.json();
-  }catch(e){showMsg('❌ 오류 조회 실패: '+e.message,false);return;}
+  }catch(e){if(!auto)showMsg('❌ 오류 조회 실패: '+e.message,false);return;}
   
-  if(!errors.length){showMsg('발송할 오류가 없습니다',false);return;}
-  if(auto&&errors.length<s.threshold)return;  // 임계값 미달
+  if(!errors.length){if(!auto)showMsg('발송할 오류가 없습니다',false);return;}
   
-  // 중복 발송 방지 (interval 분)
+  // ★★★ 자동 발송 시: "새로 발생한 오류"만 카운트 (이전에 발송한 ID는 제외)
+  let newErrors=errors;
   if(auto){
+    const sentIds=JSON.parse(localStorage.getItem('sentErrorIds')||'[]');
+    newErrors=errors.filter(e=>!sentIds.includes(e.id));
+    if(!newErrors.length)return; // 모두 이미 발송한 건
+    if(newErrors.length<s.threshold)return; // 임계값 미달
+    
+    // 발송 간격 확인 (같은 오류 반복발송 방지)
     const lastSent=parseInt(localStorage.getItem('lastMailSent')||'0');
     if(Date.now()-lastSent<s.interval*60000)return;
   }
   
-  // 본문 생성
-  const today=new Date().toLocaleDateString('ko-KR');
-  const details=errors.slice(0,20).map(r=>
+  // 본문 생성 (자동: 새 오류만 / 수동: 전체 오류)
+  const targetErrors=auto?newErrors:errors;
+  const today=new Date().toLocaleString('ko-KR',{timeZone:'Asia/Seoul'});
+  const details=targetErrors.slice(0,20).map(r=>
     `[ID ${r.id}] ${r.vendor_site_id||'-'} | ${r.item_code||'-'} | LOT: ${r.heat_no||'-'} | ${(r.error_msg||'').substring(0,80)}`
   ).join('\n');
-  const vendors=[...new Set(errors.map(r=>r.vendor_site_id).filter(v=>v))].join(', ');
+  const vendors=[...new Set(targetErrors.map(r=>r.vendor_site_id).filter(v=>v))].join(', ');
   
   const body=s.mailBody
     .replaceAll('{date}',today)
-    .replaceAll('{count}',errors.length)
+    .replaceAll('{count}',targetErrors.length)
     .replaceAll('{errorDetails}',details)
     .replaceAll('{vendor}',vendors);
-  const subject=`${s.subjPrefix} ${today} - 오류 ${errors.length}건`;
+  const subject=`${s.subjPrefix} ${new Date().toLocaleDateString('ko-KR')} - 오류 ${targetErrors.length}건${auto?' [자동]':''}`;
   
   if(!auto){
     if(!confirm(`다음 ${s.recipients.length}명에게 오류 메일을 발송하시겠습니까?\n\n${s.recipients.join(', ')}\n\n오류 ${errors.length}건`))return;
   }
   
-  // GAS Webhook 발송
+  // GAS Webhook 발송 (CORS 우회: text/plain 사용 → preflight 회피)
   if(s.gasUrl){
     try{
       const r=await fetch(s.gasUrl,{
         method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({to:s.recipients.join(','),subject:subject,body:body})
+        headers:{'Content-Type':'text/plain;charset=utf-8'},
+        body:JSON.stringify({to:s.recipients.join(','),subject:subject,body:body}),
+        redirect:'follow'
       });
-      showMsg(`📧 메일 발송 요청 완료 (${s.recipients.length}명, 오류 ${errors.length}건)`);
+      let resultMsg='';
+      try{
+        const j=await r.json();
+        resultMsg=j.success?` (잔여 ${j.remainingQuota}통)`:` ❌ ${j.message}`;
+      }catch(e){}
+      const tag=auto?'🤖 자동':'📧';
+      showMsg(`${tag} 메일 발송 완료 (${s.recipients.length}명, 오류 ${targetErrors.length}건)${resultMsg}`);
       localStorage.setItem('lastMailSent',Date.now().toString());
+      
+      // ★★★ 발송한 오류 ID 기록 (재발송 방지)
+      const sentIds=JSON.parse(localStorage.getItem('sentErrorIds')||'[]');
+      const newSentIds=[...new Set([...sentIds,...targetErrors.map(e=>e.id)])].slice(-500); // 최근 500개만 유지
+      localStorage.setItem('sentErrorIds',JSON.stringify(newSentIds));
       return;
     }catch(e){
-      showMsg('❌ GAS 발송 실패, mailto로 대체합니다: '+e.message,false);
+      if(!auto)showMsg('❌ GAS 발송 실패, mailto로 대체합니다: '+e.message,false);
+      else console.error('자동 메일 발송 실패:',e);
     }
   }
   
-  // 폴백: mailto 링크 (브라우저 기본 메일)
+  // ★★★ 자동 발송 시 mailto 폴백 차단
+  if(auto){
+    console.warn('GAS URL 없음 또는 발송 실패 - 자동 메일 발송 스킵');
+    return;
+  }
+  
+  // 수동 발송 시에만 mailto 폴백
   const mailto=`mailto:${s.recipients.join(',')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
   window.location.href=mailto;
   localStorage.setItem('lastMailSent',Date.now().toString());
@@ -456,12 +518,18 @@ async function testMail(){
   
   if(s.gasUrl){
     try{
-      await fetch(s.gasUrl,{
+      const r=await fetch(s.gasUrl,{
         method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({to:s.recipients.join(','),subject:subject,body:body})
+        headers:{'Content-Type':'text/plain;charset=utf-8'},
+        body:JSON.stringify({to:s.recipients.join(','),subject:subject,body:body}),
+        redirect:'follow'
       });
-      showMsg(`✅ 테스트 메일 발송 (${s.recipients.length}명)`);
+      let extra='';
+      try{
+        const j=await r.json();
+        extra=j.success?` (잔여 ${j.remainingQuota}통)`:` ❌ ${j.message}`;
+      }catch(e){}
+      showMsg(`✅ 테스트 메일 발송 (${s.recipients.length}명)${extra}`);
       return;
     }catch(e){showMsg('GAS 실패, mailto로 대체: '+e.message,false);}
   }
@@ -469,16 +537,36 @@ async function testMail(){
   window.location.href=mailto;
 }
 
-// 자동 발송 체크 (1분마다)
-setInterval(async()=>{
+// 자동 발송 체크 (30초마다 + 페이지 로드 5초 후 즉시 1회)
+async function autoCheckAndSend(){
   const s=getSettings();
-  if(s.autoSend)await sendErrorMail(true);
-},60000);
+  if(s.autoSend){
+    await sendErrorMail(true);
+    updateAutoStatus();  // 상태 갱신
+  }
+}
+setInterval(autoCheckAndSend,30000);
+setTimeout(autoCheckAndSend,5000);  // 페이지 열고 5초 뒤 즉시 한 번 체크
 
 // 첫 실행 시 기본 수신자 저장
 if(!localStorage.getItem(SET_KEY)){
   localStorage.setItem(SET_KEY,JSON.stringify(getSettings()));
 }
+// 기존 사용자 마이그레이션 (GAS URL 자동 채움 + 자동발송 ON)
+(function(){
+  const cur=getSettings();
+  const DEFAULT_GAS='https://script.google.com/macros/s/AKfycbyKbjrxk2HyYHpHCGbEGQA0zLle9pmkZHAJyTVUdW4aHN1oFUu_6av0VXSx11bliI9Y/exec';
+  let changed=false;
+  if(!cur.gasUrl){cur.gasUrl=DEFAULT_GAS;changed=true;}
+  // autoSend가 명시적으로 false인 경우는 사용자가 끈 것이므로 건드리지 않음
+  // 단, 한 번도 마이그레이션 안 한 기존 사용자는 ON으로 전환
+  if(!localStorage.getItem('autoSendMigrated')){
+    cur.autoSend=true;
+    localStorage.setItem('autoSendMigrated','1');
+    changed=true;
+  }
+  if(changed)localStorage.setItem(SET_KEY,JSON.stringify(cur));
+})();
 </script>
 </body>
 </html>
