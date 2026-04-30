@@ -631,86 +631,41 @@ const MEAS_ITEMS = [
   { key:'r8', label:'평탄도',      defaultSpec:'0/+12, 0/+8, 0/+6',  type:'text',   placeholder:'양호' }
 ];
 
-// 측정 테이블 동적 생성 (통합 표: 공급자 + 수요자 2행 구조)
-// prefix='sup' → 통합 표 전체 반환 / prefix='cus' → 빈 문자열 (customerMeasBody 사용 안함)
+// 측정 테이블 동적 생성 (prefix = 'sup' 공급자 or 'cus' 수요자)
 function buildMeasTable(prefix){
-  if (prefix === 'cus') return '';
-  
+  const isSupplier = (prefix === 'sup');
   return MEAS_ITEMS.map(item => {
+    // 스펙 칸
+    let specCell;
     const specPlaceholder = item.specPlaceholder || item.defaultSpec || '';
-    const stepAttr = item.step ? ' step="' + item.step + '"' : '';
-    const inputType = (item.type === 'number') ? 'number' : 'text';
-    const xPh = item.placeholder || '양호';
-    
-    // 공급자 spec input
-    const supSpecInput = '<input type="text" id="sup_' + item.key + '_spec" placeholder="' + specPlaceholder + '" class="meas-spec-input" oninput="syncSpecToCustomer(\'' + item.key + '\'); autoEvaluateAndSetRow(\'sup\', \'' + item.key + '\'); autoEvaluateAndSetRow(\'cus\', \'' + item.key + '\'); syncFinalJudgesFromRows();">';
-    
-    // 공급자 행 측정값
-    let supValCells = '';
-    ['x1','x2','x3'].forEach(x => {
-      const oninput = ' oninput="autoEvaluateAndSetRow(\'sup\', \'' + item.key + '\'); syncFinalJudgesFromRows();"';
-      supValCells += '<td><input type="' + inputType + '"' + stepAttr + ' id="sup_' + item.key + '_' + x + '" placeholder="' + xPh + '"' + oninput + '></td>';
-    });
-    
-    // 수요자 행 측정값 (첫 셀에 hidden cus_spec 포함)
-    let cusValCells = '';
-    ['x1','x2','x3'].forEach((x, i) => {
-      const oninput = ' oninput="autoEvaluateAndSetRow(\'cus\', \'' + item.key + '\'); syncFinalJudgesFromRows();"';
-      let cell = '<td><input type="' + inputType + '"' + stepAttr + ' id="cus_' + item.key + '_' + x + '" placeholder="' + xPh + '"' + oninput + '>';
-      if (i === 0) cell += '<input type="hidden" id="cus_' + item.key + '_spec">';
-      cell += '</td>';
-      cusValCells += cell;
-    });
-    
-    // 판정 라디오
-    const supJudge = '<td><div class="judge-radio" id="sup_' + item.key + '_j_wrap">' +
-      '<label><input type="radio" name="sup_' + item.key + '_j" value="OK" checked><span>OK</span></label>' +
-      '<label><input type="radio" name="sup_' + item.key + '_j" value="NG"><span>NG</span></label>' +
-      '</div></td>';
-    const cusJudge = '<td><div class="judge-radio" id="cus_' + item.key + '_j_wrap">' +
-      '<label><input type="radio" name="cus_' + item.key + '_j" value="OK" checked><span>OK</span></label>' +
-      '<label><input type="radio" name="cus_' + item.key + '_j" value="NG"><span>NG</span></label>' +
-      '</div></td>';
-    
-    // 공급자 행 (rowspan=2로 검사항목/규격 셀 병합)
-    const supRow = '<tr class="sup-row" data-item-key="' + item.key + '">' +
-      '<td rowspan="2" class="meas-label-cell" style="background:#f8fafc; font-weight:700; color:#1e3a5f; vertical-align:middle;"><strong>' + item.label + '</strong></td>' +
-      '<td rowspan="2" style="vertical-align:middle;">' + supSpecInput + '</td>' +
-      '<td style="background:#fef3c7; font-size:11px; font-weight:700; color:#92400e; text-align:center; padding:4px;">공급자</td>' +
-      supValCells + supJudge +
-      '</tr>';
-    
-    // 수요자 행
-    const cusRow = '<tr class="cus-row" data-item-key="' + item.key + '" style="background:#eff6ff;">' +
-      '<td style="background:#dbeafe; font-size:11px; font-weight:700; color:#1e40af; text-align:center; padding:4px;">수요자<br>(입고검사)</td>' +
-      cusValCells + cusJudge +
-      '</tr>';
-    
-    return supRow + cusRow;
-  }).join('');
-}
-
-// 통합 표에서 공급자가 spec을 작성하지 않은 행은 비활성화 (시각적으로 흐리게)
-// editCert 호출 후 자동으로 호출되어 IQC 모달 표시 시 적용됨
-function highlightActiveRows(){
-  if (!Array.isArray(MEAS_ITEMS)) return;
-  MEAS_ITEMS.forEach(item => {
-    const supSpec = document.getElementById('sup_' + item.key + '_spec');
-    const supRow = document.querySelector('tr.sup-row[data-item-key="' + item.key + '"]');
-    const cusRow = document.querySelector('tr.cus-row[data-item-key="' + item.key + '"]');
-    if (!supSpec || !supRow || !cusRow) return;
-    const hasSpec = (supSpec.value || '').trim().length > 0;
-    if (hasSpec) {
-      supRow.style.opacity = '';
-      cusRow.style.opacity = '';
-      cusRow.title = '';
+    if (isSupplier) {
+      specCell = '<td><input type="text" id="sup_' + item.key + '_spec" placeholder="' + specPlaceholder + '" class="meas-spec-input" oninput="syncSpecToCustomer(\'' + item.key + '\'); autoEvaluateAndSetRow(\'sup\', \'' + item.key + '\'); autoEvaluateAndSetRow(\'cus\', \'' + item.key + '\'); syncFinalJudgesFromRows();"></td>';
     } else {
-      // 공급자가 작성하지 않은 항목 → 흐리게
-      supRow.style.opacity = '0.45';
-      cusRow.style.opacity = '0.45';
-      cusRow.title = '공급자가 작성하지 않은 항목 — 입고검사 시 측정 불필요';
+      specCell = '<td><input type="text" id="cus_' + item.key + '_spec" class="meas-spec-input readonly-spec" readonly title="공급자 Spec 자동 반영"></td>';
     }
-  });
+
+    // 측정값 칸 (X1, X2, X3) — 입력 시 자동 OK/NG 판정 트리거
+    let valCells = '';
+    ['x1','x2','x3'].forEach(x => {
+      const oninput = ' oninput="autoEvaluateAndSetRow(\'' + prefix + '\', \'' + item.key + '\'); syncFinalJudgesFromRows();"';
+      if (item.type === 'number') {
+        valCells += '<td><input type="number" step="' + (item.step||'0.01') + '" id="' + prefix + '_' + item.key + '_' + x + '" placeholder="' + (item.placeholder||'') + '"' + oninput + '></td>';
+      } else {
+        valCells += '<td><input type="text" id="' + prefix + '_' + item.key + '_' + x + '" placeholder="' + (item.placeholder||'양호') + '"' + oninput + '></td>';
+      }
+    });
+
+    // 판정 라디오 (OK/NG) - 자동판정되지만 수동 변경도 허용
+    const radioName = prefix + '_' + item.key + '_j';
+    const judgeCell = '<td>' +
+      '<div class="judge-radio" id="' + prefix + '_' + item.key + '_j_wrap">' +
+        '<label><input type="radio" name="' + radioName + '" value="OK" checked><span>OK</span></label>' +
+        '<label><input type="radio" name="' + radioName + '" value="NG"><span>NG</span></label>' +
+      '</div>' +
+    '</td>';
+
+    return '<tr><td><strong>' + item.label + '</strong></td>' + specCell + valCells + judgeCell + '</tr>';
+  }).join('');
 }
 
 // 공급자 Spec → 수요자 Spec 자동 동기화
@@ -720,8 +675,6 @@ function syncSpecToCustomer(itemKey){
   if (supEl && cusEl) {
     cusEl.value = supEl.value;
   }
-  // spec이 채워졌는지에 따라 행 활성화 상태 갱신
-  if (typeof highlightActiveRows === 'function') highlightActiveRows();
 }
 
 // 모든 항목에 대해 공급자→수요자 Spec 동기화 (일괄)
@@ -1553,14 +1506,9 @@ function openCertModal(){
   document.getElementById('c_label').value = '부착';
   document.getElementById('c_remark').value = '';
 
-  // 측정 테이블 동적 생성 (통합 표)
-  const unifiedBody = document.getElementById('unifiedMeasBody');
-  if (unifiedBody) {
-    unifiedBody.innerHTML = buildMeasTable('sup');
-  } else {
-    const supBody = document.getElementById('supplierMeasBody');
-    if (supBody) supBody.innerHTML = buildMeasTable('sup');
-  }
+  // 측정 테이블 동적 생성 (공급자 + 수요자)
+  document.getElementById('supplierMeasBody').innerHTML = buildMeasTable('sup');
+  document.getElementById('customerMeasBody').innerHTML = buildMeasTable('cus');
 
   // ⭐ 측정값 SPEC도 모두 비움 (공급자가 작성하도록)
   MEAS_ITEMS.forEach(item => {
@@ -1624,15 +1572,9 @@ function editCert(idx){
   document.getElementById('c_label').value = c.label||'부착';
   document.getElementById('c_remark').value = c.remark||'';
 
-  // 측정 테이블 동적 생성 (통합 표)
-  const unifiedBody = document.getElementById('unifiedMeasBody');
-  if (unifiedBody) {
-    unifiedBody.innerHTML = buildMeasTable('sup');
-  } else {
-    // fallback - 구버전 호환
-    const supBody = document.getElementById('supplierMeasBody');
-    if (supBody) supBody.innerHTML = buildMeasTable('sup');
-  }
+  // 측정 테이블 동적 생성
+  document.getElementById('supplierMeasBody').innerHTML = buildMeasTable('sup');
+  document.getElementById('customerMeasBody').innerHTML = buildMeasTable('cus');
 
   // 공급자 + 수요자 측정값 로드
   MEAS_ITEMS.forEach(item => {
@@ -1664,8 +1606,6 @@ function editCert(idx){
   // 자동 판정 이벤트 부여 + 현재 값으로 즉시 판정
   attachAutoJudgeEvents();
   evaluateAllJudgements();
-  // 공급자가 작성하지 않은 행은 흐리게 처리
-  highlightActiveRows();
 
   document.getElementById('certModal').classList.add('show');
 }
@@ -3928,11 +3868,19 @@ async function loadCertsFromSupabase(){
     
     // 기존 certData와 중복 체크 (lot+heat+supplier 기준)
     if(!certData)certData=[];
-    let added=0,skipped=0;
+    let added=0,skipped=0,updated=0;
     remoteCerts.forEach(rc=>{
       const dupKey=(rc.lot_no||'')+'|'+(rc.heat_no||'')+'|'+(rc.supplier||'');
-      const exists=certData.some(c=>((c.lot||'')+'|'+(c.heat||'')+'|'+(c.supplier||''))===dupKey);
-      if(exists){skipped++;return;}
+      const existIdx=certData.findIndex(c=>((c.lot||'')+'|'+(c.heat||'')+'|'+(c.supplier||''))===dupKey);
+      
+      // 기존이 있어도 수요자가 이미 검사완료한 경우(_uninspected가 false이고 customer judge가 OK/NG)는 skip
+      // 미검사 상태이거나 공급자가 spec을 늦게 수정한 경우는 갱신 허용
+      if(existIdx>=0){
+        const existing=certData[existIdx];
+        // 수요자가 이미 검사 완료한 경우는 보존
+        const customerInspected = existing.judge==='OK'||existing.judge==='NG';
+        if(customerInspected){skipped++;return;}
+      }
       
       // Supabase 형식 → certData 형식 변환
       const cd=rc.cert_data||{};
@@ -3974,25 +3922,33 @@ async function loadCertsFromSupabase(){
         r6:isSUS?_dashRow():(isUninspected?_emptyRow('1000mm'):_certDataToRow(cd.r6,'1000mm')),
         r7:isSUS?_dashRow():(isUninspected?_emptyRow('0/+2'):_certDataToRow(cd.r7,'0/+2')),
         r8:isSUS?_dashRow():(isUninspected?_emptyRow('양호'):_certDataToRow(cd.r8,'양호')),
-        // 수요자 측정값 (입고 후 채움 - 일단 비움)
-        c_r1:_emptyRow('과도한 스크래치 및 오염, Burr 없을것'),
-        c_r2:_emptyRow(rc.material_type),
-        c_r3:_emptyRow((rc.width_mm||'')+'mm ±0.1'),
-        c_r4:_emptyRow((rc.thickness||'')+'T ±0.05'),
-        c_r5:isSUS?_dashRow():_emptyRow('65 이하'),
-        c_r6:isSUS?_dashRow():_emptyRow('1000mm'),
-        c_r7:isSUS?_dashRow():_emptyRow('0/+2'),
-        c_r8:isSUS?_dashRow():_emptyRow('양호'),
+        // 수요자 측정값 (공급자 spec 가져오되 측정값은 비움 - 입고검사 시 채움)
+        c_r1:isUninspected?_emptyRow('과도한 스크래치 및 오염, Burr 없을것'):_cusEmptyFromCert(cd.r1,'과도한 스크래치 및 오염, Burr 없을것'),
+        c_r2:isUninspected?_emptyRow(rc.material_type):_cusEmptyFromCert(cd.r2,rc.material_type),
+        c_r3:isUninspected?_emptyRow((rc.width_mm||'')+'mm ±0.1'):_cusEmptyFromCert(cd.r3,(rc.width_mm||'')+'mm ±0.1'),
+        c_r4:isUninspected?_emptyRow((rc.thickness||'')+'T ±0.05'):_cusEmptyFromCert(cd.r4,(rc.thickness||'')+'T ±0.05'),
+        c_r5:isSUS?_dashRow():(isUninspected?_emptyRow('65 이하'):_cusEmptyFromCert(cd.r5,'65 이하')),
+        c_r6:isSUS?_dashRow():(isUninspected?_emptyRow('1000mm'):_cusEmptyFromCert(cd.r6,'1000mm')),
+        c_r7:isSUS?_dashRow():(isUninspected?_emptyRow('0/+2'):_cusEmptyFromCert(cd.r7,'0/+2')),
+        c_r8:isSUS?_dashRow():(isUninspected?_emptyRow('양호'):_cusEmptyFromCert(cd.r8,'양호')),
         _from_supabase:true,
         _supabase_id:rc.id,
         _uninspected:isUninspected
       };
-      certData.push(newCert);
-      added++;
+      // 기존 항목 있으면 교체(spec 갱신), 없으면 추가
+      if(existIdx>=0){
+        // _key는 보존 (기존 ID 유지)
+        if(certData[existIdx]._key)newCert._key=certData[existIdx]._key;
+        certData[existIdx]=newCert;
+        updated++;
+      }else{
+        certData.push(newCert);
+        added++;
+      }
     });
     
-    console.log(`[IQC] 신규 추가: ${added}건, 중복 제외: ${skipped}건, 총 certData: ${certData.length}건`);
-    if(added>0){
+    console.log(`[IQC] 신규 추가: ${added}건, 갱신: ${updated}건, 중복 제외: ${skipped}건, 총 certData: ${certData.length}건`);
+    if(added>0||updated>0){
       saveCertToLS();
       renderCert();
     }else{
@@ -4004,13 +3960,28 @@ async function loadCertsFromSupabase(){
   }
 }
 
-// 보조 함수: cert_data의 한 항목 → 행 형식
+// 보조 함수: cert_data의 한 항목 → 행 형식 (공급자 입력 spec 우선)
 function _certDataToRow(item,specDefault){
   if(!item)return{spec:specDefault||'',x1:'',x2:'',x3:'',j:'OK'};
-  return{spec:specDefault||'',x1:item.x1||'',x2:item.x2||'',x3:item.x3||'',j:item.j||'OK'};
+  // 공급자가 입력한 spec이 있으면 그대로 사용, 없으면 default
+  return{
+    spec:(item.spec&&String(item.spec).trim())||specDefault||'',
+    x1:item.x1||'',
+    x2:item.x2||'',
+    x3:item.x3||'',
+    j:item.j||'OK'
+  };
 }
 function _emptyRow(spec){return{spec:spec||'',x1:'',x2:'',x3:'',j:'OK'}}
 function _dashRow(){return{spec:'-',x1:'-',x2:'-',x3:'-',j:'-'}}
+// 수요자 측정행: 공급자 spec 가져오되 X1~X3와 판정은 비움 (입고검사 시 채움)
+function _cusEmptyFromCert(item,specDefault){
+  if(!item)return{spec:specDefault||'',x1:'',x2:'',x3:'',j:''};
+  return{
+    spec:(item.spec&&String(item.spec).trim())||specDefault||'',
+    x1:'',x2:'',x3:'',j:''  // 수요자는 비워둠
+  };
+}
 
 // 페이지 로드 후 자동 실행 (appSettings 로드 후)
 // 페이지 로드 직후 + 1.5초 후 두 번 시도 (appSettings 미로딩 대비)
