@@ -299,23 +299,9 @@ const MEAS_ITEMS = [
 ];
 
 // 측정 테이블 동적 생성 (prefix = 'sup' 공급자 or 'cus' 수요자)
-// cusActiveKeys: 수요자 모드에서만 사용. 공급자가 측정한 row key 배열
-//   - undefined면 모든 항목 표시 (기존 동작)
-//   - 배열이면 해당 키만 활성, 나머지는 흐리게 표시 + 입력 비활성
-function buildMeasTable(prefix, cusActiveKeys){
+function buildMeasTable(prefix){
   const isSupplier = (prefix === 'sup');
   return MEAS_ITEMS.map(item => {
-    const isInactive = !isSupplier && Array.isArray(cusActiveKeys) && !cusActiveKeys.includes(item.key);
-    
-    if(isInactive){
-      // 비활성 행 — 회색 흐림, 입력 불가, "공급자 미측정" 표시
-      return '<tr style="opacity:0.35; background:#f8fafc;">' +
-        '<td><strong>' + item.label + '</strong></td>' +
-        '<td colspan="4" style="text-align:center; color:#94a3b8; font-style:italic; font-size:11px;">— 공급자 미측정 항목 (수요자 측정 불필요) —</td>' +
-        '<td><span style="color:#cbd5e0;">—</span></td>' +
-      '</tr>';
-    }
-    
     let specCell;
     const specPlaceholder = item.specPlaceholder || item.defaultSpec || '';
     if (isSupplier) {
@@ -324,7 +310,6 @@ function buildMeasTable(prefix, cusActiveKeys){
       specCell = '<td><input type="text" id="cus_' + item.key + '_spec" class="meas-spec-input readonly-spec" readonly title="공급자 Spec 자동 반영"></td>';
     }
 
-    // 측정값 칸 (X1, X2, X3) — 입력 시 자동 OK/NG 판정 트리거
     let valCells = '';
     ['x1','x2','x3'].forEach(x => {
       const oninput = ' oninput="autoEvaluateAndSetRow(\'' + prefix + '\', \'' + item.key + '\'); syncFinalJudgesFromRows();"';
@@ -335,7 +320,6 @@ function buildMeasTable(prefix, cusActiveKeys){
       }
     });
 
-    // 판정 라디오 (OK/NG) - 자동판정되지만 수동 변경도 허용
     const radioName = prefix + '_' + item.key + '_j';
     const judgeCell = '<td>' +
       '<div class="judge-radio" id="' + prefix + '_' + item.key + '_j_wrap">' +
@@ -345,6 +329,60 @@ function buildMeasTable(prefix, cusActiveKeys){
     '</td>';
 
     return '<tr><td><strong>' + item.label + '</strong></td>' + specCell + valCells + judgeCell + '</tr>';
+  }).join('');
+}
+
+// 공급자+수요자 통합 측정 테이블 (각 항목당 2행: 공급자 → 수요자)
+// 가시성 향상을 위해 분리하지 않고 한 표에서 비교 가능
+function buildUnifiedMeasTable(){
+  return MEAS_ITEMS.map(item => {
+    const specPlaceholder = item.specPlaceholder || item.defaultSpec || '';
+    
+    // 공급자 행
+    const supSpec = '<input type="text" id="sup_' + item.key + '_spec" placeholder="' + specPlaceholder + '" class="meas-spec-input" oninput="syncSpecToCustomer(\'' + item.key + '\'); autoEvaluateAndSetRow(\'sup\', \'' + item.key + '\'); autoEvaluateAndSetRow(\'cus\', \'' + item.key + '\'); syncFinalJudgesFromRows();">';
+    let supValCells = '';
+    ['x1','x2','x3'].forEach(x => {
+      const oninput = ' oninput="autoEvaluateAndSetRow(\'sup\', \'' + item.key + '\'); syncFinalJudgesFromRows();"';
+      if (item.type === 'number') {
+        supValCells += '<td><input type="number" step="' + (item.step||'0.01') + '" id="sup_' + item.key + '_' + x + '" placeholder="' + (item.placeholder||'') + '"' + oninput + '></td>';
+      } else {
+        supValCells += '<td><input type="text" id="sup_' + item.key + '_' + x + '" placeholder="' + (item.placeholder||'양호') + '"' + oninput + '></td>';
+      }
+    });
+    const supRadioName = 'sup_' + item.key + '_j';
+    const supJudge = '<div class="judge-radio" id="sup_' + item.key + '_j_wrap">' +
+      '<label><input type="radio" name="' + supRadioName + '" value="OK" checked><span>OK</span></label>' +
+      '<label><input type="radio" name="' + supRadioName + '" value="NG"><span>NG</span></label></div>';
+
+    // 수요자 행 (공급자 측정 여부와 무관하게 항상 활성)
+    const cusSpec = '<input type="text" id="cus_' + item.key + '_spec" class="meas-spec-input readonly-spec" readonly title="공급자 Spec 자동 반영">';
+    let cusValCells = '';
+    ['x1','x2','x3'].forEach(x => {
+      const oninput = ' oninput="autoEvaluateAndSetRow(\'cus\', \'' + item.key + '\'); syncFinalJudgesFromRows();"';
+      if (item.type === 'number') {
+        cusValCells += '<td><input type="number" step="' + (item.step||'0.01') + '" id="cus_' + item.key + '_' + x + '" placeholder="' + (item.placeholder||'') + '"' + oninput + '></td>';
+      } else {
+        cusValCells += '<td><input type="text" id="cus_' + item.key + '_' + x + '" placeholder="' + (item.placeholder||'양호') + '"' + oninput + '></td>';
+      }
+    });
+    const cusRadioName = 'cus_' + item.key + '_j';
+    const cusJudge = '<div class="judge-radio" id="cus_' + item.key + '_j_wrap">' +
+      '<label><input type="radio" name="' + cusRadioName + '" value="OK" checked><span>OK</span></label>' +
+      '<label><input type="radio" name="' + cusRadioName + '" value="NG"><span>NG</span></label></div>';
+
+    // 한 항목당 2행: 공급자(파란 배경) → 수요자(녹색 배경)
+    return '<tr style="background:#eff6ff;">' +
+      '<td rowspan="2" style="vertical-align:middle; background:white;"><strong>' + item.label + '</strong></td>' +
+      '<td rowspan="2" style="vertical-align:middle; background:white;">' + supSpec + '</td>' +
+      '<td style="background:#dbeafe; font-size:10px; color:#1e40af; font-weight:700; text-align:center; padding:2px 6px;">공급자</td>' +
+      supValCells +
+      '<td>' + supJudge + '</td>' +
+      '</tr>' +
+      '<tr style="background:#f0fdf4;">' +
+      '<td style="background:#dcfce7; font-size:10px; color:#166534; font-weight:700; text-align:center; padding:2px 6px;">수요자</td>' +
+      cusValCells +
+      '<td>' + cusJudge + '</td>' +
+      '</tr>';
   }).join('');
 }
 
@@ -1174,9 +1212,16 @@ function openCertModal(){
   document.getElementById('c_label').value = '부착';
   document.getElementById('c_remark').value = '';
 
-  // 측정 테이블 동적 생성 (공급자 + 수요자)
-  document.getElementById('supplierMeasBody').innerHTML = buildMeasTable('sup');
-  document.getElementById('customerMeasBody').innerHTML = buildMeasTable('cus');
+  // 측정 테이블 동적 생성 (공급자+수요자 통합)
+  const unifiedBody = document.getElementById('unifiedMeasBody');
+  if (unifiedBody) {
+    unifiedBody.innerHTML = buildUnifiedMeasTable();
+  } else {
+    const supBody = document.getElementById('supplierMeasBody');
+    const cusBody = document.getElementById('customerMeasBody');
+    if (supBody) supBody.innerHTML = buildMeasTable('sup');
+    if (cusBody) cusBody.innerHTML = buildMeasTable('cus');
+  }
 
   // ⭐ 측정값 SPEC도 모두 비움 (공급자가 작성하도록)
   MEAS_ITEMS.forEach(item => {
@@ -1228,15 +1273,17 @@ function editCert(idx){
   document.getElementById('c_label').value = c.label||'부착';
   document.getElementById('c_remark').value = c.remark||'';
 
-  const cusActiveKeys = MEAS_ITEMS.filter(item => {
-    const sd = c[item.key] || {};
-    return (sd.x1 && String(sd.x1).trim()) ||
-           (sd.x2 && String(sd.x2).trim()) ||
-           (sd.x3 && String(sd.x3).trim());
-  }).map(item => item.key);
-  
-  document.getElementById('supplierMeasBody').innerHTML = buildMeasTable('sup');
-  document.getElementById('customerMeasBody').innerHTML = buildMeasTable('cus', cusActiveKeys);
+  // 통합 측정 테이블 (공급자 + 수요자 한 표에 표시)
+  const unifiedBody = document.getElementById('unifiedMeasBody');
+  if (unifiedBody) {
+    unifiedBody.innerHTML = buildUnifiedMeasTable();
+  } else {
+    // 구버전 호환 (분리 표가 남아있으면 둘 다 채움)
+    const supBody = document.getElementById('supplierMeasBody');
+    const cusBody = document.getElementById('customerMeasBody');
+    if (supBody) supBody.innerHTML = buildMeasTable('sup');
+    if (cusBody) cusBody.innerHTML = buildMeasTable('cus');
+  }
 
   // 공급자 + 수요자 측정값 로드
   MEAS_ITEMS.forEach(item => {
@@ -1244,13 +1291,11 @@ function editCert(idx){
     const cusData = c['c_' + item.key] || {};
 
     // 공급자 Spec — 저장된 값만 사용 (defaultSpec 강제 채우기 제거)
-    // 공급자가 측정한 행만 spec 채워짐, 미측정 행은 빈값 유지
     const supSpec = supData.spec || '';
     const supSpecEl = document.getElementById('sup_' + item.key + '_spec');
     if (supSpecEl) supSpecEl.value = supSpec;
 
     // 수요자 Spec — 공급자 Spec과 동일 (읽기전용, 자동 반영)
-    // 비활성 행은 input 자체가 없으니 null 체크
     const cusSpecEl = document.getElementById('cus_' + item.key + '_spec');
     if (cusSpecEl) cusSpecEl.value = supSpec;
 
