@@ -2,11 +2,12 @@
 // 데이터 저장소 (localStorage 기반)
 // ========================================
 const LS_LOG = 'tj_material_log_v1';
-const LS_CERT = 'tj_material_cert_v3';
+const LS_CERT = 'tj_material_cert_v4';  // v4: default spec 잔재 정리, 측정 안 한 행은 표시 안 함
 
-// v1/v2 → v3 마이그레이션 (SUS 데이터 추가 반영)
-['tj_material_cert_v1', 'tj_material_cert_v2'].forEach(k => {
-  if (localStorage.getItem(k) && !localStorage.getItem('tj_material_cert_v3')) {
+// v1/v2/v3 → v4 마이그레이션 (default spec 강제 표시 버그 정리)
+['tj_material_cert_v1', 'tj_material_cert_v2', 'tj_material_cert_v3'].forEach(k => {
+  if (localStorage.getItem(k) && !localStorage.getItem('tj_material_cert_v4')) {
+    console.log('[Migration] 옛 cert 캐시 정리:', k);
     localStorage.removeItem(k);
   }
 });
@@ -621,7 +622,7 @@ function exportLog(){
 
 // 검사 항목 정의 (수치형 vs 텍스트형)
 const MEAS_ITEMS = [
-  { key:'r1', label:'표면',        defaultSpec:'과도한 스크래치 및 오염, Burr 없을것', type:'text',   placeholder:'양호' },
+  { key:'r1', label:'표면',        defaultSpec:'결함없을것', type:'text',   placeholder:'양호' },
   { key:'r2', label:'재질',        defaultSpec:'SPCC',               type:'text',   placeholder:'양호' },
   { key:'r3', label:'폭 (mm)',     defaultSpec:'',                   type:'number', step:'0.01', placeholder:'90.00', specPlaceholder:'예: 90mm ±0.1' },
   { key:'r4', label:'두께 (mm)',   defaultSpec:'0.6T ±0.05',         type:'number', step:'0.001', placeholder:'0.594' },
@@ -1349,17 +1350,28 @@ function renderCert(){
 
   const buildMeasRows = (c, prefix) => {
     // prefix: 'r' (공급자) or 'c_r' (수요자)
+    // 핵심 규칙: 공급자(r)가 X1~X3 중 하나라도 측정값을 입력한 행만 표시
+    // → SPCC/SUS 구분 불필요. 공급자가 측정 안 한 항목은 default spec도 표시 안 함
     const rows = [];
-    rows.push(renderMeasRow('표면', c[prefix+'1']));
-    rows.push(renderMeasRow('재질', c[prefix+'2']));
-    rows.push(renderMeasRow('폭', c[prefix+'3']));
-    rows.push(renderMeasRow('두께', c[prefix+'4']));
-    if (!isSUS(c)) {
-      // SPCC만 8행 표시
-      rows.push(renderMeasRow('경도 HRB', c[prefix+'5']));
-      rows.push(renderMeasRow('연신율 EL(%)', c[prefix+'6']));
-      rows.push(renderMeasRow('형곡', c[prefix+'7']));
-      rows.push(renderMeasRow('평탄도', c[prefix+'8']));
+    const labels = {1:'표면', 2:'재질', 3:'폭', 4:'두께', 5:'경도 HRB', 6:'연신율 EL(%)', 7:'형곡', 8:'평탄도'};
+    
+    for(let i=1; i<=8; i++){
+      // 판정 기준은 공급자(r) 데이터의 측정값 유무
+      const rData = c['r'+i];
+      const hasMeas = rData && (
+        (rData.x1 && String(rData.x1).trim()) ||
+        (rData.x2 && String(rData.x2).trim()) ||
+        (rData.x3 && String(rData.x3).trim())
+      );
+      // 공급자가 X1~X3 중 하나라도 입력했을 때만 행 표시
+      if(hasMeas){
+        rows.push(renderMeasRow(labels[i], c[prefix+i]));
+      }
+    }
+    
+    // 표시할 행이 0이면 빈 메시지
+    if(rows.length===0){
+      return '<tr><td colspan="6" style="text-align:center; padding:20px; color:#94a3b8; font-style:italic;">측정 항목이 없습니다</td></tr>';
     }
     return rows.join('');
   };
@@ -2811,7 +2823,7 @@ function autoFillMeasSpecsByMaterial(material, thick, width){
 // 재질별 SPEC 템플릿 (검사 기준서 기반)
 const MATERIAL_SPEC_TEMPLATES = {
   'SPCC': {
-    r1: '과도한 스크래치 및 오염 없을 것',
+    r1: '결함없을것',
     r2: 'SPCC',
     r3: '{width} ±0.1',
     r4: '{thick} ±0.05',
@@ -2821,7 +2833,7 @@ const MATERIAL_SPEC_TEMPLATES = {
     r8: '0/+12, 0/+8, 0/+6'
   },
   'SUS304': {
-    r1: '과도한 스크래치 및 오염 없을 것',
+    r1: '결함없을것',
     r2: 'SUS304',
     r3: '{width} ±0.1',
     r4: '{thick} ±0.02',
@@ -2831,7 +2843,7 @@ const MATERIAL_SPEC_TEMPLATES = {
     r8: '0/+12, 0/+8, 0/+6'
   },
   'SUS430': {
-    r1: '과도한 스크래치 및 오염 없을 것',
+    r1: '결함없을것',
     r2: 'SUS430',
     r3: '{width} ±0.1',
     r4: '{thick} ±0.02',
@@ -3931,7 +3943,7 @@ async function loadCertsFromSupabase(){
         label:'미부착',  // 입고 전 상태
         remark:remarkParts.join(' / '),
         // 공급자 측정값 (cert_data로부터, 미검사면 빈 값)
-        r1:isUninspected?_emptyRow('과도한 스크래치 및 오염, Burr 없을것'):_certDataToRow(cd.r1,'과도한 스크래치 및 오염, Burr 없을것'),
+        r1:isUninspected?_emptyRow('결함없을것'):_certDataToRow(cd.r1,'결함없을것'),
         r2:isUninspected?_emptyRow(rc.material_type):_certDataToRow(cd.r2,rc.material_type),
         r3:isUninspected?_emptyRow((rc.width_mm||'')+'mm ±0.1'):_certDataToRow(cd.r3,(rc.width_mm||'')+'mm ±0.1'),
         r4:isUninspected?_emptyRow((rc.thickness||'')+'T ±0.05'):_certDataToRow(cd.r4,(rc.thickness||'')+'T ±0.05'),
@@ -3940,7 +3952,7 @@ async function loadCertsFromSupabase(){
         r7:isSUS?_dashRow():(isUninspected?_emptyRow('0/+2'):_certDataToRow(cd.r7,'0/+2')),
         r8:isSUS?_dashRow():(isUninspected?_emptyRow('양호'):_certDataToRow(cd.r8,'양호')),
         // 수요자 측정값 (공급자 spec 가져오되 측정값은 비움 - 입고검사 시 채움)
-        c_r1:isUninspected?_emptyRow('과도한 스크래치 및 오염, Burr 없을것'):_cusEmptyFromCert(cd.r1,'과도한 스크래치 및 오염, Burr 없을것'),
+        c_r1:isUninspected?_emptyRow('결함없을것'):_cusEmptyFromCert(cd.r1,'결함없을것'),
         c_r2:isUninspected?_emptyRow(rc.material_type):_cusEmptyFromCert(cd.r2,rc.material_type),
         c_r3:isUninspected?_emptyRow((rc.width_mm||'')+'mm ±0.1'):_cusEmptyFromCert(cd.r3,(rc.width_mm||'')+'mm ±0.1'),
         c_r4:isUninspected?_emptyRow((rc.thickness||'')+'T ±0.05'):_cusEmptyFromCert(cd.r4,(rc.thickness||'')+'T ±0.05'),
