@@ -132,7 +132,6 @@ function showTab(id){
   document.querySelectorAll('.tab-btn').forEach(el=>el.classList.remove('active'));
   document.getElementById(id).classList.add('active');
   event.target.classList.add('active');
-  if (id === 'dashboard')
   if (id === 'log') renderLog();
   if (id === 'cert') {
     // cert 탭 진입 시 항상 리스트 화면 표시 (박스 선택 화면 제거됨)
@@ -1109,18 +1108,6 @@ function renderCert(){
             ${buildMeasRows(c, 'r')}
           </tbody>
         </table>
-
-        <!-- 밀시트 첨부 영역 (공급자 작성란 맨 아래) -->
-        <div style="margin-top:12px; padding:10px; background:#f0fdf4; border:1px solid #16a34a; border-radius:5px;">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-            <div style="font-weight:700; font-size:13px; color:#14532d;">
-              <span class="cert-badge" style="background:#16a34a; color:white; margin-right:6px;">밀시트</span>
-              📎 밀시트 원본 첨부
-            </div>
-            
-          </div>
-          <span style="color:#64748b; font-size:11px;">클릭하여 확대</span></div>` : '<div style="padding:15px; text-align:center; color:#94a3b8; font-size:12px; background:white; border-radius:4px; border:1px dashed #cbd5e0;">아직 밀시트가 첨부되지 않았습니다. "첨부하기" 버튼을 눌러 밀시트 스캔을 업로드하세요.</div>'}
-        </div>
       </div>
 
       <!-- 수요자 작성란 -->
@@ -2833,7 +2820,6 @@ async function pullFromSupabase(){
 
     if (document.getElementById('logBody')) renderLog();
     if (document.getElementById('certList')) renderCert();
-    if (document.getElementById('recentLogBody'))
   } catch(e) {
     syncState.isOnline = false;
     updateSyncBadge();
