@@ -861,13 +861,27 @@ function collectMeasData(prefix){
 // 측정 행 렌더러 (카드 뷰용)
 function renderMeasRow(label, data){
   const d = data || {};
+  // 측정값이 모두 비어있으면 미측정 행으로 처리 (흐리게 표시, 판정 '-' 처리)
+  const hasAny = (d.spec && String(d.spec).trim()) || (d.x1 && String(d.x1).trim()) ||
+                 (d.x2 && String(d.x2).trim()) || (d.x3 && String(d.x3).trim());
+  if(!hasAny){
+    return '<tr style="opacity:0.4; background:#fafafa;">' +
+      '<td><strong>' + label + '</strong></td>' +
+      '<td colspan="4" style="text-align:center; color:#94a3b8; font-style:italic; font-size:11px;">— 미측정 —</td>' +
+      '<td><span style="color:#cbd5e0;">—</span></td>' +
+      '</tr>';
+  }
+  const judgeText = d.j || '';
+  const judgeBadge = judgeText==='OK' ? '<span class="badge badge-ok">OK</span>'
+                   : judgeText==='NG' ? '<span class="badge badge-ng">NG</span>'
+                   : '<span style="color:#94a3b8;">-</span>';
   return '<tr>' +
     '<td><strong>' + label + '</strong></td>' +
     '<td>' + (d.spec || '') + '</td>' +
     '<td>' + (d.x1 || '') + '</td>' +
     '<td>' + (d.x2 || '') + '</td>' +
     '<td>' + (d.x3 || '') + '</td>' +
-    '<td><span class="badge badge-' + (d.j === 'OK' ? 'ok' : (d.j === 'NG' ? 'ng' : 'info')) + '">' + (d.j || '-') + '</span></td>' +
+    '<td>' + judgeBadge + '</td>' +
     '</tr>';
 }
 
@@ -1403,7 +1417,7 @@ function renderCert(){
         </div>
         <table class="std-table" style="margin-top:8px;">
           <thead>
-            <tr><th style="width:90px;">검사항목</th><th>Specification</th><th>X1</th><th>X2</th><th>X3</th><th style="width:60px;">판정</th></tr>
+            <tr><th style="width:90px;">검사항목</th><th>규격</th><th>X1</th><th>X2</th><th>X3</th><th style="width:60px;">판정</th></tr>
           </thead>
           <tbody>
             ${buildMeasRows(c, 'r')}
@@ -1446,7 +1460,7 @@ function renderCert(){
         ${hasCustomerMeas(c) ? `
         <table class="std-table" style="margin-top:8px;">
           <thead>
-            <tr><th style="width:90px;">검사항목</th><th>Specification</th><th>X1</th><th>X2</th><th>X3</th><th style="width:60px;">판정</th></tr>
+            <tr><th style="width:90px;">검사항목</th><th>규격</th><th>X1</th><th>X2</th><th>X3</th><th style="width:60px;">판정</th></tr>
           </thead>
           <tbody>
             ${buildMeasRows(c, 'c_r')}
@@ -3962,21 +3976,32 @@ async function loadCertsFromSupabase(){
 
 // 보조 함수: cert_data의 한 항목 → 행 형식 (공급자 입력 spec 우선)
 function _certDataToRow(item,specDefault){
-  if(!item)return{spec:specDefault||'',x1:'',x2:'',x3:'',j:'OK'};
+  // item 자체가 없으면 항목을 측정 안 한 것 → spec/X1~3/판정 모두 비움 (default spec 사용 안 함)
+  if(!item)return{spec:'',x1:'',x2:'',x3:'',j:''};
   // 공급자가 입력한 spec이 있으면 그대로 사용, 없으면 default
+  // 단, X1~X3가 모두 비어있으면 측정 안 한 항목으로 보고 spec/판정도 비움
+  const hasMeas=(item.x1&&String(item.x1).trim())||(item.x2&&String(item.x2).trim())||(item.x3&&String(item.x3).trim());
+  if(!hasMeas&&!item.spec){
+    return{spec:'',x1:'',x2:'',x3:'',j:''};
+  }
   return{
     spec:(item.spec&&String(item.spec).trim())||specDefault||'',
     x1:item.x1||'',
     x2:item.x2||'',
     x3:item.x3||'',
-    j:item.j||'OK'
+    j:item.j||(hasMeas?'OK':'')
   };
 }
 function _emptyRow(spec){return{spec:spec||'',x1:'',x2:'',x3:'',j:'OK'}}
 function _dashRow(){return{spec:'-',x1:'-',x2:'-',x3:'-',j:'-'}}
 // 수요자 측정행: 공급자 spec 가져오되 X1~X3와 판정은 비움 (입고검사 시 채움)
+// 공급자가 측정 안 한 항목은 수요자도 비워둠
 function _cusEmptyFromCert(item,specDefault){
-  if(!item)return{spec:specDefault||'',x1:'',x2:'',x3:'',j:''};
+  if(!item)return{spec:'',x1:'',x2:'',x3:'',j:''};
+  const hasMeas=(item.x1&&String(item.x1).trim())||(item.x2&&String(item.x2).trim())||(item.x3&&String(item.x3).trim());
+  if(!hasMeas&&!item.spec){
+    return{spec:'',x1:'',x2:'',x3:'',j:''};
+  }
   return{
     spec:(item.spec&&String(item.spec).trim())||specDefault||'',
     x1:'',x2:'',x3:'',j:''  // 수요자는 비워둠
