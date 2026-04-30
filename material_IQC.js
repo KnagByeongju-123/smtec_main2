@@ -2262,8 +2262,8 @@ const SETTINGS_LS_KEY = 'tj_material_settings_v1';
 // 이 값을 비워두면 설정 탭에서 수동 입력 모드로 동작합니다.
 // 하드코딩된 값이 있으면 앱 시작 시 자동으로 연결됩니다.
 // ======================================================================
-const DEFAULT_SUPABASE_URL = 'https://jgvikmakenpllwxwdugk.supabase.co';
-const DEFAULT_SUPABASE_KEY = 'sb_publishable_sKp-6nz2PQ9LxQ5pF-nYkg_YwoEJN6S';
+const DEFAULT_SUPABASE_URL = 'https://omngtyewdaqpphnzeate.supabase.co';
+const DEFAULT_SUPABASE_KEY = 'sb_publishable_9j2YkkL-7ul1TrhH-NjVdQ_vWDG2-1D';
 
 // 설정 상태
 let appSettings = {
@@ -2285,8 +2285,8 @@ function loadSettingsFromLS(){
       if (!appSettings.supabaseUrl) appSettings.supabaseUrl = DEFAULT_SUPABASE_URL;
       if (!appSettings.supabaseKey) appSettings.supabaseKey = DEFAULT_SUPABASE_KEY;
       // ★ 옛 프로젝트 URL 발견 시 자동으로 새 URL로 교체
-      // 운영 DB는 jgvikmakenpllwxwdugk 1개로 통일됨
-      const OLD_URLS = ['ebthltdmxpzlkfwvdloz', 'omngtyewdaqpphnzeate'];
+      // 운영 DB는 omngtyewdaqpphnzeate 1개로 통일됨
+      const OLD_URLS = ['ebthltdmxpzlkfwvdloz', 'jgvikmakenpllwxwdugk'];
       if (OLD_URLS.some(o => (appSettings.supabaseUrl||'').indexOf(o) >= 0)) {
         console.log('[Migration] 옛 Supabase URL 발견 → 새 URL로 교체:', appSettings.supabaseUrl, '→', DEFAULT_SUPABASE_URL);
         appSettings.supabaseUrl = DEFAULT_SUPABASE_URL;
@@ -3085,8 +3085,11 @@ function toggleGasUrlVisibility(){
   el.type = el.type === 'password' ? 'text' : 'password';
 }
 function toggleSupabaseKeyVisibility(){
-  const el = document.getElementById('supabaseKey');
-  el.type = el.type === 'password' ? 'text' : 'password';
+  const elKey = document.getElementById('supabaseKey');
+  const elUrl = document.getElementById('supabaseUrl');
+  const newType = elKey.type === 'password' ? 'text' : 'password';
+  elKey.type = newType;
+  if(elUrl) elUrl.type = newType;
 }
 
 // ==================================================================
