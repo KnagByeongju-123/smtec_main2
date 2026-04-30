@@ -963,7 +963,20 @@ function renderCert(){
   const fSupp = selSupp.value;
   const fText = document.getElementById('certFilterText').value.toLowerCase();
 
-  let data = [...certData];
+  // ⭐ 수입검사 대기 항목만 표시 (judge가 OK/NG 아닌 것 = 미검사/대기 상태)
+  let data = certData.filter(c => {
+    const j = String(c.judge||'').trim();
+    return c._uninspected === true || j === '' || j === '대기' || j === '미검사';
+  });
+  
+  // 대기 건수 배지 갱신 (필터 적용 전 전체 대기 건수)
+  const cntEl = document.getElementById('certPendingCount');
+  if (cntEl) {
+    const total = data.length;
+    cntEl.textContent = total + '건';
+    cntEl.style.background = total > 0 ? '#f59e0b' : '#10b981';
+  }
+  
   if (fSupp) data = data.filter(c=>c.supplier===fSupp);
   if (fText) data = data.filter(c=>
     (c.lot||'').toLowerCase().includes(fText) ||
@@ -976,25 +989,29 @@ function renderCert(){
   if (data.length === 0){
     const supplierName = fSupp || '';
     const totalAll = certData.length;
-    const totalShown = data.length;
+    const totalCompleted = certData.filter(c => {
+      const j = String(c.judge||'').trim();
+      return j === 'OK' || j === 'NG';
+    }).length;
     const diagInfo = `<div style="margin-top:20px; padding:12px 16px; background:#f8fafc; border:1px dashed #cbd5e1; border-radius:8px; font-size:11px; color:#64748b; text-align:left;">
       🔍 진단 정보<br>
-      • 전체 certData: <b>${totalAll}건</b><br>
+      • 전체 성적서: <b>${totalAll}건</b> (검사 완료 ${totalCompleted}건 / 대기 ${totalAll - totalCompleted}건)<br>
       • 현재 필터: <b>${supplierName||'전체'}</b> ${fText?` / 검색어: "${fText}"`:''}<br>
       • Supabase 자동 조회: 페이지 로드 1.5초 후, 그 후 5분마다<br>
       <button onclick="loadCertsFromSupabase().then(()=>alert('✅ Supabase에서 다시 조회했습니다.\\n콘솔(F12)에서 결과 확인 가능'))" style="margin-top:8px; padding:6px 14px; background:#3b82f6; color:white; border:none; border-radius:5px; font-size:12px; cursor:pointer;">🔄 Supabase 다시 조회</button>
     </div>`;
     const msg = supplierName
       ? `<div style="padding:50px 30px; text-align:center; color:#64748b;">
-           <div style="font-size:48px; margin-bottom:15px; opacity:0.4;">📋</div>
+           <div style="font-size:48px; margin-bottom:15px;">✅</div>
            <div style="font-size:16px; font-weight:600; color:#475569; margin-bottom:8px;">${supplierName}</div>
-           <div style="font-size:13px; margin-bottom:20px;">등록된 검사성적서가 없습니다.</div>
-           <button class="btn btn-primary" onclick="openCertModal()" style="padding:10px 24px; font-size:13px;">＋ 신규 성적서 등록</button>
+           <div style="font-size:13px; margin-bottom:20px;">대기 중인 수입검사가 없습니다.</div>
+           <div style="font-size:11px; color:#94a3b8;">소재업체에서 신규 등록 시 자동으로 표시됩니다.</div>
            ${diagInfo}
          </div>`
       : `<div style="padding:30px; text-align:center; color:#64748b;">
-           <div style="font-size:48px; margin-bottom:15px; opacity:0.4;">📋</div>
-           <div style="font-size:14px; margin-bottom:10px;">등록된 성적서가 없습니다.</div>
+           <div style="font-size:48px; margin-bottom:15px;">✅</div>
+           <div style="font-size:14px; margin-bottom:10px; font-weight:600; color:#475569;">대기 중인 수입검사가 없습니다.</div>
+           <div style="font-size:11px; color:#94a3b8;">검사 완료된 항목은 관리대장 탭에서 확인 가능합니다.</div>
            ${diagInfo}
          </div>`;
     list.innerHTML = msg;
