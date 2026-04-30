@@ -1494,27 +1494,16 @@ function showToast(msg){
 function editCustomerPart(idx){
   editCert(idx);
 
-  // 모달이 열린 후 공급자 영역 접기 + 수요자 영역 강조
+  // 모달이 열린 후 수요자 영역 강조 (공급자 박스 collapse는 제거 - 통합 표가 공급자 박스 안에 있어 같이 사라지는 버그)
   setTimeout(() => {
     const modal = document.querySelector('#certModal .modal');
     if (modal) {
       modal.classList.add('customer-focus');
     }
 
-    const supplierBoxes = document.querySelectorAll('#certModal .cert-section-box.supplier');
-    supplierBoxes.forEach(box => {
-      box.classList.add('collapsed');
-      const title = box.querySelector('.cert-section-title');
-      if (title && !title.dataset.toggleBound) {
-        title.dataset.toggleBound = '1';
-        title.addEventListener('click', () => {
-          box.classList.toggle('collapsed');
-        });
-      }
-    });
-
     document.getElementById('certModalTitle').textContent = '📝 수요자 수입검사 작성';
 
+    // 수요자 작성란으로 스크롤
     const customerBox = document.querySelector('#certModal .cert-section-box.customer');
     if (customerBox) {
       customerBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -1530,8 +1519,6 @@ const _origCloseCertModal = closeCertModal;
 closeCertModal = function(){
   const modal = document.querySelector('#certModal .modal');
   if (modal) modal.classList.remove('customer-focus');
-  const supplierBoxes = document.querySelectorAll('#certModal .cert-section-box.supplier');
-  supplierBoxes.forEach(box => box.classList.remove('collapsed'));
   _origCloseCertModal();
 };
 
