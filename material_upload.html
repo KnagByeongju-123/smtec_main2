@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>소재입고 등록 (Rev4.6.3)</title>
+  <title>소재입고 등록 (Rev4.6.4)</title>
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
@@ -102,7 +102,7 @@
 </head>
 <body>
 <div class="hdr">
-  <h1>📤 소재입고 등록 (Rev4.6.3)</h1>
+  <h1>📤 소재입고 등록 (Rev4.6.4)</h1>
   <p>소재업체 템플릿 업로드 → DB 저장 · <span style="color:#ffeb3b;font-weight:700">성적서, 밀시트 첨부 가능</span></p>
 </div>
 <div class="tabs">
@@ -323,11 +323,26 @@ CREATE POLICY "anon_all" ON move_history_tj FOR ALL TO anon USING (true) WITH CH
 <script>
 function getKST(d){const utc=d.getTime()+d.getTimezoneOffset()*60000;return new Date(utc+9*3600000)}
 function kstDateStr(d){const k=getKST(d||new Date());return k.getFullYear()+'-'+String(k.getMonth()+1).padStart(2,'0')+'-'+String(k.getDate()).padStart(2,'0')}
-// 엑셀 SheetJS의 Date 객체 → YYYY-MM-DD (UTC 기준 추출)
-// SheetJS는 cellDates:true에서 엑셀 날짜를 UTC 자정 Date로 만들기 때문에 UTC 기준으로 읽어야 정확
+// 엑셀 SheetJS의 Date 객체 → YYYY-MM-DD
+// timezone에 무관하게 안정적으로 동작하도록 여러 fallback 적용
 function excelDateToYMD(d){
-  if(!(d instanceof Date)) return String(d||'').trim();
-  return d.getUTCFullYear()+'-'+String(d.getUTCMonth()+1).padStart(2,'0')+'-'+String(d.getUTCDate()).padStart(2,'0');
+  if(!d) return '';
+  if(typeof d==='string') return d.trim();
+  if(typeof d==='number'){
+    // 엑셀 시리얼 번호 (1900-01-01 기준) → YMD 직접 계산
+    // 엑셀 시리얼 1 = 1900-01-01 (단, 1900 윤년 버그로 +1 보정 안 함이 정확)
+    // 1899-12-30이 시리얼 0인 게 표준
+    const epoch=Date.UTC(1899,11,30);  // 1899-12-30 UTC
+    const ms=epoch+d*86400000;
+    const dt=new Date(ms);
+    return dt.getUTCFullYear()+'-'+String(dt.getUTCMonth()+1).padStart(2,'0')+'-'+String(dt.getUTCDate()).padStart(2,'0');
+  }
+  if(d instanceof Date){
+    // SheetJS는 cellDates:true에서 보통 UTC 자정 Date를 반환
+    // UTC 기준으로 추출
+    return d.getUTCFullYear()+'-'+String(d.getUTCMonth()+1).padStart(2,'0')+'-'+String(d.getUTCDate()).padStart(2,'0');
+  }
+  return String(d).trim();
 }
 function kstTimeStr(d){const k=getKST(d||new Date());return String(k.getHours()).padStart(2,'0')+':'+String(k.getMinutes()).padStart(2,'0')+':'+String(k.getSeconds()).padStart(2,'0')}
 function kstISOString(d){
@@ -572,7 +587,7 @@ document.addEventListener('DOMContentLoaded',()=>{const drop=document.getElement
 
 function handleFile(input){const f=input.files[0];if(f)parseFile(f);input.value=''}
 
-function parseFile(file){const reader=new FileReader();reader.onload=function(e){try{const wb=XLSX.read(e.target.result,{type:'array',cellDates:true});const sheetName=wb.SheetNames.find(n=>n==='입고등록')||wb.SheetNames[0];const ws=wb.Sheets[sheetName];const allRows=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});_batchCompany='';_batchDate='';if(allRows.length>=1){const r1=allRows[0];if(r1[1])_batchCompany=String(r1[1]).trim();let dv=r1[4];if(dv instanceof Date)_batchDate=excelDateToYMD(dv);else if(dv)_batchDate=String(dv).trim()}let raw=XLSX.utils.sheet_to_json(ws,{range:2,defval:''});raw=raw.filter(r=>Object.values(r).some(v=>v!==''));raw.forEach(r=>{if(_batchCompany&&!r['업체명'])r['업체명']=_batchCompany;if(_batchDate&&!r['입고일자'])r['입고일자']=_batchDate});if(!raw.length){showToast('데이터가 없습니다');return}_batchData=raw;
+function parseFile(file){const reader=new FileReader();reader.onload=function(e){try{const wb=XLSX.read(e.target.result,{type:'array',cellDates:true,UTC:true});const sheetName=wb.SheetNames.find(n=>n==='입고등록')||wb.SheetNames[0];const ws=wb.Sheets[sheetName];const allRows=XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:true});_batchCompany='';_batchDate='';if(allRows.length>=1){const r1=allRows[0];if(r1[1])_batchCompany=String(r1[1]).trim();let dv=r1[4];console.log('[DEBUG] E1:',dv,'type:',typeof dv,'isDate:',dv instanceof Date);if(dv instanceof Date)console.log('[DEBUG] iso:',dv.toISOString(),'getUTCDate:',dv.getUTCDate(),'getDate:',dv.getDate());_batchDate=excelDateToYMD(dv);console.log('[DEBUG] _batchDate result:',_batchDate)}let raw=XLSX.utils.sheet_to_json(ws,{range:2,defval:'',raw:true});raw=raw.filter(r=>Object.values(r).some(v=>v!==''));raw.forEach(r=>{if(_batchCompany&&!r['업체명'])r['업체명']=_batchCompany;if(_batchDate&&!r['입고일자'])r['입고일자']=_batchDate});if(!raw.length){showToast('데이터가 없습니다');return}_batchData=raw;
 const longLots=[];raw.forEach((r,i)=>{const lot=String(r['로트']||r['lot']||r['로트번호']||'').trim();const lotClean=lot.replace(/^LOT[-_\s]*/i,'');if(lotClean.length>20)longLots.push({row:i+4,lot:lotClean,len:lotClean.length})});if(longLots.length){const list=longLots.slice(0,5).map(x=>`  • ${x.row}행: ${x.lot} (${x.len}자)`).join('\n');alert('⚠️ LOT 길이 초과 경고\n\nOracle MES의 HEAT_NO 컬럼은 최대 20자까지만 저장됩니다.\n다음 '+longLots.length+'건이 20자를 초과합니다:\n\n'+list+(longLots.length>5?`\n  ... 외 ${longLots.length-5}건`:'')+'\n\n→ 그대로 등록 시 MES 동기화에서 ORA-12899 오류가 발생합니다.\n→ LOT를 수정한 후 다시 업로드하세요.')}
 document.getElementById('fileInfo').style.display='block';document.getElementById('fileInfoText').innerHTML='✅ <b>'+file.name+'</b> 읽기 완료<br>업체: <b>'+(_batchCompany||'미기입')+'</b> · 입고일: <b>'+(_batchDate||'미기입')+'</b> · <b>'+raw.length+'건</b>'+(longLots.length?'<br><span style="color:#c62828;font-weight:700">⚠️ LOT 20자 초과 '+longLots.length+'건 — 수정 권장</span>':'');document.getElementById('btnToStep3').disabled=false;showToast('✅ '+raw.length+'건 읽기 완료'+(longLots.length?' (LOT 초과 '+longLots.length+'건)':''))}catch(err){showToast('파일 읽기 오류: '+err.message)}};reader.readAsArrayBuffer(file)}
 
