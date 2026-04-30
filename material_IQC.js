@@ -1522,7 +1522,7 @@ function downloadCSV(rows, filename){
 setTimeout(() => { try { updateSupplierCounts(); } catch(e) {} }, 100);
 
 // === IndexedDB 기반 스캔 파일 관리 (수백 MB 저장 가능) ===
-// === 설정 탭 - Supabase common_code 연동 / ntfy ===
+// === 설정 탭 - Supabase common_code 연동 ===
 const SETTINGS_LS_KEY = 'tj_material_settings_v1';
 // 🔗 Supabase 자동 연동 설정 (파일 열자마자 바로 연결)
 // 이 값을 비워두면 설정 탭에서 수동 입력 모드로 동작합니다.
@@ -1532,7 +1532,6 @@ const DEFAULT_SUPABASE_KEY = 'sb_publishable_9j2YkkL-7ul1TrhH-NjVdQ_vWDG2-1D';
 
 // 설정 상태
 let appSettings = {
-  ntfyTopics: [],
   supabaseUrl: DEFAULT_SUPABASE_URL,
   supabaseKey: DEFAULT_SUPABASE_KEY
 };
@@ -1620,7 +1619,6 @@ function renderSettingsTab(){
   const supKeyEl = document.getElementById('supabaseKey');
   if (supUrlEl) supUrlEl.value = appSettings.supabaseUrl || '';
   if (supKeyEl) supKeyEl.value = appSettings.supabaseKey || '';
-  if (typeof renderNtfyTopics === 'function') renderNtfyTopics();
   if (typeof renderChargeSettings === 'function') renderChargeSettings();
   if (typeof renderSupplierMaster === 'function') renderSupplierMaster();
   if (typeof renderMaterialMaster === 'function') renderMaterialMaster();
@@ -2218,63 +2216,18 @@ function getDefaultChargeForCert(c){
   return chargeSettings.defaultByMaterial.SPCC || '문수진';
 }
 
-function renderNtfyTopics(){
-  const list = document.getElementById('ntfyTopicList');
-  if (appSettings.ntfyTopics.length === 0) {
-    list.innerHTML = '<div style="padding:12px; text-align:center; color:#94a3b8; background:#f8fafc; border-radius:4px; font-size:12px;">등록된 ntfy 방이 없습니다</div>';
-    return;
-  }
-  list.innerHTML = appSettings.ntfyTopics.map((topic, idx) =>
-    '<div style="display:flex; align-items:center; gap:8px; padding:8px 12px; background:#f8fafc; border-radius:4px; margin-bottom:4px;">' +
-      '<span style="font-weight:600; color:#64748b; font-size:12px; min-width:20px;">' + (idx+1) + '</span>' +
-      '<span style="flex:1; font-size:13px; color:#1e3a5f; font-family:Consolas,monospace;">' + topic + '</span>' +
-      '<a href="https://ntfy.sh/' + topic + '" target="_blank" class="btn btn-secondary" style="padding:4px 10px; font-size:11px; text-decoration:none;">🔗</a>' +
-      '<button class="btn btn-danger" style="padding:4px 10px; font-size:11px;" onclick="removeNtfyTopic(' + idx + ')">✕</button>' +
-    '</div>'
-  ).join('');
-}
-
 function updateConnectionStatus(){
   const el = document.getElementById('connectionStatus');
   const supOk = !!(appSettings.supabaseUrl && appSettings.supabaseKey);
   const mailOk = false;
-  const ntfyCount = appSettings.ntfyTopics.length;
   const mailCount = 0;
   el.innerHTML =
     '<div>' + (supOk?'🟢':'🔴') + ' Supabase: ' + (supOk?'설정됨':'미연결') + '</div>' +
     '<div>' + (mailOk?'🟢':'🔴') + ' 메일 알림: ' + (mailOk?'서버 설정됨':'미설정') + '</div>' +
-    '<div>' + (ntfyCount>0?'🟢':'🔴') + ' ntfy: ' + ntfyCount + '개 방</div>' +
     '<div>' + (mailCount>0?'🟢':'🔴') + ' 메일 수신자: ' + mailCount + '명</div>';
 }
 
 // === 이벤트 핸들러 ===
-
-function addNtfyTopic(){
-  const input = document.getElementById('newNtfyInput');
-  const topic = (input.value || '').trim();
-  if (!topic) return;
-  if (!/^[a-zA-Z0-9_-]+$/.test(topic)) {
-    alert('영문/숫자/하이픈/언더스코어만 사용 가능합니다');
-    return;
-  }
-  if (appSettings.ntfyTopics.includes(topic)) {
-    alert('이미 등록된 방입니다');
-    return;
-  }
-  appSettings.ntfyTopics.push(topic);
-  saveSettingsToLS();
-  input.value = '';
-  renderNtfyTopics();
-  updateConnectionStatus();
-}
-
-function removeNtfyTopic(idx){
-  if (!confirm('이 ntfy 방을 삭제하시겠습니까?')) return;
-  appSettings.ntfyTopics.splice(idx, 1);
-  saveSettingsToLS();
-  renderNtfyTopics();
-  updateConnectionStatus();
-}
 
 function toggleSupabaseKeyVisibility(){
   const elKey = document.getElementById('supabaseKey');
@@ -2330,25 +2283,6 @@ async function testSupabaseConnection(){
   }
 }
 
-async function testNtfy(){
-  if (appSettings.ntfyTopics.length === 0) {
-    alert('먼저 ntfy 방을 등록하세요');
-    return;
-  }
-  try {
-    for (const topic of appSettings.ntfyTopics) {
-      await fetch('https://ntfy.sh/' + topic, {
-        method: 'POST',
-        headers: { 'Title': '[태진다이텍] 테스트', 'Priority': 'default', 'Tags': 'bell' },
-        body: '소재 수입검사 관리 시스템 푸시 알림 테스트입니다.\n시각: ' + new Date().toLocaleString('ko-KR')
-      });
-    }
-    alert('📡 ntfy 푸시 알림 발송 완료\n' + appSettings.ntfyTopics.length + '개 방에 전송');
-  } catch(e) {
-    alert('❌ 전송 실패: ' + e.message);
-  }
-}
-
 // === 전체 설정 저장 ===
 async function saveAllSettings(){
   appSettings.supabaseUrl = document.getElementById('supabaseUrl').value.trim();
@@ -2365,9 +2299,6 @@ async function saveAllSettings(){
 
   try {
     // GAS URL 저장
-    // ntfy 방 저장
-    await upsertCommonCodeGroup('ntfy_topics', appSettings.ntfyTopics);
-
     alert('✅ 모든 설정이 Supabase에 저장되었습니다!\n\n수입검사 데이터도 자동으로 서버에 동기화됩니다.');
     updateConnectionStatus();
 
@@ -2384,8 +2315,6 @@ async function saveAllSettings(){
 async function loadSettingsFromSupabase(){
   if (!appSettings.supabaseUrl || !appSettings.supabaseKey) return;
   try {
-    const ntfyRows = await loadCommonCode('ntfy_topics').catch(()=>[]);
-    if (ntfyRows.length > 0) appSettings.ntfyTopics = ntfyRows.map(r => r.code_value || r.code_key);
     saveSettingsToLS();
   } catch(e) {}
 }
