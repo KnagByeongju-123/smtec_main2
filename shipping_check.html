@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>출하관리 체크시트 v1.5</title>
+<title>출하관리 체크시트 v1.6</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;900&display=swap">
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
@@ -327,27 +327,35 @@ GRANT USAGE, SELECT ON SEQUENCE shipping_check_id_seq TO anon, authenticated;</p
 'use strict';
 
 // ============ KST 유틸 ============
-function nowKST() {
-  // 사용자 폰 시간을 KST로 보정 (브라우저 타임존이 KST가 아닌 경우 대비)
-  const now = new Date();
-  const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
-  return new Date(utc + 9 * 3600 * 1000);
+// 브라우저 타임존과 무관하게 항상 KST(Asia/Seoul) 기준으로 동작
+function _kstParts(d) {
+  d = d || new Date();
+  // en-CA 로케일은 YYYY-MM-DD 형식, hour12:false로 24h 시간 보장
+  const fmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Seoul',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false
+  });
+  const parts = {};
+  fmt.formatToParts(d).forEach(p => { if (p.type !== 'literal') parts[p.type] = p.value; });
+  // hour가 '24'로 나오는 환경 대비 (구버전 Safari)
+  if (parts.hour === '24') parts.hour = '00';
+  return parts;
 }
-function kstDateStr(d) { d = d || nowKST(); return d.toISOString().slice(0, 10); }
+function nowKST() { return new Date(); }  // 호환용: 실제 변환은 아래 함수들이 수행
+function kstDateStr(d) {
+  const p = _kstParts(d);
+  return p.year + '-' + p.month + '-' + p.day;
+}
 function kstTimeStr(d) {
-  d = d || nowKST();
-  return String(d.getUTCHours()).padStart(2,'0') + ':' + String(d.getUTCMinutes()).padStart(2,'0');
+  const p = _kstParts(d);
+  return p.hour + ':' + p.minute;
 }
 function kstISOWithOffset(d) {
   // Supabase TIMESTAMPTZ 저장용: '2026-05-01T13:25:00+09:00' 형태
-  d = d || nowKST();
-  const yy = d.getUTCFullYear();
-  const mm = String(d.getUTCMonth() + 1).padStart(2,'0');
-  const dd = String(d.getUTCDate()).padStart(2,'0');
-  const hh = String(d.getUTCHours()).padStart(2,'0');
-  const mi = String(d.getUTCMinutes()).padStart(2,'0');
-  const ss = String(d.getUTCSeconds()).padStart(2,'0');
-  return yy + '-' + mm + '-' + dd + 'T' + hh + ':' + mi + ':' + ss + '+09:00';
+  const p = _kstParts(d);
+  return p.year + '-' + p.month + '-' + p.day + 'T' + p.hour + ':' + p.minute + ':' + p.second + '+09:00';
 }
 
 // ============ 기본값 ============
