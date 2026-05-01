@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>일상점검 종합현황 v1.6</title>
+<title>일상점검 종합현황 v1.7</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 body{font-family:'Noto Sans KR','맑은 고딕',sans-serif;background:#f5f5f5;color:#222;font-size:13px;padding-bottom:30px}
@@ -206,53 +206,105 @@ function genDays(s,e){
   return arr;
 }
 
-/* ========== 설비목록 수집 ==========
- * 우선순위:
- *   생산설비 = machine_status(실설비)+ p_machine_check 이력에 등장하는 설비 + machine_master_tj
- *   검사기   = qc_machine_check 이력에서 추출 (설정 테이블 별도 없으면 이력 기반)
- *   세척기   = wash_machine_check 이력에서 추출
- *  + common_code 의 _machine_list 그룹 (있는 경우)
+/* ========== 생산설비명 정규화 ==========
+ * 같은 호기가 여러 형태로 들어옴:
+ *   - "6호기 심팩110톤"  (P_machine_check 점검이력)
+ *   - "06_110"           (machine_status.machine_name, 0패딩)
+ *   - "6_110"            (machine_master_tj 의 ho_code+tonnage)
+ *   - "6호기"            (간단 표기)
+ * → 호기번호(숫자) 기준으로 하나의 키로 통합
+ *   정규화 키 형식: "호기번호_톤수" 또는 "호기번호" (톤수 모를 때)
  */
+function normProdName(raw){
+  if(!raw)return '';
+  const s=String(raw).trim();
+  const hoMatch=s.match(/^0*(\d+)/);
+  if(!hoMatch)return s;
+  const ho=parseInt(hoMatch[1],10);
+  const tonMatch=s.match(/_0*(\d+)\b/) || s.match(/(\d+)\s*톤/);
+  const ton=tonMatch?parseInt(tonMatch[1],10):null;
+  return ton?(ho+'_'+ton):String(ho);
+}
+
+/* 정규화키 → 표시명 매핑 (가장 풍성한 이름 우선) */
+const _displayNames={};
+function registerDisplayName(rawName){
+  if(!rawName)return;
+  const key=normProdName(rawName);
+  if(!key)return;
+  const cur=_displayNames[key];
+  const richness=(s)=>(String(s).includes('호기')?100:0)+(String(s).includes('톤')?50:0)+String(s).length;
+  if(!cur||richness(rawName)>richness(cur)){
+    _displayNames[key]=rawName;
+  }
+}
+function getDisplayName(key){ return _displayNames[key]||key; }
+
+/* ========== 설비목록 수집 (생산설비는 정규화 통합) ========== */
 async function loadEquipments(){
-  /* 1) 점검이력에서 등장하는 설비명 모두 수집 */
+  /* 1) 점검이력에서 등장하는 설비명 수집 */
   const eqSet={prod:new Set(),qc:new Set(),wash:new Set(),ship:new Set()};
   for(const k of ['prod','qc','wash','ship']){
     (CACHE.records[k]||[]).forEach(r=>{
       const m=r.machine||r.machine_name||r.equipment_name||r.line;
-      if(m)eqSet[k].add(String(m).trim());
+      if(!m)return;
+      const raw=String(m).trim();
+      if(k==='prod'){
+        registerDisplayName(raw);
+        eqSet.prod.add(normProdName(raw));
+      } else {
+        eqSet[k].add(raw);
+      }
     });
   }
-  /* 2) machine_status (실설비) 추가 → 생산설비 */
+  /* 2) machine_status (실설비) → 생산설비 */
   try{
     const ms=await sbGet('machine_status?select=machine_name,machine_code&order=machine_code');
-    ms.forEach(r=>{ if(r.machine_name)eqSet.prod.add(String(r.machine_name).trim()) });
+    ms.forEach(r=>{
+      if(r.machine_name){
+        const raw=String(r.machine_name).trim();
+        registerDisplayName(raw);
+        eqSet.prod.add(normProdName(raw));
+      }
+    });
   }catch(e){console.warn('machine_status skip:',e.message)}
-  /* 3) machine_master_tj 추가 → 생산설비 (호기_톤수 형태) */
+  /* 3) machine_master_tj → 생산설비 (호기_톤수 형태) */
   try{
     const mm=await sbGet('machine_master_tj?select=ho_code,tonnage&order=ho_code');
     mm.forEach(r=>{
       if(r.ho_code){
         const nm=r.tonnage?(r.ho_code+'_'+r.tonnage):String(r.ho_code);
-        eqSet.prod.add(nm);
+        registerDisplayName(nm);
+        eqSet.prod.add(normProdName(nm));
       }
     });
   }catch(e){console.warn('machine_master_tj skip:',e.message)}
-  /* 4) common_code 의 점검 설정 그룹 (있다면) */
+  /* 4) common_code 점검 설정 그룹 */
   try{
     const cc=await sbGet("common_code?select=code_group,code_value&code_group=in.(qc_machine_list,wash_machine_list,p_machine_list,ship_machine_list)");
     cc.forEach(r=>{
       if(!r.code_value)return;
-      if(r.code_group==='qc_machine_list')eqSet.qc.add(r.code_value.trim());
-      else if(r.code_group==='wash_machine_list')eqSet.wash.add(r.code_value.trim());
-      else if(r.code_group==='p_machine_list')eqSet.prod.add(r.code_value.trim());
-      else if(r.code_group==='ship_machine_list')eqSet.ship.add(r.code_value.trim());
+      const raw=r.code_value.trim();
+      if(r.code_group==='qc_machine_list')eqSet.qc.add(raw);
+      else if(r.code_group==='wash_machine_list')eqSet.wash.add(raw);
+      else if(r.code_group==='p_machine_list'){
+        registerDisplayName(raw);
+        eqSet.prod.add(normProdName(raw));
+      }
+      else if(r.code_group==='ship_machine_list')eqSet.ship.add(raw);
     });
   }catch(e){console.warn('common_code skip:',e.message)}
 
-  /* 정렬: 호기번호가 앞에 있으면 숫자기준 */
+  /* 정렬: 숫자 우선 */
   function srt(a,b){
     const na=parseInt(a),nb=parseInt(b);
-    if(!isNaN(na)&&!isNaN(nb))return na-nb;
+    if(!isNaN(na)&&!isNaN(nb)){
+      if(na!==nb)return na-nb;
+      /* 같은 호기번호 내에서 톤수 순 */
+      const ta=parseInt((a.split('_')[1]||'0'),10);
+      const tb=parseInt((b.split('_')[1]||'0'),10);
+      return ta-tb;
+    }
     return a.localeCompare(b,'ko');
   }
   CACHE.equipments={
@@ -291,12 +343,14 @@ async function loadData(){
     /* 설비목록 갱신 */
     await loadEquipments();
 
-    /* (cat, equipment, date) → records[] 인덱싱 */
+    /* (cat, equipment, date) → records[] 인덱싱
+       생산설비는 정규화 키로 통합 (같은 호기 다른 표기를 같은 행으로) */
     for(const k of ['prod','qc','wash','ship']){
       CACHE.records[k].forEach(r=>{
-        const eq=String(r.machine||r.machine_name||r.equipment_name||r.line||'').trim();
+        const raw=String(r.machine||r.machine_name||r.equipment_name||r.line||'').trim();
         const dt=r.check_date;
-        if(!eq||!dt)return;
+        if(!raw||!dt)return;
+        const eq = (k==='prod') ? normProdName(raw) : raw;
         const key=`${k}|${eq}|${dt}`;
         (CACHE.byKey[key]=CACHE.byKey[key]||[]).push(r);
       });
@@ -377,7 +431,8 @@ function renderTable(){
       });
       h+=`<tr class="cat-${k}">`;
       h+=`<td class="cat">${cfg.icon}<br>${cfg.label}</td>`;
-      h+=`<td class="eq">${eq}</td>`;
+      const showName = (k==='prod') ? getDisplayName(eq) : eq;
+      h+=`<td class="eq">${showName}</td>`;
       h+=rowHtml;
       h+=`<td class="total">${rowTotal||'-'}</td>`;
       h+='</tr>';
@@ -392,7 +447,8 @@ function renderTable(){
 function showDetail(cat,eq,date){
   const recs=CACHE.byKey[`${cat}|${eq}|${date}`]||[];
   const cfg=CFG[cat];
-  $('modalTitle').textContent=`${cfg.icon} ${cfg.label} · ${eq} · ${date}`;
+  const showName = (cat==='prod') ? getDisplayName(eq) : eq;
+  $('modalTitle').textContent=`${cfg.icon} ${cfg.label} · ${showName} · ${date}`;
   if(!recs.length){$('modalBody').innerHTML='<div class="empty"><div>점검기록 없음</div></div>';$('modal').classList.add('show');return}
   let h='';
   recs.forEach((r,i)=>{
@@ -444,7 +500,8 @@ function exportXlsx(){
   cats.forEach(k=>{
     const cfg=CFG[k];
     CACHE.equipments[k].forEach(eq=>{
-      const row=[cfg.label,eq];
+      const showName = (k==='prod') ? getDisplayName(eq) : eq;
+      const row=[cfg.label,showName];
       let total=0;
       CACHE.days.forEach(d=>{
         const recs=CACHE.byKey[`${k}|${eq}|${d}`]||[];
