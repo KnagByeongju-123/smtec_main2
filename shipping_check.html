@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>출하관리 체크시트 v1.4</title>
+<title>출하관리 체크시트 v1.5</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;900&display=swap">
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
@@ -243,11 +243,10 @@ input[type=radio]:checked + .okng-btn[for$=_ng] { background: var(--ng); color: 
       <label class="field-label">Bot Token (선택)</label>
       <input type="text" id="cfgTgBot" placeholder="비워두면 기본 봇 사용">
     </div>
-    <div class="field">
+    <div class="field" style="margin-bottom:0">
       <label class="field-label">수신자 Chat ID (콤마 구분)</label>
       <input type="text" id="cfgTgUsers" placeholder="예: 123456789,987654321">
     </div>
-    <button class="btn-secondary" onclick="saveTgSettings()">💾 텔레그램 설정 저장</button>
   </div>
 
   <!-- 점검 항목 편집 -->
@@ -256,20 +255,21 @@ input[type=radio]:checked + .okng-btn[for$=_ng] { background: var(--ng); color: 
     <div class="section-info">
       • 점검 항목명, 점검 기준, 방법(육안/실시/입력/착용)을 자유롭게 편집할 수 있습니다.<br>
       • 위↑/아래↓ 화살표로 순서를 바꿀 수 있습니다.<br>
-      • 변경 사항은 [저장] 버튼을 눌러야 적용됩니다.
+      • 변경 사항은 화면 맨 아래 <b style="color:var(--accent)">[모든 설정 저장]</b> 버튼을 눌러야 적용됩니다.
     </div>
     <div id="itemEditor"></div>
     <div style="display:flex;gap:6px;margin-top:8px">
       <button class="btn-secondary" onclick="addItem()" style="flex:1">➕ 항목 추가</button>
       <button class="btn-secondary" onclick="resetItems()" style="flex:1">↻ 기본값</button>
     </div>
-    <div style="height:8px"></div>
-    <button class="btn-primary" onclick="saveItems()">💾 점검 항목 저장</button>
   </div>
 
   <!-- 검사실/라인 편집 -->
   <div class="card">
     <div class="card-title">🏭 검사실 / 라인 관리</div>
+    <div class="section-info">
+      • 변경 사항은 화면 맨 아래 <b style="color:var(--accent)">[모든 설정 저장]</b> 버튼을 눌러야 적용됩니다.
+    </div>
     <div class="field">
       <input type="text" id="newLine" placeholder="검사실 또는 라인명 추가 (예: SKF C실)">
     </div>
@@ -308,6 +308,14 @@ ALTER TABLE shipping_check DISABLE ROW LEVEL SECURITY;
 GRANT ALL ON shipping_check TO anon, authenticated;
 GRANT USAGE, SELECT ON SEQUENCE shipping_check_id_seq TO anon, authenticated;</pre>
     </details>
+  </div>
+
+  <!-- 통합 저장 -->
+  <div class="card" style="position:sticky;bottom:8px;background:var(--surface);border:2px solid var(--accent);box-shadow:0 4px 14px rgba(6,182,212,.3)">
+    <div class="section-info" style="margin-bottom:10px">
+      • 점검 항목 · 검사실/라인 · 텔레그램 알림 설정을 한 번에 저장합니다.
+    </div>
+    <button class="btn-primary" onclick="saveAllSettings()" style="font-size:16px">💾 모든 설정 저장</button>
   </div>
 </div>
 
@@ -757,28 +765,25 @@ function addLine() {
   if (!v) { toast('⚠ 라인명을 입력하세요'); return; }
   if (_lines.includes(v)) { toast('⚠ 이미 있는 항목'); return; }
   _lines.push(v);
-  persistLines();
   fillLineSelects();
   renderLineList();
   document.getElementById('newLine').value = '';
-  toast('✅ 추가됨', 'success');
+  toast('➕ 추가됨 · 맨 아래 [모든 설정 저장] 버튼을 누르세요');
 }
 
 function removeLine(i) {
-  if (!confirm(_lines[i] + ' 삭제?')) return;
+  if (!confirm(_lines[i] + ' 삭제?\n\n맨 아래 [모든 설정 저장] 버튼을 눌러야 최종 반영됩니다.')) return;
   _lines.splice(i, 1);
-  persistLines();
   fillLineSelects();
   renderLineList();
 }
 
 function resetLines() {
-  if (!confirm('기본 검사실 목록으로 되돌리시겠습니까?')) return;
+  if (!confirm('기본 검사실 목록으로 되돌리시겠습니까?\n\n맨 아래 [모든 설정 저장] 버튼을 눌러야 최종 반영됩니다.')) return;
   _lines = [...DEFAULT_LINES];
-  persistLines();
   fillLineSelects();
   renderLineList();
-  toast('✅ 초기화됨', 'success');
+  toast('↻ 기본값으로 변경됨 · 저장 버튼을 누르세요');
 }
 
 // ============ 설정: 점검 항목 편집 ============
@@ -836,27 +841,47 @@ function removeItem(idx) {
   renderItemEditor();
 }
 
-function saveItems() {
-  // 빈 항목 제거
-  _items = _items.filter(it => (it.label || '').trim());
-  // 번호 재할당
-  _items.forEach((it, i) => { it.no = i + 1; });
-  persistItems();
+function resetItems() {
+  if (!confirm('기본 점검 항목 11개로 되돌리시겠습니까?\n현재 편집 내용은 사라집니다.\n\n맨 아래 [모든 설정 저장] 버튼을 눌러야 최종 반영됩니다.')) return;
+  _items = JSON.parse(JSON.stringify(DEFAULT_ITEMS));
   renderItemEditor();
-  renderRefPhotoList();
-  // 점검 탭에 즉시 반영
-  renderCheckItems();
-  toast('💾 점검 항목 저장됨 (' + _items.length + '개)', 'success');
+  toast('↻ 기본값으로 변경됨 · 저장 버튼을 누르세요');
 }
 
-function resetItems() {
-  if (!confirm('기본 점검 항목 11개로 되돌리시겠습니까?\n현재 편집 내용은 사라집니다.')) return;
-  _items = JSON.parse(JSON.stringify(DEFAULT_ITEMS));
+// ============ 통합 저장 ============
+function saveAllSettings() {
+  // 1. 점검 항목: 빈 항목 제거 + 번호 재할당
+  _items = _items.filter(it => (it.label || '').trim());
+  _items.forEach((it, i) => { it.no = i + 1; });
+
+  if (_items.length === 0) {
+    toast('⚠ 점검 항목이 1개 이상 있어야 합니다', 'error');
+    return;
+  }
+  if (_lines.length === 0) {
+    toast('⚠ 검사실/라인이 1개 이상 있어야 합니다', 'error');
+    return;
+  }
+
+  // 2. 영구 저장
   persistItems();
+  persistLines();
+
+  // 3. 텔레그램 설정 저장
+  const s = getSettings();
+  s.tg_bot = document.getElementById('cfgTgBot').value.trim();
+  const usersStr = document.getElementById('cfgTgUsers').value.trim();
+  s.tg_users = usersStr ? JSON.stringify(usersStr.split(',').map(x => x.trim()).filter(x => x)) : '[]';
+  setSettings(s);
+
+  // 4. UI 즉시 반영
   renderItemEditor();
+  renderLineList();
+  fillLineSelects();
   renderRefPhotoList();
   renderCheckItems();
-  toast('✅ 초기화됨', 'success');
+
+  toast('💾 모든 설정이 저장되었습니다 (' + _items.length + '개 항목 · ' + _lines.length + '개 라인)', 'success');
 }
 
 // ============ 기준사진 ============
@@ -946,15 +971,6 @@ async function deleteRefPhoto(key) {
   } catch(e) {
     toast('❌ 실패: ' + e.message, 'error');
   }
-}
-
-function saveTgSettings() {
-  const s = getSettings();
-  s.tg_bot = document.getElementById('cfgTgBot').value.trim();
-  const usersStr = document.getElementById('cfgTgUsers').value.trim();
-  s.tg_users = usersStr ? JSON.stringify(usersStr.split(',').map(x => x.trim()).filter(x => x)) : '[]';
-  setSettings(s);
-  toast('💾 텔레그램 설정 저장됨', 'success');
 }
 
 function loadSettingsToUI() {
