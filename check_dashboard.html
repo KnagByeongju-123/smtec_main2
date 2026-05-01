@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>일상점검 종합현황 v1.3</title>
+<title>일상점검 종합현황 v1.4</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 body{font-family:'Noto Sans KR','맑은 고딕',sans-serif;background:#f5f5f5;color:#222;font-size:13px;padding-bottom:30px}
@@ -148,7 +148,7 @@ tbody td.eq{padding-left:6px}
 <script>
 /* ========== Supabase 설정 ========== */
 const SB_URL='https://omngtyewdaqpphnzeate.supabase.co';
-const SB_KEY='sb_publishable_uK6kTttoinEbLFM5L1kQLA_ouM5_Yad';
+const SB_KEY='sb_publishable_9j2YkkL-7ul1TrhH-NjVdQ_vWDG2-1D';
 
 /* ========== 점검 테이블 정의 ==========
  *   생산설비 → p_machine_check (machine 컬럼)
@@ -217,7 +217,7 @@ async function loadEquipments(){
   const eqSet={prod:new Set(),qc:new Set(),wash:new Set(),ship:new Set()};
   for(const k of ['prod','qc','wash','ship']){
     (CACHE.records[k]||[]).forEach(r=>{
-      const m=r.machine||r.machine_name||r.equipment_name;
+      const m=r.machine||r.machine_name||r.equipment_name||r.line;
       if(m)eqSet[k].add(String(m).trim());
     });
   }
@@ -293,7 +293,7 @@ async function loadData(){
     /* (cat, equipment, date) → records[] 인덱싱 */
     for(const k of ['prod','qc','wash','ship']){
       CACHE.records[k].forEach(r=>{
-        const eq=String(r.machine||r.machine_name||r.equipment_name||'').trim();
+        const eq=String(r.machine||r.machine_name||r.equipment_name||r.line||'').trim();
         const dt=r.check_date;
         if(!eq||!dt)return;
         const key=`${k}|${eq}|${dt}`;
@@ -313,8 +313,8 @@ function judge(records){
   if(!records||!records.length)return {sign:'-',cls:'cell-none',count:0};
   let okCnt=0,ngCnt=0;
   records.forEach(r=>{
-    const res=String(r.result||'').toUpperCase();
-    if(res==='NG'||(r.ng_count&&r.ng_count>0))ngCnt++;
+    const res=String(r.result||r.judgement||'').toUpperCase();
+    if(res==='NG'||res==='부적합'||res==='FAIL'||(r.ng_count&&r.ng_count>0))ngCnt++;
     else okCnt++;
   });
   if(ngCnt===0)return {sign:'✓',cls:'cell-ok',count:okCnt+ngCnt};
@@ -335,7 +335,7 @@ function renderTable(){
   let totalEq=0;
   cats.forEach(k=>totalEq+=CACHE.equipments[k].length);
   if(totalEq===0){
-    $('tblWrap').innerHTML='<div class="empty"><div class="empty-ic">📭</div><div>등록된 설비가 없습니다</div><div style="font-size:11px;margin-top:6px;color:#aaa">각 점검페이지의 설정에서 설비를 먼저 등록하세요</div></div>';
+    $('tblWrap').innerHTML='<div class="empty"><div class="empty-ic">📭</div><div>표시할 설비가 없습니다</div><div style="font-size:11px;margin-top:8px;color:#aaa;line-height:1.6">설비는 다음 중 하나에서 자동 수집됩니다:<br>① 해당 기간에 점검 이력이 1건 이상 있는 설비<br>② 생산설비 마스터 (machine_status / machine_master_tj)<br>③ Supabase common_code 의 *_machine_list 그룹</div></div>';
     return;
   }
 
@@ -400,19 +400,22 @@ function showDetail(cat,eq,date){
     const fields=[
       ['점검시간',r.check_time||'-'],
       ['점검자',r.inspector||r.checker||'-'],
-      ['결과',r.result?(r.result==='NG'?'<span style="color:#c62828;font-weight:800">NG</span>':'<span style="color:#2e7d32;font-weight:800">OK</span>'):'-'],
+      ['결과',(r.result||r.judgement)?((r.result==='NG'||r.judgement==='부적합')?'<span style="color:#c62828;font-weight:800">'+(r.judgement||'NG')+'</span>':'<span style="color:#2e7d32;font-weight:800">'+(r.judgement||'OK')+'</span>'):'-'],
       ['NG수',r.ng_count!=null?r.ng_count:'-'],
       ['비고',r.memo||r.note||'-']
     ];
     fields.forEach(([k,v])=>{
       h+=`<div class="detail-row"><span class="dt-label">${k}</span><span class="dt-val">${v}</span></div>`;
     });
-    /* 점검항목별 OK/NG 표시 (chk_*, item_* 등) */
-    const items=Object.keys(r).filter(k=>/^(chk_|item_|i_|c_)/.test(k)&&r[k]!=null);
+    /* 점검항목별 OK/NG 표시 - chk_*/item_* 컬럼 또는 results JSONB */
+    let items=Object.keys(r).filter(k=>/^(chk_|item_|i_|c_)/.test(k)&&r[k]!=null).map(k=>[k,r[k]]);
+    if(!items.length && r.results && typeof r.results==='object'){
+      items=Object.entries(r.results).filter(([k,v])=>v!=null);
+    }
     if(items.length){
       h+=`<div style="margin-top:8px;padding-top:8px;border-top:1px dashed #ddd"><div style="font-size:11px;color:#666;font-weight:700;margin-bottom:4px">점검항목</div>`;
-      items.forEach(ik=>{
-        const v=String(r[ik]);
+      items.forEach(([ik,iv])=>{
+        const v=String(iv);
         const c=v==='NG'?'#c62828':(v==='OK'?'#2e7d32':'#666');
         h+=`<div style="display:inline-block;margin:2px 4px 2px 0;padding:2px 7px;border-radius:10px;background:${v==='NG'?'#ffebee':'#f1f8e9'};color:${c};font-size:10px;font-weight:700">${ik}: ${v}</div>`;
       });
@@ -468,7 +471,7 @@ function exportXlsx(){
       detail.push([
         CFG[k].label,
         r.check_date||'',
-        r.machine||r.machine_name||r.equipment_name||'',
+        r.machine||r.machine_name||r.equipment_name||r.line||'',
         r.inspector||r.checker||'',
         r.result||'',
         r.ng_count!=null?r.ng_count:'',
