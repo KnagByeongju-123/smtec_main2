@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>ESG Smart Factory v2.6</title>
+<title>ESG Smart Factory v2.7</title>
 <meta name="theme-color" content="#0f172a">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -195,7 +195,7 @@ body.locked{overflow:hidden}
 </div>
 
 <div class="cat-list" id="catList"></div>
-<div class="footer">ESG Smart Factory v2.6</div>
+<div class="footer">ESG Smart Factory v2.7</div>
 
 <canvas id="analysisCv" style="display:none"></canvas>
 <div class="toast" id="toast"></div>
@@ -899,14 +899,13 @@ async function checkPendingMachineChecks(silent){
 
     updateCheckBadge(pending.length);
 
-    /* 4) 본인 담당이 1건 이상 미점검이면 토스트 (1시간 내 중복 방지) */
+    /* 4) 본인 담당이 1건 이상 미점검이면 모달 (사용자가 스누즈 누른 경우 침묵) */
     if(silent||pending.length===0)return;
-    let lastShown=0;
-    try{lastShown=parseInt(localStorage.getItem(CHECK_TOAST_KEY)||'0')}catch(e){}
-    if(Date.now()-lastShown<60*60*1000)return; /* 1시간 내 재표시 안함 */
+    let snoozedUntil=0;
+    try{snoozedUntil=parseInt(localStorage.getItem('esg_check_alert_snooze')||'0')}catch(e){}
+    if(snoozedUntil>Date.now())return; /* 사용자가 명시적으로 1시간 안 보기 누른 경우 */
 
     showCheckToast(pending.length, pending, me);
-    try{localStorage.setItem(CHECK_TOAST_KEY,String(Date.now()))}catch(e){}
   }catch(e){
     console.warn('일상점검 체크 실패:',e.message);
   }
@@ -925,27 +924,52 @@ function updateCheckBadge(count){
 }
 
 function showCheckToast(count, pending, userName){
-  const names=(pending||[]).slice(0,5).map(m=>m.machine_name).join(', ');
-  const more=pending.length>5?(' 외 '+(pending.length-5)+'대'):'';
-  const who=userName?userName+' 작업자님, ':'';
-  const msg='⚠️ '+who+'담당 설비 일상점검 필요\n'+count+'대 미점검: '+names+more;
-  /* toast 기존 영역 활용 */
-  const e=document.getElementById('toast');
-  if(e){
-    e.textContent=msg;
-    e.style.background='rgba(220,38,38,.95)';
-    e.style.whiteSpace='pre-line';
-    e.style.maxWidth='90%';
-    e.style.cursor='pointer';
-    e.onclick=()=>{ goCheckPage() };
-    e.classList.add('show');
-    /* 토스트는 8초간 표시 */
-    clearTimeout(window._checkToastTimer);
-    window._checkToastTimer=setTimeout(()=>{
-      e.classList.remove('show');
-      e.style.background='';e.style.whiteSpace='';e.style.maxWidth='';e.style.cursor='';e.onclick=null;
-    },8000);
+  /* 모달 형태로 표시 - 사용자가 명시적으로 닫을 때까지 유지 */
+  const modal = document.getElementById('checkAlertOverlay');
+  if(!modal) return;
+
+  /* 부제목 - 누가 보고있는지 */
+  const sub = document.getElementById('checkAlertSubtitle');
+  if(sub) sub.textContent = userName ? userName + ' 작업자 담당 호기' : '담당 호기 점검 미실시';
+
+  /* 카운트 */
+  const cntEl = document.getElementById('checkAlertModalCount');
+  if(cntEl) cntEl.textContent = count;
+
+  /* 호기 목록 */
+  const listEl = document.getElementById('checkAlertModalList');
+  if(listEl){
+    const items = (pending||[]).map(m=>{
+      const name = String(m.machine_name||'').trim();
+      const code = String(m.machine_code||'').trim();
+      return '<div class="doc-alert-item urgent">'+
+        '<div class="da-no">🏭 호기</div>'+
+        '<div class="da-title">'+escHtmlIdx(name)+(code?' <span style="color:#94a3b8;font-size:11px">('+escHtmlIdx(code)+')</span>':'')+'</div>'+
+        '<div class="da-meta"><span class="due-warn">⏰ 오늘 점검 미실시</span></div>'+
+      '</div>';
+    }).join('');
+    listEl.innerHTML = items || '<div style="text-align:center;padding:20px;color:#64748b">미점검 호기 없음</div>';
   }
+
+  modal.classList.add('show');
+}
+
+function closeCheckAlert(){
+  const modal = document.getElementById('checkAlertOverlay');
+  if(modal) modal.classList.remove('show');
+}
+
+function goCheckPageFromAlert(){
+  closeCheckAlert();
+  location.href='P_machine_check.html';
+}
+
+function snoozeCheckAlert(minutes){
+  try{
+    const until = Date.now() + minutes*60*1000;
+    localStorage.setItem('esg_check_alert_snooze', String(until));
+  }catch(e){}
+  closeCheckAlert();
 }
 
 function goCheckPage(){
@@ -999,6 +1023,31 @@ initLock();
     </div>
     <div class="doc-alert-snooze">
       <a onclick="snoozeDocAlert(60)">⏰ 1시간 동안 안 보기</a>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 일상점검 미실시 알림 팝업 (본인 담당 호기) ===== -->
+<div class="doc-alert-overlay" id="checkAlertOverlay">
+  <div class="doc-alert-box" style="border-color:rgba(239,68,68,.5)">
+    <div class="doc-alert-header" style="background:linear-gradient(135deg,#7f1d1d,#991b1b)">
+      <span class="icon">🔧</span>
+      <div class="title">설비 일상점검 필요</div>
+      <div class="subtitle" id="checkAlertSubtitle">담당 호기 점검 미실시</div>
+    </div>
+    <div class="doc-alert-body">
+      <div class="doc-alert-summary">
+        <span class="count" id="checkAlertModalCount" style="color:#fca5a5">0</span>
+        <span>대 점검 미실시</span>
+      </div>
+      <div class="doc-alert-list" id="checkAlertModalList"></div>
+    </div>
+    <div class="doc-alert-footer">
+      <button class="doc-alert-btn doc-alert-btn-skip" onclick="closeCheckAlert()">나중에</button>
+      <button class="doc-alert-btn doc-alert-btn-go" onclick="goCheckPageFromAlert()">✅ 점검하기</button>
+    </div>
+    <div class="doc-alert-snooze">
+      <a onclick="snoozeCheckAlert(60)">⏰ 1시간 동안 안 보기</a>
     </div>
   </div>
 </div>
