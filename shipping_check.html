@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>출하관리 체크시트 v1.6</title>
+<title>출하관리 체크시트 v1.7</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;900&display=swap">
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
@@ -1030,16 +1030,56 @@ function setKstNow() {
 // ============ 로그인 정보로 점검자 자동 입력 ============
 function loadCurrentUser() {
   let userName = '';
+
+  // 1) localStorage('esg_pin_auth') - ESG 메인 PIN 로그인 (최우선, 만료체크)
   try {
-    const u = JSON.parse(sessionStorage.getItem('ESG_USER') || 'null');
-    if (u) userName = u.name || u.user_name || u.username || '';
+    const esgAuth = JSON.parse(localStorage.getItem('esg_pin_auth') || 'null');
+    if (esgAuth && esgAuth.exp > Date.now() && esgAuth.name) {
+      userName = esgAuth.name;
+      try { sessionStorage.setItem('ESG_USER', userName); } catch(e) {}
+    }
   } catch(e) {}
-  // localStorage fallback
+
+  // 2) sessionStorage('ESG_USER') - 문자열 또는 객체 모두 지원
   if (!userName) {
     try {
-      const u2 = JSON.parse(localStorage.getItem('ESG_USER') || 'null');
-      if (u2) userName = u2.name || u2.user_name || u2.username || '';
+      const raw = sessionStorage.getItem('ESG_USER');
+      if (raw) {
+        // 문자열로 저장된 경우 (esg_pin_auth에서 생성)
+        if (raw[0] !== '{') userName = raw;
+        else {
+          const u = JSON.parse(raw);
+          if (u) userName = u.name || u.user_name || u.username || '';
+        }
+      }
     } catch(e) {}
+  }
+
+  // 3) localStorage('ESG_USER') - 동일 패턴
+  if (!userName) {
+    try {
+      const raw = localStorage.getItem('ESG_USER');
+      if (raw) {
+        if (raw[0] !== '{') userName = raw;
+        else {
+          const u = JSON.parse(raw);
+          if (u) userName = u.name || u.user_name || u.username || '';
+        }
+      }
+    } catch(e) {}
+  }
+
+  // 4) URL ?user= 파라미터 (NFC/QR 진입 등)
+  if (!userName) {
+    try {
+      const p = new URLSearchParams(location.search);
+      userName = p.get('user') || '';
+    } catch(e) {}
+  }
+
+  // 5) localStorage('mes_last_worker') - 마지막 작업자 fallback
+  if (!userName) {
+    try { userName = localStorage.getItem('mes_last_worker') || ''; } catch(e) {}
   }
 
   const inspEl = document.getElementById('inspector');
@@ -1047,8 +1087,10 @@ function loadCurrentUser() {
 
   const badge = document.getElementById('hdrUserBadge');
   if (userName) {
-    badge.textContent = userName;
+    badge.textContent = '👤 ' + userName;
     badge.style.display = 'inline-block';
+    badge.style.background = 'rgba(34,197,94,.15)';
+    badge.style.color = '#4ade80';
   } else {
     badge.textContent = '미로그인';
     badge.style.display = 'inline-block';
