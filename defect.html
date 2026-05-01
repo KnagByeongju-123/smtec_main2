@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>불량관리 시스템 v1.1</title>
+  <title>불량관리 시스템 v1.2</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&display=swap');
@@ -101,7 +101,7 @@
   </style>
 </head>
 <body>
-<div class="hdr"><button class="home-btn" onclick="location.href='index.html'">🏠</button><h1>🔍 불량관리 시스템 v1.1</h1><p>기판 영역별 불량 등록 · 이력 추적 · 통계 분석</p><button class="share-btn" onclick="window.open(SB_DASHBOARD_URL,'_blank')">📊 DB</button></div>
+<div class="hdr"><button class="home-btn" onclick="location.href='index.html'">🏠</button><h1>🔍 불량관리 시스템 v1.2</h1><p>기판 영역별 불량 등록 · 이력 추적 · 통계 분석</p><button class="share-btn" onclick="window.open(SB_DASHBOARD_URL,'_blank')">📊 DB</button></div>
 <div class="tabs"><div class="tab on" onclick="swTab(0)">📝 불량등록</div><div class="tab" onclick="swTab(1)">📋 이력</div><div class="tab" onclick="swTab(2)">📊 통계</div><div class="tab" onclick="swTab(3)">⚙ 설정</div></div>
 
 <div class="pnl on" id="pnl0">
@@ -321,12 +321,15 @@ function saveCfgToStorage(c){localStorage.setItem('DEFECT_SB_CFG',JSON.stringify
 function loadCfgToUI(){}
 function saveCfg(){}
 function sbHeaders(){const c=getCfg();return{'apikey':c.key,'Authorization':'Bearer '+c.key,'Content-Type':'application/json','Prefer':'return=representation'}}
-/* ===== KST(한국시간) 헬퍼 - 모든 시간은 UTC+9 기준 ===== */
-function kstNow(){const n=new Date();return new Date(n.getTime()+(9*60+n.getTimezoneOffset())*60000)}
-function kstDateStr(d){const k=d?(d instanceof Date?d:new Date(d)):null;const t=k?new Date(k.getTime()+(9*60+k.getTimezoneOffset())*60000):kstNow();const y=t.getFullYear(),m=String(t.getMonth()+1).padStart(2,'0'),da=String(t.getDate()).padStart(2,'0');return y+'-'+m+'-'+da}
-function kstTimeStr(d){const k=d?(d instanceof Date?d:new Date(d)):null;const t=k?new Date(k.getTime()+(9*60+k.getTimezoneOffset())*60000):kstNow();const h=String(t.getHours()).padStart(2,'0'),mi=String(t.getMinutes()).padStart(2,'0'),s=String(t.getSeconds()).padStart(2,'0');return h+':'+mi+':'+s}
+/* ===== KST(한국시간) 헬퍼 - 디바이스 타임존과 무관하게 UTC+9 강제 ===== */
+function _kstParts(d){const ms=(d?(d instanceof Date?d.getTime():new Date(d).getTime()):Date.now())+9*3600*1000;const t=new Date(ms);return{y:t.getUTCFullYear(),m:String(t.getUTCMonth()+1).padStart(2,'0'),d:String(t.getUTCDate()).padStart(2,'0'),h:String(t.getUTCHours()).padStart(2,'0'),mi:String(t.getUTCMinutes()).padStart(2,'0'),s:String(t.getUTCSeconds()).padStart(2,'0')}}
+function kstNow(){return new Date(Date.now()+9*3600*1000)}
+function kstDateStr(d){const p=_kstParts(d);return p.y+'-'+p.m+'-'+p.d}
+function kstTimeStr(d){const p=_kstParts(d);return p.h+':'+p.mi+':'+p.s}
 function kstDateTimeStr(d){return kstDateStr(d)+' '+kstTimeStr(d)}
 function kstToday(){return kstDateStr()}
+/* Supabase timestamptz 저장용: '2026-05-01T13:45:30+09:00' 형식 */
+function kstISOForDB(d){const p=_kstParts(d);return p.y+'-'+p.m+'-'+p.d+'T'+p.h+':'+p.mi+':'+p.s+'+09:00'}
 function sbUrl(t,q){const c=getCfg();return(c.url||SB_DEFAULT_URL).replace(/\/$/,'')+'/rest/v1/'+t+(q?'?'+q:'')}
 async function sbSelect(t,f,o,l){const p=new URLSearchParams();if(f)Object.entries(f).forEach(([k,v])=>{if(v!==undefined&&v!==null&&v!=='')p.append(k,v)});if(o)p.append('order',o);if(l)p.append('limit',l);p.append('select','*');const r=await fetch(sbUrl(t,p.toString()),{headers:sbHeaders()});if(!r.ok)throw new Error('SELECT: '+r.status+' '+await r.text());return await r.json()}
 async function sbInsert(t,d){const b=Array.isArray(d)?d:[d];const r=await fetch(sbUrl(t),{method:'POST',headers:sbHeaders(),body:JSON.stringify(b)});if(!r.ok)throw new Error('INSERT: '+r.status+' '+await r.text());return await r.json()}
@@ -416,7 +419,7 @@ function adjCount(t,d){defectCounts[t]=Math.max(0,(defectCounts[t]||0)+d);const 
 function onCountInput(t,v){defectCounts[t]=Math.max(0,parseInt(v)||0);const e=document.getElementById('cnt_'+t.replace(/\s/g,'_'));if(e)e.value=defectCounts[t]}
 
 /* ★★★ saveDefect - 등록 후 기종명/검사수 리셋 적용 ★★★ */
-async function saveDefect(){if(!selectedZone)return;const ent=Object.entries(defectCounts).filter(([,v])=>v>0);const worker=document.getElementById('selWorker').value;if(!worker){showToast('⚠ 작업자를 선택하세요');closeDefectInput();return}const inspectQty=parseInt(document.getElementById('inspectQtyInput').value)||0;if(!ent.length&&!inspectQty){showToast('검사수 또는 불량수량 입력');return}const dt=kstToday(),tm=kstTimeStr();const note=document.getElementById('defectNote').value.trim();const inspLine=document.getElementById('selInspLine').value,prodLine=document.getElementById('selProdLine').value;showLoading('저장...');try{let rows;if(ent.length){rows=ent.map(([type,qty],idx)=>({defect_date:dt,defect_time:tm,model_name:currentModel,side:currentSide,zone_name:selectedZone.name,defect_type:type,qty:qty,inspect_qty:idx===0?inspectQty:0,note:note,worker:worker,inspect_line:inspLine,prod_line:prodLine}))}else{rows=[{defect_date:dt,defect_time:tm,model_name:currentModel,side:currentSide,zone_name:selectedZone.name,defect_type:'양품',qty:0,inspect_qty:inspectQty,note:note,worker:worker,inspect_line:inspLine,prod_line:prodLine}]}await sbInsert('defect_history',rows);const totalDef=ent.reduce((s,[,q])=>s+q,0);showToast(totalDef>0?`✅ ${selectedZone.name} 불량 ${totalDef}건`:`✅ 양품 등록`);if(navigator.vibrate)navigator.vibrate([50,30,50]);closeDefectInput();loadTodayStats();
+async function saveDefect(){if(!selectedZone)return;const ent=Object.entries(defectCounts).filter(([,v])=>v>0);const worker=document.getElementById('selWorker').value;if(!worker){showToast('⚠ 작업자를 선택하세요');closeDefectInput();return}const inspectQty=parseInt(document.getElementById('inspectQtyInput').value)||0;if(!ent.length&&!inspectQty){showToast('검사수 또는 불량수량 입력');return}const dt=kstToday(),tm=kstTimeStr(),rec=kstISOForDB();const note=document.getElementById('defectNote').value.trim();const inspLine=document.getElementById('selInspLine').value,prodLine=document.getElementById('selProdLine').value;showLoading('저장...');try{let rows;if(ent.length){rows=ent.map(([type,qty],idx)=>({defect_date:dt,defect_time:tm,recorded_at:rec,model_name:currentModel,side:currentSide,zone_name:selectedZone.name,defect_type:type,qty:qty,inspect_qty:idx===0?inspectQty:0,note:note,worker:worker,inspect_line:inspLine,prod_line:prodLine}))}else{rows=[{defect_date:dt,defect_time:tm,recorded_at:rec,model_name:currentModel,side:currentSide,zone_name:selectedZone.name,defect_type:'양품',qty:0,inspect_qty:inspectQty,note:note,worker:worker,inspect_line:inspLine,prod_line:prodLine}]}await sbInsert('defect_history',rows);const totalDef=ent.reduce((s,[,q])=>s+q,0);showToast(totalDef>0?`✅ ${selectedZone.name} 불량 ${totalDef}건`:`✅ 양품 등록`);if(navigator.vibrate)navigator.vibrate([50,30,50]);closeDefectInput();loadTodayStats();
 /* ★ 등록 후 기종명·검사수·기판보드 리셋 */
 document.getElementById('selModelInput').value='';
 document.getElementById('selModel').value='';
