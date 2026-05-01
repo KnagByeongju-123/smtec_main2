@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>설비 레이아웃 점검 v1.1</title>
+  <title>설비 레이아웃 점검 v1.2</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&display=swap');
@@ -361,7 +361,48 @@ document.getElementById('camInput').addEventListener('change',function(e){
   const f=e.target.files[0];if(!f){if(camResolve)camResolve(null);return}
   const reader=new FileReader();reader.onload=ev=>{const img=new Image();img.onload=()=>{const max=800;let w=img.width,h=img.height;if(w>max||h>max){if(w>h){h=h*max/w;w=max}else{w=w*max/h;h=max}}const cv=document.createElement('canvas');cv.width=w;cv.height=h;cv.getContext('2d').drawImage(img,0,0,w,h);if(camResolve)camResolve(cv.toDataURL('image/jpeg',0.7));camResolve=null};img.src=ev.target.result};reader.readAsDataURL(f);e.target.value=''});
 function viewPhoto(s){document.getElementById('pvImg').src=s;document.getElementById('photoViewer').classList.add('show')}
-function renderInspSel(){const s=document.getElementById('insp'),p=s.value;s.innerHTML='<option value="" disabled selected>점검자</option>';INSP.forEach(n=>{const o=document.createElement('option');o.value=n;o.textContent=n;s.appendChild(o)});if(p&&INSP.includes(p))s.value=p}
+/* 현재 로그인 사용자 이름 가져오기 (다른 점검페이지와 동일 패턴) */
+function getCurrentUserName(){
+  /* 1) localStorage('esg_pin_auth') - ESG 메인 PIN 로그인 */
+  try{
+    const a=JSON.parse(localStorage.getItem('esg_pin_auth')||'null');
+    if(a&&a.exp>Date.now()&&a.name)return a.name;
+  }catch(e){}
+  /* 2) sessionStorage('ESG_USER') - 문자열 또는 객체 */
+  try{
+    const raw=sessionStorage.getItem('ESG_USER');
+    if(raw){
+      if(raw[0]!=='{')return raw;
+      const u=JSON.parse(raw);
+      if(u)return u.name||u.user_name||u.username||'';
+    }
+  }catch(e){}
+  /* 3) localStorage('ESG_USER') */
+  try{
+    const raw=localStorage.getItem('ESG_USER');
+    if(raw){
+      if(raw[0]!=='{')return raw;
+      const u=JSON.parse(raw);
+      if(u)return u.name||u.user_name||u.username||'';
+    }
+  }catch(e){}
+  return '';
+}
+
+function renderInspSel(){
+  const s=document.getElementById('insp'),p=s.value;
+  s.innerHTML='<option value="" disabled selected>점검자</option>';
+  INSP.forEach(n=>{const o=document.createElement('option');o.value=n;o.textContent=n;s.appendChild(o)});
+  /* 로그인 사용자가 INSP에 없으면 자동 추가 */
+  const loginName=getCurrentUserName();
+  if(loginName&&!INSP.includes(loginName)){
+    const o=document.createElement('option');o.value=loginName;o.textContent=loginName+' (로그인)';
+    s.appendChild(o);
+  }
+  /* 우선순위: 직전 선택값 > 로그인 사용자 */
+  if(p&&(INSP.includes(p)||p===loginName))s.value=p;
+  else if(loginName)s.value=loginName;
+}
 
 function init(){
   const n=new Date();document.getElementById('chkDate').value=n.toISOString().split('T')[0];
@@ -376,6 +417,17 @@ function openMo(zid,e){
   document.getElementById('moNo').textContent=e.no;document.getElementById('moTon').textContent=e.t?e.t+'t':'';
   document.getElementById('moTit').textContent=e.t?e.mk+' '+e.t+'t':e.no;document.getElementById('moSub').textContent=(z?z.name:zid)+' · '+e.no;
   if(isActive(res[k])){mChk={...res[k]}}else{mChk={};CI.forEach(i=>{mChk[i.id]=i.tp==='text'?'':null})}
+  /* 기존 NG 레포트의 발생/개선 사진/내용 자동 복원 (점검 재방문 시 보이게) */
+  CI.forEach(i=>{
+    if(mChk[i.id]==='NG'){
+      const existing=Object.values(ngReports).find(r=>r.key===k&&r.itemId===i.id);
+      if(existing){
+        if(existing.photo&&!mChk[i.id+'_photo'])mChk[i.id+'_photo']=existing.photo;
+        if(existing.improvePhoto&&!mChk[i.id+'_improve_photo'])mChk[i.id+'_improve_photo']=existing.improvePhoto;
+        if(existing.improveDesc&&!mChk[i.id+'_improve_desc'])mChk[i.id+'_improve_desc']=existing.improveDesc;
+      }
+    }
+  });
   renderCL();document.getElementById('chkMo').classList.add('show');
 }
 function renderCL(){
@@ -427,19 +479,40 @@ function moSave(){
   const h={key:curKey,b:zid,no,mk:eq?eq.mk:'',t:eq?eq.t:'',chk:{...mChk},at,insp:ins,st,ts};
   if(editIdx>=0){hist[editIdx]=h;editIdx=-1}else hist.unshift(h);
   checkItems().forEach(i=>{
-    if(mChk[i.id]==='NG'&&!Object.values(ngReports).find(r=>r.key===curKey&&r.itemId===i.id&&r.status==='open')){
+    if(mChk[i.id]==='NG'){
       const impPhoto=mChk[i.id+'_improve_photo']||'';
       const impDesc=mChk[i.id+'_improve_desc']||'';
       const isClosed=!!impPhoto;  /* 개선사진 있으면 자동 closed */
-      ngReports[curKey+'_'+i.id+'_'+ts]={
-        key:curKey,zone:zid,no,itemId:i.id,itemName:i.lb,
-        reason:mChk[i.id+'_r']||'',
-        photo:mChk[i.id+'_photo']||'',
-        improvePhoto:impPhoto,
-        improveDesc:impDesc,
-        improveAt:isClosed?at:'',
-        status:isClosed?'closed':'open',
-        createdAt:at,insp:ins
+      /* 기존 ngReport 찾기 (해당 설비+항목의 가장 최근 open) */
+      const existingId=Object.keys(ngReports).find(rid=>{
+        const r=ngReports[rid];
+        return r.key===curKey&&r.itemId===i.id&&r.status==='open';
+      });
+      if(existingId){
+        /* 기존 미개선 NG 갱신: 사유/발생사진/개선정보 모두 업데이트 */
+        const r=ngReports[existingId];
+        r.reason=mChk[i.id+'_r']||'';
+        if(mChk[i.id+'_photo'])r.photo=mChk[i.id+'_photo'];
+        if(impPhoto){
+          r.improvePhoto=impPhoto;
+          r.improveDesc=impDesc;
+          r.improveAt=at;
+          r.status='closed';
+        }
+        /* 점검자 정보 업데이트 (기존이 '-'였으면 갱신) */
+        if(!r.insp||r.insp==='-')r.insp=ins;
+      }else{
+        /* 신규 NG 생성 */
+        ngReports[curKey+'_'+i.id+'_'+ts]={
+          key:curKey,zone:zid,no,itemId:i.id,itemName:i.lb,
+          reason:mChk[i.id+'_r']||'',
+          photo:mChk[i.id+'_photo']||'',
+          improvePhoto:impPhoto,
+          improveDesc:impDesc,
+          improveAt:isClosed?at:'',
+          status:isClosed?'closed':'open',
+          createdAt:at,insp:ins
+        };
       }
     }
   });
@@ -580,7 +653,43 @@ function downloadNgReport(){
   const openNg=allNg.filter(r=>r.status==='open');
   const closedNg=allNg.filter(r=>r.status==='closed');
   let html=`<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>NG 레포트 ${date}</title><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Noto Sans KR',sans-serif;background:#fff;color:#333;font-size:13px;padding:16px}h1{font-size:18px;text-align:center;margin-bottom:4px}.sub{text-align:center;font-size:12px;color:#888;margin-bottom:16px}h2{font-size:15px;margin:20px 0 10px;padding:6px 10px;border-radius:6px}.h-open{background:#ffebee;color:#c62828}.h-closed{background:#e8f5e9;color:#2e7d32}.rpt{border:1px solid #ddd;border-radius:8px;margin-bottom:12px;overflow:hidden;page-break-inside:avoid}.rpt-hd{padding:8px 12px;font-weight:700;font-size:13px;display:flex;justify-content:space-between;align-items:center}.rpt-hd.open{background:#ffebee;color:#c62828}.rpt-hd.closed{background:#e8f5e9;color:#2e7d32}.rpt-body{padding:10px 12px}.rpt-row{display:flex;padding:4px 0;border-bottom:1px solid #f5f5f5;font-size:12px}.rpt-row:last-child{border:none}.rpt-label{width:80px;flex-shrink:0;font-weight:600;color:#666}.rpt-val{flex:1}.rpt-photos{display:flex;gap:10px;margin-top:8px;flex-wrap:wrap}.rpt-photo-box{text-align:center}.rpt-photo-box img{width:200px;max-width:45vw;border-radius:6px;border:1px solid #ddd}.rpt-photo-box .caption{font-size:11px;color:#888;margin-top:4px}.badge{display:inline-block;font-size:11px;padding:2px 8px;border-radius:4px;font-weight:600}.badge-open{background:#ffebee;color:#c62828}.badge-closed{background:#e8f5e9;color:#2e7d32}@media print{body{padding:10px}h2{page-break-before:always}.rpt{break-inside:avoid}}</style></head><body><h1>NG 레포트</h1><div class="sub">출력일: ${date} | 총 ${allNg.length}건 (미개선 ${openNg.length} / 개선완료 ${closedNg.length})</div>`;
-  function renderSection(title,list,cls){if(!list.length)return '';let s=`<h2 class="${cls}">${title} (${list.length}건)</h2>`;list.forEach((r,i)=>{const z=ZONES.find(x=>x.id===r.zone);const statusCls=r.status==='open'?'open':'closed';const statusTxt=r.status==='open'?'미개선':'개선완료';s+=`<div class="rpt"><div class="rpt-hd ${statusCls}"><span>#${i+1} ${z?z.name:r.zone} / ${r.no}</span><span class="badge badge-${statusCls}">${statusTxt}</span></div><div class="rpt-body">`;s+=`<div class="rpt-row"><div class="rpt-label">점검항목</div><div class="rpt-val">${r.itemName}</div></div>`;s+=`<div class="rpt-row"><div class="rpt-label">NG사유</div><div class="rpt-val">${r.reason||'-'}</div></div>`;s+=`<div class="rpt-row"><div class="rpt-label">발생일시</div><div class="rpt-val">${r.createdAt}</div></div>`;s+=`<div class="rpt-row"><div class="rpt-label">점검자</div><div class="rpt-val">${r.insp}</div></div>`;if(r.improveAt)s+=`<div class="rpt-row"><div class="rpt-label">개선일시</div><div class="rpt-val">${r.improveAt}</div></div>`;if(r.improveDesc)s+=`<div class="rpt-row"><div class="rpt-label">개선내용</div><div class="rpt-val" style="color:#2e7d32;font-weight:500">${r.improveDesc}</div></div>`;if(r.photo||r.improvePhoto){s+=`<div class="rpt-photos">`;if(r.photo)s+=`<div class="rpt-photo-box"><img src="${r.photo}"><div class="caption">▲ 발생 (Before)</div></div>`;if(r.improvePhoto)s+=`<div class="rpt-photo-box"><img src="${r.improvePhoto}"><div class="caption">▲ 개선 (After)</div></div>`;s+=`</div>`;}s+=`</div></div>`});return s}
+  function renderSection(title,list,cls){
+    if(!list.length)return '';
+    let s=`<h2 class="${cls}">${title} (${list.length}건)</h2>`;
+    list.forEach((r,i)=>{
+      const z=ZONES.find(x=>x.id===r.zone);
+      const statusCls=r.status==='open'?'open':'closed';
+      const statusTxt=r.status==='open'?'미개선':'개선완료';
+      s+=`<div class="rpt"><div class="rpt-hd ${statusCls}"><span>#${i+1} ${z?z.name:r.zone} / ${r.no}</span><span class="badge badge-${statusCls}">${statusTxt}</span></div><div class="rpt-body">`;
+      s+=`<div class="rpt-row"><div class="rpt-label">점검항목</div><div class="rpt-val">${r.itemName}</div></div>`;
+      s+=`<div class="rpt-row"><div class="rpt-label">NG사유</div><div class="rpt-val">${r.reason||'-'}</div></div>`;
+      s+=`<div class="rpt-row"><div class="rpt-label">발생일시</div><div class="rpt-val">${r.createdAt}</div></div>`;
+      s+=`<div class="rpt-row"><div class="rpt-label">점검자</div><div class="rpt-val">${r.insp||'-'}</div></div>`;
+      /* 개선완료된 경우 - 개선 정보 강조 표시 */
+      if(r.status==='closed'){
+        s+=`<div class="rpt-row" style="background:#f1f8e9;padding:6px 8px;border-radius:4px;margin-top:6px"><div class="rpt-label" style="color:#2e7d32">✅ 개선일시</div><div class="rpt-val" style="color:#2e7d32;font-weight:600">${r.improveAt||'-'}</div></div>`;
+        s+=`<div class="rpt-row" style="background:#f1f8e9;padding:6px 8px;border-radius:4px"><div class="rpt-label" style="color:#2e7d32">✅ 개선내용</div><div class="rpt-val" style="color:#2e7d32;font-weight:500">${r.improveDesc||'(개선내용 없음)'}</div></div>`;
+      }
+      /* 사진 영역 - 발생/개선 나란히 (개선이 없으면 placeholder 표시) */
+      s+=`<div class="rpt-photos">`;
+      if(r.photo){
+        s+=`<div class="rpt-photo-box"><img src="${r.photo}"><div class="caption">▲ 발생 (Before)</div></div>`;
+      }else{
+        s+=`<div class="rpt-photo-box"><div style="width:200px;max-width:45vw;height:140px;border:2px dashed #ddd;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#bbb;font-size:11px">발생사진 없음</div><div class="caption">▲ 발생 (Before)</div></div>`;
+      }
+      if(r.improvePhoto){
+        s+=`<div class="rpt-photo-box"><img src="${r.improvePhoto}" style="border:2px solid #2e7d32"><div class="caption" style="color:#2e7d32;font-weight:700">✅ 개선 (After)</div></div>`;
+      }else if(r.status==='closed'){
+        /* 개선완료인데 사진 없음 (예: 개선사진 없이 desc만 등록된 케이스) */
+        s+=`<div class="rpt-photo-box"><div style="width:200px;max-width:45vw;height:140px;border:2px dashed #a5d6a7;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#2e7d32;font-size:11px;background:#f1f8e9">개선사진 없음<br>(개선내용으로만 처리)</div><div class="caption" style="color:#2e7d32">✅ 개선 (After)</div></div>`;
+      }else{
+        s+=`<div class="rpt-photo-box"><div style="width:200px;max-width:45vw;height:140px;border:2px dashed #ffcdd2;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#c62828;font-size:11px;background:#fff5f5">미개선 상태</div><div class="caption" style="color:#c62828">✅ 개선 (After) - 미진행</div></div>`;
+      }
+      s+=`</div>`;
+      s+=`</div></div>`;
+    });
+    return s;
+  }
   html+=renderSection('미개선 NG',openNg,'h-open');html+=renderSection('개선완료 NG',closedNg,'h-closed');html+=`</body></html>`;
   const blob=new Blob([html],{type:'text/html;charset=utf-8'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`NG레포트_${date.replace(/-/g,'')}.html`;a.click();URL.revokeObjectURL(a.href);
 }
