@@ -3352,3 +3352,236 @@ setInterval(loadLogFromSupabase,5*60*1000);
   
   document.addEventListener('DOMContentLoaded', syncSelectToRadio);
 })();
+
+// ============================================================
+// 숫자 키패드 모달 - 검사성적서 측정값 입력용
+// 모바일/PC 모두 동작, 소수점 포함, 탭(다음 칸) 지원
+// ============================================================
+(function(){
+  let _curEl = null;        // 현재 입력 대상 input element
+  let _curBuf = '';         // 입력 버퍼
+  let _tabOrder = [];       // 탭 순회 순서 (input element 배열)
+  
+  // 키패드 대상 input id 패턴 (측정값 X1/X2/X3)
+  // r1=표면, r2=재질은 text라 제외, r3=폭, r4=두께가 number
+  const NUMPAD_TARGETS = ['r3', 'r4'];
+  
+  function isNumpadTarget(el){
+    if(!el || !el.id) return false;
+    // sup_r3_x1, cus_r4_x2 등 패턴
+    return /^(sup|cus)_r[34]_x[123]$/.test(el.id);
+  }
+  
+  function buildTabOrder(){
+    // 탭 순서: sup_r3_x1, x2, x3 → sup_r4_x1, x2, x3 → cus_r3_x1 ... cus_r4_x3
+    const order = [];
+    ['sup', 'cus'].forEach(role => {
+      NUMPAD_TARGETS.forEach(rk => {
+        ['x1', 'x2', 'x3'].forEach(x => {
+          const el = document.getElementById(`${role}_${rk}_${x}`);
+          if(el) order.push(el);
+        });
+      });
+    });
+    return order;
+  }
+  
+  function openNumpad(el){
+    if(!el) return;
+    _curEl = el;
+    _tabOrder = buildTabOrder();
+    
+    // 라벨 생성 (어떤 항목인지)
+    const m = el.id.match(/^(sup|cus)_(r[34])_(x[123])$/);
+    let label = '측정값 입력';
+    if(m){
+      const role = m[1] === 'sup' ? '🏭 공급자' : '🏢 수요자';
+      const itemMap = {r3:'폭(mm)', r4:'두께(mm)'};
+      const xMap = {x1:'X1', x2:'X2', x3:'X3'};
+      label = `${role} · ${itemMap[m[2]]} · ${xMap[m[3]]}`;
+    }
+    document.getElementById('numpadLabel').textContent = label;
+    
+    // 기존 값 로드 (0이거나 빈 값이면 빈 상태로 시작)
+    const cur = String(el.value || '').trim();
+    _curBuf = (cur === '0' || cur === '') ? '' : cur;
+    updateDisplay();
+    
+    // 모달 표시
+    document.getElementById('numpadOverlay').classList.add('show');
+  }
+  
+  function closeNumpad(){
+    document.getElementById('numpadOverlay').classList.remove('show');
+    _curEl = null;
+    _curBuf = '';
+  }
+  
+  function updateDisplay(){
+    const disp = document.getElementById('numpadDisplay');
+    if(disp) disp.textContent = _curBuf || '0';
+  }
+  
+  function applyValue(){
+    if(!_curEl) return;
+    // 빈 상태면 빈 값으로, 아니면 그대로
+    _curEl.value = _curBuf;
+    // input 이벤트 발생시켜 자동판정 트리거
+    _curEl.dispatchEvent(new Event('input', {bubbles:true}));
+  }
+  
+  function moveToNext(){
+    if(!_curEl) return false;
+    const idx = _tabOrder.indexOf(_curEl);
+    if(idx < 0 || idx >= _tabOrder.length - 1) return false;
+    
+    // 현재 값 적용 후 다음 input으로 이동
+    applyValue();
+    const nextEl = _tabOrder[idx + 1];
+    
+    // 다음 input의 기존 값 로드
+    _curEl = nextEl;
+    const cur = String(nextEl.value || '').trim();
+    _curBuf = (cur === '0' || cur === '') ? '' : cur;
+    
+    // 라벨 갱신
+    const m = nextEl.id.match(/^(sup|cus)_(r[34])_(x[123])$/);
+    if(m){
+      const role = m[1] === 'sup' ? '🏭 공급자' : '🏢 수요자';
+      const itemMap = {r3:'폭(mm)', r4:'두께(mm)'};
+      const xMap = {x1:'X1', x2:'X2', x3:'X3'};
+      document.getElementById('numpadLabel').textContent = `${role} · ${itemMap[m[2]]} · ${xMap[m[3]]}`;
+    }
+    
+    updateDisplay();
+    return true;
+  }
+  
+  function handleKey(action, num){
+    if(num !== undefined){
+      // 숫자 또는 소수점 입력
+      if(num === '.'){
+        if(_curBuf.includes('.')) return;  // 소수점 중복 방지
+        if(_curBuf === '') _curBuf = '0';  // ".5" 방지 → "0.5"
+        _curBuf += '.';
+      }else{
+        // 일반 숫자
+        if(_curBuf === '0') _curBuf = num;  // 선행 0 제거
+        else _curBuf += num;
+      }
+      updateDisplay();
+      return;
+    }
+    
+    switch(action){
+      case 'back':
+        _curBuf = _curBuf.slice(0, -1);
+        updateDisplay();
+        break;
+      case 'clear':
+        _curBuf = '';
+        updateDisplay();
+        break;
+      case 'cancel':
+        closeNumpad();
+        break;
+      case 'ok':
+        applyValue();
+        closeNumpad();
+        break;
+      case 'tab':
+        if(!moveToNext()){
+          // 마지막 칸이면 OK처럼 동작
+          applyValue();
+          closeNumpad();
+        }
+        break;
+    }
+  }
+  
+  // 입력 위임: number input 클릭/포커스 시 키패드 열기
+  function attachToInput(el){
+    if(!el || el.dataset.numpadAttached) return;
+    el.dataset.numpadAttached = '1';
+    el.classList.add('numpad-target');
+    
+    // iOS 키보드 자동 표시 방지
+    el.setAttribute('readonly', 'readonly');
+    el.setAttribute('inputmode', 'none');
+    
+    el.addEventListener('focus', e => {
+      e.preventDefault();
+      openNumpad(el);
+      el.blur();  // 시스템 키보드 방지
+    });
+    el.addEventListener('click', e => {
+      e.preventDefault();
+      openNumpad(el);
+    });
+    // 터치 디바이스
+    el.addEventListener('touchstart', e => {
+      e.preventDefault();
+      openNumpad(el);
+    }, {passive:false});
+  }
+  
+  // 모든 측정 number input에 핸들러 부착
+  function refreshAttachments(){
+    document.querySelectorAll('input[type="number"]').forEach(el => {
+      if(isNumpadTarget(el)) attachToInput(el);
+    });
+  }
+  
+  // 키패드 버튼 클릭 처리 (이벤트 위임)
+  document.addEventListener('click', e => {
+    const btn = e.target.closest('.numpad-key');
+    if(!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    
+    if(btn.dataset.num !== undefined){
+      handleKey(null, btn.dataset.num);
+    }else if(btn.dataset.act){
+      handleKey(btn.dataset.act);
+    }
+  });
+  
+  // 오버레이 바깥 클릭 시 취소
+  document.addEventListener('click', e => {
+    const overlay = document.getElementById('numpadOverlay');
+    if(!overlay || !overlay.classList.contains('show')) return;
+    if(e.target === overlay) closeNumpad();
+  });
+  
+  // 키보드 입력 지원 (PC)
+  document.addEventListener('keydown', e => {
+    const overlay = document.getElementById('numpadOverlay');
+    if(!overlay || !overlay.classList.contains('show')) return;
+    
+    if(/^[0-9]$/.test(e.key)){
+      e.preventDefault();
+      handleKey(null, e.key);
+    }else if(e.key === '.'){
+      e.preventDefault();
+      handleKey(null, '.');
+    }else if(e.key === 'Backspace'){
+      e.preventDefault();
+      handleKey('back');
+    }else if(e.key === 'Enter'){
+      e.preventDefault();
+      handleKey('ok');
+    }else if(e.key === 'Escape'){
+      e.preventDefault();
+      handleKey('cancel');
+    }else if(e.key === 'Tab'){
+      e.preventDefault();
+      handleKey('tab');
+    }
+  });
+  
+  // 초기 부착 + 동적 추가된 input도 주기적으로 부착
+  document.addEventListener('DOMContentLoaded', refreshAttachments);
+  setTimeout(refreshAttachments, 500);
+  // editCert/openCertModal로 테이블이 다시 그려지면 다시 부착 필요
+  setInterval(refreshAttachments, 1500);
+})();
