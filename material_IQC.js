@@ -337,56 +337,55 @@ function buildMeasTable(prefix){
 // 가시성 향상을 위해 분리하지 않고 한 표에서 비교 가능
 function buildUnifiedMeasTable(){
   return MEAS_ITEMS.map(item => {
-    // 규격 placeholder: 항상 "(선택)" 표시 (소재별 변경은 applyMaterialOptions로 동적 처리)
+    // 규격 placeholder: 항상 "(선택)" 표시
     const specPlaceholder = '(선택)';
     
-    // 공급자 행
-    const supSpec = '<input type="text" id="sup_' + item.key + '_spec" placeholder="' + specPlaceholder + '" class="meas-spec-input" oninput="syncSpecToCustomer(\'' + item.key + '\'); autoEvaluateAndSetRow(\'sup\', \'' + item.key + '\'); autoEvaluateAndSetRow(\'cus\', \'' + item.key + '\'); syncFinalJudgesFromRows();">';
+    // 규격 (공통, 한 칸만)
+    const specCell = '<input type="text" id="sup_' + item.key + '_spec" placeholder="' + specPlaceholder + '" class="meas-spec-input" oninput="syncSpecToCustomer(\'' + item.key + '\'); autoEvaluateAndSetRow(\'sup\', \'' + item.key + '\'); autoEvaluateAndSetRow(\'cus\', \'' + item.key + '\'); syncFinalJudgesFromRows();">' +
+      // 수요자 spec은 hidden (공급자 spec과 동일 자동 반영, 호환성 유지)
+      '<input type="hidden" id="cus_' + item.key + '_spec" class="meas-spec-input readonly-spec">';
+    
+    // 공급자 X1/X2/X3 셀 (파란 배경)
     let supValCells = '';
     ['x1','x2','x3'].forEach(x => {
       const oninput = ' oninput="autoEvaluateAndSetRow(\'sup\', \'' + item.key + '\'); syncFinalJudgesFromRows();"';
-      // placeholder 제거: 임의값 노출 방지 (사용자가 직접 입력)
-      if (item.type === 'number') {
-        supValCells += '<td><input type="number" step="' + (item.step||'0.01') + '" id="sup_' + item.key + '_' + x + '" placeholder=""' + oninput + '></td>';
-      } else {
-        supValCells += '<td><input type="text" id="sup_' + item.key + '_' + x + '" placeholder=""' + oninput + '></td>';
-      }
+      const inputType = item.type === 'number' ? 'number' : 'text';
+      const stepAttr = item.type === 'number' ? ' step="' + (item.step||'0.01') + '"' : '';
+      supValCells += '<td style="background:#eff6ff;"><input type="' + inputType + '"' + stepAttr + ' id="sup_' + item.key + '_' + x + '" placeholder=""' + oninput + ' style="background:#fff;"></td>';
     });
-    const supRadioName = 'sup_' + item.key + '_j';
-    // 자동 OK 체크 제거 → 사용자가 측정값 입력하면 자동판정으로 결정
-    const supJudge = '<div class="judge-radio" id="sup_' + item.key + '_j_wrap">' +
-      '<label><input type="radio" name="' + supRadioName + '" value="OK"><span>OK</span></label>' +
-      '<label><input type="radio" name="' + supRadioName + '" value="NG"><span>NG</span></label></div>';
-
-    // 수요자 행 (공급자 측정 여부와 무관하게 항상 활성)
-    const cusSpec = '<input type="text" id="cus_' + item.key + '_spec" class="meas-spec-input readonly-spec" readonly title="공급자 Spec 자동 반영">';
+    
+    // 수요자 X1/X2/X3 셀 (녹색 배경)
     let cusValCells = '';
     ['x1','x2','x3'].forEach(x => {
       const oninput = ' oninput="autoEvaluateAndSetRow(\'cus\', \'' + item.key + '\'); syncFinalJudgesFromRows();"';
-      if (item.type === 'number') {
-        cusValCells += '<td><input type="number" step="' + (item.step||'0.01') + '" id="cus_' + item.key + '_' + x + '" placeholder=""' + oninput + '></td>';
-      } else {
-        cusValCells += '<td><input type="text" id="cus_' + item.key + '_' + x + '" placeholder=""' + oninput + '></td>';
-      }
+      const inputType = item.type === 'number' ? 'number' : 'text';
+      const stepAttr = item.type === 'number' ? ' step="' + (item.step||'0.01') + '"' : '';
+      cusValCells += '<td style="background:#f0fdf4;"><input type="' + inputType + '"' + stepAttr + ' id="cus_' + item.key + '_' + x + '" placeholder=""' + oninput + ' style="background:#fff;"></td>';
     });
+    
+    // 통합 판정: 공급자/수요자 라디오는 hidden 유지 (자동 판정 로직 호환)
+    // UI에는 한 줄에 OK/NG만 (수요자 기준으로 표시, 사용자가 변경 가능)
+    const supRadioName = 'sup_' + item.key + '_j';
     const cusRadioName = 'cus_' + item.key + '_j';
-    // 자동 OK 체크 제거
-    const cusJudge = '<div class="judge-radio" id="cus_' + item.key + '_j_wrap">' +
-      '<label><input type="radio" name="' + cusRadioName + '" value="OK"><span>OK</span></label>' +
-      '<label><input type="radio" name="' + cusRadioName + '" value="NG"><span>NG</span></label></div>';
+    const judgeCell = '<td>' +
+      '<div class="judge-radio judge-radio-unified" id="cus_' + item.key + '_j_wrap">' +
+        '<label><input type="radio" name="' + cusRadioName + '" value="OK"><span>OK</span></label>' +
+        '<label><input type="radio" name="' + cusRadioName + '" value="NG"><span>NG</span></label>' +
+      '</div>' +
+      // 공급자 라디오는 hidden으로 보존 (자동 판정 로직 호환)
+      '<div id="sup_' + item.key + '_j_wrap" style="display:none;">' +
+        '<input type="radio" name="' + supRadioName + '" value="OK">' +
+        '<input type="radio" name="' + supRadioName + '" value="NG">' +
+      '</div>' +
+    '</td>';
 
-    // 한 항목당 2행: 공급자(파란 배경) → 수요자(녹색 배경)
-    return '<tr style="background:#eff6ff;">' +
-      '<td rowspan="2" style="vertical-align:middle; background:white;"><strong>' + item.label + '</strong></td>' +
-      '<td rowspan="2" style="vertical-align:middle; background:white;">' + supSpec + '</td>' +
-      '<td style="background:#dbeafe; font-size:10px; color:#1e40af; font-weight:700; text-align:center; padding:2px 6px;">공급자</td>' +
+    // 한 항목당 1행 (가로로 공급자 → 수요자 비교)
+    return '<tr>' +
+      '<td style="vertical-align:middle; text-align:center;"><strong>' + item.label + '</strong></td>' +
+      '<td style="vertical-align:middle;">' + specCell + '</td>' +
       supValCells +
-      '<td>' + supJudge + '</td>' +
-      '</tr>' +
-      '<tr style="background:#f0fdf4;">' +
-      '<td style="background:#dcfce7; font-size:10px; color:#166534; font-weight:700; text-align:center; padding:2px 6px;">수요자</td>' +
       cusValCells +
-      '<td>' + cusJudge + '</td>' +
+      judgeCell +
       '</tr>';
   }).join('');
 }
@@ -2907,12 +2906,34 @@ function setupCertCardToggle(){
   document.querySelectorAll('#certList .inspection-cert').forEach(card=>{
     if(card.dataset.toggleReady)return;
     card.dataset.toggleReady='1';
-    card.classList.add('collapsed');  // 기본 접힘
+    card.classList.add('collapsed');  // 기본 접힘 유지 (목록 컴팩트)
     const header=card.querySelector('.cert-header');
     if(!header)return;
+    
+    // 헤더에 클릭 안내 + 커서
+    header.style.cursor = 'pointer';
+    header.title = '클릭하여 수요자 검사 작성';
+    
     header.addEventListener('click',e=>{
-      if(e.target.closest('button'))return;  // 헤더 안 버튼 클릭은 토글 안함
-      card.classList.toggle('collapsed');
+      // 헤더 안 버튼(수정/삭제/OK 등) 클릭은 무시
+      if(e.target.closest('button'))return;
+      
+      // ⭐ 카드 클릭 → 바로 수요자 검사 작성 모달 열기
+      // 카드 idx 찾기 (data-idx 속성 또는 onclick에서 파싱)
+      let idx = -1;
+      const editBtn = card.querySelector('.btn-customer-edit');
+      if(editBtn){
+        const onclick = editBtn.getAttribute('onclick') || '';
+        const m = onclick.match(/editCustomerPart\((\d+)\)/);
+        if(m) idx = parseInt(m[1]);
+      }
+      
+      if(idx >= 0 && typeof editCustomerPart === 'function'){
+        editCustomerPart(idx);
+      }else{
+        // fallback: 모달 열기 실패 시 토글
+        card.classList.toggle('collapsed');
+      }
     });
   });
 }
