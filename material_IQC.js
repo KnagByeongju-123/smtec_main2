@@ -393,51 +393,14 @@ function buildUnifiedMeasTable(){
   }).join('');
 }
 
-// 소재별 옵션 적용: 공급자/규격 선택 시 각 검사항목의 (선택) 자리에 추천 옵션 표시
-// 호출 시점: c_spec(규격) 또는 c_supplier(공급자) 변경 시
+// 모든 검사항목 spec placeholder를 "(선택)"으로 통일
+// 사용자 요청: 임의값 자동 채움 없이 (선택)만 표시
 function applyMaterialOptions(){
-  const spec = (document.getElementById('c_spec')?.value || '').toUpperCase();
-  const commodity = (document.getElementById('c_commodity')?.value || '').toUpperCase();
-  const txt = spec + ' ' + commodity;
-  
-  // 소재 종류 판별
-  let mat = 'GENERIC';
-  if (/SPCC|SPC1|A1008/i.test(txt)) mat = 'SPCC';
-  else if (/304|STS304|A240M-304/i.test(txt)) mat = 'STS304';
-  else if (/430|STS430|A240M-430/i.test(txt)) mat = 'STS430';
-  else if (/STS|STAINLESS|스테인/i.test(txt)) mat = 'STS';
-  
-  // 소재별 권장 spec (placeholder만 변경, 사용자가 입력하면 그대로 저장)
-  const presets = {
-    SPCC: {
-      r1: '결함없을것', r2: 'SPCC', r3: '90mm ±0.1', r4: '0.6T ±0.05',
-      r5: '65 이하', r6: '40 이상', r7: '0/+2', r8: '양호'
-    },
-    STS304: {
-      r1: '결함없을것', r2: 'STS304', r3: '90mm ±0.1', r4: '0.6T ±0.05',
-      r5: '90 이하', r6: '40 이상', r7: '0/+2', r8: '양호'
-    },
-    STS430: {
-      r1: '결함없을것', r2: 'STS430', r3: '90mm ±0.1', r4: '0.6T ±0.05',
-      r5: '88 이하', r6: '22 이상', r7: '0/+2', r8: '양호'
-    },
-    STS: {
-      r1: '결함없을것', r2: 'STS', r3: '90mm ±0.1', r4: '0.6T ±0.05',
-      r5: '(선택)', r6: '(선택)', r7: '0/+2', r8: '양호'
-    },
-    GENERIC: {
-      r1: '(선택)', r2: '(선택)', r3: '(선택)', r4: '(선택)',
-      r5: '(선택)', r6: '(선택)', r7: '(선택)', r8: '(선택)'
-    }
-  };
-  
-  const opts = presets[mat] || presets.GENERIC;
-  
-  // 각 spec input의 placeholder 동적 변경 (입력값은 보존)
-  Object.keys(opts).forEach(key => {
+  const keys = ['r1','r2','r3','r4','r5','r6','r7','r8'];
+  keys.forEach(key => {
     const el = document.getElementById('sup_' + key + '_spec');
     if (el && !el.value) {
-      el.placeholder = opts[key];
+      el.placeholder = '(선택)';
     }
   });
 }
@@ -2127,12 +2090,13 @@ function onSupplierChange(){
   }
 
   // 2) materialMaster에서 동일 공급자 항목 찾아 측정 SPEC 자동 채움
-  if (typeof materialMaster !== 'undefined' && Array.isArray(materialMaster) && typeof MATERIAL_SPEC_TEMPLATES === 'object') {
-    const matchedMat = materialMaster.find(m => m.supplier === supName);
-    if (matchedMat && matchedMat.material) {
-      autoFillMeasSpecsByMaterial(matchedMat.material, matchedMat.thick, matchedMat.width);
-    }
-  }
+  // ⚠ 비활성화: 사용자 요청에 따라 spec은 (선택)으로만 표시 (임의값 자동 채움 X)
+  // if (typeof materialMaster !== 'undefined' && Array.isArray(materialMaster) && typeof MATERIAL_SPEC_TEMPLATES === 'object') {
+  //   const matchedMat = materialMaster.find(m => m.supplier === supName);
+  //   if (matchedMat && matchedMat.material) {
+  //     autoFillMeasSpecsByMaterial(matchedMat.material, matchedMat.thick, matchedMat.width);
+  //   }
+  // }
 }
 
 // 재질에 따라 측정값 SPEC 자동 채움 (sup_xxx_spec, cus_xxx_spec 둘 다)
