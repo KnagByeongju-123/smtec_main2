@@ -303,7 +303,8 @@ function buildMeasTable(prefix){
   const isSupplier = (prefix === 'sup');
   return MEAS_ITEMS.map(item => {
     let specCell;
-    const specPlaceholder = item.specPlaceholder || item.defaultSpec || '';
+    // 규격 placeholder: (선택)으로 통일 (소재별 변경은 applyMaterialOptions에서)
+    const specPlaceholder = '(선택)';
     if (isSupplier) {
       specCell = '<td><input type="text" id="sup_' + item.key + '_spec" placeholder="' + specPlaceholder + '" class="meas-spec-input" oninput="syncSpecToCustomer(\'' + item.key + '\'); autoEvaluateAndSetRow(\'sup\', \'' + item.key + '\'); autoEvaluateAndSetRow(\'cus\', \'' + item.key + '\'); syncFinalJudgesFromRows();"></td>';
     } else {
@@ -313,17 +314,19 @@ function buildMeasTable(prefix){
     let valCells = '';
     ['x1','x2','x3'].forEach(x => {
       const oninput = ' oninput="autoEvaluateAndSetRow(\'' + prefix + '\', \'' + item.key + '\'); syncFinalJudgesFromRows();"';
+      // placeholder 빈값으로: 임의값 노출 방지
       if (item.type === 'number') {
-        valCells += '<td><input type="number" step="' + (item.step||'0.01') + '" id="' + prefix + '_' + item.key + '_' + x + '" placeholder="' + (item.placeholder||'') + '"' + oninput + '></td>';
+        valCells += '<td><input type="number" step="' + (item.step||'0.01') + '" id="' + prefix + '_' + item.key + '_' + x + '" placeholder=""' + oninput + '></td>';
       } else {
-        valCells += '<td><input type="text" id="' + prefix + '_' + item.key + '_' + x + '" placeholder="' + (item.placeholder||'양호') + '"' + oninput + '></td>';
+        valCells += '<td><input type="text" id="' + prefix + '_' + item.key + '_' + x + '" placeholder=""' + oninput + '></td>';
       }
     });
 
     const radioName = prefix + '_' + item.key + '_j';
+    // 자동 OK 체크 제거
     const judgeCell = '<td>' +
       '<div class="judge-radio" id="' + prefix + '_' + item.key + '_j_wrap">' +
-        '<label><input type="radio" name="' + radioName + '" value="OK" checked><span>OK</span></label>' +
+        '<label><input type="radio" name="' + radioName + '" value="OK"><span>OK</span></label>' +
         '<label><input type="radio" name="' + radioName + '" value="NG"><span>NG</span></label>' +
       '</div>' +
     '</td>';
@@ -336,22 +339,25 @@ function buildMeasTable(prefix){
 // 가시성 향상을 위해 분리하지 않고 한 표에서 비교 가능
 function buildUnifiedMeasTable(){
   return MEAS_ITEMS.map(item => {
-    const specPlaceholder = item.specPlaceholder || item.defaultSpec || '';
+    // 규격 placeholder: 항상 "(선택)" 표시 (소재별 변경은 applyMaterialOptions로 동적 처리)
+    const specPlaceholder = '(선택)';
     
     // 공급자 행
     const supSpec = '<input type="text" id="sup_' + item.key + '_spec" placeholder="' + specPlaceholder + '" class="meas-spec-input" oninput="syncSpecToCustomer(\'' + item.key + '\'); autoEvaluateAndSetRow(\'sup\', \'' + item.key + '\'); autoEvaluateAndSetRow(\'cus\', \'' + item.key + '\'); syncFinalJudgesFromRows();">';
     let supValCells = '';
     ['x1','x2','x3'].forEach(x => {
       const oninput = ' oninput="autoEvaluateAndSetRow(\'sup\', \'' + item.key + '\'); syncFinalJudgesFromRows();"';
+      // placeholder 제거: 임의값 노출 방지 (사용자가 직접 입력)
       if (item.type === 'number') {
-        supValCells += '<td><input type="number" step="' + (item.step||'0.01') + '" id="sup_' + item.key + '_' + x + '" placeholder="' + (item.placeholder||'') + '"' + oninput + '></td>';
+        supValCells += '<td><input type="number" step="' + (item.step||'0.01') + '" id="sup_' + item.key + '_' + x + '" placeholder=""' + oninput + '></td>';
       } else {
-        supValCells += '<td><input type="text" id="sup_' + item.key + '_' + x + '" placeholder="' + (item.placeholder||'양호') + '"' + oninput + '></td>';
+        supValCells += '<td><input type="text" id="sup_' + item.key + '_' + x + '" placeholder=""' + oninput + '></td>';
       }
     });
     const supRadioName = 'sup_' + item.key + '_j';
+    // 자동 OK 체크 제거 → 사용자가 측정값 입력하면 자동판정으로 결정
     const supJudge = '<div class="judge-radio" id="sup_' + item.key + '_j_wrap">' +
-      '<label><input type="radio" name="' + supRadioName + '" value="OK" checked><span>OK</span></label>' +
+      '<label><input type="radio" name="' + supRadioName + '" value="OK"><span>OK</span></label>' +
       '<label><input type="radio" name="' + supRadioName + '" value="NG"><span>NG</span></label></div>';
 
     // 수요자 행 (공급자 측정 여부와 무관하게 항상 활성)
@@ -360,14 +366,15 @@ function buildUnifiedMeasTable(){
     ['x1','x2','x3'].forEach(x => {
       const oninput = ' oninput="autoEvaluateAndSetRow(\'cus\', \'' + item.key + '\'); syncFinalJudgesFromRows();"';
       if (item.type === 'number') {
-        cusValCells += '<td><input type="number" step="' + (item.step||'0.01') + '" id="cus_' + item.key + '_' + x + '" placeholder="' + (item.placeholder||'') + '"' + oninput + '></td>';
+        cusValCells += '<td><input type="number" step="' + (item.step||'0.01') + '" id="cus_' + item.key + '_' + x + '" placeholder=""' + oninput + '></td>';
       } else {
-        cusValCells += '<td><input type="text" id="cus_' + item.key + '_' + x + '" placeholder="' + (item.placeholder||'양호') + '"' + oninput + '></td>';
+        cusValCells += '<td><input type="text" id="cus_' + item.key + '_' + x + '" placeholder=""' + oninput + '></td>';
       }
     });
     const cusRadioName = 'cus_' + item.key + '_j';
+    // 자동 OK 체크 제거
     const cusJudge = '<div class="judge-radio" id="cus_' + item.key + '_j_wrap">' +
-      '<label><input type="radio" name="' + cusRadioName + '" value="OK" checked><span>OK</span></label>' +
+      '<label><input type="radio" name="' + cusRadioName + '" value="OK"><span>OK</span></label>' +
       '<label><input type="radio" name="' + cusRadioName + '" value="NG"><span>NG</span></label></div>';
 
     // 한 항목당 2행: 공급자(파란 배경) → 수요자(녹색 배경)
@@ -384,6 +391,55 @@ function buildUnifiedMeasTable(){
       '<td>' + cusJudge + '</td>' +
       '</tr>';
   }).join('');
+}
+
+// 소재별 옵션 적용: 공급자/규격 선택 시 각 검사항목의 (선택) 자리에 추천 옵션 표시
+// 호출 시점: c_spec(규격) 또는 c_supplier(공급자) 변경 시
+function applyMaterialOptions(){
+  const spec = (document.getElementById('c_spec')?.value || '').toUpperCase();
+  const commodity = (document.getElementById('c_commodity')?.value || '').toUpperCase();
+  const txt = spec + ' ' + commodity;
+  
+  // 소재 종류 판별
+  let mat = 'GENERIC';
+  if (/SPCC|SPC1|A1008/i.test(txt)) mat = 'SPCC';
+  else if (/304|STS304|A240M-304/i.test(txt)) mat = 'STS304';
+  else if (/430|STS430|A240M-430/i.test(txt)) mat = 'STS430';
+  else if (/STS|STAINLESS|스테인/i.test(txt)) mat = 'STS';
+  
+  // 소재별 권장 spec (placeholder만 변경, 사용자가 입력하면 그대로 저장)
+  const presets = {
+    SPCC: {
+      r1: '결함없을것', r2: 'SPCC', r3: '90mm ±0.1', r4: '0.6T ±0.05',
+      r5: '65 이하', r6: '40 이상', r7: '0/+2', r8: '양호'
+    },
+    STS304: {
+      r1: '결함없을것', r2: 'STS304', r3: '90mm ±0.1', r4: '0.6T ±0.05',
+      r5: '90 이하', r6: '40 이상', r7: '0/+2', r8: '양호'
+    },
+    STS430: {
+      r1: '결함없을것', r2: 'STS430', r3: '90mm ±0.1', r4: '0.6T ±0.05',
+      r5: '88 이하', r6: '22 이상', r7: '0/+2', r8: '양호'
+    },
+    STS: {
+      r1: '결함없을것', r2: 'STS', r3: '90mm ±0.1', r4: '0.6T ±0.05',
+      r5: '(선택)', r6: '(선택)', r7: '0/+2', r8: '양호'
+    },
+    GENERIC: {
+      r1: '(선택)', r2: '(선택)', r3: '(선택)', r4: '(선택)',
+      r5: '(선택)', r6: '(선택)', r7: '(선택)', r8: '(선택)'
+    }
+  };
+  
+  const opts = presets[mat] || presets.GENERIC;
+  
+  // 각 spec input의 placeholder 동적 변경 (입력값은 보존)
+  Object.keys(opts).forEach(key => {
+    const el = document.getElementById('sup_' + key + '_spec');
+    if (el && !el.value) {
+      el.placeholder = opts[key];
+    }
+  });
 }
 
 // 공급자 Spec → 수요자 Spec 자동 동기화
@@ -1193,12 +1249,14 @@ function openCertModal(){
   document.getElementById('c_cut').value = '';
   document.getElementById('c_lot').value = '';
   document.getElementById('c_heat').value = '';
-  setRadioValue('c_supplier_judge', 'OK');
+  // 공급자 판정도 임의 OK 제거 (사용자가 직접 선택)
+  setRadioValue('c_supplier_judge', '');
   document.getElementById('c_supplier_sign').value = '';
 
   document.getElementById('c_recv_date').value = new Date().toISOString().split('T')[0];
   document.getElementById('c_recv_charge').value = '';
-  setRadioValue('c_judge', 'OK');
+  // 수요자 최종판정도 임의 OK 제거
+  setRadioValue('c_judge', '');
   document.getElementById('c_customer_sign').value = '';
   document.getElementById('c_label').value = '부착';
   document.getElementById('c_remark').value = '';
@@ -1221,17 +1279,21 @@ function openCertModal(){
     const cusSpecEl = document.getElementById('cus_' + item.key + '_spec');
     if (cusSpecEl) cusSpecEl.value = '';
 
-    // 측정값(X1/X2/X3) 및 판정 초기화 (모두 빈 값)
+    // 측정값(X1/X2/X3) 및 판정 초기화 (라디오는 선택 해제 상태)
     ['sup','cus'].forEach(prefix => {
       ['x1','x2','x3'].forEach(x => {
         const el = document.getElementById(prefix + '_' + item.key + '_' + x);
         if (el) el.value = '';
       });
-      setRadioValue(prefix + '_' + item.key + '_j', 'OK');
+      // 라디오 선택 해제 (임의 OK 제거)
+      document.querySelectorAll('input[name="' + prefix + '_' + item.key + '_j"]').forEach(r => r.checked = false);
     });
   });
 
   attachAutoJudgeEvents();
+  
+  // 소재별 옵션 적용 (placeholder만 변경)
+  if (typeof applyMaterialOptions === 'function') applyMaterialOptions();
 
   document.getElementById('certModal').classList.add('show');
 }
@@ -1254,12 +1316,22 @@ function editCert(idx){
   document.getElementById('c_cut').value = c.cut||'';
   document.getElementById('c_lot').value = c.lot||'';
   document.getElementById('c_heat').value = c.heat||'';
-  setRadioValue('c_supplier_judge', c.supplier_judge||c.judge||'OK');
+  // 공급자 판정: 저장값 있으면 적용, 없으면 미선택
+  if (c.supplier_judge || c.judge) {
+    setRadioValue('c_supplier_judge', c.supplier_judge||c.judge);
+  } else {
+    document.querySelectorAll('input[name="c_supplier_judge"]').forEach(r => r.checked = false);
+  }
   document.getElementById('c_supplier_sign').value = c.supplier_sign||'';
 
   document.getElementById('c_recv_date').value = c.recv_date||'';
   document.getElementById('c_recv_charge').value = c.recv_charge||'';
-  setRadioValue('c_judge', c.judge||'OK');
+  // 수요자 판정: 저장값 있으면 적용, 없으면 미선택
+  if (c.judge) {
+    setRadioValue('c_judge', c.judge);
+  } else {
+    document.querySelectorAll('input[name="c_judge"]').forEach(r => r.checked = false);
+  }
   document.getElementById('c_customer_sign').value = c.customer_sign||'';
   document.getElementById('c_label').value = c.label||'부착';
   document.getElementById('c_remark').value = c.remark||'';
@@ -1298,13 +1370,25 @@ function editCert(idx){
       if (cusEl) cusEl.value = cusData[x] || '';
     });
 
-    setRadioValue('sup_' + item.key + '_j', supData.j || 'OK');
-    setRadioValue('cus_' + item.key + '_j', cusData.j || 'OK');
+    // 항목별 판정: 저장값 있을 때만 라디오 선택 (임의 OK 제거)
+    if (supData.j) {
+      setRadioValue('sup_' + item.key + '_j', supData.j);
+    } else {
+      document.querySelectorAll('input[name="sup_' + item.key + '_j"]').forEach(r => r.checked = false);
+    }
+    if (cusData.j) {
+      setRadioValue('cus_' + item.key + '_j', cusData.j);
+    } else {
+      document.querySelectorAll('input[name="cus_' + item.key + '_j"]').forEach(r => r.checked = false);
+    }
   });
 
   // 자동 판정 이벤트 부여 + 현재 값으로 즉시 판정
   attachAutoJudgeEvents();
   evaluateAllJudgements();
+  
+  // 소재별 옵션 적용 (placeholder 갱신)
+  if (typeof applyMaterialOptions === 'function') applyMaterialOptions();
 
   document.getElementById('certModal').classList.add('show');
 }
@@ -2112,6 +2196,8 @@ const MATERIAL_SPEC_TEMPLATES = {
 };
 
 function onCommodityChange(){
+  // 품명 변경 시 소재별 옵션(placeholder) 갱신
+  if (typeof applyMaterialOptions === 'function') applyMaterialOptions();
 }
 
 // === 담당자 관리 (localStorage 기반) ===
