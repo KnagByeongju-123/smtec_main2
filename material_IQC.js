@@ -1021,7 +1021,9 @@ function renderCert(){
   selSupp.value = curSupp;
 
   const fSupp = selSupp.value;
-  const fText = document.getElementById('certFilterText').value.toLowerCase();
+  // 검색창 제거됨 (소재입고 자동 연동) - 안전 참조
+  const fTextEl = document.getElementById('certFilterText');
+  const fText = fTextEl ? fTextEl.value.toLowerCase() : '';
 
   // ⭐ 수입검사 대기 항목만 표시 (judge가 OK/NG 아닌 것 = 미검사/대기 상태)
   let data = certData.filter(c => {
