@@ -363,19 +363,21 @@ function buildUnifiedMeasTable(){
       cusValCells += '<td style="background:#f0fdf4;"><input type="' + inputType + '"' + stepAttr + ' id="cus_' + item.key + '_' + x + '" placeholder=""' + oninput + ' style="background:#fff;"></td>';
     });
     
-    // 통합 판정: 공급자/수요자 라디오는 hidden 유지 (자동 판정 로직 호환)
-    // UI에는 한 줄에 OK/NG만 (수요자 기준으로 표시, 사용자가 변경 가능)
+    // 자동 판정 뱃지 (측정값 입력 시 autoEvaluateAndSetRow가 자동 판정)
+    // 라디오는 hidden 보존 (자동 판정 로직과 호환)
     const supRadioName = 'sup_' + item.key + '_j';
     const cusRadioName = 'cus_' + item.key + '_j';
-    const judgeCell = '<td>' +
-      '<div class="judge-radio judge-radio-unified" id="cus_' + item.key + '_j_wrap">' +
-        '<label><input type="radio" name="' + cusRadioName + '" value="OK"><span>OK</span></label>' +
-        '<label><input type="radio" name="' + cusRadioName + '" value="NG"><span>NG</span></label>' +
-      '</div>' +
-      // 공급자 라디오는 hidden으로 보존 (자동 판정 로직 호환)
+    const judgeCell = '<td style="text-align:center; vertical-align:middle;">' +
+      // 자동판정 뱃지 (시각적 표시만, 사용자는 클릭 불가)
+      '<div class="auto-judge-badge" id="cus_' + item.key + '_badge" data-judge="">─</div>' +
+      // 공급자/수요자 라디오는 모두 hidden (자동 판정 로직이 값 설정)
       '<div id="sup_' + item.key + '_j_wrap" style="display:none;">' +
         '<input type="radio" name="' + supRadioName + '" value="OK">' +
         '<input type="radio" name="' + supRadioName + '" value="NG">' +
+      '</div>' +
+      '<div id="cus_' + item.key + '_j_wrap" style="display:none;">' +
+        '<input type="radio" name="' + cusRadioName + '" value="OK">' +
+        '<input type="radio" name="' + cusRadioName + '" value="NG">' +
       '</div>' +
     '</td>';
 
@@ -518,11 +520,30 @@ function judgeRow(prefix, itemKey){
   return null;
 }
 
-// 한 행의 자동 판정 → 라디오에 반영 + 라벨 갱신
+// 한 행의 자동 판정 → 라디오에 반영 + 자동판정 뱃지 색상/텍스트 갱신
 function autoEvaluateAndSetRow(prefix, itemKey){
   const result = judgeRow(prefix, itemKey);
-  if (result === null) return;
+  if (result === null) {
+    // 측정값 없음 → 뱃지를 빈 상태로 (수요자 prefix만 표시)
+    if (prefix === 'cus') {
+      const badge = document.getElementById('cus_' + itemKey + '_badge');
+      if (badge) {
+        badge.textContent = '─';
+        badge.dataset.judge = '';
+      }
+    }
+    return;
+  }
   setRadioValue(prefix + '_' + itemKey + '_j', result);
+  
+  // 수요자 판정 결과를 뱃지에 반영 (색상 자동)
+  if (prefix === 'cus') {
+    const badge = document.getElementById('cus_' + itemKey + '_badge');
+    if (badge) {
+      badge.textContent = result;
+      badge.dataset.judge = result;
+    }
+  }
 }
 
 // 모든 행 일괄 평가 (모달 열릴 때 호출)
