@@ -291,11 +291,9 @@ const MEAS_ITEMS = [
   { key:'r1', label:'표면',        defaultSpec:'결함없을것', type:'text',   placeholder:'양호' },
   { key:'r2', label:'재질',        defaultSpec:'SPCC',               type:'text',   placeholder:'양호' },
   { key:'r3', label:'폭 (mm)',     defaultSpec:'',                   type:'number', step:'0.01', placeholder:'90.00', specPlaceholder:'예: 90mm ±0.1' },
-  { key:'r4', label:'두께 (mm)',   defaultSpec:'0.6T ±0.05',         type:'number', step:'0.001', placeholder:'0.594' },
-  { key:'r5', label:'경도 HRB',    defaultSpec:'65 이하',            type:'number', step:'1', placeholder:'56' },
-  { key:'r6', label:'연신율 EL(%)',defaultSpec:'1000mm',             type:'number', step:'0.1', placeholder:'40' },
-  { key:'r7', label:'형곡',        defaultSpec:'0 / +2',             type:'number', step:'0.1', placeholder:'0' },
-  { key:'r8', label:'평탄도',      defaultSpec:'0/+12, 0/+8, 0/+6',  type:'text',   placeholder:'양호' }
+  { key:'r4', label:'두께 (mm)',   defaultSpec:'0.6T ±0.05',         type:'number', step:'0.001', placeholder:'0.594' }
+  // r5(경도)/r6(연신율)/r7(형곡)/r8(평탄도) 제거됨 - 표면/재질/폭/두께 4개 항목만 검사
+  // 기존 저장 데이터의 r5~r8은 DB에 그대로 보존됨 (호환성 유지)
 ];
 
 // 측정 테이블 동적 생성 (prefix = 'sup' 공급자 or 'cus' 수요자)
@@ -396,7 +394,7 @@ function buildUnifiedMeasTable(){
 // 모든 검사항목 spec placeholder를 "(선택)"으로 통일
 // 사용자 요청: 임의값 자동 채움 없이 (선택)만 표시
 function applyMaterialOptions(){
-  const keys = ['r1','r2','r3','r4','r5','r6','r7','r8'];
+  const keys = ['r1','r2','r3','r4'];  // r5~r8 제거됨
   keys.forEach(key => {
     const el = document.getElementById('sup_' + key + '_spec');
     if (el && !el.value) {
@@ -816,19 +814,7 @@ async function autoFillSingleCert(idx){
   c.c_r2 = fillGood(c.r2);
   c.c_r3 = fillWidth(c.r3);
   c.c_r4 = fillThickness(c.r4);
-
-  if (isSUS) {
-    // SUS는 r5~r8이 '-' 이므로 수요자도 '-'로 유지
-    c.c_r5 = keepDash(c.r5);
-    c.c_r6 = keepDash(c.r6);
-    c.c_r7 = keepDash(c.r7);
-    c.c_r8 = keepDash(c.r8);
-  } else {
-    c.c_r5 = fillHardness(c.r5);
-    c.c_r6 = fillElong(c.r6);
-    c.c_r7 = fillZero(c.r7);
-    c.c_r8 = fillGood(c.r8);
-  }
+  // r5~r8 제거됨 - 표면/재질/폭/두께 4개 항목만 검사
 
   saveCertToLS();
   renderCert();
@@ -948,25 +934,11 @@ async function bulkFillCustomerMeas(){
     // SUS인지 판별
     const isSUS = /동일스테인레스|STS|스테인|304|430/i.test((c.supplier||'')+' '+(c.spec||'')+' '+(c.commodity||''));
 
-    // 공통 4행 (표면/재질/폭/두께)
+    // 4행 (표면/재질/폭/두께) - r5~r8 제거됨
     c.c_r1 = fillGood(c.r1);
     c.c_r2 = fillGood(c.r2);
     c.c_r3 = fillWidth(c.r3);
     c.c_r4 = fillThickness(c.r4);
-
-    if (isSUS) {
-      // SUS는 r5~r8이 '-' 이므로 수요자도 '-'로 유지
-      c.c_r5 = keepDash(c.r5);
-      c.c_r6 = keepDash(c.r6);
-      c.c_r7 = keepDash(c.r7);
-      c.c_r8 = keepDash(c.r8);
-    } else {
-      // SPCC는 8행 전체
-      c.c_r5 = fillHardness(c.r5);
-      c.c_r6 = fillElong(c.r6);
-      c.c_r7 = fillZero(c.r7);
-      c.c_r8 = fillGood(c.r8);
-    }
     count++;
   });
 
@@ -998,7 +970,7 @@ async function bulkFillCustomerMeas(){
 
 // 수요자 측정값이 하나라도 있는지 확인
 function hasCustomerMeas(c){
-  return ['c_r1','c_r2','c_r3','c_r4','c_r5','c_r6','c_r7','c_r8'].some(k => {
+  return ['c_r1','c_r2','c_r3','c_r4'].some(k => {
     const d = c[k];
     if (!d) return false;
     return (d.x1 && d.x1 !== '') || (d.x2 && d.x2 !== '') || (d.x3 && d.x3 !== '');
@@ -1089,13 +1061,13 @@ function renderCert(){
 
   const buildMeasRows = (c, prefix) => {
     // prefix: 'r' (공급자) or 'c_r' (수요자)
-    // 변경: 공급자 미측정 시에도 검사항목 8개를 양식으로 항상 표시
+    // 변경: 공급자 미측정 시에도 검사항목 4개를 양식으로 항상 표시
     // → renderMeasRow가 데이터 없으면 자동으로 "— 미측정 —" 행 출력
+    // r5(경도)/r6(연신율)/r7(형곡)/r8(평탄도) 제거됨 - 4개 항목만 검사
     const rows = [];
-    const labels = {1:'표면', 2:'재질', 3:'폭', 4:'두께', 5:'경도 HRB', 6:'연신율 EL(%)', 7:'형곡', 8:'평탄도'};
+    const labels = {1:'표면', 2:'재질', 3:'폭', 4:'두께'};
     
-    for(let i=1; i<=8; i++){
-      // 항상 8개 항목 모두 표시 (값 있으면 표시, 없으면 "— 미측정 —")
+    for(let i=1; i<=4; i++){
       rows.push(renderMeasRow(labels[i], c[prefix+i]));
     }
     
@@ -1441,7 +1413,7 @@ function isCustomerWorkCompleted(cert){
                    (cert.recv_charge && cert.recv_charge !== '') ||
                    (cert.customer_sign && cert.customer_sign !== '');
   const hasJudge = cert.judge && cert.judge !== '';
-  const hasMeas = ['c_r1','c_r2','c_r3','c_r4','c_r5','c_r6','c_r7','c_r8'].some(k => {
+  const hasMeas = ['c_r1','c_r2','c_r3','c_r4'].some(k => {
     const d = cert[k];
     return d && ((d.x1 && d.x1 !== '' && d.x1 !== '양호') ||
                  (d.x2 && d.x2 !== '' && d.x2 !== '양호') ||
@@ -2127,37 +2099,26 @@ function autoFillMeasSpecsByMaterial(material, thick, width){
   if (cusR2X1 && !cusR2X1.value) cusR2X1.value = material;
 }
 
-// 재질별 SPEC 템플릿 (검사 기준서 기반)
+// 재질별 SPEC 템플릿 (검사 기준서 기반) - r5~r8 제거됨
+// 현재는 autoFillMeasSpecsByMaterial이 비활성화되어 있어 사용 안 함
 const MATERIAL_SPEC_TEMPLATES = {
   'SPCC': {
     r1: '결함없을것',
     r2: 'SPCC',
     r3: '{width} ±0.1',
-    r4: '{thick} ±0.05',
-    r5: '65 이하',
-    r6: '24 이상',
-    r7: '0 / +2',
-    r8: '0/+12, 0/+8, 0/+6'
+    r4: '{thick} ±0.05'
   },
   'SUS304': {
     r1: '결함없을것',
     r2: 'SUS304',
     r3: '{width} ±0.1',
-    r4: '{thick} ±0.02',
-    r5: '90 이하',
-    r6: '40 이상',
-    r7: '0 / +2',
-    r8: '0/+12, 0/+8, 0/+6'
+    r4: '{thick} ±0.02'
   },
   'SUS430': {
     r1: '결함없을것',
     r2: 'SUS430',
     r3: '{width} ±0.1',
-    r4: '{thick} ±0.02',
-    r5: '88 이하',
-    r6: '22 이상',
-    r7: '0 / +2',
-    r8: '0/+12, 0/+8, 0/+6'
+    r4: '{thick} ±0.02'
   }
 };
 
@@ -2512,7 +2473,7 @@ async function fetchLogsFromSupabase(){
 async function pushCertToSupabase(cert){
   if (!cert.id) cert.id = 'cert_' + Date.now() + '_' + Math.random().toString(36).slice(2,7);
 
-  // 측정치(r1~r8, c_r1~c_r8)를 JSONB로 묶음
+  // 측정치를 JSONB로 묶음 (r1~r4 활성, r5~r8은 기존 데이터 호환용)
   const measurements = {};
   ['r1','r2','r3','r4','r5','r6','r7','r8'].forEach(k => {
     if (cert[k]) measurements[k] = cert[k];
@@ -3030,24 +2991,16 @@ async function loadCertsFromSupabase(){
         customer_sign:rc.sign||(isUninspected?'':'강병주'),
         label:'미부착',  // 입고 전 상태
         remark:remarkParts.join(' / '),
-        // 공급자 측정값 (cert_data로부터, 미검사면 빈 값)
+        // 공급자 측정값 (cert_data로부터, 미검사면 빈 값) - r5~r8 제거됨
         r1:isUninspected?_emptyRow('결함없을것'):_certDataToRow(cd.r1,'결함없을것'),
         r2:isUninspected?_emptyRow(rc.material_type):_certDataToRow(cd.r2,rc.material_type),
         r3:isUninspected?_emptyRow((rc.width_mm||'')+'mm ±0.1'):_certDataToRow(cd.r3,(rc.width_mm||'')+'mm ±0.1'),
         r4:isUninspected?_emptyRow((rc.thickness||'')+'T ±0.05'):_certDataToRow(cd.r4,(rc.thickness||'')+'T ±0.05'),
-        r5:isSUS?_dashRow():(isUninspected?_emptyRow('65 이하'):_certDataToRow(cd.r5,'65 이하')),
-        r6:isSUS?_dashRow():(isUninspected?_emptyRow('1000mm'):_certDataToRow(cd.r6,'1000mm')),
-        r7:isSUS?_dashRow():(isUninspected?_emptyRow('0/+2'):_certDataToRow(cd.r7,'0/+2')),
-        r8:isSUS?_dashRow():(isUninspected?_emptyRow('양호'):_certDataToRow(cd.r8,'양호')),
-        // 수요자 측정값 (공급자 spec 가져오되 측정값은 비움 - 입고검사 시 채움)
+        // 수요자 측정값 (공급자 spec 가져오되 측정값은 비움 - 입고검사 시 채움) - c_r5~c_r8 제거됨
         c_r1:isUninspected?_emptyRow('결함없을것'):_cusEmptyFromCert(cd.r1,'결함없을것'),
         c_r2:isUninspected?_emptyRow(rc.material_type):_cusEmptyFromCert(cd.r2,rc.material_type),
         c_r3:isUninspected?_emptyRow((rc.width_mm||'')+'mm ±0.1'):_cusEmptyFromCert(cd.r3,(rc.width_mm||'')+'mm ±0.1'),
         c_r4:isUninspected?_emptyRow((rc.thickness||'')+'T ±0.05'):_cusEmptyFromCert(cd.r4,(rc.thickness||'')+'T ±0.05'),
-        c_r5:isSUS?_dashRow():(isUninspected?_emptyRow('65 이하'):_cusEmptyFromCert(cd.r5,'65 이하')),
-        c_r6:isSUS?_dashRow():(isUninspected?_emptyRow('1000mm'):_cusEmptyFromCert(cd.r6,'1000mm')),
-        c_r7:isSUS?_dashRow():(isUninspected?_emptyRow('0/+2'):_cusEmptyFromCert(cd.r7,'0/+2')),
-        c_r8:isSUS?_dashRow():(isUninspected?_emptyRow('양호'):_cusEmptyFromCert(cd.r8,'양호')),
         _from_supabase:true,
         _supabase_id:rc.id,
         _uninspected:isUninspected
