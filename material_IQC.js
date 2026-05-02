@@ -2,6 +2,22 @@
 const LS_LOG = 'tj_material_log_v1';
 const LS_CERT = 'tj_material_cert_v4';  // v4: default spec 잔재 정리, 측정 안 한 행은 표시 안 함
 
+// === 유틸리티: 한국시간(KST, UTC+9) 기준 오늘 날짜 (YYYY-MM-DD) ===
+// new Date().toISOString()은 UTC 기준이라 KST로 변환 필요
+// 자정 전후 시간대에서 날짜가 다르게 나오는 문제 방지
+function getTodayKST() {
+  const now = new Date();
+  // KST = UTC + 9시간
+  const kstOffset = 9 * 60; // minutes
+  const localOffset = now.getTimezoneOffset(); // 클라이언트의 UTC 오프셋 (분, 음수)
+  // KST 기준 시각으로 보정
+  const kstTime = new Date(now.getTime() + (kstOffset + localOffset) * 60000);
+  const y = kstTime.getFullYear();
+  const m = String(kstTime.getMonth() + 1).padStart(2, '0');
+  const d = String(kstTime.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 // v1/v2/v3 → v4 마이그레이션 (default spec 강제 표시 버그 정리)
 ['tj_material_cert_v1', 'tj_material_cert_v2', 'tj_material_cert_v3'].forEach(k => {
   if (localStorage.getItem(k) && !localStorage.getItem('tj_material_cert_v4')) {
@@ -1212,7 +1228,8 @@ function openCertModal(){
   setRadioValue('c_supplier_judge', '');
   document.getElementById('c_supplier_sign').value = '';
 
-  document.getElementById('c_recv_date').value = new Date().toISOString().split('T')[0];
+  // 수입검사 일자 = 한국시간(KST) 기준 오늘
+  document.getElementById('c_recv_date').value = getTodayKST();
   document.getElementById('c_recv_charge').value = '';
   // 수요자 최종판정도 임의 OK 제거
   setRadioValue('c_judge', '');
@@ -1283,7 +1300,8 @@ function editCert(idx){
   }
   document.getElementById('c_supplier_sign').value = c.supplier_sign||'';
 
-  document.getElementById('c_recv_date').value = c.recv_date||'';
+  // 수입검사 일자: 저장값 있으면 사용, 없으면 한국시간 오늘
+  document.getElementById('c_recv_date').value = c.recv_date || getTodayKST();
   document.getElementById('c_recv_charge').value = c.recv_charge||'';
   // 수요자 판정: 저장값 있으면 적용, 없으면 미선택
   if (c.judge) {
