@@ -1112,13 +1112,37 @@ const SPEC_HIST_MAX=20;
 const SPEC_DEFAULTS={
   r1:['결함없을것','과도한 스크래치 및 오염, Burr 없을것','이물·결함 없을것'],
   r2:['SPCC','SUS304','SUS430','S55C','S70C','C55E','C67S'],
-  r3:['33mm ±0.1','64mm ±0.1','90mm ±0.1','94mm ±0.1','102mm ±0.1','118mm ±0.1'],
-  r4:['0.5T ±0.05','0.6T ±0.05','0.8T ±0.05','1.0T ±0.05','1.2T ±0.05'],
-  r5:['65 이하','60 이하','55 이하'],
-  r6:['1000mm','EL 35% 이상','EL 40% 이상'],
-  r7:['0/+2','±1','±2'],
-  r8:['양호','평탄','-'],
+  // r3(폭)·r4(두께) 옵션은 동적으로 생성됨 (getDynamicSpecOptions 참조)
+  // 공차 고정: 폭 ±0.1, 두께 ±0.05
+  r3:['33mm ±0.1','64mm ±0.1','90mm ±0.1','94mm ±0.1','102mm ±0.1','105mm ±0.1','118mm ±0.1'],
+  r4:['0.5T ±0.05','0.6T ±0.05','0.7T ±0.05','0.8T ±0.05','1.0T ±0.05','1.2T ±0.05'],
+  // r5(경도)/r6(연신율)/r7(형곡)/r8(평탄도) 제거됨 - 표면/재질/폭/두께 4개만 검사
 };
+
+// 입고된 모든 데이터 기반으로 폭(r3)·두께(r4) 옵션 동적 생성
+// 공차는 항상 폭 ±0.1, 두께 ±0.05
+function getDynamicSpecOptions(key){
+  if(key!=='r3' && key!=='r4') return SPEC_DEFAULTS[key]||[];
+  
+  const tol = (key==='r3') ? '±0.1' : '±0.05';
+  const unit = (key==='r3') ? 'mm' : 'T';
+  const field = (key==='r3') ? 'width' : 'thickness';
+  
+  // 입고 데이터에서 고유 값 수집
+  const values = new Set();
+  if(typeof _certBatch !== 'undefined' && Array.isArray(_certBatch)){
+    _certBatch.forEach(c=>{
+      const v = c?.[field];
+      if(v!==null && v!==undefined && String(v).trim()!=='') values.add(String(v).trim());
+    });
+  }
+  
+  // 동적 옵션 + 기본 옵션 병합
+  const dynamicOpts = Array.from(values).sort((a,b)=>parseFloat(a)-parseFloat(b))
+    .map(v=>`${v}${unit} ${tol}`);
+  const defaultOpts = SPEC_DEFAULTS[key]||[];
+  return [...new Set([...dynamicOpts, ...defaultOpts])];
+}
 
 function getSpecHistoryAll(){
   try{return JSON.parse(localStorage.getItem(SPEC_HIST_KEY)||'{}')}catch(e){return{}}
@@ -1126,7 +1150,8 @@ function getSpecHistoryAll(){
 function getSpecHistory(key){
   const all=getSpecHistoryAll();
   const userSpecs=Array.isArray(all[key])?all[key]:[];
-  const defaults=SPEC_DEFAULTS[key]||[];
+  // r3(폭)·r4(두께)는 입고 데이터 기반 동적 옵션 사용 (공차 ±0.1/±0.05 보장)
+  const defaults=(key==='r3'||key==='r4')?getDynamicSpecOptions(key):(SPEC_DEFAULTS[key]||[]);
   const merged=[...new Set([...userSpecs,...defaults])];
   return merged;
 }
@@ -1255,7 +1280,7 @@ function renderCertModal(){
   document.getElementById('certInfoBox').innerHTML=
     `<div class="cert-info-grid">`+
       row('공급자',c.supplier)+
-      row('유형',isSUS?'SUS (4항목)':'SPCC (8항목)')+
+      row('유형','4항목 (표면/재질/폭/두께)')+
       row('재질',c.material_type)+
       row('두께·폭',`${c.thickness}t × ${c.width}mm`)+
       row('LOT',c.lot)+
@@ -1271,10 +1296,7 @@ function renderCertModal(){
     {k:'r2',n:'재질',         spec:c.material_type||'', type:'text',   step:'',     ph:''},
     {k:'r3',n:'폭(mm)',       spec:widthSpec,           type:'number', step:'0.01', ph:''},
     {k:'r4',n:'두께(mm)',     spec:thickSpec,           type:'number', step:'0.001',ph:''},
-    {k:'r5',n:'경도 HRB',     spec:'',          type:'text',   step:'',     ph:'',     optional:true},
-    {k:'r6',n:'연신율 EL(%)', spec:'',          type:'text',   step:'',     ph:'',     optional:true},
-    {k:'r7',n:'형곡',         spec:'',          type:'text',   step:'',     ph:'',     optional:true},
-    {k:'r8',n:'평탄도',       spec:'',          type:'text',   step:'',     ph:'',     optional:true},
+    // r5(경도)/r6(연신율)/r7(형곡)/r8(평탄도) 제거됨 - 표면/재질/폭/두께 4개만 검사
   ];
   
   let h='<thead><tr>'+
