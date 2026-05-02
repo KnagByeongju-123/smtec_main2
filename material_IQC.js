@@ -3262,9 +3262,8 @@ setInterval(loadLogFromSupabase,5*60*1000);
   if(typeof _origEdit === 'function'){
     window.editCert = function(idx){
       _origEdit.apply(this, arguments);
-      // 수정 시에는 저장된 값이 있으면 그대로 두고, 없을 때만 자동 채움
-      const el = document.getElementById('c_recv_charge');
-      if(el && !el.value) autoFillInspectorFromLogin();
+      // 로그인 사용자 이름으로 항상 덮어쓰기 (이전 저장값 무시)
+      autoFillInspectorFromLogin();
     };
   }
   
