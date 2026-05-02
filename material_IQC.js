@@ -575,14 +575,18 @@ function collectMeasData(prefix){
 // 측정 행 렌더러 (카드 뷰용)
 function renderMeasRow(label, data){
   const d = data || {};
-  // 측정값이 모두 비어있으면 미측정 행으로 처리 (흐리게 표시, 판정 '-' 처리)
+  // 측정값이 모두 비어있으면 미측정 행으로 처리 (양식은 유지, 셀만 비움)
   const hasAny = (d.spec && String(d.spec).trim()) || (d.x1 && String(d.x1).trim()) ||
                  (d.x2 && String(d.x2).trim()) || (d.x3 && String(d.x3).trim());
   if(!hasAny){
-    return '<tr style="opacity:0.4; background:#fafafa;">' +
+    // 양식 그대로 빈 셀로 출력 (X1/X2/X3 컬럼 구조 유지)
+    return '<tr style="background:#fafafa;">' +
       '<td><strong>' + label + '</strong></td>' +
-      '<td colspan="4" style="text-align:center; color:#94a3b8; font-style:italic; font-size:11px;">— 미측정 —</td>' +
-      '<td><span style="color:#cbd5e0;">—</span></td>' +
+      '<td style="color:#cbd5e0;">-</td>' +
+      '<td style="color:#cbd5e0; text-align:center;">-</td>' +
+      '<td style="color:#cbd5e0; text-align:center;">-</td>' +
+      '<td style="color:#cbd5e0; text-align:center;">-</td>' +
+      '<td><span style="color:#cbd5e0;">-</span></td>' +
       '</tr>';
   }
   const judgeText = d.j || '';
@@ -591,10 +595,10 @@ function renderMeasRow(label, data){
                    : '<span style="color:#94a3b8;">-</span>';
   return '<tr>' +
     '<td><strong>' + label + '</strong></td>' +
-    '<td>' + (d.spec || '') + '</td>' +
-    '<td>' + (d.x1 || '') + '</td>' +
-    '<td>' + (d.x2 || '') + '</td>' +
-    '<td>' + (d.x3 || '') + '</td>' +
+    '<td>' + (d.spec || '<span style="color:#cbd5e0;">-</span>') + '</td>' +
+    '<td style="text-align:center;">' + (d.x1 || '<span style="color:#cbd5e0;">-</span>') + '</td>' +
+    '<td style="text-align:center;">' + (d.x2 || '<span style="color:#cbd5e0;">-</span>') + '</td>' +
+    '<td style="text-align:center;">' + (d.x3 || '<span style="color:#cbd5e0;">-</span>') + '</td>' +
     '<td>' + judgeBadge + '</td>' +
     '</tr>';
 }
@@ -1064,29 +1068,16 @@ function renderCert(){
 
   const buildMeasRows = (c, prefix) => {
     // prefix: 'r' (공급자) or 'c_r' (수요자)
-    // 핵심 규칙: 공급자(r)가 X1~X3 중 하나라도 측정값을 입력한 행만 표시
-    // → SPCC/SUS 구분 불필요. 공급자가 측정 안 한 항목은 default spec도 표시 안 함
+    // 변경: 공급자 미측정 시에도 검사항목 8개를 양식으로 항상 표시
+    // → renderMeasRow가 데이터 없으면 자동으로 "— 미측정 —" 행 출력
     const rows = [];
     const labels = {1:'표면', 2:'재질', 3:'폭', 4:'두께', 5:'경도 HRB', 6:'연신율 EL(%)', 7:'형곡', 8:'평탄도'};
     
     for(let i=1; i<=8; i++){
-      // 판정 기준은 공급자(r) 데이터의 측정값 유무
-      const rData = c['r'+i];
-      const hasMeas = rData && (
-        (rData.x1 && String(rData.x1).trim()) ||
-        (rData.x2 && String(rData.x2).trim()) ||
-        (rData.x3 && String(rData.x3).trim())
-      );
-      // 공급자가 X1~X3 중 하나라도 입력했을 때만 행 표시
-      if(hasMeas){
-        rows.push(renderMeasRow(labels[i], c[prefix+i]));
-      }
+      // 항상 8개 항목 모두 표시 (값 있으면 표시, 없으면 "— 미측정 —")
+      rows.push(renderMeasRow(labels[i], c[prefix+i]));
     }
     
-    // 표시할 행이 0이면 빈 메시지
-    if(rows.length===0){
-      return '<tr><td colspan="6" style="text-align:center; padding:20px; color:#94a3b8; font-style:italic;">측정 항목이 없습니다</td></tr>';
-    }
     return rows.join('');
   };
 
