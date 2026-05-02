@@ -3190,283 +3190,85 @@ setInterval(loadLogFromSupabase,5*60*1000);
 })();
 
 // ============================================================
-// PIN 인증 시스템 (admin_pin.html과 동일한 user_pin 테이블 사용)
+// ESG 메인 시스템 인증 연동 (QC_machine_check.html과 동일 패턴)
+// PIN 입력 없이 ESG 메인에서 로그인한 사용자 정보를 자동 사용
 // ============================================================
 (function(){
-  const SB_URL = 'https://omngtyewdaqpphnzeate.supabase.co';
-  const SB_KEY = 'sb_publishable_9j2YkkL-7ul1TrhH-NjVdQ_vWDG2-1D';
-  const TBL = 'user_pin';
-  const LK_USER = 'tj_iqc_current_user';     // 현재 로그인 사용자
-  const LK_FAIL = 'tj_iqc_pin_fail';         // 실패 횟수
-  const SESS_TTL_HOURS = 8;                  // 세션 유효시간
-  const MAX_FAIL = 5;
-  const LOCKOUT_SEC = 60;
-  
-  // 부서 매핑 (admin_pin.html과 동일)
-  const PIN_DEPT_MAP = {
-    '0':'대표이사','1':'개발팀','2':'생산팀','3':'설계팀',
-    '4':'품질관리팀','5':'영업관리팀','6':'공장장'
-  };
-  
-  let _curPin = '';
-  let _lockTimer = null;
-  
-  // SHA-256 해시
-  async function sha256(s){
-    const b = new TextEncoder().encode(s);
-    const h = await crypto.subtle.digest('SHA-256', b);
-    return Array.from(new Uint8Array(h)).map(x=>x.toString(16).padStart(2,'0')).join('');
-  }
-  
-  // Supabase REST 호출
-  async function pinSbReq(method, path, body){
-    const opt = {
-      method,
-      headers: {
-        'apikey': SB_KEY,
-        'Authorization': 'Bearer ' + SB_KEY,
-        'Content-Type': 'application/json'
-      }
-    };
-    if(body) opt.body = JSON.stringify(body);
+  // ESG 인증 정보를 여러 소스에서 순차적으로 찾기
+  function getCurrentUserName(){
     try{
-      const r = await fetch(SB_URL + '/rest/v1/' + path, opt);
-      if(!r.ok) return null;
-      const ct = r.headers.get('content-type') || '';
-      if(ct.includes('json')) return await r.json();
-      return null;
-    }catch(e){
-      console.error('PIN sbReq error:', e);
-      return null;
-    }
-  }
-  
-  // 현재 사용자 가져오기
-  function getCurrentUser(){
-    try{
-      const raw = localStorage.getItem(LK_USER);
-      if(!raw) return null;
-      const u = JSON.parse(raw);
-      // 세션 만료 체크
-      if(u.expireAt && Date.now() > u.expireAt){
-        localStorage.removeItem(LK_USER);
-        return null;
+      // 1순위: ESG PIN 인증 (esg_pin_auth)
+      var raw = localStorage.getItem('esg_pin_auth');
+      if(raw){
+        var auth = JSON.parse(raw);
+        if(auth && auth.exp > Date.now() && auth.name){
+          try{ sessionStorage.setItem('ESG_USER', auth.name); }catch(e){}
+          return {name: auth.name, dept: auth.dept || '', position: auth.position || ''};
+        }
       }
-      return u;
+      // 2순위: sessionStorage ESG_USER
+      var su = sessionStorage.getItem('ESG_USER');
+      if(su) return {name: su, dept: '', position: ''};
+      
+      // 3순위: URL 파라미터 (?user=홍길동)
+      var p = new URLSearchParams(location.search);
+      var u = p.get('user') || p.get('worker') || p.get('name') || p.get('inspector');
+      if(u){
+        try{ sessionStorage.setItem('ESG_USER', u); }catch(e){}
+        return {name: u, dept: '', position: ''};
+      }
+      
+      // 4순위: 다른 시스템의 fallback
+      var last = localStorage.getItem('mes_last_worker') || localStorage.getItem('QC_LAST_INSPECTOR');
+      if(last) return {name: last, dept: '', position: ''};
+      
+      return null;
     }catch(e){ return null; }
   }
-  window.getCurrentUser = getCurrentUser;
-  
-  // 사용자 저장
-  function setCurrentUser(user){
-    const data = Object.assign({}, user, {
-      loginAt: Date.now(),
-      expireAt: Date.now() + SESS_TTL_HOURS * 60 * 60 * 1000
-    });
-    localStorage.setItem(LK_USER, JSON.stringify(data));
-    updateUserBadge();
-  }
+  window.getCurrentUser = getCurrentUserName;
   
   // 헤더 사용자 표시 갱신
   function updateUserBadge(){
-    const el = document.getElementById('currentUserName');
-    if(!el) return;
-    const u = getCurrentUser();
-    if(u){
-      el.textContent = u.name + (u.dept ? ' ('+u.dept+')' : '');
+    var nameEl = document.getElementById('currentUserName');
+    var badgeEl = document.getElementById('currentUserBadge');
+    if(!nameEl) return;
+    
+    var u = getCurrentUserName();
+    if(u && u.name){
+      nameEl.textContent = u.name + (u.dept ? ' ('+u.dept+')' : '');
+      if(badgeEl){
+        badgeEl.style.background = 'rgba(56,189,248,0.3)';
+        badgeEl.style.borderColor = 'rgba(56,189,248,0.5)';
+        badgeEl.title = '로그인됨: ' + u.name;
+      }
+      // QC 시스템과 동일하게 fallback 키도 갱신
+      try{ localStorage.setItem('QC_LAST_INSPECTOR', u.name); }catch(e){}
     }else{
-      el.textContent = '미로그인';
+      nameEl.textContent = '로그인 필요';
+      if(badgeEl){
+        badgeEl.style.background = 'rgba(239,68,68,0.25)';
+        badgeEl.style.borderColor = 'rgba(239,68,68,0.5)';
+        badgeEl.title = 'ESG 메인 시스템에서 PIN 로그인하세요';
+      }
     }
   }
   window.updateUserBadge = updateUserBadge;
   
-  // 로그아웃 (사용자 변경)
-  window.logoutUser = function(){
-    if(!confirm('로그아웃 하시겠습니까?\n다른 담당자로 변경할 수 있습니다.')) return;
-    localStorage.removeItem(LK_USER);
+  // 페이지 로드 + 다른 탭에서 로그인 변화 감지
+  document.addEventListener('DOMContentLoaded', function(){
     updateUserBadge();
-    showPinModal();
-  };
+    // 5초마다 인증 상태 확인 (ESG 메인에서 로그인하면 자동 반영)
+    setInterval(updateUserBadge, 5000);
+  });
   
-  // PIN 입력 dot 표시
-  function renderDots(){
-    const dots = document.querySelectorAll('#pinDots .pin-dot');
-    dots.forEach((d,i)=>{
-      d.classList.toggle('filled', i < _curPin.length);
-      d.classList.remove('err');
-    });
-  }
-  
-  // 잠금 상태 체크
-  function getLockState(){
-    try{
-      const raw = localStorage.getItem(LK_FAIL);
-      if(!raw) return {fails:0, lockedUntil:0};
-      return JSON.parse(raw);
-    }catch(e){ return {fails:0, lockedUntil:0}; }
-  }
-  function setLockState(s){ localStorage.setItem(LK_FAIL, JSON.stringify(s)); }
-  
-  function updateLockHint(){
-    const hint = document.getElementById('pinHint');
-    if(!hint) return;
-    const ls = getLockState();
-    if(ls.lockedUntil > Date.now()){
-      const sec = Math.ceil((ls.lockedUntil - Date.now())/1000);
-      hint.textContent = `🔒 잠금 ${sec}초 후 다시 시도`;
-      hint.style.color = '#fca5a5';
-      return true;
-    }
-    if(ls.fails > 0){
-      hint.textContent = `4자리 숫자 (실패 ${ls.fails}/${MAX_FAIL})`;
-      hint.style.color = ls.fails >= 3 ? '#fca5a5' : '#94a3b8';
-    }else{
-      hint.textContent = '4자리 숫자';
-      hint.style.color = '#94a3b8';
-    }
-    return false;
-  }
-  
-  // PIN 검증
-  async function verifyPin(pin){
-    const hint = document.getElementById('pinHint');
-    
-    // 잠금 체크
-    if(updateLockHint()) return;
-    
-    try{
-      const pinHash = await sha256(pin);
-      // user_pin 테이블에서 PIN 조회
-      const result = await pinSbReq('GET', TBL+'?select=id,name,dept,position,emp_id,pin_plain&pin_hash=eq.'+pinHash);
-      
-      if(!result || result.length === 0){
-        // 실패
-        const ls = getLockState();
-        ls.fails = (ls.fails||0) + 1;
-        if(ls.fails >= MAX_FAIL){
-          ls.lockedUntil = Date.now() + LOCKOUT_SEC * 1000;
-          ls.fails = 0;
-        }
-        setLockState(ls);
-        
-        // dot 흔들기
-        document.querySelectorAll('#pinDots .pin-dot').forEach(d=>d.classList.add('err'));
-        if(hint){
-          hint.textContent = ls.lockedUntil > Date.now() ? `🔒 5회 연속 실패 - ${LOCKOUT_SEC}초 잠금` : '❌ PIN이 일치하지 않습니다';
-          hint.style.color = '#fca5a5';
-        }
-        setTimeout(()=>{ _curPin = ''; renderDots(); updateLockHint(); }, 500);
-        if(ls.lockedUntil > Date.now()){
-          startLockCountdown();
-        }
-        return;
-      }
-      
-      // 성공
-      const u = result[0];
-      const dept = u.dept || PIN_DEPT_MAP[String(u.pin_plain||'').charAt(0)] || '';
-      setCurrentUser({
-        id: u.id,
-        name: u.name,
-        dept: dept,
-        position: u.position || '',
-        emp_id: u.emp_id || ''
-      });
-      
-      // 실패 카운터 리셋
-      setLockState({fails:0, lockedUntil:0});
-      
-      if(hint){
-        hint.textContent = '✅ ' + u.name + (dept ? ' ('+dept+')' : '');
-        hint.style.color = '#86efac';
-      }
-      
-      // 0.5초 뒤 모달 닫기
-      setTimeout(()=>{
-        const ov = document.getElementById('pinAuthOverlay');
-        if(ov) ov.classList.remove('show');
-      }, 500);
-      
-    }catch(e){
-      console.error('PIN verify error:', e);
-      if(hint){
-        hint.textContent = '⚠️ 네트워크 오류';
-        hint.style.color = '#fca5a5';
-      }
-      setTimeout(()=>{ _curPin = ''; renderDots(); }, 800);
-    }
-  }
-  
-  // 잠금 카운트다운
-  function startLockCountdown(){
-    if(_lockTimer) clearInterval(_lockTimer);
-    _lockTimer = setInterval(()=>{
-      const finished = !updateLockHint();
-      if(finished){
-        clearInterval(_lockTimer);
-        _lockTimer = null;
-      }
-    }, 500);
-  }
-  
-  // PIN 입력 처리
-  function handlePinInput(num){
-    if(updateLockHint()) return; // 잠금 중
-    if(_curPin.length >= 4) return;
-    _curPin += num;
-    renderDots();
-    if(_curPin.length === 4){
-      setTimeout(()=>verifyPin(_curPin), 100);
-    }
-  }
-  
-  function handleClear(){ _curPin = ''; renderDots(); }
-  function handleBack(){ _curPin = _curPin.slice(0,-1); renderDots(); }
-  
-  // PIN 모달 표시
-  function showPinModal(){
-    const ov = document.getElementById('pinAuthOverlay');
-    if(!ov) return;
-    _curPin = '';
-    renderDots();
-    updateLockHint();
-    ov.classList.add('show');
-    if(getLockState().lockedUntil > Date.now()) startLockCountdown();
-  }
-  window.showPinModal = showPinModal;
-  
-  // 키패드 + 키보드 이벤트
-  function attachPinEvents(){
-    document.querySelectorAll('.pin-key').forEach(btn=>{
-      btn.addEventListener('click', ()=>{
-        const num = btn.getAttribute('data-num');
-        const act = btn.getAttribute('data-act');
-        if(num !== null) handlePinInput(num);
-        else if(act === 'clear') handleClear();
-        else if(act === 'back') handleBack();
-      });
-    });
-    
-    // 키보드 입력도 지원 (PC에서 편하게)
-    document.addEventListener('keydown', (e)=>{
-      const ov = document.getElementById('pinAuthOverlay');
-      if(!ov || !ov.classList.contains('show')) return;
-      if(e.key >= '0' && e.key <= '9') handlePinInput(e.key);
-      else if(e.key === 'Backspace') handleBack();
-      else if(e.key === 'Escape') handleClear();
-    });
-  }
-  
-  // 초기화
-  document.addEventListener('DOMContentLoaded', ()=>{
-    attachPinEvents();
-    updateUserBadge();
-    // 로그인 안 됨 → PIN 모달 표시
-    if(!getCurrentUser()){
-      setTimeout(showPinModal, 200);
+  // 다른 탭에서 로그인 정보 변경 감지
+  window.addEventListener('storage', function(e){
+    if(e.key === 'esg_pin_auth' || e.key === 'QC_LAST_INSPECTOR'){
+      updateUserBadge();
     }
   });
 })();
+
 
 // ============================================================
 // 검사성적서 작성 시 담당자 자동 채움 (PIN 로그인 사용자)
@@ -3492,17 +3294,26 @@ setInterval(loadLogFromSupabase,5*60*1000);
   
   function autoFillInspectorFromLogin(){
     const u = (typeof getCurrentUser === 'function') ? getCurrentUser() : null;
-    if(!u) return;
     
-    // 수입검사 담당자 자동 채움 + 읽기전용
     const chargeEl = document.getElementById('c_recv_charge');
-    if(chargeEl){
-      chargeEl.value = u.name || '';
+    if(!chargeEl) return;
+    
+    if(u && u.name){
+      // 로그인됨: 자동 채움 + 읽기전용
+      chargeEl.value = u.name;
       chargeEl.setAttribute('readonly', 'readonly');
       chargeEl.style.background = '#f1f5f9';
       chargeEl.style.color = '#475569';
       chargeEl.style.cursor = 'not-allowed';
-      chargeEl.title = '로그인한 사용자로 자동 입력됩니다 (변경하려면 우측 상단에서 사용자 변경)';
+      chargeEl.title = 'ESG 메인 시스템 로그인 정보로 자동 입력됨';
+    }else{
+      // 미로그인: 직접 입력 가능 + 안내
+      chargeEl.removeAttribute('readonly');
+      chargeEl.style.background = '';
+      chargeEl.style.color = '';
+      chargeEl.style.cursor = '';
+      chargeEl.placeholder = '⚠️ ESG 메인에서 로그인하면 자동 입력됩니다';
+      chargeEl.title = 'ESG 메인 시스템에서 PIN 로그인 후 사용하세요';
     }
   }
 })();
