@@ -3188,3 +3188,363 @@ setInterval(loadLogFromSupabase,5*60*1000);
   s.textContent = css;
   document.head.appendChild(s);
 })();
+
+// ============================================================
+// PIN 인증 시스템 (admin_pin.html과 동일한 user_pin 테이블 사용)
+// ============================================================
+(function(){
+  const SB_URL = 'https://omngtyewdaqpphnzeate.supabase.co';
+  const SB_KEY = 'sb_publishable_9j2YkkL-7ul1TrhH-NjVdQ_vWDG2-1D';
+  const TBL = 'user_pin';
+  const LK_USER = 'tj_iqc_current_user';     // 현재 로그인 사용자
+  const LK_FAIL = 'tj_iqc_pin_fail';         // 실패 횟수
+  const SESS_TTL_HOURS = 8;                  // 세션 유효시간
+  const MAX_FAIL = 5;
+  const LOCKOUT_SEC = 60;
+  
+  // 부서 매핑 (admin_pin.html과 동일)
+  const PIN_DEPT_MAP = {
+    '0':'대표이사','1':'개발팀','2':'생산팀','3':'설계팀',
+    '4':'품질관리팀','5':'영업관리팀','6':'공장장'
+  };
+  
+  let _curPin = '';
+  let _lockTimer = null;
+  
+  // SHA-256 해시
+  async function sha256(s){
+    const b = new TextEncoder().encode(s);
+    const h = await crypto.subtle.digest('SHA-256', b);
+    return Array.from(new Uint8Array(h)).map(x=>x.toString(16).padStart(2,'0')).join('');
+  }
+  
+  // Supabase REST 호출
+  async function pinSbReq(method, path, body){
+    const opt = {
+      method,
+      headers: {
+        'apikey': SB_KEY,
+        'Authorization': 'Bearer ' + SB_KEY,
+        'Content-Type': 'application/json'
+      }
+    };
+    if(body) opt.body = JSON.stringify(body);
+    try{
+      const r = await fetch(SB_URL + '/rest/v1/' + path, opt);
+      if(!r.ok) return null;
+      const ct = r.headers.get('content-type') || '';
+      if(ct.includes('json')) return await r.json();
+      return null;
+    }catch(e){
+      console.error('PIN sbReq error:', e);
+      return null;
+    }
+  }
+  
+  // 현재 사용자 가져오기
+  function getCurrentUser(){
+    try{
+      const raw = localStorage.getItem(LK_USER);
+      if(!raw) return null;
+      const u = JSON.parse(raw);
+      // 세션 만료 체크
+      if(u.expireAt && Date.now() > u.expireAt){
+        localStorage.removeItem(LK_USER);
+        return null;
+      }
+      return u;
+    }catch(e){ return null; }
+  }
+  window.getCurrentUser = getCurrentUser;
+  
+  // 사용자 저장
+  function setCurrentUser(user){
+    const data = Object.assign({}, user, {
+      loginAt: Date.now(),
+      expireAt: Date.now() + SESS_TTL_HOURS * 60 * 60 * 1000
+    });
+    localStorage.setItem(LK_USER, JSON.stringify(data));
+    updateUserBadge();
+  }
+  
+  // 헤더 사용자 표시 갱신
+  function updateUserBadge(){
+    const el = document.getElementById('currentUserName');
+    if(!el) return;
+    const u = getCurrentUser();
+    if(u){
+      el.textContent = u.name + (u.dept ? ' ('+u.dept+')' : '');
+    }else{
+      el.textContent = '미로그인';
+    }
+  }
+  window.updateUserBadge = updateUserBadge;
+  
+  // 로그아웃 (사용자 변경)
+  window.logoutUser = function(){
+    if(!confirm('로그아웃 하시겠습니까?\n다른 담당자로 변경할 수 있습니다.')) return;
+    localStorage.removeItem(LK_USER);
+    updateUserBadge();
+    showPinModal();
+  };
+  
+  // PIN 입력 dot 표시
+  function renderDots(){
+    const dots = document.querySelectorAll('#pinDots .pin-dot');
+    dots.forEach((d,i)=>{
+      d.classList.toggle('filled', i < _curPin.length);
+      d.classList.remove('err');
+    });
+  }
+  
+  // 잠금 상태 체크
+  function getLockState(){
+    try{
+      const raw = localStorage.getItem(LK_FAIL);
+      if(!raw) return {fails:0, lockedUntil:0};
+      return JSON.parse(raw);
+    }catch(e){ return {fails:0, lockedUntil:0}; }
+  }
+  function setLockState(s){ localStorage.setItem(LK_FAIL, JSON.stringify(s)); }
+  
+  function updateLockHint(){
+    const hint = document.getElementById('pinHint');
+    if(!hint) return;
+    const ls = getLockState();
+    if(ls.lockedUntil > Date.now()){
+      const sec = Math.ceil((ls.lockedUntil - Date.now())/1000);
+      hint.textContent = `🔒 잠금 ${sec}초 후 다시 시도`;
+      hint.style.color = '#fca5a5';
+      return true;
+    }
+    if(ls.fails > 0){
+      hint.textContent = `4자리 숫자 (실패 ${ls.fails}/${MAX_FAIL})`;
+      hint.style.color = ls.fails >= 3 ? '#fca5a5' : '#94a3b8';
+    }else{
+      hint.textContent = '4자리 숫자';
+      hint.style.color = '#94a3b8';
+    }
+    return false;
+  }
+  
+  // PIN 검증
+  async function verifyPin(pin){
+    const hint = document.getElementById('pinHint');
+    
+    // 잠금 체크
+    if(updateLockHint()) return;
+    
+    try{
+      const pinHash = await sha256(pin);
+      // user_pin 테이블에서 PIN 조회
+      const result = await pinSbReq('GET', TBL+'?select=id,name,dept,position,emp_id,pin_plain&pin_hash=eq.'+pinHash);
+      
+      if(!result || result.length === 0){
+        // 실패
+        const ls = getLockState();
+        ls.fails = (ls.fails||0) + 1;
+        if(ls.fails >= MAX_FAIL){
+          ls.lockedUntil = Date.now() + LOCKOUT_SEC * 1000;
+          ls.fails = 0;
+        }
+        setLockState(ls);
+        
+        // dot 흔들기
+        document.querySelectorAll('#pinDots .pin-dot').forEach(d=>d.classList.add('err'));
+        if(hint){
+          hint.textContent = ls.lockedUntil > Date.now() ? `🔒 5회 연속 실패 - ${LOCKOUT_SEC}초 잠금` : '❌ PIN이 일치하지 않습니다';
+          hint.style.color = '#fca5a5';
+        }
+        setTimeout(()=>{ _curPin = ''; renderDots(); updateLockHint(); }, 500);
+        if(ls.lockedUntil > Date.now()){
+          startLockCountdown();
+        }
+        return;
+      }
+      
+      // 성공
+      const u = result[0];
+      const dept = u.dept || PIN_DEPT_MAP[String(u.pin_plain||'').charAt(0)] || '';
+      setCurrentUser({
+        id: u.id,
+        name: u.name,
+        dept: dept,
+        position: u.position || '',
+        emp_id: u.emp_id || ''
+      });
+      
+      // 실패 카운터 리셋
+      setLockState({fails:0, lockedUntil:0});
+      
+      if(hint){
+        hint.textContent = '✅ ' + u.name + (dept ? ' ('+dept+')' : '');
+        hint.style.color = '#86efac';
+      }
+      
+      // 0.5초 뒤 모달 닫기
+      setTimeout(()=>{
+        const ov = document.getElementById('pinAuthOverlay');
+        if(ov) ov.classList.remove('show');
+      }, 500);
+      
+    }catch(e){
+      console.error('PIN verify error:', e);
+      if(hint){
+        hint.textContent = '⚠️ 네트워크 오류';
+        hint.style.color = '#fca5a5';
+      }
+      setTimeout(()=>{ _curPin = ''; renderDots(); }, 800);
+    }
+  }
+  
+  // 잠금 카운트다운
+  function startLockCountdown(){
+    if(_lockTimer) clearInterval(_lockTimer);
+    _lockTimer = setInterval(()=>{
+      const finished = !updateLockHint();
+      if(finished){
+        clearInterval(_lockTimer);
+        _lockTimer = null;
+      }
+    }, 500);
+  }
+  
+  // PIN 입력 처리
+  function handlePinInput(num){
+    if(updateLockHint()) return; // 잠금 중
+    if(_curPin.length >= 4) return;
+    _curPin += num;
+    renderDots();
+    if(_curPin.length === 4){
+      setTimeout(()=>verifyPin(_curPin), 100);
+    }
+  }
+  
+  function handleClear(){ _curPin = ''; renderDots(); }
+  function handleBack(){ _curPin = _curPin.slice(0,-1); renderDots(); }
+  
+  // PIN 모달 표시
+  function showPinModal(){
+    const ov = document.getElementById('pinAuthOverlay');
+    if(!ov) return;
+    _curPin = '';
+    renderDots();
+    updateLockHint();
+    ov.classList.add('show');
+    if(getLockState().lockedUntil > Date.now()) startLockCountdown();
+  }
+  window.showPinModal = showPinModal;
+  
+  // 키패드 + 키보드 이벤트
+  function attachPinEvents(){
+    document.querySelectorAll('.pin-key').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const num = btn.getAttribute('data-num');
+        const act = btn.getAttribute('data-act');
+        if(num !== null) handlePinInput(num);
+        else if(act === 'clear') handleClear();
+        else if(act === 'back') handleBack();
+      });
+    });
+    
+    // 키보드 입력도 지원 (PC에서 편하게)
+    document.addEventListener('keydown', (e)=>{
+      const ov = document.getElementById('pinAuthOverlay');
+      if(!ov || !ov.classList.contains('show')) return;
+      if(e.key >= '0' && e.key <= '9') handlePinInput(e.key);
+      else if(e.key === 'Backspace') handleBack();
+      else if(e.key === 'Escape') handleClear();
+    });
+  }
+  
+  // 초기화
+  document.addEventListener('DOMContentLoaded', ()=>{
+    attachPinEvents();
+    updateUserBadge();
+    // 로그인 안 됨 → PIN 모달 표시
+    if(!getCurrentUser()){
+      setTimeout(showPinModal, 200);
+    }
+  });
+})();
+
+// ============================================================
+// 검사성적서 작성 시 담당자 자동 채움 (PIN 로그인 사용자)
+// ============================================================
+(function(){
+  // openCertModal 후킹: 모달 열린 후 담당자 자동 채움
+  const _origOpen = window.openCertModal;
+  if(typeof _origOpen === 'function'){
+    window.openCertModal = function(){
+      _origOpen.apply(this, arguments);
+      autoFillInspectorFromLogin();
+    };
+  }
+  const _origEdit = window.editCert;
+  if(typeof _origEdit === 'function'){
+    window.editCert = function(idx){
+      _origEdit.apply(this, arguments);
+      // 수정 시에는 저장된 값이 있으면 그대로 두고, 없을 때만 자동 채움
+      const el = document.getElementById('c_recv_charge');
+      if(el && !el.value) autoFillInspectorFromLogin();
+    };
+  }
+  
+  function autoFillInspectorFromLogin(){
+    const u = (typeof getCurrentUser === 'function') ? getCurrentUser() : null;
+    if(!u) return;
+    
+    // 수입검사 담당자 자동 채움 + 읽기전용
+    const chargeEl = document.getElementById('c_recv_charge');
+    if(chargeEl){
+      chargeEl.value = u.name || '';
+      chargeEl.setAttribute('readonly', 'readonly');
+      chargeEl.style.background = '#f1f5f9';
+      chargeEl.style.color = '#475569';
+      chargeEl.style.cursor = 'not-allowed';
+      chargeEl.title = '로그인한 사용자로 자동 입력됩니다 (변경하려면 우측 상단에서 사용자 변경)';
+    }
+  }
+})();
+
+// ============================================================
+// 수요자 최종판정 드롭다운 ↔ 라디오 동기화
+// ============================================================
+(function(){
+  function syncSelectToRadio(){
+    const sel = document.getElementById('c_judge_select');
+    if(!sel) return;
+    sel.addEventListener('change', ()=>{
+      const v = sel.value;
+      // 기존 코드 호환: hidden 라디오에도 값 설정
+      const radios = document.querySelectorAll('input[name="c_judge"]');
+      radios.forEach(r=>{ r.checked = (r.value === v); });
+    });
+  }
+  
+  // openCertModal 후킹: 모달 열릴 때 select 초기화
+  const _origOpen2 = window.openCertModal;
+  if(typeof _origOpen2 === 'function'){
+    window.openCertModal = function(){
+      _origOpen2.apply(this, arguments);
+      const sel = document.getElementById('c_judge_select');
+      if(sel) sel.value = '';
+    };
+  }
+  
+  // editCert 후킹: 저장된 판정값을 select에 반영
+  const _origEdit2 = window.editCert;
+  if(typeof _origEdit2 === 'function'){
+    window.editCert = function(idx){
+      _origEdit2.apply(this, arguments);
+      const sel = document.getElementById('c_judge_select');
+      if(sel){
+        // 라디오에서 현재 값 읽어와 select에 반영
+        const checked = document.querySelector('input[name="c_judge"]:checked');
+        sel.value = checked ? checked.value : '';
+      }
+    };
+  }
+  
+  document.addEventListener('DOMContentLoaded', syncSelectToRadio);
+})();
