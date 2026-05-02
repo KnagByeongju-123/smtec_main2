@@ -3294,18 +3294,28 @@ setInterval(loadLogFromSupabase,5*60*1000);
 })();
 
 // ============================================================
-// 수요자 최종판정 드롭다운 ↔ 라디오 동기화
+// 수요자/공급자 판정 드롭다운 ↔ 라디오 동기화
 // ============================================================
 (function(){
   function syncSelectToRadio(){
+    // 수요자 최종판정
     const sel = document.getElementById('c_judge_select');
-    if(!sel) return;
-    sel.addEventListener('change', ()=>{
-      const v = sel.value;
-      // 기존 코드 호환: hidden 라디오에도 값 설정
-      const radios = document.querySelectorAll('input[name="c_judge"]');
-      radios.forEach(r=>{ r.checked = (r.value === v); });
-    });
+    if(sel){
+      sel.addEventListener('change', ()=>{
+        const v = sel.value;
+        const radios = document.querySelectorAll('input[name="c_judge"]');
+        radios.forEach(r=>{ r.checked = (r.value === v); });
+      });
+    }
+    // 공급자 판정
+    const supSel = document.getElementById('c_supplier_judge_select');
+    if(supSel){
+      supSel.addEventListener('change', ()=>{
+        const v = supSel.value;
+        const radios = document.querySelectorAll('input[name="c_supplier_judge"]');
+        radios.forEach(r=>{ r.checked = (r.value === v); });
+      });
+    }
   }
   
   // openCertModal 후킹: 모달 열릴 때 select 초기화
@@ -3315,6 +3325,8 @@ setInterval(loadLogFromSupabase,5*60*1000);
       _origOpen2.apply(this, arguments);
       const sel = document.getElementById('c_judge_select');
       if(sel) sel.value = '';
+      const supSel = document.getElementById('c_supplier_judge_select');
+      if(supSel) supSel.value = '';
     };
   }
   
@@ -3323,11 +3335,17 @@ setInterval(loadLogFromSupabase,5*60*1000);
   if(typeof _origEdit2 === 'function'){
     window.editCert = function(idx){
       _origEdit2.apply(this, arguments);
+      // 수요자 판정
       const sel = document.getElementById('c_judge_select');
       if(sel){
-        // 라디오에서 현재 값 읽어와 select에 반영
         const checked = document.querySelector('input[name="c_judge"]:checked');
         sel.value = checked ? checked.value : '';
+      }
+      // 공급자 판정
+      const supSel = document.getElementById('c_supplier_judge_select');
+      if(supSel){
+        const checked = document.querySelector('input[name="c_supplier_judge"]:checked');
+        supSel.value = checked ? checked.value : '';
       }
     };
   }
