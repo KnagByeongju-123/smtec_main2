@@ -3362,18 +3362,26 @@ setInterval(loadLogFromSupabase,5*60*1000);
   let _curBuf = '';         // 입력 버퍼
   let _tabOrder = [];       // 탭 순회 순서 (input element 배열)
   
-  // 키패드 대상 input id 패턴 (측정값 X1/X2/X3)
-  // r1=표면, r2=재질은 text라 제외, r3=폭, r4=두께가 number
-  const NUMPAD_TARGETS = ['r3', 'r4'];
+  // 키패드 대상: 모든 측정 항목 (r1=표면, r2=재질, r3=폭, r4=두께)
+  // 텍스트 항목(r1/r2)은 OK/NG/- 빠른 입력 사용, 숫자 항목(r3/r4)은 0~9 사용
+  const NUMPAD_TARGETS = ['r1', 'r2', 'r3', 'r4'];
   
   function isNumpadTarget(el){
     if(!el || !el.id) return false;
-    // sup_r3_x1, cus_r4_x2 등 패턴
-    return /^(sup|cus)_r[34]_x[123]$/.test(el.id);
+    // sup_r1_x1, cus_r4_x2 등 패턴 (r1~r4 모두)
+    return /^(sup|cus)_r[1-4]_x[123]$/.test(el.id);
   }
   
+  // 항목 라벨 매핑
+  const ITEM_LABEL_MAP = {
+    r1: '표면',
+    r2: '재질',
+    r3: '폭(mm)',
+    r4: '두께(mm)'
+  };
+  
   function buildTabOrder(){
-    // 탭 순서: sup_r3_x1, x2, x3 → sup_r4_x1, x2, x3 → cus_r3_x1 ... cus_r4_x3
+    // 탭 순서: sup r1~r4 X1/X2/X3 → cus r1~r4 X1/X2/X3
     const order = [];
     ['sup', 'cus'].forEach(role => {
       NUMPAD_TARGETS.forEach(rk => {
@@ -3386,21 +3394,20 @@ setInterval(loadLogFromSupabase,5*60*1000);
     return order;
   }
   
+  function buildLabel(el){
+    const m = el.id.match(/^(sup|cus)_(r[1-4])_(x[123])$/);
+    if(!m) return '측정값 입력';
+    const role = m[1] === 'sup' ? '🏭 공급자' : '🏢 수요자';
+    const xMap = {x1:'X1', x2:'X2', x3:'X3'};
+    return `${role} · ${ITEM_LABEL_MAP[m[2]]} · ${xMap[m[3]]}`;
+  }
+  
   function openNumpad(el){
     if(!el) return;
     _curEl = el;
     _tabOrder = buildTabOrder();
     
-    // 라벨 생성 (어떤 항목인지)
-    const m = el.id.match(/^(sup|cus)_(r[34])_(x[123])$/);
-    let label = '측정값 입력';
-    if(m){
-      const role = m[1] === 'sup' ? '🏭 공급자' : '🏢 수요자';
-      const itemMap = {r3:'폭(mm)', r4:'두께(mm)'};
-      const xMap = {x1:'X1', x2:'X2', x3:'X3'};
-      label = `${role} · ${itemMap[m[2]]} · ${xMap[m[3]]}`;
-    }
-    document.getElementById('numpadLabel').textContent = label;
+    document.getElementById('numpadLabel').textContent = buildLabel(el);
     
     // 기존 값 로드 (0이거나 빈 값이면 빈 상태로 시작)
     const cur = String(el.value || '').trim();
@@ -3444,20 +3451,29 @@ setInterval(loadLogFromSupabase,5*60*1000);
     const cur = String(nextEl.value || '').trim();
     _curBuf = (cur === '0' || cur === '') ? '' : cur;
     
-    // 라벨 갱신
-    const m = nextEl.id.match(/^(sup|cus)_(r[34])_(x[123])$/);
-    if(m){
-      const role = m[1] === 'sup' ? '🏭 공급자' : '🏢 수요자';
-      const itemMap = {r3:'폭(mm)', r4:'두께(mm)'};
-      const xMap = {x1:'X1', x2:'X2', x3:'X3'};
-      document.getElementById('numpadLabel').textContent = `${role} · ${itemMap[m[2]]} · ${xMap[m[3]]}`;
-    }
+    // 라벨 갱신 (r1~r4 모두 지원)
+    document.getElementById('numpadLabel').textContent = buildLabel(nextEl);
     
     updateDisplay();
     return true;
   }
   
-  function handleKey(action, num){
+  function handleKey(action, num, textVal){
+    // 텍스트 빠른 입력 (OK / NG / -) - 즉시 적용 후 다음 칸 이동
+    if(textVal !== undefined){
+      _curBuf = textVal;
+      updateDisplay();
+      // 0.1초 후 자동으로 다음 칸 이동 (시각적 피드백)
+      setTimeout(() => {
+        if(!moveToNext()){
+          // 마지막 칸이면 적용 후 닫기
+          applyValue();
+          closeNumpad();
+        }
+      }, 150);
+      return;
+    }
+    
     if(num !== undefined){
       // 숫자 또는 소수점 입력
       if(num === '.'){
@@ -3465,8 +3481,9 @@ setInterval(loadLogFromSupabase,5*60*1000);
         if(_curBuf === '') _curBuf = '0';  // ".5" 방지 → "0.5"
         _curBuf += '.';
       }else{
-        // 일반 숫자
-        if(_curBuf === '0') _curBuf = num;  // 선행 0 제거
+        // 일반 숫자 (텍스트 값에서 숫자 누르면 새로 시작)
+        if(_curBuf === 'OK' || _curBuf === 'NG' || _curBuf === '-') _curBuf = num;
+        else if(_curBuf === '0') _curBuf = num;  // 선행 0 제거
         else _curBuf += num;
       }
       updateDisplay();
@@ -3525,9 +3542,10 @@ setInterval(loadLogFromSupabase,5*60*1000);
     }, {passive:false});
   }
   
-  // 모든 측정 number input에 핸들러 부착
+  // 모든 측정 input에 핸들러 부착 (number + text 둘 다 - r1/r2는 text, r3/r4는 number)
   function refreshAttachments(){
-    document.querySelectorAll('input[type="number"]').forEach(el => {
+    // sup_r*_x* 와 cus_r*_x* 패턴의 모든 input 검색
+    document.querySelectorAll('input[id^="sup_r"], input[id^="cus_r"]').forEach(el => {
       if(isNumpadTarget(el)) attachToInput(el);
     });
   }
@@ -3541,6 +3559,9 @@ setInterval(loadLogFromSupabase,5*60*1000);
     
     if(btn.dataset.num !== undefined){
       handleKey(null, btn.dataset.num);
+    }else if(btn.dataset.text !== undefined){
+      // OK / NG / - 빠른 입력
+      handleKey(null, undefined, btn.dataset.text);
     }else if(btn.dataset.act){
       handleKey(btn.dataset.act);
     }
