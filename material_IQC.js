@@ -1109,7 +1109,7 @@ function renderCert(){
     const finalBg = finalJudge === 'OK' ? '#16a34a' : (finalJudge === 'NG' ? '#dc2626' : '#f59e0b');
 
     return `
-    <div class="inspection-cert">
+    <div class="inspection-cert collapsed">
       <div class="cert-header">
         <span>${c.commodity||''} / ${c.size||''}</span>
         <span style="display:flex; align-items:center; gap:6px;">
@@ -1186,6 +1186,8 @@ function renderCert(){
     </div>`;
   }).join('');
 
+  // 즉시 모든 카드를 접힘 상태로 (setInterval 기다리지 않고)
+  if (typeof setupCertCardToggle === 'function') setupCertCardToggle();
 }
 
 function openCertModal(){
