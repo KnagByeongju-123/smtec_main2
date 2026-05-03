@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>소재입고 등록 (Rev4.6.5)</title>
+  <title>소재입고 등록 (Rev4.8)</title>
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
@@ -102,7 +102,7 @@
 </head>
 <body>
 <div class="hdr">
-  <h1>📤 소재입고 등록 (Rev4.6.5)</h1>
+  <h1>📤 소재입고 등록 (Rev4.8)</h1>
   <p>소재업체 템플릿 업로드 → DB 저장 · <span style="color:#ffeb3b;font-weight:700">성적서, 밀시트 첨부 가능</span></p>
 </div>
 <div class="tabs">
@@ -540,6 +540,59 @@ async function sendEmail(info){
       +'<td style="padding:6px 10px;border:1px solid #e0e0e0;text-align:right">'+w+'</td></tr>';
   }).join('');
 
+  /* [Rev4.8] 성적서 요약 + 밀시트 첨부 모으기 */
+  const attachments=[];
+  let certSummaryHtml='';
+  if(typeof _certBatch!=='undefined' && Array.isArray(_certBatch) && _certBatch.length){
+    const certRows=[];
+    _certBatch.forEach((c, idx)=>{
+      const ms=_certMillsheets&&_certMillsheets[idx];
+      const finalJ=c.certData?.finalJ||'-';
+      const judgeColor=finalJ==='NG'?'#c62828':(finalJ==='OK'?'#2e7d32':'#888');
+      const msMark=ms?'📎':'-';
+      certRows.push(
+        '<tr>'+
+        '<td style="padding:5px 8px;border:1px solid #e0e0e0;font-size:11px">'+(c.lot||'')+'</td>'+
+        '<td style="padding:5px 8px;border:1px solid #e0e0e0;font-size:11px">'+(c.heat_no||'')+'</td>'+
+        '<td style="padding:5px 8px;border:1px solid #e0e0e0;font-size:11px">'+(c.material_type||'')+' '+(c.thickness||'')+'t × '+(c.width||'')+'mm</td>'+
+        '<td style="padding:5px 8px;border:1px solid #e0e0e0;font-size:11px;text-align:center;font-weight:700;color:'+judgeColor+'">'+finalJ+'</td>'+
+        '<td style="padding:5px 8px;border:1px solid #e0e0e0;font-size:11px;text-align:center">'+msMark+'</td>'+
+        '</tr>'
+      );
+
+      /* 밀시트가 있으면 첨부 추가 */
+      if(ms){
+        const dataUrl=(typeof ms==='string')?ms:ms.dataUrl;
+        const mimeType=(typeof ms==='string')?(dataUrl.match(/data:([^;]+)/)?.[1]||'image/jpeg'):(ms.mimeType||'application/octet-stream');
+        const orig=(typeof ms==='string')?('millsheet'+(mimeType==='application/pdf'?'.pdf':'.jpg')):(ms.originalName||'millsheet');
+        const m=orig.match(/^(.+?)(\.[^.]+)?$/);
+        const baseName=(m&&m[1])||orig;
+        const ext=(m&&m[2])||(mimeType==='application/pdf'?'.pdf':(mimeType==='image/png'?'.png':'.jpg'));
+        const meta=((c.supplier||'')+'_'+(c.material_type||'')+'_'+(c.thickness||'')+'t'+(c.width||'')+'_LOT'+(c.lot||'')+'_'+(c.heat_no||''))
+          .replace(/[\\/:*?"<>|]/g,'_').replace(/\s+/g,'_').slice(0,80);
+        const filename=('밀시트_'+meta+'_'+baseName+ext).replace(/[\\/:*?"<>|]/g,'_');
+        const base64Data=(dataUrl||'').split(',')[1]||dataUrl||'';
+        if(base64Data){
+          attachments.push({name:filename, base64:base64Data, mimeType:mimeType});
+        }
+      }
+    });
+    if(certRows.length){
+      certSummaryHtml=
+        '<div style="font-size:13px;font-weight:700;color:#555;margin:16px 0 6px">📋 성적서 / 밀시트 ('+certRows.length+'건, 첨부 '+attachments.length+'개)</div>'+
+        '<table style="width:100%;border-collapse:collapse;font-size:11px;background:#fff">'+
+        '<tr style="background:#fff3e0">'+
+        '<th style="padding:6px 8px;border:1px solid #ffe0b2;text-align:left">LOT</th>'+
+        '<th style="padding:6px 8px;border:1px solid #ffe0b2;text-align:left">HEAT</th>'+
+        '<th style="padding:6px 8px;border:1px solid #ffe0b2;text-align:left">규격</th>'+
+        '<th style="padding:6px 8px;border:1px solid #ffe0b2;text-align:center">판정</th>'+
+        '<th style="padding:6px 8px;border:1px solid #ffe0b2;text-align:center">밀시트</th>'+
+        '</tr>'+
+        certRows.join('')+
+        '</table>';
+    }
+  }
+
   const html='<div style="font-family:sans-serif;max-width:600px">'
     +'<div style="background:#1a237e;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">'
     +'<h2 style="margin:0;font-size:18px">📤 소재입고 등록 완료</h2></div>'
@@ -559,16 +612,18 @@ async function sendEmail(info){
     +'<th style="padding:6px 10px;border:1px solid #c5cae9;text-align:right">중량</th></tr>'
     +matRows
     +'</table>'
-    +'<div style="margin-top:16px;font-size:11px;color:#aaa;text-align:center">Smart Factory Platform · 소재입고 자동알림</div>'
+    +certSummaryHtml
+    +'<div style="margin-top:16px;font-size:11px;color:#aaa;text-align:center">Smart Factory Platform · 소재입고 자동알림 (밀시트 통합)</div>'
     +'</div></div>';
 
-  const subject='📤 소재입고 '+info.count+'건 — '+info.company+' ('+info.date+')';
+  const subjectSuffix=attachments.length?(' / 밀시트 '+attachments.length+'개 첨부'):'';
+  const subject='📤 소재입고 '+info.count+'건 — '+info.company+' ('+info.date+')'+subjectSuffix;
 
   try{
     await fetch(gasUrl,{
       method:'POST',
       headers:{'Content-Type':'text/plain;charset=utf-8'},
-      body:JSON.stringify({action:'sendMail',subject:subject,html:html,text:subject,recipients:info.recipients||[]})
+      body:JSON.stringify({action:'sendMail',subject:subject,html:html,text:subject,recipients:info.recipients||[],attachments:attachments})
     });
   }catch(e){console.log('메일 발송 실패:',e)}
 }
@@ -1575,9 +1630,15 @@ async function certSaveCurrent(){
     return;  /* 실패하면 다음 카드로 안 넘어감 */
   }
   
-  /* 밀시트가 있으면 메일로 첨부 발송 */
-  if(millsheetImg){
-    sendMillsheetMail(c,millsheetImg).catch(e=>console.error('밀시트 메일 발송 실패:',e));
+  /* [Rev4.8] 밀시트는 개별 메일 발송 안 함 — 최종등록(doRegister)에서 통합 메일로 발송됨
+     단, Storage 업로드는 유지 (IQC가 자동으로 PDF 첨부 표시) */
+  // if(millsheetImg){
+  //   sendMillsheetMail(c,millsheetImg).catch(e=>console.error('밀시트 메일 발송 실패:',e));
+  // }
+
+  /* [Rev4.8] 밀시트가 있으면 Supabase Storage에 업로드 + millsheet_pdf_path 갱신 */
+  if(millsheetImg && saveOk){
+    uploadMillsheetToStorage(c, millsheetImg, lastResp).catch(e=>console.error('밀시트 Storage 업로드 실패:',e));
   }
   
   updateCertBadge();
@@ -1589,6 +1650,94 @@ async function certSaveCurrent(){
 function certSkipCurrent(){
   if(!confirm('이 성적서를 건너뛰시겠습니까?\n나중에 다시 작성할 수 있습니다.'))return;
   certNavNext();
+}
+
+/* [Rev4.8] 밀시트를 Supabase Storage(millsheets 버킷)에 업로드하고 inspection_certs.millsheet_pdf_path 갱신 */
+async function uploadMillsheetToStorage(c, millsheet, lastResp){
+  try{
+    const SB_URL=getSbUrl(), SB_KEY=getSbKey();
+    if(!SB_URL || !SB_KEY){console.log('[Storage] Supabase 미설정 - 업로드 스킵');return;}
+    
+    /* 1) lastResp 또는 lot+heat로 inspection_certs.id 확보 */
+    let savedId=null;
+    try{
+      const arr=JSON.parse(lastResp.text);
+      if(Array.isArray(arr)&&arr.length>0&&arr[0].id)savedId=arr[0].id;
+    }catch(_){}
+    if(!savedId){
+      const vRes=await fetch(SB_URL+'/rest/v1/inspection_certs?lot_no=eq.'+encodeURIComponent(c.lot)+'&heat_no=eq.'+encodeURIComponent(c.heat_no)+'&select=id&order=created_at.desc&limit=1',{
+        headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY}
+      });
+      if(vRes.ok){
+        const vData=await vRes.json();
+        if(vData&&vData.length>0)savedId=vData[0].id;
+      }
+    }
+    if(!savedId){console.warn('[Storage] inspection_certs.id 확보 실패 - 업로드 중단');return;}
+    
+    /* 2) 밀시트를 Blob으로 변환 */
+    let blob, ext;
+    if(typeof millsheet==='string'){
+      /* dataUrl 문자열 */
+      const m=millsheet.match(/^data:([^;]+);base64,(.+)$/);
+      if(!m){console.warn('[Storage] 잘못된 dataUrl');return;}
+      const mime=m[1], b64=m[2];
+      const bin=atob(b64);
+      const bytes=new Uint8Array(bin.length);
+      for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+      blob=new Blob([bytes],{type:mime});
+      ext=mime==='application/pdf'?'pdf':(mime==='image/png'?'png':'jpg');
+    }else{
+      const m=(millsheet.dataUrl||'').match(/^data:([^;]+);base64,(.+)$/);
+      if(!m){console.warn('[Storage] 잘못된 dataUrl');return;}
+      const mime=m[1], b64=m[2];
+      const bin=atob(b64);
+      const bytes=new Uint8Array(bin.length);
+      for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+      blob=new Blob([bytes],{type:mime});
+      ext=mime==='application/pdf'?'pdf':(mime==='image/png'?'png':(mime==='image/jpeg'?'jpg':'bin'));
+    }
+    
+    /* 3) Storage 업로드 (millsheets 버킷, 경로: <id>/millsheet.<ext>) */
+    const path = String(savedId)+'/millsheet.'+ext;
+    const upUrl = SB_URL+'/storage/v1/object/millsheets/'+path;
+    const upRes = await fetch(upUrl, {
+      method:'POST',
+      headers:{
+        'apikey':SB_KEY,
+        'Authorization':'Bearer '+SB_KEY,
+        'Content-Type':blob.type,
+        'x-upsert':'true'
+      },
+      body:blob
+    });
+    if(!upRes.ok){
+      const t=await upRes.text().catch(()=>'');
+      console.error('[Storage] 업로드 실패',upRes.status,t);
+      return;
+    }
+    console.log('[Storage] 업로드 성공:',path);
+    
+    /* 4) inspection_certs.millsheet_pdf_path 갱신 */
+    const patchRes = await fetch(SB_URL+'/rest/v1/inspection_certs?id=eq.'+encodeURIComponent(savedId), {
+      method:'PATCH',
+      headers:{
+        'Content-Type':'application/json',
+        'apikey':SB_KEY,
+        'Authorization':'Bearer '+SB_KEY,
+        'Prefer':'return=minimal'
+      },
+      body:JSON.stringify({millsheet_pdf_path: path})
+    });
+    if(!patchRes.ok){
+      const t=await patchRes.text().catch(()=>'');
+      console.error('[Storage] path 갱신 실패',patchRes.status,t);
+      return;
+    }
+    console.log('[Storage] millsheet_pdf_path 갱신 완료:',path);
+  }catch(e){
+    console.error('[Storage] 예외:',e);
+  }
 }
 
 async function sendMillsheetMail(c,millsheet){
