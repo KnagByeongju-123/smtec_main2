@@ -1284,7 +1284,7 @@ function openCertModal(){
   // 드롭다운(datalist) 옵션 새로고침
   if (typeof refreshCertModalDatalists === 'function') refreshCertModalDatalists();
 
-  document.getElementById('certModalTitle').textContent = '검사 성적서 신규 등록';
+  document.getElementById('certModalTitle').textContent = '📝 수입검사';
   document.getElementById('certIdx').value = -1;
   // ⭐ 공급자/품명/규격/표면을 빈 양식으로 (사용자가 소재업체에서 직접 선택/입력)
   document.getElementById('c_commodity').value = '';
@@ -1352,7 +1352,7 @@ function editCert(idx){
   const c = certData[idx];
   if (typeof refreshCertModalDatalists === 'function') refreshCertModalDatalists();
 
-  document.getElementById('certModalTitle').textContent = '검사 성적서 수정';
+  document.getElementById('certModalTitle').textContent = '📝 수입검사';
   document.getElementById('certIdx').value = idx;
 
   document.getElementById('c_commodity').value = c.commodity||'';
@@ -1633,7 +1633,7 @@ function editCustomerPart(idx){
       modal.classList.add('customer-focus');
     }
 
-    document.getElementById('certModalTitle').textContent = '📝 수요자 수입검사 작성';
+    document.getElementById('certModalTitle').textContent = '📝 수입검사';
 
     // 수요자 작성란으로 스크롤
     const customerBox = document.querySelector('#certModal .cert-section-box.customer');
