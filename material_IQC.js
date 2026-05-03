@@ -170,6 +170,9 @@ function renderLog(){
   const fMat = document.getElementById('filterMat').value;
   const fJudge = document.getElementById('filterJudge').value;
   const fText = document.getElementById('filterText').value.toLowerCase();
+  // 날짜 범위 필터 추가
+  const fDateFrom = (document.getElementById('filterDateFrom') || {}).value || '';
+  const fDateTo = (document.getElementById('filterDateTo') || {}).value || '';
 
   let data = [...logData];
   if (fMat) data = data.filter(d=>d.material===fMat);
@@ -179,7 +182,15 @@ function renderLog(){
     (d.charge||'').toLowerCase().includes(fText) ||
     (d.boss||'').toLowerCase().includes(fText)
   );
+  // 날짜 범위 필터
+  if (fDateFrom) data = data.filter(d => (d.date||'') >= fDateFrom);
+  if (fDateTo) data = data.filter(d => (d.date||'') <= fDateTo);
+  
   data.sort((a,b)=>b.date.localeCompare(a.date));
+  
+  // 결과 카운트 표시
+  const countEl = document.getElementById('logCount');
+  if (countEl) countEl.textContent = data.length > 0 ? `(${data.length}건)` : '';
 
   const tbody = document.getElementById('logBody');
   if (data.length === 0){
@@ -296,10 +307,61 @@ function delLog(idx){
   renderLog();
 }
 
+// 현재 화면 필터 조건에 맞는 logData만 반환
+function getFilteredLogData(){
+  const fMat = (document.getElementById('filterMat') || {}).value || '';
+  const fJudge = (document.getElementById('filterJudge') || {}).value || '';
+  const fText = ((document.getElementById('filterText') || {}).value || '').toLowerCase();
+  const fDateFrom = (document.getElementById('filterDateFrom') || {}).value || '';
+  const fDateTo = (document.getElementById('filterDateTo') || {}).value || '';
+  
+  let data = [...logData];
+  if (fMat) data = data.filter(d => d.material === fMat);
+  if (fJudge) data = data.filter(d => d.judge === fJudge);
+  if (fText) data = data.filter(d =>
+    (d.heat||'').toLowerCase().includes(fText) ||
+    (d.charge||'').toLowerCase().includes(fText) ||
+    (d.boss||'').toLowerCase().includes(fText)
+  );
+  if (fDateFrom) data = data.filter(d => (d.date||'') >= fDateFrom);
+  if (fDateTo) data = data.filter(d => (d.date||'') <= fDateTo);
+  return data;
+}
+
 function exportLog(){
+  // 필터된 데이터만 내보내기 (조회 결과 그대로)
+  const data = getFilteredLogData();
+  if (data.length === 0) {
+    alert('내보낼 데이터가 없습니다. 검색 조건을 확인하세요.');
+    return;
+  }
   const headers = ['입고일','재질','외관','두께SPEC','폭SPEC','실측두께','실측폭','입고량(KG)','검사수','불량(KG)','HEAT-NO','부적합내용','입고라벨','판정','담당','부서장'];
-  const rows = logData.map(d=>[d.date,d.material,d.appear,d.thick_spec,d.width_spec,d.thick,d.width,d.in_kg,d.count,d.bad_kg,d.heat,d.nc,d.label,d.judge,d.charge,d.boss]);
-  downloadCSV([headers,...rows], `관리대장_${new Date().toISOString().split('T')[0]}.csv`);
+  const rows = data.map(d=>[d.date,d.material,d.appear,d.thick_spec,d.width_spec,d.thick,d.width,d.in_kg,d.count,d.bad_kg,d.heat,d.nc,d.label,d.judge,d.charge,d.boss]);
+  const today = (typeof getTodayKST === 'function') ? getTodayKST() : new Date().toISOString().split('T')[0];
+  downloadCSV([headers,...rows], `검사이력_${today}.csv`);
+}
+
+// 현재 필터에 맞는 데이터 일괄 삭제 (선택범위 삭제)
+function deleteFilteredLog(){
+  const data = getFilteredLogData();
+  if (data.length === 0) {
+    alert('삭제할 데이터가 없습니다. 검색 조건을 확인하세요.');
+    return;
+  }
+  if (data.length === logData.length) {
+    if (!confirm(`⚠️ 전체 ${data.length}건이 삭제됩니다.\n\n검색 조건이 비어있어 모든 데이터가 대상입니다.\n정말 삭제하시겠습니까?`)) return;
+  } else {
+    if (!confirm(`현재 검색 조건에 맞는 ${data.length}건을 삭제합니다.\n계속하시겠습니까?`)) return;
+  }
+  // 한번 더 확인
+  if (!confirm(`최종 확인: ${data.length}건을 영구 삭제합니다. 진행하시겠습니까?`)) return;
+  
+  // 삭제 대상 식별 (참조 비교)
+  const targetSet = new Set(data);
+  logData = logData.filter(d => !targetSet.has(d));
+  saveLogToLS();
+  renderLog();
+  alert(`✅ ${data.length}건이 삭제되었습니다.`);
 }
 
 // 검사 항목 정의 (수치형 vs 텍스트형)
@@ -3569,6 +3631,21 @@ setInterval(loadLogFromSupabase,5*60*1000);
         if(!moveToNext()){
           // 마지막 칸이면 OK처럼 동작
           applyValue();
+          closeNumpad();
+        }
+        break;
+      case 'jump-cus-x1':
+        // 현재 값 적용 후 수요자 외관(r1) X1 칸으로 점프
+        applyValue();
+        const targetEl = document.getElementById('cus_r1_x1');
+        if(targetEl){
+          _curEl = targetEl;
+          const cur = String(targetEl.value || '').trim();
+          _curBuf = (cur === '0' || cur === '') ? '' : cur;
+          // 라벨 갱신
+          document.getElementById('numpadLabel').textContent = buildLabel(targetEl);
+          updateDisplay();
+        }else{
           closeNumpad();
         }
         break;
