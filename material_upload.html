@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>소재입고 등록 (Rev4.7-debug)</title>
+  <title>소재입고 등록 (Rev4.7)</title>
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
@@ -102,7 +102,7 @@
 </head>
 <body>
 <div class="hdr">
-  <h1>📤 소재입고 등록 (Rev4.7-debug)</h1>
+  <h1>📤 소재입고 등록 (Rev4.7)</h1>
   <p>소재업체 템플릿 업로드 → DB 저장 · <span style="color:#ffeb3b;font-weight:700">성적서, 밀시트 첨부 가능</span></p>
 </div>
 <div class="tabs">
@@ -1320,13 +1320,13 @@ function renderCertModal(){
     const specListId=`specList_${it.k}`;
     const specOpts=getSpecHistory(it.k).map(s=>`<option value="${String(s).replace(/"/g,'&quot;')}">`).join('');
     h+=`<tr><td><b>${it.n}</b></td>`+
-       `<td><input type="text" value="${String(specVal||'').replace(/"/g,'&quot;')}" data-cert-k="${it.k}" data-cert-x="spec" list="${specListId}" class="spec-input${optClass}" title="기준값 (클릭 시 이전 입력값 선택)" onchange="saveSpecHistory('${it.k}',this.value)" onblur="saveSpecHistory('${it.k}',this.value)"${it.optional?' placeholder="(선택)"':''}>`+
+       `<td><input type="text" value="${String(specVal||'').replace(/"/g,'&quot;')}" data-cert-k="${it.k}" data-cert-x="spec" list="${specListId}" class="spec-input${optClass}" title="기준값 (클릭 시 이전 입력값 선택)" onchange="saveSpecHistory('${it.k}',this.value); readCertModalData();" onblur="saveSpecHistory('${it.k}',this.value)"${it.optional?' placeholder="(선택)"':''}>`+
        `<datalist id="${specListId}">${specOpts}</datalist></td>`+
-       `<td><input type="${inputType}"${stepAttr} data-cert-k="${it.k}" data-cert-x="x1" value="${v1}" class="meas-input${optClass}"${it.optional?' placeholder="-"':''}></td>`+
-       `<td><input type="${inputType}"${stepAttr} data-cert-k="${it.k}" data-cert-x="x2" value="${v2}" class="meas-input${optClass}"${it.optional?' placeholder="-"':''}></td>`+
-       `<td><input type="${inputType}"${stepAttr} data-cert-k="${it.k}" data-cert-x="x3" value="${v3}" class="meas-input${optClass}"${it.optional?' placeholder="-"':''}></td>`+
-       `<td><label><input type="radio" name="cert_${it.k}_j_${_certCurrentIdx}" value="OK" data-cert-k="${it.k}" data-cert-x="j"${j==='OK'?' checked':''}>OK</label>`+
-       `<label><input type="radio" name="cert_${it.k}_j_${_certCurrentIdx}" value="NG" data-cert-k="${it.k}" data-cert-x="j"${j==='NG'?' checked':''}>NG</label></td>`+
+       `<td><input type="${inputType}"${stepAttr} data-cert-k="${it.k}" data-cert-x="x1" value="${v1}" class="meas-input${optClass}" oninput="readCertModalData()"${it.optional?' placeholder="-"':''}></td>`+
+       `<td><input type="${inputType}"${stepAttr} data-cert-k="${it.k}" data-cert-x="x2" value="${v2}" class="meas-input${optClass}" oninput="readCertModalData()"${it.optional?' placeholder="-"':''}></td>`+
+       `<td><input type="${inputType}"${stepAttr} data-cert-k="${it.k}" data-cert-x="x3" value="${v3}" class="meas-input${optClass}" oninput="readCertModalData()"${it.optional?' placeholder="-"':''}></td>`+
+       `<td><label><input type="radio" name="cert_${it.k}_j_${_certCurrentIdx}" value="OK" data-cert-k="${it.k}" data-cert-x="j"${j==='OK'?' checked':''} onchange="readCertModalData()">OK</label>`+
+       `<label><input type="radio" name="cert_${it.k}_j_${_certCurrentIdx}" value="NG" data-cert-k="${it.k}" data-cert-x="j"${j==='NG'?' checked':''} onchange="readCertModalData()">NG</label></td>`+
        `</tr>`;
   });
   document.getElementById('certMeasTable').innerHTML=h+'</tbody>';
@@ -1392,6 +1392,8 @@ function certMillsheetUpload(input){
   }
   const r=new FileReader();
   r.onload=e=>{
+    /* [Rev4.7 핵심수정] 밀시트 첨부 시점에 사용자가 입력한 X1/X2/X3 값 먼저 보존 */
+    readCertModalData();
     _certMillsheets[_certCurrentIdx]={
       dataUrl:e.target.result,
       originalName:f.name,
@@ -1437,27 +1439,6 @@ async function certSaveCurrent(){
   readCertModalData();
   const c=_certBatch[_certCurrentIdx];
   const millsheetImg=_certMillsheets[_certCurrentIdx]||null;
-
-  /* [Rev4.7] 화면 디버그 패널 - 저장 직전 cert_data 내용 표시 */
-  try {
-    const fmtR = r => r ? `spec="${r.spec||''}" x1="${r.x1||''}" x2="${r.x2||''}" x3="${r.x3||''}" j="${r.j||''}"` : '(없음)';
-    const cd = c.certData || {};
-    const dbgMsg = 
-      `🔍 디버그 [Rev4.7] LOT=${c.lot||'-'}\n`+
-      `\n저장될 cert_data 내용:\n`+
-      `r1(표면): ${fmtR(cd.r1)}\n`+
-      `r2(재질): ${fmtR(cd.r2)}\n`+
-      `r3(폭):   ${fmtR(cd.r3)}\n`+
-      `r4(두께): ${fmtR(cd.r4)}\n`+
-      `\ncharge: "${cd.charge||''}"\n`+
-      `sign:   "${cd.sign||''}"\n`+
-      `finalJ: "${cd.finalJ||''}"\n`+
-      `\n[확인]을 눌러야 Supabase에 저장됩니다.\n`+
-      `[취소]를 누르면 저장하지 않고 모달 유지.`;
-    if(!confirm(dbgMsg)) {
-      return;
-    }
-  } catch(e){ console.error('debug', e); }
   
   let saveOk=false, saveErr='';
   const SB_URL=getSbUrl(),SB_KEY=getSbKey();
