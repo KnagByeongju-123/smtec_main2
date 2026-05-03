@@ -540,6 +540,110 @@ async function sendEmail(info){
       +'<td style="padding:6px 10px;border:1px solid #e0e0e0;text-align:right">'+w+'</td></tr>';
   }).join('');
 
+  /* [Rev4.8] 성적서 상세 + 밀시트 첨부 모으기 (모든 _certBatch 카드 전체 표시) */
+  const attachments=[];
+  let certSummaryHtml='';
+  if(typeof _certBatch!=='undefined' && Array.isArray(_certBatch) && _certBatch.length){
+    const cards=[];
+    _certBatch.forEach((c, idx)=>{
+      const ms=_certMillsheets&&_certMillsheets[idx];
+      const cd=c.certData||{};
+      const finalJ=cd.finalJ||'-';
+      const judgeColor=finalJ==='NG'?'#c62828':(finalJ==='OK'?'#2e7d32':'#888');
+      const headerBg=finalJ==='NG'?'#ffebee':(finalJ==='OK'?'#e8f5e9':'#f5f5f5');
+      const headerColor=finalJ==='NG'?'#c62828':(finalJ==='OK'?'#1b5e20':'#555');
+      const msTag=ms?'<span style="background:#0ea5e9;color:#fff;font-size:10px;padding:2px 8px;border-radius:10px;margin-left:6px;font-weight:700">📎 밀시트</span>':'';
+      const charge=cd.charge||'-';
+      const sign=cd.sign||'-';
+      
+      // 측정 행 4개 (r1=결함/r2=재질/r3=폭/r4=두께)
+      const rowDef=[
+        {k:'r1', label:'표면'},
+        {k:'r2', label:'재질'},
+        {k:'r3', label:'폭(W)'},
+        {k:'r4', label:'두께(T)'}
+      ];
+      const measRows=rowDef.map(rd=>{
+        const r=cd[rd.k]||{};
+        const spec=r.spec||'-';
+        const x1=(r.x1!==undefined&&r.x1!=='')?r.x1:'-';
+        const x2=(r.x2!==undefined&&r.x2!=='')?r.x2:'-';
+        const x3=(r.x3!==undefined&&r.x3!=='')?r.x3:'-';
+        const j=r.j||'-';
+        const jColor=j==='NG'?'#c62828':(j==='OK'?'#2e7d32':'#888');
+        return '<tr>'+
+          '<td style="padding:4px 6px;border:1px solid #e0e0e0;background:#f9fafb;font-weight:700">'+rd.label+'</td>'+
+          '<td style="padding:4px 6px;border:1px solid #e0e0e0">'+spec+'</td>'+
+          '<td style="padding:4px 6px;border:1px solid #e0e0e0;text-align:center">'+x1+'</td>'+
+          '<td style="padding:4px 6px;border:1px solid #e0e0e0;text-align:center">'+x2+'</td>'+
+          '<td style="padding:4px 6px;border:1px solid #e0e0e0;text-align:center">'+x3+'</td>'+
+          '<td style="padding:4px 6px;border:1px solid #e0e0e0;text-align:center;font-weight:700;color:'+jColor+'">'+j+'</td>'+
+        '</tr>';
+      }).join('');
+      
+      const totalWeight=c.weight?(Math.round(c.weight*100)/100).toLocaleString():'-';
+      const coilLine=(c.coil_count&&c.coil_count>1)?(' / 코일 '+c.coil_count+'개'):'';
+      const lotsLine=(c.lots_all&&c.lots_all.length>1)?
+        ('<div style="font-size:10px;color:#1565c0;margin-top:3px">개별 LOT: '+c.lots_all.join(', ')+'</div>'):'';
+      
+      cards.push(
+        '<div style="border:1px solid #cbd5e1;border-radius:6px;margin-bottom:10px;overflow:hidden;background:#fff">'+
+          '<div style="background:'+headerBg+';padding:8px 12px;border-bottom:1px solid #cbd5e1;display:flex;justify-content:space-between;align-items:center">'+
+            '<div style="font-weight:700;color:'+headerColor+';font-size:12px">'+
+              '#'+(idx+1)+'. '+(c.supplier||'-')+' / '+(c.material_type||'-')+' '+(c.thickness||'')+'t × '+(c.width||'')+'mm'+
+              msTag+
+            '</div>'+
+            '<div style="font-weight:700;font-size:12px;color:'+judgeColor+'">최종판정 '+finalJ+'</div>'+
+          '</div>'+
+          '<div style="padding:8px 12px">'+
+            '<table style="width:100%;font-size:11px;border-collapse:collapse;margin-bottom:6px">'+
+              '<tr><td style="padding:2px 6px;color:#888;width:60px">LOT</td><td style="font-weight:700">'+(c.lot||'-')+'</td>'+
+                  '<td style="padding:2px 6px;color:#888;width:60px">HEAT</td><td style="font-weight:700">'+(c.heat_no||'-')+'</td></tr>'+
+              '<tr><td style="padding:2px 6px;color:#888">중량</td><td><b>'+totalWeight+' KG</b>'+coilLine+'</td>'+
+                  '<td style="padding:2px 6px;color:#888">입고일</td><td>'+(c.receipt_date||'-')+'</td></tr>'+
+              '<tr><td style="padding:2px 6px;color:#888">담당자</td><td>'+charge+'</td>'+
+                  '<td style="padding:2px 6px;color:#888">서명</td><td>'+sign+'</td></tr>'+
+            '</table>'+
+            lotsLine+
+            '<table style="width:100%;font-size:11px;border-collapse:collapse;margin-top:6px">'+
+              '<thead><tr style="background:#fff3e0">'+
+                '<th style="padding:4px 6px;border:1px solid #ffe0b2;text-align:left;width:60px">항목</th>'+
+                '<th style="padding:4px 6px;border:1px solid #ffe0b2;text-align:left">규격</th>'+
+                '<th style="padding:4px 6px;border:1px solid #ffe0b2;text-align:center;width:50px">X1</th>'+
+                '<th style="padding:4px 6px;border:1px solid #ffe0b2;text-align:center;width:50px">X2</th>'+
+                '<th style="padding:4px 6px;border:1px solid #ffe0b2;text-align:center;width:50px">X3</th>'+
+                '<th style="padding:4px 6px;border:1px solid #ffe0b2;text-align:center;width:45px">판정</th>'+
+              '</tr></thead>'+
+              '<tbody>'+measRows+'</tbody>'+
+            '</table>'+
+          '</div>'+
+        '</div>'
+      );
+
+      /* 밀시트가 있으면 첨부 추가 */
+      if(ms){
+        const dataUrl=(typeof ms==='string')?ms:ms.dataUrl;
+        const mimeType=(typeof ms==='string')?(dataUrl.match(/data:([^;]+)/)?.[1]||'image/jpeg'):(ms.mimeType||'application/octet-stream');
+        const orig=(typeof ms==='string')?('millsheet'+(mimeType==='application/pdf'?'.pdf':'.jpg')):(ms.originalName||'millsheet');
+        const m=orig.match(/^(.+?)(\.[^.]+)?$/);
+        const baseName=(m&&m[1])||orig;
+        const ext=(m&&m[2])||(mimeType==='application/pdf'?'.pdf':(mimeType==='image/png'?'.png':'.jpg'));
+        const meta=((c.supplier||'')+'_'+(c.material_type||'')+'_'+(c.thickness||'')+'t'+(c.width||'')+'_LOT'+(c.lot||'')+'_'+(c.heat_no||''))
+          .replace(/[\\/:*?"<>|]/g,'_').replace(/\s+/g,'_').slice(0,80);
+        const filename=('밀시트_'+meta+'_'+baseName+ext).replace(/[\\/:*?"<>|]/g,'_');
+        const base64Data=(dataUrl||'').split(',')[1]||dataUrl||'';
+        if(base64Data){
+          attachments.push({name:filename, base64:base64Data, mimeType:mimeType});
+        }
+      }
+    });
+    if(cards.length){
+      certSummaryHtml=
+        '<div style="font-size:13px;font-weight:700;color:#555;margin:18px 0 8px">📋 성적서 상세 ('+cards.length+'건 전체 / 밀시트 첨부 '+attachments.length+'개)</div>'+
+        cards.join('');
+    }
+  }
+
   const html='<div style="font-family:sans-serif;max-width:600px">'
     +'<div style="background:#1a237e;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">'
     +'<h2 style="margin:0;font-size:18px">📤 소재입고 등록 완료</h2></div>'
@@ -559,16 +663,18 @@ async function sendEmail(info){
     +'<th style="padding:6px 10px;border:1px solid #c5cae9;text-align:right">중량</th></tr>'
     +matRows
     +'</table>'
-    +'<div style="margin-top:16px;font-size:11px;color:#aaa;text-align:center">Smart Factory Platform · 소재입고 자동알림</div>'
+    +certSummaryHtml
+    +'<div style="margin-top:16px;font-size:11px;color:#aaa;text-align:center">Smart Factory Platform · 소재입고 자동알림 (밀시트 통합)</div>'
     +'</div></div>';
 
-  const subject='📤 소재입고 '+info.count+'건 — '+info.company+' ('+info.date+')';
+  const subjectSuffix=attachments.length?(' / 밀시트 '+attachments.length+'개 첨부'):'';
+  const subject='📤 소재입고 '+info.count+'건 — '+info.company+' ('+info.date+')'+subjectSuffix;
 
   try{
     await fetch(gasUrl,{
       method:'POST',
       headers:{'Content-Type':'text/plain;charset=utf-8'},
-      body:JSON.stringify({action:'sendMail',subject:subject,html:html,text:subject,recipients:info.recipients||[]})
+      body:JSON.stringify({action:'sendMail',subject:subject,html:html,text:subject,recipients:info.recipients||[],attachments:attachments})
     });
   }catch(e){console.log('메일 발송 실패:',e)}
 }
@@ -1585,10 +1691,11 @@ async function certSaveCurrent(){
     return;  /* 실패하면 다음 카드로 안 넘어감 */
   }
   
-  /* 밀시트가 있으면 메일로 첨부 발송 */
-  if(millsheetImg){
-    sendMillsheetMail(c,millsheetImg).catch(e=>console.error('밀시트 메일 발송 실패:',e));
-  }
+  /* [Rev4.8] 밀시트는 개별 메일 발송 안 함 — 최종등록(doRegister)에서 통합 메일로 발송됨
+     단, Storage 업로드는 별도 (IQC가 자동으로 PDF 첨부 표시) */
+  // if(millsheetImg){
+  //   sendMillsheetMail(c,millsheetImg).catch(e=>console.error('밀시트 메일 발송 실패:',e));
+  // }
   
   updateCertBadge();
   const next=_certBatch.findIndex(x=>!x.done);
