@@ -1301,7 +1301,13 @@ function editCert(idx){
   document.getElementById('c_customer').value = c.customer||'';
   document.getElementById('c_date').value = c.date||'';
   document.getElementById('c_weight').value = c.weight||'';
-  document.getElementById('c_cut').value = c.cut||'';
+  // Cut 자동 계산: 소재업체 업로드 시 입력한 분할 갯수(coil_count) 그대로
+  // 저장된 c.cut 값이 있으면 (사용자 수정값) 우선
+  let cutValue = c.cut || '';
+  if (!cutValue && c.coil_count && Number(c.coil_count) > 0) {
+    cutValue = c.coil_count + 'CUT';
+  }
+  document.getElementById('c_cut').value = cutValue;
   document.getElementById('c_lot').value = c.lot||'';
   document.getElementById('c_heat').value = c.heat||'';
   // 공급자 판정: 저장값 있으면 적용, 없으면 미선택
