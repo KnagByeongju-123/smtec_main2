@@ -576,17 +576,29 @@ function evaluateAllJudgements(){
 // 행별 판정 → 공급자 판정 / 수요자 최종 판정 자동 동기화
 function syncFinalJudgesFromRows(){
   let supplierAllOK = true, customerAllOK = true;
+  let supplierAnyMeas = false, customerAnyMeas = false;
   MEAS_ITEMS.forEach(item => {
     const sJ = getRadioValue('sup_' + item.key + '_j');
     const cJ = getRadioValue('cus_' + item.key + '_j');
     if (sJ === 'NG') supplierAllOK = false;
     if (cJ === 'NG') customerAllOK = false;
+    if (sJ === 'OK' || sJ === 'NG') supplierAnyMeas = true;
+    if (cJ === 'OK' || cJ === 'NG') customerAnyMeas = true;
   });
-  setRadioValue('c_supplier_judge', supplierAllOK ? 'OK' : 'NG');
-  // 수요자 최종 판정 - 보류는 사용자가 수동으로만 선택
+  
+  // 공급자 판정 - 측정값 있을 때만 자동 (없으면 빈 상태 유지)
+  const supJudge = supplierAnyMeas ? (supplierAllOK ? 'OK' : 'NG') : '';
+  setRadioValue('c_supplier_judge', supJudge);
+  const supSel = document.getElementById('c_supplier_judge_select');
+  if (supSel) supSel.value = supJudge;
+  
+  // 수요자 최종 판정 - 보류는 사용자 수동, 그 외엔 자동
   const curCustomerJudge = getRadioValue('c_judge');
   if (curCustomerJudge !== '보류') {
-    setRadioValue('c_judge', customerAllOK ? 'OK' : 'NG');
+    const cusJudge = customerAnyMeas ? (customerAllOK ? 'OK' : 'NG') : '';
+    setRadioValue('c_judge', cusJudge);
+    const cusSel = document.getElementById('c_judge_select');
+    if (cusSel) cusSel.value = cusJudge;
   }
 }
 
