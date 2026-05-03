@@ -4399,7 +4399,13 @@ setInterval(loadLogFromSupabase,5*60*1000);
   // ---------- DB에서 전체 로드 ----------
   window.loadMaterialStd = async function(){
     if(!appSettings.supabaseUrl || !appSettings.supabaseKey){
-      renderEmptyState('Supabase 설정 필요');
+      // Supabase 미설정 시: 하드코딩 데이터로 화면만 표시
+      const seed = window._MATERIAL_STD_SEED || [];
+      window._MATERIAL_STD_CACHE = {};
+      seed.forEach(row => { window._MATERIAL_STD_CACHE[row.material] = row; });
+      renderMaterialStdTable(seed);
+      renderMaterialTolTable(seed);
+      console.log('[MaterialStd] Supabase 미설정 → 하드코딩 폴백');
       return;
     }
     
@@ -4414,14 +4420,69 @@ setInterval(loadLogFromSupabase,5*60*1000);
       
       if(!res.ok){
         if(res.status === 404 || res.status === 401){
-          renderEmptyState('테이블 없음 — material_property_std.sql 실행 필요');
+          renderEmptyState('테이블 없음 — material_property_std_v2.sql 실행 필요');
         } else {
           renderEmptyState('로드 실패: HTTP ' + res.status);
+        }
+        // 그래도 하드코딩 폴백으로 화면 표시
+        const seed = window._MATERIAL_STD_SEED || [];
+        if(seed.length > 0){
+          window._MATERIAL_STD_CACHE = {};
+          seed.forEach(row => { window._MATERIAL_STD_CACHE[row.material] = row; });
+          renderMaterialStdTable(seed);
+          renderMaterialTolTable(seed);
         }
         return;
       }
       
-      const data = await res.json();
+      let data = await res.json();
+      
+      // ⭐ DB가 비어있으면 자동 시드 (기본 3종 INSERT)
+      if(data.length === 0){
+        console.log('[MaterialStd] DB 비어있음 → 자동 시드 시작');
+        const seed = window._MATERIAL_STD_SEED || [];
+        if(seed.length > 0){
+          // 즉시 화면에는 하드코딩 데이터 표시
+          window._MATERIAL_STD_CACHE = {};
+          seed.forEach(row => { window._MATERIAL_STD_CACHE[row.material] = row; });
+          renderMaterialStdTable(seed);
+          renderMaterialTolTable(seed);
+          
+          // 백그라운드에서 자동 시드 (UPSERT)
+          let seedSuccess = 0;
+          for(const item of seed){
+            try {
+              const upRes = await fetch(appSettings.supabaseUrl + '/rest/v1/material_property_std?on_conflict=material', {
+                method:'POST',
+                headers:{
+                  'Content-Type':'application/json',
+                  'apikey':appSettings.supabaseKey,
+                  'Authorization':'Bearer ' + appSettings.supabaseKey,
+                  'Prefer':'resolution=merge-duplicates'
+                },
+                body: JSON.stringify(item)
+              });
+              if(upRes.ok) seedSuccess++;
+            } catch(_){}
+          }
+          console.log('[MaterialStd] 자동 시드 완료:', seedSuccess + '/' + seed.length);
+          
+          // 시드 후 다시 조회 (DB 데이터로 동기화)
+          if(seedSuccess > 0){
+            try {
+              const reRes = await fetch(url, {
+                headers:{
+                  'apikey': appSettings.supabaseKey,
+                  'Authorization': 'Bearer ' + appSettings.supabaseKey
+                }
+              });
+              if(reRes.ok){
+                data = await reRes.json();
+              }
+            } catch(_){}
+          }
+        }
+      }
       
       // 캐시 업데이트 (재질 코드를 키로)
       window._MATERIAL_STD_CACHE = {};
@@ -4434,7 +4495,17 @@ setInterval(loadLogFromSupabase,5*60*1000);
       console.log('[MaterialStd] 로드 완료:', data.length + '종');
     } catch(e){
       console.error('[MaterialStd] 로드 오류:', e);
-      renderEmptyState('네트워크 오류: ' + e.message);
+      // 네트워크 오류 시도 하드코딩 폴백
+      const seed = window._MATERIAL_STD_SEED || [];
+      if(seed.length > 0){
+        window._MATERIAL_STD_CACHE = {};
+        seed.forEach(row => { window._MATERIAL_STD_CACHE[row.material] = row; });
+        renderMaterialStdTable(seed);
+        renderMaterialTolTable(seed);
+        console.log('[MaterialStd] 네트워크 오류 → 하드코딩 폴백 적용');
+      } else {
+        renderEmptyState('네트워크 오류: ' + e.message);
+      }
     }
   };
   
@@ -4798,7 +4869,7 @@ setInterval(loadLogFromSupabase,5*60*1000);
 // ============================================================
 (function(){
   
-  // 기본 3종 데이터 (SQL 동기화)
+  // 기본 3종 데이터 (SQL 동기화) - 전역 노출 (다른 IIFE에서 폴백으로 사용)
   const SEED_DATA = [
     {
       material:'SUS304', standard:'KS D3698', material_code:'STS304', display_order:1,
@@ -4820,6 +4891,7 @@ setInterval(loadLogFromSupabase,5*60*1000);
       remark:'연신율/경도는 조질 구분에 따라 다름 (1/8경질 25%↑, 1/4경질 10%↑ / 비조질 105Hv↓, 표준조질 115Hv↓)'
     }
   ];
+  window._MATERIAL_STD_SEED = SEED_DATA;  // 전역 노출
   
   // ---------- 1) 초기 3종 일괄 등록 ----------
   window.seedDefaultMaterialStd = async function(){
