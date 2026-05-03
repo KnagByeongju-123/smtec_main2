@@ -1201,7 +1201,7 @@ function renderCert(){
     return `
     <div class="inspection-cert collapsed">
       <div class="cert-header">
-        <span>${c.commodity||''} / ${c.size||''}</span>
+        <span>${c.commodity||''} / ${c.size||''}${c.millsheet_pdf_path?' <span style="display:inline-block; background:#0ea5e9; color:#fff; font-size:10px; padding:2px 8px; border-radius:10px; margin-left:6px; font-weight:700; letter-spacing:0.5px;">📎 밀시트</span>':''}</span>
         <span style="display:flex; align-items:center; gap:6px;">
           <button class="btn btn-primary" style="padding:3px 10px; font-size:11px;" onclick="editCert(${idx})">수정</button>
           <button class="btn btn-danger" style="padding:3px 10px; font-size:11px;" onclick="delCert(${idx})">삭제</button>
@@ -1454,6 +1454,22 @@ function closeCertModal(){ document.getElementById('certModal').classList.remove
 
 function saveCert(){
   const idx = parseInt(document.getElementById('certIdx').value);
+  
+  // ⭐ 밀시트 PDF 다운로드 강제 (모든 데이터 처리 전)
+  // 첨부된 PDF가 있으면 반드시 [💾 PDF 저장] 클릭 후에만 검사 저장 가능
+  // 다운로드 시점에 Storage에서 PDF 정리되므로 = 백업 완료 의미
+  const wasDownloaded = (typeof hasMillsheetBeenDownloaded === 'function') ? hasMillsheetBeenDownloaded() : true;
+  if (!wasDownloaded) {
+    alert(
+      '🚫 밀시트 PDF를 하드디스크에 저장하지 않았습니다.\n\n' +
+      '검사 저장 전에 반드시 [💾 PDF 저장 (하드디스크)] 버튼을\n' +
+      '눌러서 PDF를 백업해주세요.\n\n' +
+      '※ 다운로드 즉시 Supabase Storage에서 PDF가 정리됩니다.\n' +
+      '※ 백업 없이 저장은 허용되지 않습니다.'
+    );
+    return;  // 모달 유지, 저장 중단
+  }
+  
   const c = {
     commodity: document.getElementById('c_commodity').value,
     spec: document.getElementById('c_spec').value,
@@ -3145,7 +3161,8 @@ async function loadCertsFromSupabase(){
         c_r4:isUninspected?_emptyRow((rc.thickness||'')+'T ±0.05'):_cusEmptyFromCert(cd.r4,(rc.thickness||'')+'T ±0.05'),
         _from_supabase:true,
         _supabase_id:rc.id,
-        _uninspected:isUninspected
+        _uninspected:isUninspected,
+        millsheet_pdf_path:rc.millsheet_pdf_path||null  /* Storage의 PDF 경로 */
       };
       // 기존 항목 있으면 교체(spec 갱신), 없으면 추가
       if(existIdx>=0){
@@ -3741,4 +3758,1238 @@ setInterval(loadLogFromSupabase,5*60*1000);
   setTimeout(refreshAttachments, 500);
   // editCert/openCertModal로 테이블이 다시 그려지면 다시 부착 필요
   setInterval(refreshAttachments, 1500);
+})();
+
+
+// ============================================================
+// 🧪 밀시트 자동 분석 + Storage 연동 모듈
+// - PDF.js로 화학성분/기계적성질 추출
+// - 규격과 비교하여 OK/NG 판정
+// - Supabase Storage 자동 로드/삭제
+// ============================================================
+(function(){
+  // ---------- 물성 기준 (Supabase material_property_std와 동기화) ----------
+  const MATERIAL_STD = {
+    'SUS304': {
+      standard: 'KS D3698 (STS304)',
+      chemistry: {
+        C:{max:0.08}, Si:{max:1.00}, Mn:{max:2.00}, P:{max:0.045}, S:{max:0.030},
+        Ni:{min:8.00,max:10.50}, Cr:{min:18.0,max:20.0}
+      },
+      mechanical: {
+        YS:{min:205, label:'내력 0.2%', unit:'N/mm²'},
+        TS:{min:520, label:'인장강도', unit:'N/mm²'},
+        EL:{min:40,  label:'연신율',   unit:'%'},
+        HV:{max:200, label:'경도',     unit:'Hv'}
+      }
+    },
+    'SUS430': {
+      standard: 'KS D3698 (STS430)',
+      chemistry: {
+        C:{max:0.12}, Si:{max:0.75}, Mn:{max:1.00}, P:{max:0.040}, S:{max:0.030},
+        Ni:null, Cr:{min:16.00,max:18.00}
+      },
+      mechanical: {
+        YS:{min:205, label:'내력 0.2%', unit:'N/mm²'},
+        TS:{min:450, label:'인장강도', unit:'N/mm²'},
+        EL:{min:22,  label:'연신율',   unit:'%'},
+        HV:{max:220, label:'경도',     unit:'Hv'}
+      }
+    },
+    'SPCC': {
+      standard: 'KS D3512 (SCP1)',
+      chemistry: {
+        C:{max:0.15}, Si:null, Mn:{max:0.60}, P:{max:0.100}, S:{max:0.035}, Ni:null, Cr:null
+      },
+      mechanical: {
+        YS:null,
+        TS:{min:274, label:'인장강도', unit:'N/mm²'},
+        EL:{min:25,  label:'연신율',   unit:'%'},
+        HV:{max:115, label:'경도',     unit:'Hv'}
+      }
+    }
+  };
+  
+  let _msFile = null;
+  let _msRawText = '';
+  let _msLastResult = null;
+  let _msDownloaded = false;  // PDF 다운로드 여부 (검사 저장 전 경고용)
+  
+  // ---------- 파일 선택 핸들러 ----------
+  document.addEventListener('change', function(e){
+    if(e.target && e.target.id === 'millsheetPdfInput'){
+      const f = e.target.files[0];
+      if(f){
+        _msFile = f;
+        _msDownloaded = false;
+        const fn = document.getElementById('millsheetFileName');
+        if(fn){
+          fn.textContent = `📎 ${f.name} (${(f.size/1024).toFixed(1)}KB)`;
+          fn.style.color = '#0c4a6e';
+        }
+        const btn = document.getElementById('millsheetAnalyzeBtn');
+        if(btn){
+          btn.disabled = false;
+          btn.style.opacity = '1';
+        }
+        const box = document.getElementById('millsheetResultBox');
+        if(box) box.style.display = 'none';
+      }
+    }
+  });
+  
+  // ---------- PDF → 텍스트 ----------
+  async function extractPdfText(file){
+    if(!window.pdfjsLib) throw new Error('PDF.js 라이브러리 로드 실패');
+    const buf = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({data:buf}).promise;
+    let txt = '';
+    for(let i=1; i<=pdf.numPages; i++){
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      txt += content.items.map(it=>it.str).join(' ') + '\n';
+    }
+    return txt;
+  }
+  
+  // ---------- 텍스트 파싱 ----------
+  function parseMillsheet(text){
+    const result = {chemistry:{}, mechanical:{}};
+    const norm = text.replace(/\u3000/g,' ').replace(/[ \t]+/g,' ');
+    
+    const chemElements = ['C','Si','Mn','P','S','Ni','Cr','Mo','Cu','Al','Ti','N','Nb','V','B'];
+    chemElements.forEach(el => {
+      const patterns = [
+        new RegExp(`(?:^|[\\s\\(\\|])${el}\\s*[:：]\\s*(\\d+\\.\\d+)`, 'i'),
+        new RegExp(`(?:^|[\\s\\(\\|])${el}\\s*\\(%?\\)\\s*[:：]?\\s*(\\d+\\.\\d+)`, 'i'),
+        new RegExp(`(?:^|[\\s\\|])${el}\\s+(\\d+\\.\\d+)(?=\\s|$)`)
+      ];
+      for(const re of patterns){
+        const m = norm.match(re);
+        if(m){
+          const v = parseFloat(m[1]);
+          if(!isNaN(v) && v >= 0 && v < 30){
+            result.chemistry[el] = v;
+            break;
+          }
+        }
+      }
+    });
+    
+    const mechPatterns = [
+      {key:'YS', regexes:[
+        /Y\.?\s*S\.?\s*\([^)]*\)\s*[:：=]?\s*(\d+\.?\d*)/i,
+        /Y\.?\s*S\.?\s*[:：=]\s*(\d+\.?\d*)/i,
+        /Y\.?\s*P\.?\s*\([^)]*\)\s*[:：=]?\s*(\d+\.?\d*)/i,
+        /Y\.?\s*P\.?\s*[:：=]\s*(\d+\.?\d*)/i,
+        /Yield\s*Strength\s*\([^)]*\)?\s*[:：=]?\s*(\d+\.?\d*)/i,
+        /항복\s*강도\s*[:：=]?\s*(\d+\.?\d*)/,
+        /0\.2\s*%\s*[:：=]?\s*(\d+\.?\d*)/,
+        /내\s*력\s*[:：=]?\s*(\d+\.?\d*)/
+      ]},
+      {key:'TS', regexes:[
+        /T\.?\s*S\.?\s*\([^)]*\)\s*[:：=]?\s*(\d+\.?\d*)/i,
+        /T\.?\s*S\.?\s*[:：=]\s*(\d+\.?\d*)/i,
+        /Tensile\s*Strength\s*[:：=]?\s*(\d+\.?\d*)/i,
+        /인장\s*강도\s*[:：=]?\s*(\d+\.?\d*)/,
+        /UTS\s*[:：=]?\s*(\d+\.?\d*)/i
+      ]},
+      {key:'EL', regexes:[
+        /E\.?\s*L\.?\s*\([^)]*\)\s*[:：=]?\s*(\d+\.?\d*)/i,
+        /E\.?\s*L\.?\s*[:：=]\s*(\d+\.?\d*)\s*%?/i,
+        /Elongation\s*[:：=]?\s*(\d+\.?\d*)/i,
+        /연\s*신\s*율?\s*[:：=]?\s*(\d+\.?\d*)/
+      ]},
+      {key:'HV', regexes:[
+        /HARDNESS\s*\([^)]*\)\s*[:：=]?\s*(\d+\.?\d*)/i,
+        /HARDNESS\s*Hv\s*[:：=]?\s*(\d+\.?\d*)/i,
+        /HARDNESS\s*[:：=]?\s*(\d+\.?\d*)/i,
+        /H\.?\s*V\.?\s*\([^)]*\)?\s*[:：=]?\s*(\d+\.?\d*)/i,
+        /H\.?\s*V\.?\s*[:：=]\s*(\d+\.?\d*)/i,
+        /경\s*도\s*[:：=]?\s*(\d+\.?\d*)/,
+        /HRB\s*[:：=]?\s*(\d+\.?\d*)/i
+      ]}
+    ];
+    mechPatterns.forEach(({key, regexes}) => {
+      for(const re of regexes){
+        const m = norm.match(re);
+        if(m){
+          const v = parseFloat(m[1]);
+          if(!isNaN(v) && v > 0 && v < 5000){
+            result.mechanical[key] = v;
+            break;
+          }
+        }
+      }
+    });
+    
+    return result;
+  }
+  
+  // ---------- 헬퍼 ----------
+  function checkRange(value, range){
+    if(range.min !== undefined && value < range.min) return {ok:false, note:`${range.min} 이상 필요`};
+    if(range.max !== undefined && value > range.max) return {ok:false, note:`${range.max} 이하 필요`};
+    return {ok:true, note:'규격 내'};
+  }
+  function formatRange(range, unit){
+    const u = unit ? ` ${unit}` : '';
+    if(range.min !== undefined && range.max !== undefined) return `${range.min}~${range.max}${u}`;
+    if(range.min !== undefined) return `≥ ${range.min}${u}`;
+    if(range.max !== undefined) return `≤ ${range.max}${u}`;
+    return '-';
+  }
+  
+  // ---------- 분석 ----------
+  function analyze(extracted, material){
+    // DB 캐시에서 우선 조회 → 없으면 하드코딩 폴백
+    let std = null;
+    if(window._MATERIAL_STD_CACHE && window._MATERIAL_STD_CACHE[material]){
+      const dbRow = window._MATERIAL_STD_CACHE[material];
+      std = {
+        standard: dbRow.standard || '',
+        chemistry: dbRow.chemistry || {},
+        mechanical: dbRow.mechanical || {}
+      };
+    } else {
+      std = MATERIAL_STD[material];
+    }
+    if(!std) return null;
+    const rows = [];
+    let okCount=0, ngCount=0, missCount=0;
+    
+    Object.entries(std.chemistry).forEach(([el, range]) => {
+      const measured = extracted.chemistry[el];
+      if(range === null){
+        rows.push({type:'chem', item:el, std:'해당없음', measured:measured!==undefined?measured.toFixed(3):'-', judge:'skip', note:'규격 미적용'});
+        return;
+      }
+      const stdText = formatRange(range, '%');
+      if(measured === undefined){
+        rows.push({type:'chem', item:el, std:stdText, measured:'─', judge:'miss', note:'PDF에서 추출 실패'});
+        missCount++; return;
+      }
+      const r = checkRange(measured, range);
+      rows.push({type:'chem', item:el, std:stdText, measured:measured.toFixed(3), judge:r.ok?'ok':'ng', note:r.note});
+      if(r.ok) okCount++; else ngCount++;
+    });
+    
+    Object.entries(std.mechanical).forEach(([key, range]) => {
+      if(range === null){
+        rows.push({type:'mech', item:key, std:'해당없음', measured:'-', judge:'skip', note:'규격 미적용'});
+        return;
+      }
+      const measured = extracted.mechanical[key];
+      const stdText = formatRange(range, range.unit||'');
+      const itemLabel = `${key} (${range.label||''})`;
+      if(measured === undefined){
+        rows.push({type:'mech', item:itemLabel, std:stdText, measured:'─', judge:'miss', note:'PDF에서 추출 실패'});
+        missCount++; return;
+      }
+      const r = checkRange(measured, range);
+      rows.push({type:'mech', item:itemLabel, std:stdText, measured:measured.toFixed(1), judge:r.ok?'ok':'ng', note:r.note});
+      if(r.ok) okCount++; else ngCount++;
+    });
+    
+    let summary;
+    if(ngCount > 0) summary = 'ng';
+    else if(missCount > 0) summary = 'warn';
+    else summary = 'ok';
+    
+    return {rows, summary, okCount, ngCount, missCount};
+  }
+  
+  // ---------- 결과 렌더 ----------
+  function render(result, material){
+    const box = document.getElementById('millsheetResultBox');
+    const sumEl = document.getElementById('millsheetSummary');
+    const body = document.getElementById('millsheetResultBody');
+    
+    if(!box || !sumEl || !body) return;
+    box.style.display = 'block';
+    
+    const palette = {
+      ok:   {bg:'#d1fae5', color:'#065f46', text:`✅ 합격 (OK) — ${material} 모든 항목 통과`},
+      ng:   {bg:'#fee2e2', color:'#991b1b', text:`❌ 불합격 (NG) — ${result.ngCount}개 항목 미달`},
+      warn: {bg:'#fef3c7', color:'#92400e', text:`⚠️ 추출 실패 일부 — ${result.missCount}개 항목 수동 확인 필요`}
+    };
+    const p = palette[result.summary];
+    sumEl.style.background = p.bg;
+    sumEl.style.color = p.color;
+    sumEl.textContent = p.text;
+    
+    body.innerHTML = '';
+    let lastType = '';
+    result.rows.forEach(r => {
+      if(r.type !== lastType){
+        const header = r.type === 'chem' ? '화학성분' : '기계적성질';
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td colspan="4" style="padding:6px 8px; background:#f8fafc; font-weight:700; color:#475569; font-size:11px;">${header}</td>`;
+        body.appendChild(tr);
+        lastType = r.type;
+      }
+      
+      const colors = {
+        ok:   {bg:'#d1fae5', color:'#065f46', text:'OK'},
+        ng:   {bg:'#fee2e2', color:'#991b1b', text:'NG'},
+        miss: {bg:'#fef3c7', color:'#92400e', text:'MISS'},
+        skip: {bg:'#e2e8f0', color:'#64748b', text:'─'}
+      };
+      const jc = colors[r.judge];
+      
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td style="padding:6px 8px; font-weight:700; border-bottom:1px solid #e2e8f0;">${r.item}</td>
+        <td style="padding:6px 8px; color:#64748b; border-bottom:1px solid #e2e8f0; font-size:11px;">${r.std}</td>
+        <td style="padding:6px 8px; font-family:'Courier New',monospace; font-weight:700; border-bottom:1px solid #e2e8f0;">${r.measured}</td>
+        <td style="padding:6px 8px; text-align:center; border-bottom:1px solid #e2e8f0;">
+          <span style="background:${jc.bg}; color:${jc.color}; padding:2px 8px; border-radius:8px; font-size:11px; font-weight:700;">${jc.text}</span>
+        </td>
+      `;
+      body.appendChild(tr);
+    });
+    
+    const rawEl = document.getElementById('millsheetRawText');
+    if(rawEl) rawEl.textContent = _msRawText.substring(0, 5000) + (_msRawText.length > 5000 ? '\n\n... (생략)' : '');
+  }
+  
+  // ---------- 외부 노출 함수 ----------
+  window.runMillsheetAnalysis = async function(){
+    if(!_msFile){ alert('PDF 파일을 먼저 선택하세요'); return; }
+    
+    const specEl = document.getElementById('c_spec');
+    const spec = (specEl && specEl.value || '').toUpperCase();
+    // 자동 재질 감지: DB에 등록된 모든 재질 코드 기준으로 매칭
+    let material = 'SUS304';
+    const dbMaterials = Object.keys(window._MATERIAL_STD_CACHE || {});
+    
+    // 1) DB에 등록된 재질명/재료기호로 우선 매칭
+    let matched = false;
+    for(const m of dbMaterials){
+      const cache = window._MATERIAL_STD_CACHE[m];
+      const code = (cache.material_code || '').toUpperCase();
+      if(spec.includes(m) || (code && spec.includes(code))){
+        material = m;
+        matched = true;
+        break;
+      }
+    }
+    
+    // 2) 폴백: 하드코딩 매칭 (DB 비어있을 때 대비)
+    if(!matched){
+      if(spec.includes('SPCC')) material = 'SPCC';
+      else if(spec.includes('SUS430') || spec.includes('STS430')) material = 'SUS430';
+      else if(spec.includes('SUS304') || spec.includes('STS304')) material = 'SUS304';
+    }
+    
+    const btn = document.getElementById('millsheetAnalyzeBtn');
+    if(btn){ btn.disabled = true; btn.textContent = '⏳ 분석 중...'; }
+    
+    try {
+      _msRawText = await extractPdfText(_msFile);
+      const extracted = parseMillsheet(_msRawText);
+      const result = analyze(extracted, material);
+      _msLastResult = {result, material, extracted};
+      render(result, material);
+    } catch(err){
+      console.error(err);
+      alert('분석 실패: ' + err.message);
+    } finally {
+      if(btn){ btn.disabled = false; btn.textContent = '🔍 분석 시작'; }
+    }
+  };
+  
+  window.resetMillsheetAnalysis = function(){
+    _msFile = null;
+    _msRawText = '';
+    _msLastResult = null;
+    _msDownloaded = false;
+    const inp = document.getElementById('millsheetPdfInput');
+    if(inp) inp.value = '';
+    const fn = document.getElementById('millsheetFileName');
+    if(fn){ fn.textContent = '파일을 선택하세요'; fn.style.color = '#64748b'; }
+    const btn = document.getElementById('millsheetAnalyzeBtn');
+    if(btn){ btn.disabled = true; btn.style.opacity = '0.5'; }
+    const box = document.getElementById('millsheetResultBox');
+    if(box) box.style.display = 'none';
+  };
+  
+  window.toggleMillsheetRaw = function(){
+    const el = document.getElementById('millsheetRawText');
+    if(el) el.style.display = (el.style.display === 'none' || !el.style.display) ? 'block' : 'none';
+  };
+  
+  window.applyMillsheetToRemark = function(){
+    if(!_msLastResult){ alert('먼저 분석을 실행하세요'); return; }
+    const remarkEl = document.getElementById('c_remark');
+    if(!remarkEl) return;
+    
+    const {result, material} = _msLastResult;
+    const today = (typeof getTodayKST === 'function') ? getTodayKST() : new Date().toISOString().slice(0,10);
+    
+    let summary = `[밀시트 자동분석 ${today}] ${material} `;
+    if(result.summary === 'ok')  summary += `✅ OK (전 항목 규격 내)`;
+    if(result.summary === 'ng')  summary += `❌ NG (${result.ngCount}개 미달)`;
+    if(result.summary === 'warn')summary += `⚠️ 일부추출실패 (${result.missCount}개 미확인)`;
+    
+    const chemRows = result.rows.filter(r => r.type === 'chem' && r.judge !== 'skip');
+    if(chemRows.length > 0){
+      summary += '\n[화학] ' + chemRows.map(r => 
+        `${r.item}=${r.measured}${r.judge==='ng'?'(NG)':r.judge==='miss'?'(MISS)':''}`
+      ).join(', ');
+    }
+    
+    const mechRows = result.rows.filter(r => r.type === 'mech' && r.judge !== 'skip');
+    if(mechRows.length > 0){
+      summary += '\n[기계] ' + mechRows.map(r => {
+        const k = r.item.split(' ')[0];
+        return `${k}=${r.measured}${r.judge==='ng'?'(NG)':r.judge==='miss'?'(MISS)':''}`;
+      }).join(', ');
+    }
+    
+    const ngRows = result.rows.filter(r => r.judge === 'ng');
+    if(ngRows.length > 0){
+      summary += '\n[NG상세] ' + ngRows.map(r => `${r.item.split(' ')[0]}=${r.measured}(${r.note})`).join(', ');
+    }
+    
+    const cur = remarkEl.value.trim();
+    remarkEl.value = cur ? cur + '\n' + summary : summary;
+    
+    remarkEl.style.background = '#dbeafe';
+    setTimeout(()=>{ remarkEl.style.background = ''; }, 1000);
+  };
+  
+  // ---------- PDF 다운로드 (공급자_LOT_날짜.pdf) ----------
+  window.downloadMillsheetPdf = async function(){
+    if(!_msFile){ alert('PDF 파일을 먼저 선택하세요'); return; }
+    
+    const supplierEl = document.getElementById('c_supplier');
+    const lotEl = document.getElementById('c_lot');
+    const dateEl = document.getElementById('c_date');
+    
+    let supplier = (supplierEl && supplierEl.value || '공급자미상').trim();
+    let lot = (lotEl && lotEl.value || 'LOT미상').trim();
+    let date = (dateEl && dateEl.value || '').trim();
+    if(!date){
+      date = (typeof getTodayKST === 'function') ? getTodayKST() : new Date().toISOString().slice(0,10);
+    }
+    
+    const sanitize = s => s.replace(/[\\\/:*?"<>|]/g, '_').replace(/\s+/g, '');
+    supplier = sanitize(supplier);
+    lot = sanitize(lot);
+    date = sanitize(date);
+    
+    const newName = `${supplier}_${lot}_${date}.pdf`;
+    
+    // 1) 하드디스크에 다운로드
+    const url = URL.createObjectURL(_msFile);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = newName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(url), 1000);
+    
+    _msDownloaded = true;  // 다운로드 완료 마킹
+    showMillsheetToast(`💾 ${newName} 저장됨`);
+    
+    // 2) Storage에서 PDF 자동 삭제 (다운로드 = 백업 완료로 간주)
+    // 현재 모달의 cert 정보로 supabaseId / pdfPath 가져오기
+    const idxEl = document.getElementById('certIdx');
+    if(idxEl){
+      const idx = parseInt(idxEl.value);
+      if(idx >= 0 && certData[idx]){
+        const c = certData[idx];
+        if(c._supabase_id && c.millsheet_pdf_path){
+          // 약간의 딜레이 후 삭제 (다운로드 완료 후)
+          setTimeout(async ()=>{
+            try {
+              await window.deleteMillsheetFromStorage(c._supabase_id, c.millsheet_pdf_path);
+              c.millsheet_pdf_path = null;  // 메모리에서도 제거
+              // PDF 저장 버튼 비활성화 (이미 삭제됨)
+              const saveBtn = document.querySelector('button[onclick="downloadMillsheetPdf()"]');
+              if(saveBtn){
+                saveBtn.disabled = true;
+                saveBtn.style.opacity = '0.5';
+                saveBtn.textContent = '✅ 백업 완료';
+              }
+              // 파일명 표시 갱신
+              const fn = document.getElementById('millsheetFileName');
+              if(fn){
+                fn.textContent = `✅ 하드디스크 백업 완료 (Storage 정리됨)`;
+                fn.style.color = '#16a34a';
+              }
+            } catch(e) {
+              console.warn('Storage 삭제 실패 (다운로드는 성공):', e);
+            }
+          }, 800);
+        }
+      }
+    }
+  };
+  
+  // 다운로드 여부 확인 (saveCert에서 사용)
+  // - 첨부 자체가 없으면 통과
+  // - 첨부 있고 다운로드 했으면 통과
+  // - 첨부 있고 다운로드 안 했으면 차단
+  window.hasMillsheetBeenDownloaded = function(){
+    if(!_msFile) return true;
+    return _msDownloaded;
+  };
+  
+  // ---------- Storage 자동 PDF 로드 ----------
+  // 카드 클릭 → editCert 호출 → cert에 millsheet_pdf_path 있으면 자동 로드
+  window.loadMillsheetFromStorage = async function(supabaseId, pdfPath){
+    if(!pdfPath) return false;
+    if(!appSettings.supabaseUrl || !appSettings.supabaseKey) return false;
+    
+    try {
+      const url = appSettings.supabaseUrl + '/storage/v1/object/millsheets/' + pdfPath;
+      const res = await fetch(url, {
+        headers: {
+          'apikey': appSettings.supabaseKey,
+          'Authorization': 'Bearer ' + appSettings.supabaseKey
+        }
+      });
+      if(!res.ok) {
+        console.warn('밀시트 PDF 로드 실패:', res.status);
+        return false;
+      }
+      const blob = await res.blob();
+      _msFile = new File([blob], pdfPath, {type: 'application/pdf'});
+      _msDownloaded = false;
+      
+      const fn = document.getElementById('millsheetFileName');
+      if(fn){
+        fn.textContent = `📎 ${pdfPath} (${(blob.size/1024).toFixed(1)}KB) — 자동 로드됨`;
+        fn.style.color = '#0c4a6e';
+      }
+      const btn = document.getElementById('millsheetAnalyzeBtn');
+      if(btn){
+        btn.disabled = false;
+        btn.style.opacity = '1';
+      }
+      console.log('[MILLSHEET] Storage 자동 로드 완료:', pdfPath);
+      showMillsheetToast('📎 첨부된 밀시트 자동 로드됨');
+      return true;
+    } catch(e) {
+      console.warn('밀시트 자동 로드 오류:', e);
+      return false;
+    }
+  };
+  
+  // ---------- Storage에서 PDF 삭제 (검사 완료 시 자동) ----------
+  window.deleteMillsheetFromStorage = async function(supabaseId, pdfPath){
+    if(!pdfPath || !supabaseId) return;
+    if(!appSettings.supabaseUrl || !appSettings.supabaseKey) return;
+    
+    try {
+      const stUrl = appSettings.supabaseUrl + '/storage/v1/object/millsheets/' + pdfPath;
+      await fetch(stUrl, {
+        method: 'DELETE',
+        headers: {
+          'apikey': appSettings.supabaseKey,
+          'Authorization': 'Bearer ' + appSettings.supabaseKey
+        }
+      });
+      
+      const dbUrl = appSettings.supabaseUrl + '/rest/v1/inspection_certs?id=eq.' + encodeURIComponent(supabaseId);
+      await fetch(dbUrl, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': appSettings.supabaseKey,
+          'Authorization': 'Bearer ' + appSettings.supabaseKey
+        },
+        body: JSON.stringify({millsheet_pdf_path: null})
+      });
+      
+      console.log('[MILLSHEET] Storage 자동 삭제 완료:', pdfPath);
+      showMillsheetToast('🗑️ 밀시트 PDF Storage에서 정리됨 (용량 회수)');
+    } catch(e) {
+      console.warn('밀시트 자동 삭제 오류:', e);
+    }
+  };
+  
+  // ---------- editCert/editCustomerPart 후크: PDF 자동 로드 ----------
+  // editCert가 호출되고 모달이 열린 후 자동 로드 시도
+  function autoLoadMillsheet(){
+    const idxEl = document.getElementById('certIdx');
+    if(!idxEl) return;
+    const idx = parseInt(idxEl.value);
+    if(idx < 0) return;
+    
+    const c = certData[idx];
+    if(!c) return;
+    
+    if(c.millsheet_pdf_path && c._supabase_id){
+      // 자동 로드 (이미 로드된 파일이 없을 때만)
+      if(!_msFile){
+        window.loadMillsheetFromStorage(c._supabase_id, c.millsheet_pdf_path);
+      }
+    }
+  }
+  
+  // editCert 함수 호출 후 자동 로드
+  const _origEditCert = window.editCert;
+  if(typeof _origEditCert === 'function'){
+    window.editCert = function(idx){
+      window.resetMillsheetAnalysis();  // 이전 상태 초기화
+      _origEditCert.apply(this, arguments);
+      setTimeout(autoLoadMillsheet, 200);
+    };
+  }
+  
+  const _origEditCustomerPart = window.editCustomerPart;
+  if(typeof _origEditCustomerPart === 'function'){
+    window.editCustomerPart = function(idx){
+      window.resetMillsheetAnalysis();
+      _origEditCustomerPart.apply(this, arguments);
+      setTimeout(autoLoadMillsheet, 200);
+    };
+  }
+  
+  // ---------- 토스트 ----------
+  function showMillsheetToast(msg){
+    let toast = document.getElementById('msToast');
+    if(!toast){
+      toast = document.createElement('div');
+      toast.id = 'msToast';
+      toast.style.cssText = 'position:fixed; bottom:20px; right:20px; background:#16a34a; color:#fff; padding:12px 18px; border-radius:6px; font-size:13px; font-weight:700; box-shadow:0 4px 12px rgba(0,0,0,0.3); z-index:99999; transition:opacity 0.3s;';
+      document.body.appendChild(toast);
+    }
+    toast.textContent = msg;
+    toast.style.display = 'block';
+    toast.style.opacity = '1';
+    setTimeout(()=>{
+      toast.style.opacity = '0';
+      setTimeout(()=>toast.style.display = 'none', 300);
+    }, 2500);
+  }
+  
+  // 모달 닫힐 때 초기화
+  document.addEventListener('click', function(e){
+    if(e.target && (e.target.classList.contains('close-btn') || e.target.textContent === '✕')){
+      const modal = e.target.closest('#certModal');
+      if(modal) setTimeout(window.resetMillsheetAnalysis, 100);
+    }
+  });
+})();
+
+
+// ============================================================
+// 🧪 물성 기준 관리 (Supabase material_property_std 테이블)
+// 분석 모듈의 단일 진실원 — 추가/수정/삭제 시 즉시 분석에 반영
+// ============================================================
+(function(){
+  // 기본 화학 원소 (UI 입력 시 표시)
+  const DEFAULT_CHEM_ELEMENTS = ['C', 'Si', 'Mn', 'P', 'S', 'Ni', 'Cr'];
+  // 기본 기계적성질 항목
+  const DEFAULT_MECH_ITEMS = [
+    {key:'YS', label:'내력 0.2%', unit:'N/mm²'},
+    {key:'TS', label:'인장강도', unit:'N/mm²'},
+    {key:'EL', label:'연신율',   unit:'%'},
+    {key:'HV', label:'경도',     unit:'Hv'}
+  ];
+  
+  // 캐시 (분석 모듈에서도 참조)
+  window._MATERIAL_STD_CACHE = window._MATERIAL_STD_CACHE || {};
+  
+  // ---------- DB에서 전체 로드 ----------
+  window.loadMaterialStd = async function(){
+    if(!appSettings.supabaseUrl || !appSettings.supabaseKey){
+      renderEmptyState('Supabase 설정 필요');
+      return;
+    }
+    
+    try {
+      const url = appSettings.supabaseUrl + '/rest/v1/material_property_std?select=*&order=display_order.asc&is_active=eq.true';
+      const res = await fetch(url, {
+        headers: {
+          'apikey': appSettings.supabaseKey,
+          'Authorization': 'Bearer ' + appSettings.supabaseKey
+        }
+      });
+      
+      if(!res.ok){
+        if(res.status === 404 || res.status === 401){
+          renderEmptyState('테이블 없음 — material_property_std.sql 실행 필요');
+        } else {
+          renderEmptyState('로드 실패: HTTP ' + res.status);
+        }
+        return;
+      }
+      
+      const data = await res.json();
+      
+      // 캐시 업데이트 (재질 코드를 키로)
+      window._MATERIAL_STD_CACHE = {};
+      data.forEach(row => {
+        window._MATERIAL_STD_CACHE[row.material] = row;
+      });
+      
+      renderMaterialStdTable(data);
+      renderMaterialTolTable(data);
+      console.log('[MaterialStd] 로드 완료:', data.length + '종');
+    } catch(e){
+      console.error('[MaterialStd] 로드 오류:', e);
+      renderEmptyState('네트워크 오류: ' + e.message);
+    }
+  };
+  
+  function renderEmptyState(msg){
+    const tbody = document.getElementById('materialStdTbody');
+    if(tbody) tbody.innerHTML = `<tr><td colspan="14" style="text-align:center; color:#dc2626; padding:30px; font-size:13px;">⚠️ ${msg}</td></tr>`;
+    const tolBody = document.getElementById('materialTolTbody');
+    if(tolBody) tolBody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:#dc2626; padding:20px;">⚠️ ${msg}</td></tr>`;
+  }
+  
+  // ---------- 테이블 렌더 (화학/기계) ----------
+  function renderMaterialStdTable(data){
+    const tbody = document.getElementById('materialStdTbody');
+    if(!tbody) return;
+    
+    if(data.length === 0){
+      tbody.innerHTML = `<tr><td colspan="14" style="text-align:center; color:#64748b; padding:30px;">등록된 재질이 없습니다. [＋ 재질 추가] 버튼을 눌러 시작하세요.</td></tr>`;
+      return;
+    }
+    
+    tbody.innerHTML = data.map(row => {
+      const c = row.chemistry || {};
+      const m = row.mechanical || {};
+      const cell = (val) => formatRangeForDisplay(val);
+      
+      return `
+        <tr>
+          <td>${row.standard||''}</td>
+          <td class="material-name">${row.material_code||''} (${row.material})</td>
+          <td>${cell(c.C)}</td>
+          <td>${cell(c.Si)}</td>
+          <td>${cell(c.Mn)}</td>
+          <td>${cell(c.P)}</td>
+          <td>${cell(c.S)}</td>
+          <td>${cell(c.Ni)}</td>
+          <td>${cell(c.Cr)}</td>
+          <td>${cell(m.YS)}</td>
+          <td>${cell(m.TS)}</td>
+          <td>${cell(m.EL)}</td>
+          <td>${cell(m.HV)}</td>
+          <td>
+            <button onclick="openMaterialStdModal('${row.material}')" style="padding:3px 8px; background:#3b82f6; color:#fff; border:none; border-radius:3px; font-size:11px; cursor:pointer;">수정</button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  }
+  
+  // ---------- 두께/폭 공차 테이블 ----------
+  function renderMaterialTolTable(data){
+    const tbody = document.getElementById('materialTolTbody');
+    if(!tbody) return;
+    
+    if(data.length === 0){
+      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:#64748b; padding:20px;">등록된 재질이 없습니다.</td></tr>`;
+      return;
+    }
+    
+    tbody.innerHTML = data.map(row => {
+      const tThick = row.thickness_tolerance != null ? '±' + row.thickness_tolerance : '-';
+      const tWidth = row.width_tolerance != null ? '±' + row.width_tolerance : '-';
+      return `
+        <tr>
+          <td>${row.standard||''}</td>
+          <td class="material-name">${row.material_code||''} (${row.material})</td>
+          <td>지정두께</td>
+          <td>${tThick}</td>
+          <td>지정폭</td>
+          <td>${tWidth}</td>
+        </tr>
+      `;
+    }).join('');
+  }
+  
+  // ---------- 값 포맷 (표시용) ----------
+  function formatRangeForDisplay(val){
+    if(val === null || val === undefined) return '-';
+    if(typeof val === 'object'){
+      const min = val.min;
+      const max = val.max;
+      if(min !== undefined && max !== undefined) return `${min}~${max}`;
+      if(min !== undefined) return `${min} 이상`;
+      if(max !== undefined) return `${max} 이하`;
+      // 다중조건 (SPCC EL/HV처럼)
+      const keys = Object.keys(val);
+      if(keys.length > 0 && typeof val[keys[0]] === 'object'){
+        return keys.map(k => {
+          const sub = val[k];
+          let txt = k + ' ';
+          if(sub.min !== undefined && sub.max !== undefined) txt += `${sub.min}~${sub.max}`;
+          else if(sub.min !== undefined) txt += `${sub.min} 이상`;
+          else if(sub.max !== undefined) txt += `${sub.max} 이하`;
+          return txt;
+        }).join('<br>');
+      }
+    }
+    return '-';
+  }
+  
+  // ---------- 모달 열기 (신규/수정) ----------
+  window.openMaterialStdModal = function(material){
+    const isEdit = !!material;
+    const data = isEdit ? (window._MATERIAL_STD_CACHE[material] || {}) : {};
+    
+    document.getElementById('materialStdModalTitle').textContent = isEdit ? `🧪 물성기준 수정 — ${material}` : '🧪 물성기준 신규 등록';
+    document.getElementById('ms_id').value = data.id || '';
+    document.getElementById('ms_material').value = data.material || '';
+    document.getElementById('ms_material').readOnly = isEdit;
+    document.getElementById('ms_material').style.background = isEdit ? '#f1f5f9' : '';
+    document.getElementById('ms_standard').value = data.standard || '';
+    document.getElementById('ms_material_code').value = data.material_code || '';
+    document.getElementById('ms_display_order').value = data.display_order || 999;
+    document.getElementById('ms_thick_tol').value = data.thickness_tolerance != null ? data.thickness_tolerance : '';
+    document.getElementById('ms_width_tol').value = data.width_tolerance != null ? data.width_tolerance : '';
+    document.getElementById('ms_remark').value = data.remark || '';
+    document.getElementById('ms_deleteBtn').style.display = isEdit ? 'inline-block' : 'none';
+    
+    // 화학성분 행 생성
+    const chemBody = document.getElementById('ms_chemBody');
+    chemBody.innerHTML = '';
+    const chem = data.chemistry || {};
+    const chemKeys = isEdit ? Object.keys(chem) : DEFAULT_CHEM_ELEMENTS;
+    if(chemKeys.length === 0) chemKeys.push(...DEFAULT_CHEM_ELEMENTS);
+    chemKeys.forEach(el => addChemRowWithValue(el, chem[el]));
+    
+    // 기계적성질 행 생성
+    const mechBody = document.getElementById('ms_mechBody');
+    mechBody.innerHTML = '';
+    const mech = data.mechanical || {};
+    DEFAULT_MECH_ITEMS.forEach(item => {
+      const m = mech[item.key];
+      const minVal = (m && m.min != null) ? m.min : '';
+      const maxVal = (m && m.max != null) ? m.max : '';
+      const unit = (m && m.unit) ? m.unit : item.unit;
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td style="padding:6px; border:1px solid #e2e8f0; font-weight:700;">${item.key}<br><span style="font-size:10px; color:#64748b; font-weight:400;">${item.label}</span></td>
+        <td style="padding:4px; border:1px solid #e2e8f0;"><input type="number" step="0.01" data-key="${item.key}" data-fld="min" value="${minVal}" placeholder="-" style="width:100%; padding:5px; border:1px solid #cbd5e0; border-radius:3px;"></td>
+        <td style="padding:4px; border:1px solid #e2e8f0;"><input type="number" step="0.01" data-key="${item.key}" data-fld="max" value="${maxVal}" placeholder="-" style="width:100%; padding:5px; border:1px solid #cbd5e0; border-radius:3px;"></td>
+        <td style="padding:4px; border:1px solid #e2e8f0;"><input type="text" data-key="${item.key}" data-fld="unit" value="${unit}" style="width:100%; padding:5px; border:1px solid #cbd5e0; border-radius:3px;"></td>
+      `;
+      mechBody.appendChild(tr);
+    });
+    
+    document.getElementById('materialStdModal').classList.add('show');
+  };
+  
+  function addChemRowWithValue(el, val){
+    const minVal = (val && val.min != null) ? val.min : '';
+    const maxVal = (val && val.max != null) ? val.max : '';
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td style="padding:4px; border:1px solid #e2e8f0;"><input type="text" data-fld="el" value="${el}" style="width:100%; padding:5px; border:1px solid #cbd5e0; border-radius:3px; font-weight:700; text-align:center;"></td>
+      <td style="padding:4px; border:1px solid #e2e8f0;"><input type="number" step="0.001" data-fld="min" value="${minVal}" placeholder="-" style="width:100%; padding:5px; border:1px solid #cbd5e0; border-radius:3px;"></td>
+      <td style="padding:4px; border:1px solid #e2e8f0;"><input type="number" step="0.001" data-fld="max" value="${maxVal}" placeholder="-" style="width:100%; padding:5px; border:1px solid #cbd5e0; border-radius:3px;"></td>
+      <td style="padding:4px; border:1px solid #e2e8f0; font-size:11px; color:#64748b;" class="ms-preview-cell">${formatPreview(minVal, maxVal)}<button type="button" onclick="this.closest('tr').remove()" style="float:right; padding:2px 6px; background:#fee2e2; color:#991b1b; border:none; border-radius:3px; font-size:10px; cursor:pointer;">×</button></td>
+    `;
+    document.getElementById('ms_chemBody').appendChild(tr);
+    
+    // 미리보기 자동 갱신
+    tr.querySelectorAll('input[data-fld="min"], input[data-fld="max"]').forEach(inp => {
+      inp.addEventListener('input', () => {
+        const minV = tr.querySelector('input[data-fld="min"]').value;
+        const maxV = tr.querySelector('input[data-fld="max"]').value;
+        const cell = tr.querySelector('.ms-preview-cell');
+        const xBtn = cell.querySelector('button');
+        cell.firstChild.textContent = formatPreview(minV, maxV);
+        cell.appendChild(xBtn);
+      });
+    });
+  }
+  
+  window.addChemRow = function(){
+    addChemRowWithValue('', null);
+  };
+  
+  function formatPreview(min, max){
+    const hasMin = min !== '' && min != null;
+    const hasMax = max !== '' && max != null;
+    if(!hasMin && !hasMax) return '해당없음 (-)';
+    if(hasMin && hasMax) return `${min}~${max}`;
+    if(hasMin) return `${min} 이상`;
+    return `${max} 이하`;
+  }
+  
+  // ---------- 저장 ----------
+  window.saveMaterialStd = async function(){
+    const material = document.getElementById('ms_material').value.trim().toUpperCase();
+    if(!material){ alert('재질 코드를 입력하세요'); return; }
+    
+    // 화학성분 수집
+    const chemistry = {};
+    document.querySelectorAll('#ms_chemBody tr').forEach(tr => {
+      const el = tr.querySelector('input[data-fld="el"]').value.trim();
+      if(!el) return;
+      const minVal = tr.querySelector('input[data-fld="min"]').value;
+      const maxVal = tr.querySelector('input[data-fld="max"]').value;
+      const obj = {};
+      if(minVal !== '') obj.min = parseFloat(minVal);
+      if(maxVal !== '') obj.max = parseFloat(maxVal);
+      chemistry[el] = (Object.keys(obj).length === 0) ? null : obj;
+    });
+    
+    // 기계적성질 수집
+    const mechanical = {};
+    document.querySelectorAll('#ms_mechBody tr').forEach(tr => {
+      const inputs = tr.querySelectorAll('input');
+      const key = inputs[0].dataset.key;
+      const minVal = tr.querySelector('input[data-fld="min"]').value;
+      const maxVal = tr.querySelector('input[data-fld="max"]').value;
+      const unit = tr.querySelector('input[data-fld="unit"]').value.trim();
+      const labelMap = {YS:'내력 0.2%', TS:'인장강도', EL:'연신율', HV:'경도'};
+      
+      if(minVal === '' && maxVal === ''){
+        mechanical[key] = null;
+      } else {
+        const obj = {label: labelMap[key]||key, unit: unit};
+        if(minVal !== '') obj.min = parseFloat(minVal);
+        if(maxVal !== '') obj.max = parseFloat(maxVal);
+        mechanical[key] = obj;
+      }
+    });
+    
+    const payload = {
+      material: material,
+      standard: document.getElementById('ms_standard').value.trim() || null,
+      material_code: document.getElementById('ms_material_code').value.trim() || null,
+      chemistry: chemistry,
+      mechanical: mechanical,
+      thickness_tolerance: parseFloat(document.getElementById('ms_thick_tol').value) || null,
+      width_tolerance: parseFloat(document.getElementById('ms_width_tol').value) || null,
+      display_order: parseInt(document.getElementById('ms_display_order').value) || 999,
+      remark: document.getElementById('ms_remark').value.trim() || null,
+      is_active: true
+    };
+    
+    const id = document.getElementById('ms_id').value;
+    const url = appSettings.supabaseUrl + '/rest/v1/material_property_std' + (id ? '?id=eq.' + id : '');
+    const method = id ? 'PATCH' : 'POST';
+    
+    try {
+      const res = await fetch(url, {
+        method: method,
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': appSettings.supabaseKey,
+          'Authorization': 'Bearer ' + appSettings.supabaseKey,
+          'Prefer': 'return=representation'
+        },
+        body: JSON.stringify(payload)
+      });
+      
+      if(!res.ok){
+        const txt = await res.text();
+        // UPSERT 폴백 (UNIQUE 제약 충돌 시)
+        if(res.status === 409 || /duplicate key/i.test(txt)){
+          // PATCH로 재시도
+          const upRes = await fetch(appSettings.supabaseUrl + '/rest/v1/material_property_std?material=eq.' + encodeURIComponent(material), {
+            method: 'PATCH',
+            headers: {
+              'Content-Type': 'application/json',
+              'apikey': appSettings.supabaseKey,
+              'Authorization': 'Bearer ' + appSettings.supabaseKey
+            },
+            body: JSON.stringify(payload)
+          });
+          if(!upRes.ok){
+            alert('저장 실패: ' + upRes.status);
+            return;
+          }
+        } else {
+          alert('저장 실패: ' + res.status + '\n' + txt.substring(0, 200));
+          return;
+        }
+      }
+      
+      closeMaterialStdModal();
+      await loadMaterialStd();
+      showToast('✅ 물성기준 저장 완료');
+    } catch(e){
+      alert('네트워크 오류: ' + e.message);
+    }
+  };
+  
+  // ---------- 삭제 (실제로는 is_active=false) ----------
+  window.deleteMaterialStd = async function(){
+    const id = document.getElementById('ms_id').value;
+    const material = document.getElementById('ms_material').value;
+    if(!id) return;
+    
+    if(!confirm(`'${material}' 물성기준을 삭제하시겠습니까?\n(목록에서 숨겨지며, 분석에서 제외됩니다)`)) return;
+    
+    try {
+      const res = await fetch(appSettings.supabaseUrl + '/rest/v1/material_property_std?id=eq.' + id, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': appSettings.supabaseKey,
+          'Authorization': 'Bearer ' + appSettings.supabaseKey
+        },
+        body: JSON.stringify({is_active: false})
+      });
+      
+      if(res.ok){
+        closeMaterialStdModal();
+        await loadMaterialStd();
+        showToast('🗑️ 삭제 완료');
+      } else {
+        alert('삭제 실패: ' + res.status);
+      }
+    } catch(e){
+      alert('네트워크 오류: ' + e.message);
+    }
+  };
+  
+  // ---------- 모달 닫기 ----------
+  window.closeMaterialStdModal = function(){
+    document.getElementById('materialStdModal').classList.remove('show');
+  };
+  
+  // ---------- 토스트 ----------
+  function showToast(msg){
+    let toast = document.getElementById('msStdToast');
+    if(!toast){
+      toast = document.createElement('div');
+      toast.id = 'msStdToast';
+      toast.style.cssText = 'position:fixed; bottom:20px; right:20px; background:#16a34a; color:#fff; padding:12px 18px; border-radius:6px; font-size:13px; font-weight:700; z-index:99999;';
+      document.body.appendChild(toast);
+    }
+    toast.textContent = msg;
+    toast.style.display = 'block';
+    setTimeout(()=>toast.style.display = 'none', 2500);
+  }
+  
+  // ---------- 초기 로드 ----------
+  document.addEventListener('DOMContentLoaded', () => setTimeout(loadMaterialStd, 1000));
+})();
+
+
+// ============================================================
+// 분석 모듈 ↔ 물성 기준 DB 동기화
+// MATERIAL_STD를 _MATERIAL_STD_CACHE 기반으로 동적 변경
+// ============================================================
+(function(){
+  // 분석 시점에 DB 캐시에서 기준 가져오기 (덮어쓰기)
+  const _origRunAnalysis = window.runMillsheetAnalysis;
+  if(typeof _origRunAnalysis === 'function'){
+    window.runMillsheetAnalysis = async function(){
+      // 분석 직전 최신 DB 데이터 동기화
+      if(typeof loadMaterialStd === 'function' && Object.keys(window._MATERIAL_STD_CACHE||{}).length === 0){
+        try { await loadMaterialStd(); } catch(_){}
+      }
+      return _origRunAnalysis.apply(this, arguments);
+    };
+  }
+})();
+
+
+// ============================================================
+// 📤 물성 기준 데이터 관리 (전체 저장/백업/복구/초기등록)
+// ============================================================
+(function(){
+  
+  // 기본 3종 데이터 (SQL 동기화)
+  const SEED_DATA = [
+    {
+      material:'SUS304', standard:'KS D3698', material_code:'STS304', display_order:1,
+      chemistry:{C:{max:0.08},Si:{max:1.00},Mn:{max:2.00},P:{max:0.045},S:{max:0.030},Ni:{min:8.00,max:10.50},Cr:{min:18.0,max:20.0}},
+      mechanical:{YS:{min:205,unit:'N/mm²',label:'내력 0.2%'},TS:{min:520,unit:'N/mm²',label:'인장강도'},EL:{min:40,unit:'%',label:'연신율'},HV:{max:200,unit:'Hv',label:'경도'}},
+      thickness_tolerance:0.02, width_tolerance:0.10, is_active:true
+    },
+    {
+      material:'SUS430', standard:'KS D3698', material_code:'STS430', display_order:2,
+      chemistry:{C:{max:0.12},Si:{max:0.75},Mn:{max:1.00},P:{max:0.040},S:{max:0.030},Ni:null,Cr:{min:16.00,max:18.00}},
+      mechanical:{YS:{min:205,unit:'N/mm²',label:'내력 0.2%'},TS:{min:450,unit:'N/mm²',label:'인장강도'},EL:{min:22,unit:'%',label:'연신율'},HV:{max:220,unit:'Hv',label:'경도'}},
+      thickness_tolerance:0.02, width_tolerance:0.10, is_active:true
+    },
+    {
+      material:'SPCC', standard:'KS D3512', material_code:'SCP1', display_order:3,
+      chemistry:{C:{max:0.15},Si:null,Mn:{max:0.60},P:{max:0.100},S:{max:0.035},Ni:null,Cr:null},
+      mechanical:{YS:null,TS:{min:274,unit:'N/mm²',label:'인장강도'},EL:{min:25,unit:'%',label:'연신율'},HV:{max:115,unit:'Hv',label:'경도'}},
+      thickness_tolerance:0.05, width_tolerance:0.10, is_active:true,
+      remark:'연신율/경도는 조질 구분에 따라 다름 (1/8경질 25%↑, 1/4경질 10%↑ / 비조질 105Hv↓, 표준조질 115Hv↓)'
+    }
+  ];
+  
+  // ---------- 1) 초기 3종 일괄 등록 ----------
+  window.seedDefaultMaterialStd = async function(){
+    if(!appSettings.supabaseUrl || !appSettings.supabaseKey){
+      alert('Supabase 설정이 필요합니다.'); return;
+    }
+    
+    // 현재 등록된 재질 확인
+    const cache = window._MATERIAL_STD_CACHE || {};
+    const existing = SEED_DATA.filter(d => cache[d.material]);
+    
+    let confirmMsg = '🌱 기본 3종(SUS304/SUS430/SPCC)을 등록합니다.\n\n';
+    if(existing.length > 0){
+      confirmMsg += `⚠️ 이미 등록된 재질: ${existing.map(d=>d.material).join(', ')}\n`;
+      confirmMsg += '→ 기존 데이터를 덮어씁니다 (UPSERT).\n\n';
+    }
+    confirmMsg += '진행하시겠습니까?';
+    
+    if(!confirm(confirmMsg)) return;
+    
+    let success = 0, fail = 0;
+    for(const item of SEED_DATA){
+      const ok = await upsertOne(item);
+      if(ok) success++; else fail++;
+    }
+    
+    alert(`✅ 등록 완료: ${success}건\n${fail>0?`⚠️ 실패: ${fail}건`:''}`);
+    await loadMaterialStd();
+  };
+  
+  // ---------- 2) 전체 서버 동기화 ----------
+  window.syncAllToServer = async function(){
+    if(!appSettings.supabaseUrl || !appSettings.supabaseKey){
+      alert('Supabase 설정이 필요합니다.'); return;
+    }
+    
+    const cache = window._MATERIAL_STD_CACHE || {};
+    const all = Object.values(cache);
+    if(all.length === 0){
+      alert('동기화할 데이터가 없습니다.\n[🌱 기본 3종 등록]을 먼저 시도하세요.');
+      return;
+    }
+    
+    if(!confirm(`현재 화면의 ${all.length}종 재질을 서버에 UPSERT합니다.\n진행하시겠습니까?`)) return;
+    
+    let success = 0, fail = 0;
+    for(const item of all){
+      const payload = {
+        material: item.material,
+        standard: item.standard || null,
+        material_code: item.material_code || null,
+        chemistry: item.chemistry || {},
+        mechanical: item.mechanical || {},
+        thickness_tolerance: item.thickness_tolerance,
+        width_tolerance: item.width_tolerance,
+        display_order: item.display_order || 999,
+        remark: item.remark || null,
+        is_active: item.is_active !== false
+      };
+      const ok = await upsertOne(payload);
+      if(ok) success++; else fail++;
+    }
+    
+    alert(`✅ 동기화 완료: ${success}건\n${fail>0?`⚠️ 실패: ${fail}건`:''}`);
+    await loadMaterialStd();
+  };
+  
+  // ---------- 3) JSON 백업 ----------
+  window.exportMaterialStdJson = function(){
+    const cache = window._MATERIAL_STD_CACHE || {};
+    const all = Object.values(cache);
+    if(all.length === 0){
+      alert('내보낼 데이터가 없습니다.');
+      return;
+    }
+    
+    // id, created_at 등 메타 제거
+    const cleaned = all.map(({id, created_at, updated_at, ...rest}) => rest);
+    const blob = new Blob([JSON.stringify(cleaned, null, 2)], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const today = (typeof getTodayKST === 'function') ? getTodayKST() : new Date().toISOString().slice(0,10);
+    a.href = url;
+    a.download = `물성기준_백업_${today}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(url), 1000);
+    
+    alert(`💾 ${cleaned.length}종 백업 다운로드 완료`);
+  };
+  
+  // ---------- 4) JSON 복구 ----------
+  window.importMaterialStdJson = async function(event){
+    const file = event.target.files[0];
+    if(!file) return;
+    
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      if(!Array.isArray(data)){
+        alert('잘못된 JSON 형식입니다 (배열이어야 함)');
+        return;
+      }
+      
+      if(!confirm(`📂 ${data.length}종을 서버에 복구합니다 (UPSERT).\n기존 데이터를 덮어쓸 수 있습니다.\n진행하시겠습니까?`)) return;
+      
+      let success = 0, fail = 0;
+      for(const item of data){
+        if(!item.material) continue;
+        const ok = await upsertOne(item);
+        if(ok) success++; else fail++;
+      }
+      
+      alert(`✅ 복구 완료: ${success}건\n${fail>0?`⚠️ 실패: ${fail}건`:''}`);
+      event.target.value = '';
+      await loadMaterialStd();
+    } catch(e){
+      alert('복구 실패: ' + e.message);
+    }
+  };
+  
+  // ---------- 헬퍼: UPSERT ----------
+  async function upsertOne(payload){
+    try {
+      const res = await fetch(appSettings.supabaseUrl + '/rest/v1/material_property_std?on_conflict=material', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': appSettings.supabaseKey,
+          'Authorization': 'Bearer ' + appSettings.supabaseKey,
+          'Prefer': 'resolution=merge-duplicates'
+        },
+        body: JSON.stringify(payload)
+      });
+      if(!res.ok){
+        const txt = await res.text();
+        console.warn('[MaterialStd UPSERT]', payload.material, res.status, txt);
+        return false;
+      }
+      return true;
+    } catch(e){
+      console.error('[MaterialStd UPSERT]', payload.material, e);
+      return false;
+    }
+  }
+  
+  // ---------- 데이터 요약 표시 ----------
+  function updateDataSummary(){
+    const cache = window._MATERIAL_STD_CACHE || {};
+    const all = Object.values(cache);
+    const el = document.getElementById('msDataSummary');
+    if(!el) return;
+    
+    if(all.length === 0){
+      el.innerHTML = '<span style="color:#dc2626;">⚠️ 등록된 재질 없음. [🌱 기본 3종 등록]을 시도하세요.</span>';
+      return;
+    }
+    
+    const list = all.map(d => d.material).join(', ');
+    el.innerHTML = `등록 재질 <b>${all.length}종</b>: ${list}`;
+  }
+  
+  // loadMaterialStd 호출 후 요약 갱신
+  const _origLoad = window.loadMaterialStd;
+  if(typeof _origLoad === 'function'){
+    window.loadMaterialStd = async function(){
+      const ret = await _origLoad.apply(this, arguments);
+      updateDataSummary();
+      return ret;
+    };
+  }
 })();
