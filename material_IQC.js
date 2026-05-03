@@ -4841,7 +4841,9 @@ setInterval(loadLogFromSupabase,5*60*1000);
   }
   
   // ---------- 초기 로드 ----------
-  document.addEventListener('DOMContentLoaded', () => setTimeout(loadMaterialStd, 1000));
+  // [v1.2 fix] 자동 호출 제거 - HTML 정적 시드를 보호
+  // 사용자가 [🔄 새로고침] 버튼을 누르면 그때만 DB 조회
+  // document.addEventListener('DOMContentLoaded', () => setTimeout(loadMaterialStd, 1000));
 })();
 
 
