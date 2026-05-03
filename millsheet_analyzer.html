@@ -1,0 +1,929 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🧪 밀시트 자동 분석기 | 태진다이텍</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+  if(window.pdfjsLib){
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  }
+</script>
+<style>
+:root{
+  --bg:#0f172a;
+  --bg2:#1e293b;
+  --card:#1e293b;
+  --line:#334155;
+  --text:#e2e8f0;
+  --muted:#94a3b8;
+  --accent:#3b82f6;
+  --ok:#22c55e;
+  --ng:#ef4444;
+  --warn:#f59e0b;
+  --info:#0ea5e9;
+}
+*{box-sizing:border-box; margin:0; padding:0}
+body{
+  font-family:'Pretendard','Apple SD Gothic Neo','Segoe UI',sans-serif;
+  background:var(--bg);
+  color:var(--text);
+  min-height:100vh;
+  padding:20px;
+  line-height:1.5;
+}
+.container{max-width:1100px; margin:0 auto}
+
+/* Header */
+.app-header{
+  background:linear-gradient(135deg,#1e3a8a,#1e40af);
+  border-radius:12px;
+  padding:24px 28px;
+  margin-bottom:20px;
+  box-shadow:0 4px 16px rgba(0,0,0,0.3);
+}
+.app-header h1{
+  font-size:22px;
+  font-weight:700;
+  margin-bottom:4px;
+}
+.app-header .sub{
+  font-size:13px;
+  color:#bfdbfe;
+}
+
+/* Layout */
+.grid{display:grid; grid-template-columns:1fr 1fr; gap:18px; margin-bottom:18px}
+@media (max-width:780px){ .grid{grid-template-columns:1fr} }
+
+.card{
+  background:var(--card);
+  border:1px solid var(--line);
+  border-radius:10px;
+  padding:18px;
+}
+.card-title{
+  font-size:14px;
+  font-weight:700;
+  color:var(--text);
+  margin-bottom:12px;
+  padding-bottom:8px;
+  border-bottom:1px solid var(--line);
+  display:flex;
+  align-items:center;
+  gap:6px;
+}
+
+/* Form elements */
+label{
+  display:block;
+  font-size:12px;
+  font-weight:600;
+  color:var(--muted);
+  margin-bottom:6px;
+}
+select, input[type="text"], input[type="number"]{
+  width:100%;
+  padding:10px 12px;
+  background:#0f172a;
+  border:1px solid var(--line);
+  border-radius:6px;
+  color:var(--text);
+  font-size:14px;
+  font-family:inherit;
+}
+select:focus, input:focus{
+  outline:none;
+  border-color:var(--accent);
+}
+
+/* File drop */
+.file-drop{
+  background:#0f172a;
+  border:2px dashed var(--line);
+  border-radius:10px;
+  padding:30px 20px;
+  text-align:center;
+  cursor:pointer;
+  transition:all 0.2s;
+}
+.file-drop:hover, .file-drop.drag{
+  border-color:var(--accent);
+  background:rgba(59,130,246,0.08);
+}
+.file-drop .icon{font-size:36px; margin-bottom:8px}
+.file-drop .text{font-size:14px; font-weight:600; color:var(--text)}
+.file-drop .hint{font-size:12px; color:var(--muted); margin-top:4px}
+.file-name{
+  background:rgba(34,197,94,0.1);
+  border:1px solid rgba(34,197,94,0.3);
+  color:var(--ok);
+  padding:8px 12px;
+  border-radius:6px;
+  font-size:13px;
+  margin-top:10px;
+  display:none;
+}
+
+/* Buttons */
+.btn{
+  padding:12px 20px;
+  border:none;
+  border-radius:6px;
+  font-weight:700;
+  font-size:14px;
+  cursor:pointer;
+  transition:all 0.15s;
+  font-family:inherit;
+}
+.btn-primary{background:var(--accent); color:#fff}
+.btn-primary:hover{background:#2563eb}
+.btn-primary:disabled{background:#475569; cursor:not-allowed; opacity:0.6}
+.btn-secondary{background:var(--line); color:var(--text)}
+.btn-secondary:hover{background:#475569}
+
+/* Loading */
+.loading{
+  display:none;
+  text-align:center;
+  padding:30px;
+  color:var(--muted);
+}
+.loading.active{display:block}
+.spinner{
+  display:inline-block;
+  width:32px;
+  height:32px;
+  border:3px solid var(--line);
+  border-top-color:var(--accent);
+  border-radius:50%;
+  animation:spin 0.8s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* Results */
+.result-section{display:none; margin-top:18px}
+.result-section.active{display:block}
+
+.summary-banner{
+  border-radius:10px;
+  padding:18px 22px;
+  margin-bottom:16px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  font-weight:700;
+}
+.summary-banner.ok{background:linear-gradient(135deg,#14532d,#166534); border:1px solid #22c55e}
+.summary-banner.ng{background:linear-gradient(135deg,#7f1d1d,#991b1b); border:1px solid #ef4444}
+.summary-banner.warn{background:linear-gradient(135deg,#78350f,#92400e); border:1px solid #f59e0b}
+.summary-banner .big{font-size:24px}
+.summary-banner .sub{font-size:13px; opacity:0.9; margin-top:4px; font-weight:500}
+
+/* Result table */
+table.result{
+  width:100%;
+  border-collapse:collapse;
+  font-size:13px;
+  background:#0f172a;
+  border-radius:8px;
+  overflow:hidden;
+}
+table.result thead th{
+  background:#1e293b;
+  color:var(--muted);
+  font-size:11px;
+  font-weight:700;
+  text-transform:uppercase;
+  letter-spacing:0.5px;
+  padding:10px 12px;
+  text-align:left;
+  border-bottom:1px solid var(--line);
+}
+table.result tbody td{
+  padding:10px 12px;
+  border-bottom:1px solid var(--line);
+}
+table.result tbody tr:last-child td{border-bottom:none}
+table.result tbody tr:hover{background:rgba(59,130,246,0.05)}
+.item-name{font-weight:700; color:var(--text)}
+.std-text{color:var(--muted); font-size:12px}
+.measured{font-weight:700; font-family:'Courier New',monospace}
+
+.judge-pill{
+  display:inline-block;
+  padding:2px 10px;
+  border-radius:12px;
+  font-size:11px;
+  font-weight:700;
+  letter-spacing:0.5px;
+}
+.judge-pill.ok{background:rgba(34,197,94,0.15); color:var(--ok); border:1px solid rgba(34,197,94,0.4)}
+.judge-pill.ng{background:rgba(239,68,68,0.15); color:var(--ng); border:1px solid rgba(239,68,68,0.4)}
+.judge-pill.miss{background:rgba(245,158,11,0.15); color:var(--warn); border:1px solid rgba(245,158,11,0.4)}
+.judge-pill.skip{background:rgba(148,163,184,0.15); color:var(--muted); border:1px solid rgba(148,163,184,0.3)}
+
+.section-h{
+  font-size:13px;
+  font-weight:700;
+  color:var(--accent);
+  margin:18px 0 10px;
+  padding-left:10px;
+  border-left:3px solid var(--accent);
+}
+
+/* Raw text panel */
+.raw-toggle{
+  font-size:12px;
+  color:var(--muted);
+  cursor:pointer;
+  margin-top:14px;
+  display:inline-block;
+}
+.raw-toggle:hover{color:var(--accent)}
+.raw-text{
+  display:none;
+  background:#0a0f1c;
+  border:1px solid var(--line);
+  border-radius:6px;
+  padding:12px;
+  font-size:11px;
+  font-family:'Courier New',monospace;
+  color:#94a3b8;
+  max-height:300px;
+  overflow:auto;
+  margin-top:10px;
+  white-space:pre-wrap;
+  word-break:break-all;
+}
+.raw-text.show{display:block}
+
+/* Tip box */
+.tip{
+  background:rgba(14,165,233,0.08);
+  border-left:3px solid var(--info);
+  padding:10px 14px;
+  border-radius:4px;
+  font-size:12px;
+  color:var(--muted);
+  margin-top:10px;
+  line-height:1.6;
+}
+
+/* Toast */
+.toast{
+  position:fixed;
+  bottom:20px;
+  right:20px;
+  background:var(--bg2);
+  border:1px solid var(--line);
+  color:var(--text);
+  padding:12px 18px;
+  border-radius:6px;
+  font-size:13px;
+  display:none;
+  z-index:1000;
+  box-shadow:0 4px 12px rgba(0,0,0,0.4);
+}
+.toast.show{display:block}
+</style>
+</head>
+<body>
+
+<div class="container">
+  
+  <!-- 헤더 -->
+  <div class="app-header">
+    <h1>🧪 밀시트 자동 분석기</h1>
+    <div class="sub">PDF 업로드 → 화학성분/기계적성질 자동 추출 → 규격 비교 → 합부 판정</div>
+  </div>
+
+  <!-- 1. 설정 카드 -->
+  <div class="grid">
+    
+    <div class="card">
+      <div class="card-title">📋 검사 대상 재질</div>
+      <label>재질 선택</label>
+      <select id="materialSelect">
+        <option value="SUS304">SUS304 (KS D3698)</option>
+        <option value="SUS430">SUS430 (KS D3698)</option>
+        <option value="SPCC">SPCC (KS D3512)</option>
+      </select>
+      
+      <div style="margin-top:14px; display:none;" id="conditionWrap">
+        <label>조질 구분 (SPCC 전용)</label>
+        <select id="conditionSelect">
+          <option value="비조질">비조질</option>
+          <option value="표준조질">표준조질</option>
+          <option value="1/8경질">1/8경질</option>
+          <option value="1/4경질">1/4경질</option>
+        </select>
+      </div>
+      
+      <div class="tip">
+        💡 분석기는 브라우저 안에서만 동작합니다. PDF는 외부로 전송되지 않습니다.
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">📁 밀시트 PDF</div>
+      <div class="file-drop" id="fileDrop">
+        <div class="icon">📄</div>
+        <div class="text">PDF 파일 선택 또는 끌어놓기</div>
+        <div class="hint">소재업체 밀시트 (Mill Sheet)</div>
+        <input type="file" id="fileInput" accept="application/pdf" style="display:none">
+      </div>
+      <div class="file-name" id="fileName"></div>
+      
+      <div style="display:flex; gap:8px; margin-top:14px;">
+        <button class="btn btn-primary" id="btnAnalyze" style="flex:1;" disabled>🔍 분석 시작</button>
+        <button class="btn btn-secondary" id="btnReset">↻</button>
+      </div>
+    </div>
+    
+  </div>
+
+  <!-- 2. 로딩 -->
+  <div class="loading" id="loading">
+    <div class="spinner"></div>
+    <div style="margin-top:12px;">PDF 분석 중...</div>
+  </div>
+
+  <!-- 3. 결과 영역 -->
+  <div class="result-section" id="resultSection">
+    
+    <div id="summaryBanner" class="summary-banner ok">
+      <div>
+        <div class="big" id="summaryTitle">✅ 합격 (OK)</div>
+        <div class="sub" id="summarySub">모든 항목이 규격 내</div>
+      </div>
+      <div style="text-align:right; font-size:12px; opacity:0.85;">
+        <div id="summaryCount">-</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">📊 분석 결과</div>
+      
+      <div class="section-h">화학성분 (Chemical Composition)</div>
+      <div style="overflow-x:auto;">
+        <table class="result">
+          <thead>
+            <tr>
+              <th style="width:90px;">항목</th>
+              <th style="width:160px;">규격</th>
+              <th style="width:120px;">측정값</th>
+              <th style="width:90px;">판정</th>
+              <th>비고</th>
+            </tr>
+          </thead>
+          <tbody id="chemBody"></tbody>
+        </table>
+      </div>
+
+      <div class="section-h">기계적성질 (Mechanical Properties)</div>
+      <div style="overflow-x:auto;">
+        <table class="result">
+          <thead>
+            <tr>
+              <th style="width:90px;">항목</th>
+              <th style="width:160px;">규격</th>
+              <th style="width:120px;">측정값</th>
+              <th style="width:90px;">판정</th>
+              <th>비고</th>
+            </tr>
+          </thead>
+          <tbody id="mechBody"></tbody>
+        </table>
+      </div>
+
+      <div class="raw-toggle" id="rawToggle">▶ 추출된 원본 텍스트 보기</div>
+      <pre class="raw-text" id="rawText"></pre>
+    </div>
+  </div>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ============================================================
+// 물성 기준 데이터 (Supabase 테이블 material_property_std와 동일 구조)
+// 추후 API로 fetch 변경 가능
+// ============================================================
+const MATERIAL_STD = {
+  'SUS304': {
+    standard: 'KS D3698 (STS304)',
+    chemistry: {
+      'C':  { max: 0.08 },
+      'Si': { max: 1.00 },
+      'Mn': { max: 2.00 },
+      'P':  { max: 0.045 },
+      'S':  { max: 0.030 },
+      'Ni': { min: 8.00, max: 10.50 },
+      'Cr': { min: 18.0, max: 20.0 }
+    },
+    mechanical: {
+      'YS': { min: 205, label: '내력 0.2%', unit: 'N/mm²' },
+      'TS': { min: 520, label: '인장강도', unit: 'N/mm²' },
+      'EL': { min: 40,  label: '연신율',   unit: '%' },
+      'HV': { max: 200, label: '경도',     unit: 'Hv' }
+    }
+  },
+  'SUS430': {
+    standard: 'KS D3698 (STS430)',
+    chemistry: {
+      'C':  { max: 0.12 },
+      'Si': { max: 0.75 },
+      'Mn': { max: 1.00 },
+      'P':  { max: 0.040 },
+      'S':  { max: 0.030 },
+      'Ni': null,
+      'Cr': { min: 16.00, max: 18.00 }
+    },
+    mechanical: {
+      'YS': { min: 205, label: '내력 0.2%', unit: 'N/mm²' },
+      'TS': { min: 450, label: '인장강도', unit: 'N/mm²' },
+      'EL': { min: 22,  label: '연신율',   unit: '%' },
+      'HV': { max: 220, label: '경도',     unit: 'Hv' }
+    }
+  },
+  'SPCC': {
+    standard: 'KS D3512 (SCP1)',
+    chemistry: {
+      'C':  { max: 0.15 },
+      'Si': null,
+      'Mn': { max: 0.60 },
+      'P':  { max: 0.100 },
+      'S':  { max: 0.035 },
+      'Ni': null,
+      'Cr': null
+    },
+    mechanical: {
+      'YS': null,
+      'TS': { min: 274, label: '인장강도', unit: 'N/mm²' },
+      'EL': {
+        '1/8경질': { min: 25, label: '연신율', unit: '%' },
+        '1/4경질': { min: 10, label: '연신율', unit: '%' }
+      },
+      'HV': {
+        '비조질':   { max: 105, label: '경도', unit: 'Hv' },
+        '표준조질': { max: 115, label: '경도', unit: 'Hv' }
+      }
+    }
+  }
+};
+
+// ============================================================
+// 상태
+// ============================================================
+let _file = null;
+let _rawText = '';
+
+// ============================================================
+// DOM 요소
+// ============================================================
+const $ = id => document.getElementById(id);
+const fileDrop = $('fileDrop');
+const fileInput = $('fileInput');
+const fileName = $('fileName');
+const btnAnalyze = $('btnAnalyze');
+const btnReset = $('btnReset');
+const loading = $('loading');
+const resultSection = $('resultSection');
+const materialSelect = $('materialSelect');
+const conditionWrap = $('conditionWrap');
+const rawToggle = $('rawToggle');
+const rawText = $('rawText');
+const toast = $('toast');
+
+// ============================================================
+// 재질 변경 시 - SPCC면 조질 구분 표시
+// ============================================================
+materialSelect.addEventListener('change', () => {
+  conditionWrap.style.display = materialSelect.value === 'SPCC' ? 'block' : 'none';
+});
+
+// ============================================================
+// 파일 선택
+// ============================================================
+fileDrop.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', e => {
+  const f = e.target.files[0];
+  if(f) setFile(f);
+});
+
+// 드래그앤드롭
+['dragenter','dragover'].forEach(ev => {
+  fileDrop.addEventListener(ev, e => {
+    e.preventDefault();
+    fileDrop.classList.add('drag');
+  });
+});
+['dragleave','drop'].forEach(ev => {
+  fileDrop.addEventListener(ev, e => {
+    e.preventDefault();
+    fileDrop.classList.remove('drag');
+  });
+});
+fileDrop.addEventListener('drop', e => {
+  e.preventDefault();
+  const f = e.dataTransfer.files[0];
+  if(f && f.type === 'application/pdf') setFile(f);
+  else showToast('PDF 파일만 지원됩니다');
+});
+
+function setFile(f){
+  _file = f;
+  fileName.style.display = 'block';
+  fileName.innerHTML = `📎 ${f.name} <span style="color:var(--muted); margin-left:8px;">(${(f.size/1024).toFixed(1)} KB)</span>`;
+  btnAnalyze.disabled = false;
+  resultSection.classList.remove('active');
+}
+
+btnReset.addEventListener('click', () => {
+  _file = null;
+  _rawText = '';
+  fileInput.value = '';
+  fileName.style.display = 'none';
+  btnAnalyze.disabled = true;
+  resultSection.classList.remove('active');
+});
+
+// ============================================================
+// 분석 시작
+// ============================================================
+btnAnalyze.addEventListener('click', async () => {
+  if(!_file) return;
+  if(!window.pdfjsLib){
+    showToast('PDF.js 라이브러리 로드 실패. 인터넷 연결을 확인하세요.');
+    return;
+  }
+  
+  loading.classList.add('active');
+  resultSection.classList.remove('active');
+  btnAnalyze.disabled = true;
+  
+  try {
+    // 1) PDF → 텍스트
+    const text = await extractPdfText(_file);
+    _rawText = text;
+    
+    // 2) 텍스트 → 데이터 추출
+    const extracted = parseMillsheet(text);
+    
+    // 3) 규격과 비교
+    const material = materialSelect.value;
+    const condition = materialSelect.value === 'SPCC' ? $('conditionSelect').value : null;
+    const result = analyze(extracted, material, condition);
+    
+    // 4) 결과 렌더
+    render(result, extracted, material, condition);
+    
+    resultSection.classList.add('active');
+  } catch(err){
+    console.error(err);
+    showToast('분석 실패: ' + err.message);
+  } finally {
+    loading.classList.remove('active');
+    btnAnalyze.disabled = false;
+  }
+});
+
+// ============================================================
+// PDF → 텍스트
+// ============================================================
+async function extractPdfText(file){
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({data: buf}).promise;
+  let fullText = '';
+  for(let i=1; i<=pdf.numPages; i++){
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    const pageText = content.items.map(it => it.str).join(' ');
+    fullText += pageText + '\n';
+  }
+  return fullText;
+}
+
+// ============================================================
+// 텍스트 파싱: 화학성분 + 기계적성질
+// 다양한 밀시트 양식에 대응 (POSCO, 동국제강, 동일스테인레스 등)
+// ============================================================
+function parseMillsheet(text){
+  const result = { chemistry:{}, mechanical:{} };
+  
+  // 텍스트 정규화 (전각공백, 다중공백 정리)
+  const norm = text.replace(/\u3000/g,' ').replace(/[ \t]+/g,' ');
+  
+  // ----- 화학성분 추출 -----
+  // 형식 예시:
+  //   "C : 0.05" / "C 0.05" / "C(%) 0.05" / "C 0.045 Si 0.50" 등
+  //   소수점 자릿수 다양: 0.05, 0.050, 0.0034 등
+  const chemElements = ['C','Si','Mn','P','S','Ni','Cr','Mo','Cu','Al','Ti','N','Nb','V','B'];
+  
+  chemElements.forEach(el => {
+    // 원소기호 뒤에 숫자가 나오는 패턴
+    // 매칭 방지: 단어 중간(예: "Cr"이 다른 단어의 일부) → 단독 토큰만
+    // 우선 명확한 패턴 먼저
+    const patterns = [
+      // "C : 0.05" 또는 "C: 0.05"
+      new RegExp(`(?:^|[\\s\\(\\|])${el}\\s*[:：]\\s*(\\d+\\.\\d+)`, 'i'),
+      // "C(%) 0.05" 또는 "C (%) 0.05"
+      new RegExp(`(?:^|[\\s\\(\\|])${el}\\s*\\(%?\\)\\s*[:：]?\\s*(\\d+\\.\\d+)`, 'i'),
+      // "C 0.05" (공백 후 숫자)
+      new RegExp(`(?:^|[\\s\\|])${el}\\s+(\\d+\\.\\d+)(?=\\s|$)`),
+    ];
+    
+    for(const re of patterns){
+      const m = norm.match(re);
+      if(m){
+        const v = parseFloat(m[1]);
+        // 이상치 필터 (화학성분은 보통 0~30% 범위)
+        if(!isNaN(v) && v >= 0 && v < 30){
+          result.chemistry[el] = v;
+          break;
+        }
+      }
+    }
+  });
+  
+  // ----- 기계적성질 추출 -----
+  // YS / YP / 항복강도 / 0.2% / Yield Strength
+  // 단위 표기가 다양함: Y.S.(N/mm2) : 280, YS [MPa] = 280, 항복강도(N/㎟) 280
+  const mechPatterns = [
+    {key:'YS', regexes:[
+      /Y\.?\s*S\.?\s*\([^)]*\)\s*[:：=]?\s*(\d+\.?\d*)/i,  // Y.S.(N/mm2): 280
+      /Y\.?\s*S\.?\s*\[[^\]]*\]\s*[:：=]?\s*(\d+\.?\d*)/i,  // YS[MPa]: 280
+      /Y\.?\s*S\.?\s*[:：=]\s*(\d+\.?\d*)/i,                // YS: 280
+      /Y\.?\s*P\.?\s*\([^)]*\)\s*[:：=]?\s*(\d+\.?\d*)/i,
+      /Y\.?\s*P\.?\s*[:：=]\s*(\d+\.?\d*)/i,
+      /항복\s*강도\s*\([^)]*\)\s*[:：=]?\s*(\d+\.?\d*)/,
+      /항복\s*강도\s*[:：=]?\s*(\d+\.?\d*)/,
+      /0\.2\s*%\s*[:：=]?\s*(\d+\.?\d*)/,
+      /내\s*력\s*[:：=]?\s*(\d+\.?\d*)/
+    ]},
+    {key:'TS', regexes:[
+      /T\.?\s*S\.?\s*\([^)]*\)\s*[:：=]?\s*(\d+\.?\d*)/i,
+      /T\.?\s*S\.?\s*\[[^\]]*\]\s*[:：=]?\s*(\d+\.?\d*)/i,
+      /T\.?\s*S\.?\s*[:：=]\s*(\d+\.?\d*)/i,
+      /Tensile\s*Strength\s*\([^)]*\)?\s*[:：=]?\s*(\d+\.?\d*)/i,
+      /Tensile\s*Strength\s*[:：=]?\s*(\d+\.?\d*)/i,
+      /인장\s*강도\s*\([^)]*\)\s*[:：=]?\s*(\d+\.?\d*)/,
+      /인장\s*강도\s*[:：=]?\s*(\d+\.?\d*)/,
+      /UTS\s*[:：=]?\s*(\d+\.?\d*)/i
+    ]},
+    {key:'EL', regexes:[
+      /E\.?\s*L\.?\s*\([^)]*\)\s*[:：=]?\s*(\d+\.?\d*)/i,  // EL(%): 55
+      /E\.?\s*L\.?\s*[:：=]\s*(\d+\.?\d*)\s*%?/i,
+      /Elongation\s*\([^)]*\)?\s*[:：=]?\s*(\d+\.?\d*)/i,
+      /Elongation\s*[:：=]?\s*(\d+\.?\d*)/i,
+      /연\s*신\s*율?\s*\([^)]*\)?\s*[:：=]?\s*(\d+\.?\d*)/,
+      /연\s*신\s*율?\s*[:：=]?\s*(\d+\.?\d*)/
+    ]},
+    {key:'HV', regexes:[
+      /HARDNESS\s*\([^)]*\)\s*[:：=]?\s*(\d+\.?\d*)/i,     // HARDNESS(Hv): 180
+      /HARDNESS\s*Hv\s*[:：=]?\s*(\d+\.?\d*)/i,            // Hardness Hv 165
+      /HARDNESS\s*[:：=]?\s*(\d+\.?\d*)/i,
+      /H\.?\s*V\.?\s*\([^)]*\)?\s*[:：=]?\s*(\d+\.?\d*)/i,
+      /H\.?\s*V\.?\s*[:：=]\s*(\d+\.?\d*)/i,
+      /경\s*도\s*\([^)]*\)?\s*[:：=]?\s*(\d+\.?\d*)/,
+      /경\s*도\s*[:：=]?\s*(\d+\.?\d*)/,
+      /HRB\s*[:：=]?\s*(\d+\.?\d*)/i
+    ]}
+  ];
+  
+  mechPatterns.forEach(({key, regexes}) => {
+    for(const re of regexes){
+      const m = norm.match(re);
+      if(m){
+        const v = parseFloat(m[1]);
+        if(!isNaN(v) && v > 0 && v < 5000){
+          result.mechanical[key] = v;
+          break;
+        }
+      }
+    }
+  });
+  
+  return result;
+}
+
+// ============================================================
+// 분석: 추출값 vs 규격 비교
+// ============================================================
+function analyze(extracted, material, condition){
+  const std = MATERIAL_STD[material];
+  if(!std) return { chem:[], mech:[], summary:'?' };
+  
+  const chemRows = [];
+  const mechRows = [];
+  let okCount = 0, ngCount = 0, missCount = 0;
+  
+  // 화학성분 분석
+  Object.entries(std.chemistry).forEach(([el, range]) => {
+    const measured = extracted.chemistry[el];
+    
+    if(range === null){
+      // 해당없음
+      chemRows.push({
+        item: el,
+        std: '해당없음 (-)',
+        measured: measured !== undefined ? measured.toFixed(3) : '-',
+        judge: 'skip',
+        note: '규격 미적용'
+      });
+      return;
+    }
+    
+    const stdText = formatRange(range, '%');
+    
+    if(measured === undefined){
+      chemRows.push({
+        item: el, std: stdText, measured: '─',
+        judge: 'miss', note: 'PDF에서 추출 실패'
+      });
+      missCount++;
+      return;
+    }
+    
+    const judgeResult = checkRange(measured, range);
+    chemRows.push({
+      item: el,
+      std: stdText,
+      measured: measured.toFixed(3),
+      judge: judgeResult.ok ? 'ok' : 'ng',
+      note: judgeResult.note
+    });
+    if(judgeResult.ok) okCount++; else ngCount++;
+  });
+  
+  // 기계적성질 분석
+  Object.entries(std.mechanical).forEach(([key, rangeOrCond]) => {
+    if(rangeOrCond === null){
+      mechRows.push({
+        item: key, std: '해당없음 (-)',
+        measured: extracted.mechanical[key] !== undefined ? extracted.mechanical[key] : '-',
+        judge: 'skip', note: '규격 미적용'
+      });
+      return;
+    }
+    
+    // 다중조건(예: SPCC EL/HV) 처리
+    let range = rangeOrCond;
+    let conditionLabel = '';
+    if(rangeOrCond.min === undefined && rangeOrCond.max === undefined){
+      // 다중조건 객체
+      if(condition && rangeOrCond[condition]){
+        range = rangeOrCond[condition];
+        conditionLabel = ` [${condition}]`;
+      } else {
+        // 조건 미선택
+        const firstKey = Object.keys(rangeOrCond)[0];
+        range = rangeOrCond[firstKey];
+        conditionLabel = ` [${firstKey} 기준]`;
+      }
+    }
+    
+    const measured = extracted.mechanical[key];
+    const stdText = formatRange(range, range.unit || '') + conditionLabel;
+    const label = (range.label || key);
+    
+    if(measured === undefined){
+      mechRows.push({
+        item: `${key} (${label})`,
+        std: stdText, measured: '─',
+        judge: 'miss', note: 'PDF에서 추출 실패'
+      });
+      missCount++;
+      return;
+    }
+    
+    const judgeResult = checkRange(measured, range);
+    mechRows.push({
+      item: `${key} (${label})`,
+      std: stdText,
+      measured: measured.toFixed(1),
+      judge: judgeResult.ok ? 'ok' : 'ng',
+      note: judgeResult.note
+    });
+    if(judgeResult.ok) okCount++; else ngCount++;
+  });
+  
+  // 종합 판정
+  let summary;
+  if(ngCount > 0) summary = 'ng';
+  else if(missCount > 0) summary = 'warn';
+  else summary = 'ok';
+  
+  return { chem: chemRows, mech: mechRows, summary, okCount, ngCount, missCount };
+}
+
+// ============================================================
+// 헬퍼: 범위 검증
+// ============================================================
+function checkRange(value, range){
+  if(range.min !== undefined && value < range.min){
+    return { ok:false, note:`${range.min} 이상 필요` };
+  }
+  if(range.max !== undefined && value > range.max){
+    return { ok:false, note:`${range.max} 이하 필요` };
+  }
+  return { ok:true, note:'규격 내' };
+}
+
+// ============================================================
+// 헬퍼: 범위 텍스트 표현
+// ============================================================
+function formatRange(range, unit){
+  const u = unit ? ` ${unit}` : '';
+  if(range.min !== undefined && range.max !== undefined){
+    return `${range.min} ~ ${range.max}${u}`;
+  }
+  if(range.min !== undefined){
+    return `≥ ${range.min}${u}`;
+  }
+  if(range.max !== undefined){
+    return `≤ ${range.max}${u}`;
+  }
+  return '-';
+}
+
+// ============================================================
+// 결과 렌더링
+// ============================================================
+function render(result, extracted, material, condition){
+  const banner = $('summaryBanner');
+  const title = $('summaryTitle');
+  const sub = $('summarySub');
+  const count = $('summaryCount');
+  
+  banner.className = 'summary-banner ' + result.summary;
+  
+  if(result.summary === 'ok'){
+    title.textContent = '✅ 합격 (OK)';
+    sub.textContent = `${material} 규격 모든 항목 통과`;
+  } else if(result.summary === 'ng'){
+    title.textContent = '❌ 불합격 (NG)';
+    sub.textContent = `${material} 규격 중 ${result.ngCount}개 항목 미달`;
+  } else {
+    title.textContent = '⚠️ 추출 실패 일부';
+    sub.textContent = `${result.missCount}개 항목을 PDF에서 찾지 못함 - 수동 확인 필요`;
+  }
+  count.innerHTML = `OK ${result.okCount} · NG ${result.ngCount} · MISS ${result.missCount}`;
+  
+  // 화학성분 표
+  const chemBody = $('chemBody');
+  chemBody.innerHTML = result.chem.map(r => `
+    <tr>
+      <td><span class="item-name">${r.item}</span></td>
+      <td><span class="std-text">${r.std}</span></td>
+      <td><span class="measured">${r.measured}</span></td>
+      <td><span class="judge-pill ${r.judge}">${pillText(r.judge)}</span></td>
+      <td><span class="std-text">${r.note}</span></td>
+    </tr>
+  `).join('');
+  
+  // 기계적성질 표
+  const mechBody = $('mechBody');
+  mechBody.innerHTML = result.mech.map(r => `
+    <tr>
+      <td><span class="item-name">${r.item}</span></td>
+      <td><span class="std-text">${r.std}</span></td>
+      <td><span class="measured">${r.measured}</span></td>
+      <td><span class="judge-pill ${r.judge}">${pillText(r.judge)}</span></td>
+      <td><span class="std-text">${r.note}</span></td>
+    </tr>
+  `).join('');
+  
+  // 원본 텍스트
+  rawText.textContent = _rawText.substring(0, 5000) + (_rawText.length > 5000 ? '\n\n... (생략)' : '');
+}
+
+function pillText(judge){
+  return {ok:'OK', ng:'NG', miss:'MISS', skip:'─'}[judge] || '?';
+}
+
+// ============================================================
+// 원본 텍스트 토글
+// ============================================================
+rawToggle.addEventListener('click', () => {
+  rawText.classList.toggle('show');
+  rawToggle.textContent = rawText.classList.contains('show') 
+    ? '▼ 추출된 원본 텍스트 숨기기' 
+    : '▶ 추출된 원본 텍스트 보기';
+});
+
+// ============================================================
+// 토스트
+// ============================================================
+function showToast(msg){
+  toast.textContent = msg;
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), 3000);
+}
+</script>
+
+</body>
+</html>
