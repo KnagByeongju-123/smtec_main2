@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>로드모니터 하중 일일점검 v6.2</title>
+<title>로드모니터 하중 일일점검 v6.3</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
@@ -219,7 +219,7 @@ table.hist tr:hover{background:#f0f7ff}
 <body>
 
 <div class="hdr">
-  <h1>📊 로드모니터 하중 일일점검 <span class="rev-badge">Rev. 6.2</span></h1>
+  <h1>📊 로드모니터 하중 일일점검 <span class="rev-badge">Rev. 6.3</span></h1>
   <p>프레스 Smart Load Monitor · CH1좌 + CH2우 = TOTAL 자동계산</p>
 </div>
 
@@ -594,7 +594,7 @@ table.hist tr:hover{background:#f0f7ff}
     <button class="btn btn-ghost btn-block" onclick="copyDDL()" style="margin-top:8px">📋 SQL 복사</button>
   </div>
 
-  <div class="ver">v6.2 · 로드모니터 일일점검 · 태진다이텍 품질관리팀</div>
+  <div class="ver">v6.3 · 로드모니터 일일점검 · 태진다이텍 품질관리팀</div>
 </div>
 
 <script>
@@ -1471,9 +1471,11 @@ async function handleImage(ev){
   // 자동 16:9 크롭 (갤러리/카메라 모두 - 카메라는 이미 16:9이므로 그대로 유지)
   file=await autoCrop169(file);
 
-  // ★ 너무 큰 이미지는 OCR 속도 위해 다운스케일 (가로 2000px 이상이면 2000px로)
-  // 보라 OCR이 3.5배 확대하므로 원본을 너무 줄이면 6/8 구분이 어려워짐
-  file=await downscaleIfHuge(file,2000);
+  // ★ 너무 큰 이미지는 OCR 속도 위해 다운스케일 (iOS는 2배 확대 메모리 고려해 더 작게)
+  // 보라 OCR이 3등분 후 추가 2배 확대하므로 원본 1600 정도가 적절
+  const isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent) ||
+              (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
+  file=await downscaleIfHuge(file,isIOS?1600:2000);
 
   _lastImageFile=file;
   // bitmap 캐시 (영역지정 모달에서 재사용)
@@ -1509,8 +1511,9 @@ async function handleImage(ev){
     console.log(`[OCR 시작] 원본: ${origW}x${origH}`);
 
     // ★ 16:9 이미지를 좌/우 1/3씩 분할 → 각 채널이 단독 영역 → 마스킹 노이즈 ↓
-    const leftCrop=cropBitmapRegion(_lastImageBitmap,'left');
-    const rightCrop=cropBitmapRegion(_lastImageBitmap,'right');
+    // 보라 영역은 6/8 구분 어려우므로 사전 2배 확대 (Tesseract 입력 해상도 ↑)
+    const leftCrop=cropBitmapRegion(_lastImageBitmap,'left',1);     // CH1 노랑 (확대 안함)
+    const rightCrop=cropBitmapRegion(_lastImageBitmap,'right',2);   // CH2 보라 (사전 2배)
 
     // 1) 노랑 (CH1) - 좌측 1/3 영역만 OCR
     setOCRStepStatus('ch1','분석중');
@@ -1529,9 +1532,10 @@ async function handleImage(ev){
     setOCRStepStatus('ch2',ch2!=null?'ok':'fail',r3.variant);
     prog.firstElementChild.style.width='100%';
 
-    // 메모리 정리
+    // 메모리 정리 (iOS Safari 메모리 누수 방지)
     leftCrop.width=0;leftCrop.height=0;
     rightCrop.width=0;rightCrop.height=0;
+    // _lastImageBitmap은 영역 직접 지정에서 재사용하므로 유지
 
     // TOTAL은 CH1+CH2 자동계산
     const total=(ch1!=null && ch2!=null)?+(ch1+ch2).toFixed(2):null;
@@ -2108,10 +2112,11 @@ function canvasToBlob(canvas,mime,quality){
   });
 }
 
-// 이미지에서 좌/중/우 영역 1/3 크롭 → 새 bitmap 반환
-// portion: 'left' | 'right' (TOTAL은 자동계산이므로 'center'는 사용 안함)
+// 이미지에서 좌/중/우 영역 1/3 크롭 → 새 canvas 반환
+// portion: 'left' | 'right' | 'center'
+// preScale: 영역 크롭 후 추가 확대 배수 (보라 영역만 2배 확대 권장)
 // 16:9 이미지에서 각 채널은 좌우 1/3 영역에 표시되므로 다른 채널 노이즈 제거
-function cropBitmapRegion(bitmap,portion){
+function cropBitmapRegion(bitmap,portion,preScale){
   const w=bitmap.width||bitmap.naturalWidth;
   const h=bitmap.height||bitmap.naturalHeight;
   // 1/3보다 약간 더 크게 잘라서 가장자리 잘림 방지 (38%)
@@ -2124,15 +2129,37 @@ function cropBitmapRegion(bitmap,portion){
   }else{
     cropX=Math.floor((w-cropW)/2);
   }
+  // preScale: 영역 자체를 사전 확대해서 캔버스에 그림 (Tesseract OCR 입력 해상도 ↑)
+  let scale=preScale||1;
+
+  // iOS Safari 캔버스 한도: 4096x4096 또는 16M 픽셀
+  // 캔버스 크기가 한도 초과하면 자동 축소
+  const isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent) ||
+              (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
+  const MAX_CANVAS_SIDE=isIOS?4096:8192;
+  const MAX_CANVAS_PIXELS=isIOS?16777216:67108864;  // iOS 16M, 그 외 64M
+  let outW=Math.floor(cropW*scale);
+  let outH=Math.floor(h*scale);
+  if(outW>MAX_CANVAS_SIDE||outH>MAX_CANVAS_SIDE||outW*outH>MAX_CANVAS_PIXELS){
+    const scaleByW=MAX_CANVAS_SIDE/outW;
+    const scaleByH=MAX_CANVAS_SIDE/outH;
+    const scaleByPx=Math.sqrt(MAX_CANVAS_PIXELS/(outW*outH));
+    const limitScale=Math.min(scaleByW,scaleByH,scaleByPx,1);
+    outW=Math.floor(outW*limitScale);
+    outH=Math.floor(outH*limitScale);
+    scale=scale*limitScale;
+    console.warn(`[3등분 크롭 ${portion}] iOS 캔버스 한도 초과 → 축소: ${outW}x${outH} (실제 scale ${scale.toFixed(2)})`);
+  }
+
   const c=document.createElement('canvas');
-  c.width=cropW;
-  c.height=h;
+  c.width=outW;
+  c.height=outH;
   const ctx=c.getContext('2d');
   ctx.imageSmoothingEnabled=true;
   ctx.imageSmoothingQuality='high';
-  ctx.drawImage(bitmap,cropX,0,cropW,h,0,0,cropW,h);
-  console.log(`[3등분 크롭 ${portion}] ${w}x${h} → ${cropW}x${h} (X=${cropX})`);
-  return c;  // canvas는 drawImage 호환 (bitmap처럼 사용 가능)
+  ctx.drawImage(bitmap,cropX,0,cropW,h,0,0,outW,outH);
+  console.log(`[3등분 크롭 ${portion}] ${w}x${h} → 영역(${cropX},0,${cropW}x${h}) → 캔버스 ${outW}x${outH} (×${scale.toFixed(2)})`);
+  return c;
 }
 
 // iOS Safari 호환: createImageBitmap 미지원 시 Image 엘리먼트로 폴백
@@ -2172,10 +2199,11 @@ const FILTER_ORDER={
 };
 
 // 색상별 OCR 입력 확대 배수 (보라는 6/8 구분 위해 가장 크게)
+// v6.3: 보라는 cropBitmapRegion에서 사전 2배 확대 → 마스킹은 2배만 (총 4배 효과)
 const OCR_SCALE={
   green: 1,
   yellow: 1.3,
-  pink: 3.5  // 6/8 구분 위해 충분히 크게
+  pink: 2.0  // 사전 2배 + 여기 2배 = 효과적 4배 (메모리 부담 분산)
 };
 
 // 모폴로지 침식: 검은 영역(글자) 1픽셀씩 줄임 → 6의 곡선이 닫혀있고 8의 두 구멍이 분명해짐
@@ -2372,9 +2400,22 @@ async function tryColorOCR(bitmap,targetColor,minVal,maxVal,statusEl,statusPrefi
 function createColorMaskedCanvas(bitmap,targetColor,variant,scale){
   variant=variant||'strict';
   scale=scale||1;
+  // iOS Safari 캔버스 한도 적용
+  const isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent) ||
+              (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
+  const MAX_SIDE=isIOS?4096:8192;
+  const MAX_PX=isIOS?16777216:67108864;
+  let outW=Math.round(bitmap.width*scale);
+  let outH=Math.round(bitmap.height*scale);
+  if(outW>MAX_SIDE||outH>MAX_SIDE||outW*outH>MAX_PX){
+    const limitScale=Math.min(MAX_SIDE/outW,MAX_SIDE/outH,Math.sqrt(MAX_PX/(outW*outH)),1);
+    outW=Math.floor(outW*limitScale);
+    outH=Math.floor(outH*limitScale);
+    console.warn(`[마스킹 ${targetColor}/${variant}] 캔버스 한도 적용 → ${outW}x${outH}`);
+  }
   const canvas=document.createElement('canvas');
-  canvas.width=Math.round(bitmap.width*scale);
-  canvas.height=Math.round(bitmap.height*scale);
+  canvas.width=outW;
+  canvas.height=outH;
   const ctx=canvas.getContext('2d',{willReadFrequently:true});
   // 확대해서 원본 그대로 그리기 (이중선형 보간)
   ctx.imageSmoothingEnabled=true;
