@@ -1,0 +1,926 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>로드모니터 하중 일일점검 v1.4</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{font-family:'Malgun Gothic','맑은 고딕',sans-serif;background:#f5f5f5;color:#222;font-size:14px;padding-bottom:80px}
+.hdr{background:linear-gradient(135deg,#1e3a5f 0%,#2c5282 100%);color:#fff;padding:14px 16px;position:sticky;top:0;z-index:100;box-shadow:0 2px 8px rgba(0,0,0,0.15)}
+.hdr h1{font-size:17px;margin:0;display:flex;align-items:center;gap:8px}
+.hdr p{font-size:11px;opacity:.85;margin-top:2px}
+.tabs{display:flex;background:#fff;border-bottom:2px solid #e0e0e0;position:sticky;top:54px;z-index:99}
+.tab{flex:1;padding:12px;text-align:center;cursor:pointer;font-weight:600;font-size:13px;color:#888;border-bottom:3px solid transparent;transition:all .2s}
+.tab.on{color:#1e3a5f;border-bottom-color:#1e3a5f;background:#f0f4f9}
+.pnl{display:none;padding:12px}
+.pnl.on{display:block}
+.card{background:#fff;border-radius:10px;padding:14px;margin-bottom:12px;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+.card-tit{font-size:13px;font-weight:700;color:#1e3a5f;margin-bottom:10px;display:flex;align-items:center;gap:6px;padding-bottom:8px;border-bottom:1px solid #eee}
+.fg{margin-bottom:10px}
+.fg label{display:block;font-size:11px;color:#666;margin-bottom:4px;font-weight:600}
+.fg input,.fg select{width:100%;padding:10px;border:1.5px solid #ddd;border-radius:8px;font-size:14px;font-family:inherit}
+.fg input:focus,.fg select:focus{outline:none;border-color:#2c5282}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
+
+/* OCR 카드 */
+.ocr-zone{border:2px dashed #4a90d9;border-radius:10px;padding:20px;text-align:center;background:#f0f7ff;margin-bottom:10px}
+.ocr-zone.busy{border-color:#f39c12;background:#fff8e1}
+.ocr-btn{display:inline-flex;align-items:center;gap:8px;background:#2c5282;color:#fff;padding:14px 22px;border-radius:10px;border:none;font-size:15px;font-weight:700;cursor:pointer;box-shadow:0 2px 6px rgba(44,82,130,.3)}
+.ocr-btn:active{transform:scale(.97)}
+.ocr-btn:disabled{background:#999;cursor:not-allowed}
+.ocr-status{font-size:12px;color:#555;margin-top:10px;min-height:18px}
+.ocr-progress{width:100%;height:6px;background:#e0e0e0;border-radius:3px;overflow:hidden;margin-top:8px;display:none}
+.ocr-progress.on{display:block}
+.ocr-progress > div{height:100%;background:linear-gradient(90deg,#4a90d9,#2c5282);width:0%;transition:width .3s}
+.preview{max-width:100%;max-height:200px;border-radius:8px;margin-top:10px;display:none;border:1px solid #ddd}
+
+/* 측정값 입력 */
+.measure-grid{display:grid;grid-template-columns:55px 1fr 1fr 1fr;gap:5px;align-items:center;margin-bottom:4px}
+.measure-grid > label{font-size:11px;font-weight:700;color:#1e3a5f;text-align:center;padding:6px 2px;border-radius:5px;background:#eef2f7}
+.measure-grid input{padding:6px 4px;text-align:center;font-size:13px;font-weight:600;border:1.5px solid #ddd;border-radius:5px;font-family:inherit;width:100%;min-width:0}
+.measure-grid input.total{background:#dcedc8;color:#1b5e20;border-color:#aed581}
+.measure-grid input.ch1{background:#fff9c4;color:#8d6e00;border-color:#ffe082}
+.measure-grid input.ch2{background:#fce4ec;color:#a02550;border-color:#f48fb1}
+.measure-grid input.empty{background:#fff;color:#222}
+.measure-head{display:grid;grid-template-columns:55px 1fr 1fr 1fr;gap:5px;margin-bottom:6px;font-size:10px;font-weight:700;color:#666}
+.measure-head > div{text-align:center;padding:3px 2px}
+.measure-head .h-total{background:#dcedc8;color:#1b5e20;border-radius:4px}
+.measure-head .h-ch1{background:#fff9c4;color:#8d6e00;border-radius:4px}
+.measure-head .h-ch2{background:#fce4ec;color:#a02550;border-radius:4px}
+.time-section{margin-bottom:10px;padding:8px;background:#fafafa;border-radius:8px;border-left:3px solid #2c5282}
+.time-label{font-size:13px;font-weight:700;color:#1e3a5f;margin-bottom:6px;display:flex;align-items:center;gap:6px}
+.time-tag{display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;color:#fff;background:#666}
+.time-tag.s-cho{background:#e57373}
+.time-tag.s-jung{background:#64b5f6}
+.time-tag.s-jong{background:#81c784}
+
+/* 조회/이력 */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:10px 14px;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}
+.btn-primary{background:#2c5282;color:#fff}
+.btn-success{background:#388e3c;color:#fff}
+.btn-warn{background:#f57c00;color:#fff}
+.btn-danger{background:#c62828;color:#fff}
+.btn-ghost{background:#eef2f7;color:#1e3a5f;border:1px solid #d4dbe5}
+.btn-block{width:100%;padding:13px;font-size:14px}
+.btn:active{transform:scale(.97)}
+
+table.hist{width:100%;border-collapse:collapse;font-size:11px;background:#fff;border-radius:8px;overflow:hidden}
+table.hist th{background:#1e3a5f;color:#fff;padding:7px 4px;font-weight:600;font-size:10px}
+table.hist td{padding:6px 4px;border-bottom:1px solid #eee;text-align:center;font-size:11px}
+table.hist tr:hover{background:#f0f7ff}
+.hist-wrap{overflow-x:auto;margin-top:10px}
+
+.toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#333;color:#fff;padding:12px 20px;border-radius:25px;font-size:13px;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,.3);max-width:90%;text-align:center}
+.toast.ok{background:#388e3c}
+.toast.err{background:#c62828}
+
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+#fileInput{display:none}
+
+.ver{font-size:10px;opacity:.6;text-align:center;margin-top:20px;color:#999}
+
+.warn-box{background:#fff3e0;border:1px solid #ffb74d;border-radius:8px;padding:10px;font-size:11px;color:#e65100;margin-bottom:10px}
+.info-box{background:#e3f2fd;border:1px solid #64b5f6;border-radius:8px;padding:10px;font-size:11px;color:#0d47a1;margin-bottom:10px}
+
+/* 시간대 매핑 OCR 결과 */
+.ocr-result{background:#f0f7ff;border:1px solid #4a90d9;border-radius:8px;padding:10px;margin-top:10px}
+.ocr-result-row{display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:13px}
+.ocr-result-row b{color:#1e3a5f}
+.ocr-pick{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:8px}
+.ocr-pick button{padding:8px;border:1.5px solid #2c5282;background:#fff;color:#2c5282;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer}
+.ocr-pick button:active{background:#2c5282;color:#fff}
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <h1>📊 로드모니터 하중 일일점검</h1>
+  <p>프레스 Smart Load Monitor · TOTAL / CH1좌 / CH2우</p>
+</div>
+
+<div class="tabs">
+  <div class="tab on" onclick="swTab(0)">📝 점검입력</div>
+  <div class="tab" onclick="swTab(1)">📋 이력조회</div>
+  <div class="tab" onclick="swTab(2)">⚙ 설정</div>
+</div>
+
+<!-- ===== 점검 입력 ===== -->
+<div class="pnl on" id="pnl0">
+
+  <div class="card">
+    <div class="card-tit">📝 기본 정보</div>
+    <div class="row2">
+      <div class="fg"><label>점검일자</label><input type="date" id="chkDate"></div>
+      <div class="fg"><label>호기(설비)</label><select id="chkMachine" onchange="onMachineChange()"><option value="">선택</option></select></div>
+    </div>
+    <div class="row2">
+      <div class="fg">
+        <label>기종 <span id="itemSrc" style="font-size:10px;color:#888;font-weight:400"></span></label>
+        <input type="text" id="chkItem" placeholder="호기 선택 시 자동조회">
+      </div>
+      <div class="fg">
+        <label>점검자 <span id="userSrc" style="font-size:10px;color:#888;font-weight:400"></span></label>
+        <input type="text" id="chkInspector" readonly placeholder="로그인 후 자동표시" style="background:#f5f5f5;cursor:not-allowed">
+      </div>
+    </div>
+    <div class="fg">
+      <label>일일 타발수 <span id="shotSrc" style="font-size:10px;color:#888;font-weight:400"></span></label>
+      <div style="display:flex;gap:6px">
+        <input type="number" id="chkDailyShot" placeholder="MES 자동조회 또는 수동입력" inputmode="numeric" style="flex:1">
+        <button class="btn btn-primary" onclick="fetchShotQty()" style="padding:8px 14px;font-size:12px;white-space:nowrap" id="btnShot">📡 MES조회</button>
+      </div>
+      <div id="shotHint" style="font-size:11px;color:#666;margin-top:4px"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-tit">📷 OCR 자동 인식</div>
+    <div class="info-box">로드모니터 화면을 촬영하면 TOTAL / CH1 / CH2 값을 자동 인식합니다. 인식 후 시간대를 선택해 입력하세요.</div>
+    <div class="ocr-zone" id="ocrZone">
+      <button class="ocr-btn" onclick="document.getElementById('fileInput').click()" id="btnOCR">
+        📷 로드모니터 촬영/업로드
+      </button>
+      <input type="file" id="fileInput" accept="image/*" capture="environment" onchange="handleImage(event)">
+      <div class="ocr-status" id="ocrStatus">사진을 찍거나 갤러리에서 선택하세요</div>
+      <div class="ocr-progress" id="ocrProgress"><div></div></div>
+      <img class="preview" id="preview">
+      <div id="ocrResult"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-tit">📋 시간대별 측정값</div>
+    <div class="measure-head">
+      <div>시간</div>
+      <div class="h-total">TOTAL</div>
+      <div class="h-ch1">CH1(좌)</div>
+      <div class="h-ch2">CH2(우)</div>
+    </div>
+
+    <div class="time-section">
+      <div class="time-label"><span class="time-tag s-cho">초</span> 8:30</div>
+      <div class="measure-grid">
+        <label>0830</label>
+        <input class="total" id="t_0830_total" type="number" step="0.1" inputmode="decimal">
+        <input class="ch1" id="t_0830_ch1" type="number" step="0.1" inputmode="decimal">
+        <input class="ch2" id="t_0830_ch2" type="number" step="0.1" inputmode="decimal">
+      </div>
+      <div class="measure-grid">
+        <label>10:30</label>
+        <input class="total" id="t_1030_total" type="number" step="0.1" inputmode="decimal">
+        <input class="ch1" id="t_1030_ch1" type="number" step="0.1" inputmode="decimal">
+        <input class="ch2" id="t_1030_ch2" type="number" step="0.1" inputmode="decimal">
+      </div>
+    </div>
+
+    <div class="time-section">
+      <div class="time-label"><span class="time-tag s-jung">중</span> 11:30 / 14:00</div>
+      <div class="measure-grid">
+        <label>11:30</label>
+        <input class="total" id="t_1130_total" type="number" step="0.1" inputmode="decimal">
+        <input class="ch1" id="t_1130_ch1" type="number" step="0.1" inputmode="decimal">
+        <input class="ch2" id="t_1130_ch2" type="number" step="0.1" inputmode="decimal">
+      </div>
+      <div class="measure-grid">
+        <label>14:00</label>
+        <input class="total" id="t_1400_total" type="number" step="0.1" inputmode="decimal">
+        <input class="ch1" id="t_1400_ch1" type="number" step="0.1" inputmode="decimal">
+        <input class="ch2" id="t_1400_ch2" type="number" step="0.1" inputmode="decimal">
+      </div>
+    </div>
+
+    <div class="time-section">
+      <div class="time-label"><span class="time-tag s-jong">종</span> 15:10 / 16:30</div>
+      <div class="measure-grid">
+        <label>15:10</label>
+        <input class="total" id="t_1510_total" type="number" step="0.1" inputmode="decimal">
+        <input class="ch1" id="t_1510_ch1" type="number" step="0.1" inputmode="decimal">
+        <input class="ch2" id="t_1510_ch2" type="number" step="0.1" inputmode="decimal">
+      </div>
+      <div class="measure-grid">
+        <label>16:30</label>
+        <input class="total" id="t_1630_total" type="number" step="0.1" inputmode="decimal">
+        <input class="ch1" id="t_1630_ch1" type="number" step="0.1" inputmode="decimal">
+        <input class="ch2" id="t_1630_ch2" type="number" step="0.1" inputmode="decimal">
+      </div>
+    </div>
+
+    <div class="fg" style="margin-top:10px">
+      <label>비고</label>
+      <input type="text" id="chkMemo" placeholder="특이사항 (예: 설비이상)">
+    </div>
+
+    <button class="btn btn-success btn-block" onclick="saveCheck()" style="margin-top:8px">💾 점검 저장</button>
+    <button class="btn btn-ghost btn-block" onclick="clearForm()" style="margin-top:6px">🔄 초기화</button>
+  </div>
+
+</div>
+
+<!-- ===== 이력 조회 ===== -->
+<div class="pnl" id="pnl1">
+  <div class="card">
+    <div class="card-tit">🔍 조회 조건</div>
+    <div class="row2">
+      <div class="fg"><label>시작일</label><input type="date" id="qFrom"></div>
+      <div class="fg"><label>종료일</label><input type="date" id="qTo"></div>
+    </div>
+    <div class="fg"><label>호기</label><select id="qMachine"><option value="">전체</option></select></div>
+    <div class="row2">
+      <button class="btn btn-primary" onclick="loadHistory()">🔍 조회</button>
+      <button class="btn btn-warn" onclick="exportCSV()">📥 CSV</button>
+    </div>
+    <div class="hist-wrap">
+      <table class="hist" id="histTable">
+        <thead><tr>
+          <th>일자</th><th>호기</th><th>기종</th>
+          <th>8:30</th><th>10:30</th><th>11:30</th>
+          <th>14:00</th><th>15:10</th><th>16:30</th>
+          <th>타발</th><th>관리</th>
+        </tr></thead>
+        <tbody id="histBody"><tr><td colspan="11" style="padding:20px;color:#999">조회 버튼을 눌러주세요</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 설정 ===== -->
+<div class="pnl" id="pnl2">
+  <div class="card">
+    <div class="card-tit">⚙ Supabase 연결</div>
+    <div class="info-box">기본값이 미리 설정되어 있습니다. 연결만 확인하세요.</div>
+    <div class="fg"><label>URL</label><input type="text" id="sbUrl" readonly></div>
+    <div class="fg"><label>anon key</label><input type="password" id="sbKey" readonly></div>
+    <button class="btn btn-primary btn-block" onclick="testConnection()">🔌 연결 테스트</button>
+  </div>
+
+  <div class="card">
+    <div class="card-tit">📋 Supabase 테이블 SQL</div>
+    <div class="warn-box">최초 1회 Supabase SQL Editor에서 실행하세요</div>
+    <textarea id="ddlText" readonly style="width:100%;height:280px;padding:10px;border:1px solid #ddd;border-radius:6px;font-family:monospace;font-size:11px;background:#f8f8f8"></textarea>
+    <button class="btn btn-ghost btn-block" onclick="copyDDL()" style="margin-top:8px">📋 SQL 복사</button>
+  </div>
+
+  <div class="card">
+    <div class="card-tit">ℹ 사용 안내</div>
+    <div style="font-size:12px;color:#444;line-height:1.7">
+      • <b>OCR 사용법</b>: 로드모니터 화면을 정면에서 밝은 환경으로 촬영<br>
+      • <b>인식 값</b>: TOTAL(녹색 큰숫자) / CH1(노랑) / CH2(분홍)<br>
+      • <b>시간대 적용</b>: OCR 인식 후 어느 시간(8:30/10:30/...)에 넣을지 버튼 선택<br>
+      • <b>점검자 자동표시</b>: 로그인 정보(<code>ESG_USER</code>)에서 자동 입력. 미로그인 시 수동 가능<br>
+      • <b>호기 자동 기억</b>: 마지막 선택한 호기를 다음 접속 시 자동 복원 (브라우저 localStorage)<br>
+      • <b>기종 자동조회</b>: 호기 선택 시 MES → Supabase → work_order_cache 순으로 현재 작업 기종 조회<br>
+      • <b>일일타발수</b>: 📡 MES조회 버튼으로 가져오기. ① Python릴레이 → ② Supabase machine_status<br>
+      • <b>저장 위치</b>: Supabase <code>load_monitor_check</code> 테이블<br>
+      • <b>호기 마스터</b>: <code>machine_status</code> 테이블에서 자동 로드
+    </div>
+  </div>
+
+  <div class="ver">v1.4 · 로드모니터 일일점검 · 태진다이텍 품질관리팀</div>
+</div>
+
+<script>
+/* ============ 설정 ============ */
+const SB_URL='https://omngtyewdaqpphnzeate.supabase.co';
+const SB_KEY='sb_publishable_lF5QLYPHsZOMJT2PFkM3LQ_Rxt35VtO';
+let supa=null;
+
+const DDL=`-- 로드모니터 하중 일일점검 테이블
+CREATE TABLE IF NOT EXISTS public.load_monitor_check (
+  id           BIGSERIAL PRIMARY KEY,
+  check_date   DATE NOT NULL,
+  machine_code TEXT NOT NULL,
+  machine_name TEXT,
+  item_code    TEXT,
+  inspector    TEXT,
+  daily_shot   INTEGER,
+
+  t0830_total  NUMERIC(8,2),
+  t0830_ch1    NUMERIC(8,2),
+  t0830_ch2    NUMERIC(8,2),
+  t1030_total  NUMERIC(8,2),
+  t1030_ch1    NUMERIC(8,2),
+  t1030_ch2    NUMERIC(8,2),
+  t1130_total  NUMERIC(8,2),
+  t1130_ch1    NUMERIC(8,2),
+  t1130_ch2    NUMERIC(8,2),
+  t1400_total  NUMERIC(8,2),
+  t1400_ch1    NUMERIC(8,2),
+  t1400_ch2    NUMERIC(8,2),
+  t1510_total  NUMERIC(8,2),
+  t1510_ch1    NUMERIC(8,2),
+  t1510_ch2    NUMERIC(8,2),
+  t1630_total  NUMERIC(8,2),
+  t1630_ch1    NUMERIC(8,2),
+  t1630_ch2    NUMERIC(8,2),
+
+  memo         TEXT,
+  enter_by     TEXT,
+  enter_date   TIMESTAMPTZ DEFAULT NOW(),
+  modify_date  TIMESTAMPTZ DEFAULT NOW(),
+
+  UNIQUE(check_date, machine_code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_lmc_date ON public.load_monitor_check(check_date DESC);
+CREATE INDEX IF NOT EXISTS idx_lmc_machine ON public.load_monitor_check(machine_code);
+
+ALTER TABLE public.load_monitor_check DISABLE ROW LEVEL SECURITY;
+
+DO $$
+DECLARE r RECORD;
+BEGIN
+  FOR r IN SELECT policyname FROM pg_policies WHERE tablename='load_monitor_check' LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON public.load_monitor_check', r.policyname);
+  END LOOP;
+END $$;
+
+GRANT ALL ON public.load_monitor_check TO anon, authenticated;
+GRANT USAGE, SELECT ON SEQUENCE public.load_monitor_check_id_seq TO anon, authenticated;`;
+
+/* ============ 초기화 ============ */
+window.addEventListener('DOMContentLoaded',()=>{
+  document.getElementById('sbUrl').value=SB_URL;
+  document.getElementById('sbKey').value=SB_KEY;
+  document.getElementById('ddlText').value=DDL;
+  supa=window.supabase.createClient(SB_URL,SB_KEY);
+  initDates();
+  loadMachines();
+  loadInspector();
+});
+
+function initDates(){
+  const today=kstToday();
+  document.getElementById('chkDate').value=today;
+  const d7=new Date();d7.setDate(d7.getDate()-7);
+  document.getElementById('qFrom').value=fmtDate(d7);
+  document.getElementById('qTo').value=today;
+}
+
+function kstToday(){
+  const now=new Date();
+  const kst=new Date(now.getTime()+9*3600000-now.getTimezoneOffset()*60000);
+  return kst.toISOString().slice(0,10);
+}
+function fmtDate(d){
+  const kst=new Date(d.getTime()+9*3600000-d.getTimezoneOffset()*60000);
+  return kst.toISOString().slice(0,10);
+}
+
+/* ============ 탭 ============ */
+function swTab(i){
+  document.querySelectorAll('.tab').forEach((t,k)=>t.classList.toggle('on',k===i));
+  document.querySelectorAll('.pnl').forEach((p,k)=>p.classList.toggle('on',k===i));
+  if(i===1)loadHistory();
+}
+
+/* ============ 호기/점검자 로드 ============ */
+async function loadMachines(){
+  try{
+    const {data,error}=await supa.from('machine_status').select('machine_code,machine_name').order('machine_code');
+    if(error){console.error(error);return;}
+    const sels=['chkMachine','qMachine'];
+    sels.forEach(id=>{
+      const sel=document.getElementById(id);
+      const cur=sel.innerHTML;
+      const first=id==='qMachine'?'<option value="">전체</option>':'<option value="">선택</option>';
+      sel.innerHTML=first+(data||[]).map(m=>`<option value="${m.machine_code}">${m.machine_code} ${m.machine_name||''}</option>`).join('');
+    });
+    // 마지막 사용 호기 자동 복원
+    restoreLastMachine();
+  }catch(e){console.error('호기로드',e)}
+}
+
+function loadInspector(){
+  // sessionStorage / localStorage에서 로그인 정보 추출
+  const inp=document.getElementById('chkInspector');
+  const src=document.getElementById('userSrc');
+  let user=null;
+
+  // 1순위: sessionStorage.ESG_USER (현재 세션)
+  try{
+    const raw=sessionStorage.getItem('ESG_USER');
+    if(raw){
+      user=JSON.parse(raw);
+    }
+  }catch(e){console.error('ESG_USER 파싱',e)}
+
+  // 2순위: localStorage.esg_pin_auth (PIN 로그인 영속)
+  if(!user){
+    try{
+      const raw=localStorage.getItem('esg_pin_auth');
+      if(raw){
+        user=JSON.parse(raw);
+      }
+    }catch(e){console.error('esg_pin_auth 파싱',e)}
+  }
+
+  if(user && (user.emp_name||user.name||user.user_name)){
+    const name=user.emp_name||user.name||user.user_name;
+    const empNo=user.emp_no||user.user_id||'';
+    inp.value=name;
+    inp.dataset.empNo=empNo;
+    src.textContent=empNo?`✓ 로그인 (${empNo})`:'✓ 로그인';
+    src.style.color='#388e3c';
+  }else{
+    inp.value='';
+    inp.placeholder='⚠ 로그인 정보 없음 - 로그인 페이지에서 접속하세요';
+    src.textContent='✗ 미로그인';
+    src.style.color='#c62828';
+    // 로그인 안되어 있으면 직접 입력 가능하게
+    inp.removeAttribute('readonly');
+    inp.style.background='#fff';
+    inp.style.cursor='text';
+  }
+}
+
+/* ============ OCR ============ */
+async function handleImage(ev){
+  const file=ev.target.files[0];
+  if(!file)return;
+  const img=document.getElementById('preview');
+  img.src=URL.createObjectURL(file);
+  img.style.display='block';
+
+  const zone=document.getElementById('ocrZone');
+  const status=document.getElementById('ocrStatus');
+  const prog=document.getElementById('ocrProgress');
+  const btn=document.getElementById('btnOCR');
+  zone.classList.add('busy');
+  prog.classList.add('on');
+  btn.disabled=true;
+  status.innerHTML='<span class="spinner"></span> OCR 분석 중...';
+
+  try{
+    const {data:{text}}=await Tesseract.recognize(file,'eng',{
+      logger:m=>{
+        if(m.status==='recognizing text'){
+          const p=Math.round(m.progress*100);
+          prog.firstElementChild.style.width=p+'%';
+          status.innerHTML=`<span class="spinner"></span> 인식 중 ${p}%`;
+        }
+      }
+    });
+    parseOCR(text);
+  }catch(e){
+    status.textContent='❌ OCR 실패: '+e.message;
+    toast('OCR 실패','err');
+  }finally{
+    zone.classList.remove('busy');
+    setTimeout(()=>{prog.classList.remove('on');prog.firstElementChild.style.width='0%';},800);
+    btn.disabled=false;
+  }
+  ev.target.value='';
+}
+
+function parseOCR(text){
+  // Smart Load Monitor 화면에서 숫자 추출
+  // TOTAL은 가장 큰 숫자 (보통 100~200대), CH1/CH2는 작은 숫자 (50~70대)
+  const nums=text.match(/\d+\.?\d*/g)||[];
+  console.log('OCR raw:',text);
+  console.log('OCR nums:',nums);
+
+  // 합리적 범위(10~999)의 소수점 1자리 숫자 우선
+  const candidates=nums.map(n=>parseFloat(n)).filter(n=>!isNaN(n)&&n>=10&&n<=999);
+
+  // 보통 화면에는 [TOTAL, CH1, CH2, 임계값] 4개 정도가 큰 숫자로 나옴
+  // TOTAL = CH1 + CH2 인 점을 활용해 매칭 시도
+  let total=null,ch1=null,ch2=null;
+
+  // 가장 큰 값을 TOTAL 후보로
+  const sorted=[...candidates].sort((a,b)=>b-a);
+  for(let i=0;i<sorted.length;i++){
+    const cand_total=sorted[i];
+    // 나머지에서 CH1+CH2 ≈ TOTAL 조합 찾기
+    for(let j=0;j<candidates.length;j++){
+      for(let k=0;k<candidates.length;k++){
+        if(j===k)continue;
+        const a=candidates[j],b=candidates[k];
+        if(a===cand_total||b===cand_total)continue;
+        if(Math.abs((a+b)-cand_total)<=2.0 && a>=20&&a<=150&&b>=20&&b<=150){
+          total=cand_total;ch1=a;ch2=b;
+          break;
+        }
+      }
+      if(total!==null)break;
+    }
+    if(total!==null)break;
+  }
+
+  // 매칭 실패 시 단순히 가장 큰 3개
+  if(total===null && candidates.length>=3){
+    total=sorted[0];
+    ch1=sorted[1];
+    ch2=sorted[2];
+  }
+
+  const status=document.getElementById('ocrStatus');
+  const result=document.getElementById('ocrResult');
+
+  if(total===null){
+    status.textContent='❌ 숫자 인식 실패. 더 선명한 사진을 촬영하세요.';
+    result.innerHTML='';
+    return;
+  }
+
+  status.innerHTML=`✅ 인식 완료`;
+  result.innerHTML=`
+    <div class="ocr-result">
+      <div class="ocr-result-row"><span>TOTAL</span><b style="color:#1b5e20;font-size:18px">${total}</b></div>
+      <div class="ocr-result-row"><span>CH1 (좌)</span><b style="color:#8d6e00;font-size:16px">${ch1}</b></div>
+      <div class="ocr-result-row"><span>CH2 (우)</span><b style="color:#a02550;font-size:16px">${ch2}</b></div>
+      <div style="margin-top:8px;font-size:11px;color:#666">↓ 어느 시간대에 입력할까요?</div>
+      <div class="ocr-pick">
+        <button onclick="applyOCR('0830',${total},${ch1},${ch2})">8:30</button>
+        <button onclick="applyOCR('1030',${total},${ch1},${ch2})">10:30</button>
+        <button onclick="applyOCR('1130',${total},${ch1},${ch2})">11:30</button>
+        <button onclick="applyOCR('1400',${total},${ch1},${ch2})">14:00</button>
+        <button onclick="applyOCR('1510',${total},${ch1},${ch2})">15:10</button>
+        <button onclick="applyOCR('1630',${total},${ch1},${ch2})">16:30</button>
+      </div>
+    </div>`;
+}
+
+function applyOCR(time,total,ch1,ch2){
+  document.getElementById(`t_${time}_total`).value=total;
+  document.getElementById(`t_${time}_ch1`).value=ch1;
+  document.getElementById(`t_${time}_ch2`).value=ch2;
+  toast(`${time.slice(0,2)}:${time.slice(2)} 입력 완료`,'ok');
+}
+
+/* ============ 저장 ============ */
+async function saveCheck(){
+  const date=document.getElementById('chkDate').value;
+  const machine=document.getElementById('chkMachine').value;
+  const machineName=document.getElementById('chkMachine').selectedOptions[0]?.text||'';
+  const item=document.getElementById('chkItem').value.trim();
+  const inspectorInp=document.getElementById('chkInspector');
+  const inspector=inspectorInp.value.trim();
+  const empNo=inspectorInp.dataset.empNo||'';
+  const dailyShot=parseInt(document.getElementById('chkDailyShot').value)||null;
+  const memo=document.getElementById('chkMemo').value.trim();
+
+  if(!date){toast('점검일자 입력','err');return}
+  if(!machine){toast('호기 선택','err');return}
+  if(!inspector){toast('점검자 정보 없음 (로그인 필요)','err');return}
+
+  const times=['0830','1030','1130','1400','1510','1630'];
+  const row={
+    check_date:date,
+    machine_code:machine,
+    machine_name:machineName.replace(machine,'').trim(),
+    item_code:item||null,
+    inspector:inspector||null,
+    daily_shot:dailyShot,
+    memo:memo||null,
+    enter_by:empNo||inspector||'unknown'
+  };
+  times.forEach(t=>{
+    ['total','ch1','ch2'].forEach(k=>{
+      const v=document.getElementById(`t_${t}_${k}`).value;
+      row[`t${t}_${k}`]=v?parseFloat(v):null;
+    });
+  });
+
+  try{
+    const {error}=await supa.from('load_monitor_check').upsert(row,{onConflict:'check_date,machine_code'});
+    if(error)throw error;
+    toast('✅ 저장 완료','ok');
+  }catch(e){
+    console.error(e);
+    if(e.code==='PGRST205'){
+      toast('테이블 없음 - 설정탭 SQL 실행','err');
+    }else if(e.code==='42501'){
+      toast('권한 오류 - RLS 확인','err');
+    }else{
+      toast('저장 실패: '+(e.message||e.code||''),'err');
+    }
+  }
+}
+
+function clearForm(){
+  if(!confirm('현재 입력값을 모두 지울까요?'))return;
+  ['chkItem','chkDailyShot','chkMemo'].forEach(id=>document.getElementById(id).value='');
+  ['0830','1030','1130','1400','1510','1630'].forEach(t=>{
+    ['total','ch1','ch2'].forEach(k=>document.getElementById(`t_${t}_${k}`).value='');
+  });
+  document.getElementById('preview').style.display='none';
+  document.getElementById('ocrResult').innerHTML='';
+  document.getElementById('ocrStatus').textContent='사진을 찍거나 갤러리에서 선택하세요';
+  document.getElementById('shotSrc').textContent='';
+  document.getElementById('shotHint').textContent='';
+  document.getElementById('itemSrc').textContent='';
+  toast('초기화','ok');
+}
+
+/* ============ MES 일일타발수 / 기종 조회 ============ */
+// Python 릴레이 API 후보 (mes_monitor.py)
+const MES_API_BASES=[
+  'http://192.168.1.250:5100',
+  'http://localhost:5100'
+];
+
+const LS_LAST_MACHINE='lmc_last_machine';
+
+// 호기 변경 시: localStorage 저장 + 기종 자동조회
+async function onMachineChange(){
+  const machine=document.getElementById('chkMachine').value;
+  if(machine){
+    localStorage.setItem(LS_LAST_MACHINE,machine);
+    fetchItemCode(true);  // 기종은 자동, 타발수는 버튼으로만
+  }else{
+    document.getElementById('chkItem').value='';
+    document.getElementById('itemSrc').textContent='';
+  }
+}
+
+// 마지막 호기 복원
+function restoreLastMachine(){
+  const last=localStorage.getItem(LS_LAST_MACHINE);
+  if(!last)return;
+  const sel=document.getElementById('chkMachine');
+  // option에 존재하는지 확인
+  if([...sel.options].some(o=>o.value===last)){
+    sel.value=last;
+    fetchItemCode(true);
+  }
+}
+
+// 기종(품목) 자동 조회
+async function fetchItemCode(silent=false){
+  const machine=document.getElementById('chkMachine').value;
+  const inp=document.getElementById('chkItem');
+  const src=document.getElementById('itemSrc');
+  if(!machine)return;
+
+  let item=null,itemName=null,source=null;
+
+  // [1순위] Python 릴레이 - 현재 작업 중인 호기의 진행중 작업지시
+  for(const base of MES_API_BASES){
+    try{
+      const ctrl=new AbortController();
+      const tid=setTimeout(()=>ctrl.abort(),3000);
+      const r=await fetch(`${base}/api/mes/current_wo?machine_code=${encodeURIComponent(machine)}`,{signal:ctrl.signal});
+      clearTimeout(tid);
+      if(r.ok){
+        const j=await r.json();
+        if(j && (j.item_code||j.ITEM_CODE)){
+          item=j.item_code||j.ITEM_CODE;
+          itemName=j.item_name||j.ITEM_NAME||j.model_name||j.MODEL_NAME||'';
+          source='MES (현재작업)';
+          break;
+        }
+      }
+    }catch(e){/* 다음 시도 */}
+  }
+
+  // [2순위] Supabase machine_status (현재 표시 중인 작업)
+  if(!item){
+    try{
+      const {data,error}=await supa.from('machine_status')
+        .select('item_code,item_name,model_name,wo_no,work_order_no')
+        .eq('machine_code',machine)
+        .maybeSingle();
+      if(!error && data){
+        item=data.item_code||'';
+        itemName=data.item_name||data.model_name||'';
+        if(item)source='Supabase';
+      }
+    }catch(e){console.error('item lookup',e)}
+  }
+
+  // [3순위] work_order_cache (최근 작업지시)
+  if(!item){
+    try{
+      const {data}=await supa.from('work_order_cache')
+        .select('item_code,item_name,model_name,work_order_date')
+        .eq('machine_code',machine)
+        .order('work_order_date',{ascending:false})
+        .limit(1);
+      if(data && data.length){
+        item=data[0].item_code||'';
+        itemName=data[0].item_name||data[0].model_name||'';
+        if(item)source='work_order_cache';
+      }
+    }catch(e){/* 테이블 없을 수 있음 */}
+  }
+
+  if(item){
+    // 표시는 "기종명" 우선 (모델명/품번)
+    inp.value=itemName||item;
+    src.textContent=`✓ ${source}`;
+    src.style.color='#388e3c';
+  }else{
+    src.textContent=silent?'':'(조회실패 - 수동입력)';
+    src.style.color='#c62828';
+  }
+}
+
+async function fetchShotQty(silent=false){
+  const machine=document.getElementById('chkMachine').value;
+  const date=document.getElementById('chkDate').value;
+  const inp=document.getElementById('chkDailyShot');
+  const src=document.getElementById('shotSrc');
+  const hint=document.getElementById('shotHint');
+  const btn=document.getElementById('btnShot');
+
+  if(!machine){
+    if(!silent)toast('호기를 먼저 선택하세요','err');
+    return;
+  }
+  if(!date){
+    if(!silent)toast('점검일자를 먼저 선택하세요','err');
+    return;
+  }
+
+  btn.disabled=true;btn.textContent='조회중...';
+  src.textContent='';hint.textContent='';
+
+  let qty=null,source=null;
+
+  // [1순위] Python 릴레이 API (가장 정확 - 일자별 SHOT_QTY)
+  for(const base of MES_API_BASES){
+    try{
+      const ctrl=new AbortController();
+      const tid=setTimeout(()=>ctrl.abort(),3000);
+      const r=await fetch(`${base}/api/mes/shot_qty?machine_code=${encodeURIComponent(machine)}&date=${date}`,{signal:ctrl.signal});
+      clearTimeout(tid);
+      if(r.ok){
+        const j=await r.json();
+        if(j && (j.shot_qty!==undefined || j.SHOT_QTY!==undefined)){
+          qty=parseInt(j.shot_qty||j.SHOT_QTY)||0;
+          source='MES (Python릴레이)';
+          break;
+        }
+      }
+    }catch(e){/* 다음 시도 */}
+  }
+
+  // [2순위] Supabase machine_status (현재 누적값)
+  if(qty===null){
+    try{
+      const {data,error}=await supa.from('machine_status')
+        .select('shot_qty,actual_qty,last_update')
+        .eq('machine_code',machine)
+        .maybeSingle();
+      if(!error && data){
+        // shot_qty 우선, 없으면 actual_qty
+        qty=parseInt(data.shot_qty||data.actual_qty)||0;
+        source='Supabase (현재값)';
+        if(qty>0)hint.textContent=`⚠ 현재 누적값입니다. 일자별 정확값은 MES 연결 필요`;
+      }
+    }catch(e){console.error('Supabase shot_qty',e)}
+  }
+
+  btn.disabled=false;btn.textContent='📡 MES조회';
+
+  if(qty===null||qty===0){
+    if(!silent){
+      src.textContent='(조회실패 - 수동입력)';
+      src.style.color='#c62828';
+      toast('타발수 조회 실패. 수동 입력하세요','err');
+    }
+    return;
+  }
+
+  inp.value=qty;
+  src.textContent=`✓ ${source}`;
+  src.style.color='#388e3c';
+  if(!silent)toast(`타발수 ${qty.toLocaleString()} 조회됨`,'ok');
+}
+
+// 수동 입력 감지
+document.addEventListener('DOMContentLoaded',()=>{
+  setTimeout(()=>{
+    const inp=document.getElementById('chkDailyShot');
+    if(inp){
+      inp.addEventListener('input',()=>{
+        const src=document.getElementById('shotSrc');
+        src.textContent='(수동입력)';
+        src.style.color='#1565c0';
+      });
+    }
+  },300);
+});
+
+/* ============ 이력 조회 ============ */
+async function loadHistory(){
+  const from=document.getElementById('qFrom').value;
+  const to=document.getElementById('qTo').value;
+  const machine=document.getElementById('qMachine').value;
+  const tbody=document.getElementById('histBody');
+  tbody.innerHTML='<tr><td colspan="11" style="padding:20px">조회 중...</td></tr>';
+  try{
+    let q=supa.from('load_monitor_check').select('*').order('check_date',{ascending:false}).order('machine_code');
+    if(from)q=q.gte('check_date',from);
+    if(to)q=q.lte('check_date',to);
+    if(machine)q=q.eq('machine_code',machine);
+    const {data,error}=await q.limit(200);
+    if(error)throw error;
+    if(!data||!data.length){
+      tbody.innerHTML='<tr><td colspan="11" style="padding:20px;color:#999">데이터 없음</td></tr>';
+      return;
+    }
+    tbody.innerHTML=data.map(r=>{
+      const cell=t=>r[`t${t}_total`]?`${r[`t${t}_total`]}<br><span style="font-size:9px;color:#888">${r[`t${t}_ch1`]||'-'}/${r[`t${t}_ch2`]||'-'}</span>`:'-';
+      return `<tr>
+        <td>${r.check_date}</td>
+        <td>${r.machine_code}</td>
+        <td>${r.item_code||'-'}</td>
+        <td>${cell('0830')}</td>
+        <td>${cell('1030')}</td>
+        <td>${cell('1130')}</td>
+        <td>${cell('1400')}</td>
+        <td>${cell('1510')}</td>
+        <td>${cell('1630')}</td>
+        <td>${r.daily_shot||'-'}</td>
+        <td><button class="btn btn-danger" style="padding:4px 8px;font-size:11px" onclick="delRow(${r.id})">삭제</button></td>
+      </tr>`;
+    }).join('');
+  }catch(e){
+    console.error(e);
+    tbody.innerHTML=`<tr><td colspan="11" style="padding:20px;color:#c62828">오류: ${e.message||e.code}</td></tr>`;
+  }
+}
+
+async function delRow(id){
+  if(!confirm('삭제하시겠습니까?'))return;
+  try{
+    const {error}=await supa.from('load_monitor_check').delete().eq('id',id);
+    if(error)throw error;
+    toast('삭제 완료','ok');
+    loadHistory();
+  }catch(e){
+    toast('삭제실패: '+e.message,'err');
+  }
+}
+
+function exportCSV(){
+  const tbody=document.getElementById('histBody');
+  if(!tbody.querySelector('tr td button')){toast('데이터 없음','err');return}
+  const rows=[['일자','호기','기종','8:30 TOTAL','8:30 CH1','8:30 CH2','10:30 TOTAL','10:30 CH1','10:30 CH2','11:30 TOTAL','11:30 CH1','11:30 CH2','14:00 TOTAL','14:00 CH1','14:00 CH2','15:10 TOTAL','15:10 CH1','15:10 CH2','16:30 TOTAL','16:30 CH1','16:30 CH2','일일타발수','비고']];
+  const from=document.getElementById('qFrom').value;
+  const to=document.getElementById('qTo').value;
+  const machine=document.getElementById('qMachine').value;
+  (async()=>{
+    let q=supa.from('load_monitor_check').select('*').order('check_date',{ascending:false}).order('machine_code');
+    if(from)q=q.gte('check_date',from);
+    if(to)q=q.lte('check_date',to);
+    if(machine)q=q.eq('machine_code',machine);
+    const {data}=await q.limit(500);
+    (data||[]).forEach(r=>{
+      rows.push([r.check_date,r.machine_code,r.item_code||'',
+        r.t0830_total||'',r.t0830_ch1||'',r.t0830_ch2||'',
+        r.t1030_total||'',r.t1030_ch1||'',r.t1030_ch2||'',
+        r.t1130_total||'',r.t1130_ch1||'',r.t1130_ch2||'',
+        r.t1400_total||'',r.t1400_ch1||'',r.t1400_ch2||'',
+        r.t1510_total||'',r.t1510_ch1||'',r.t1510_ch2||'',
+        r.t1630_total||'',r.t1630_ch1||'',r.t1630_ch2||'',
+        r.daily_shot||'',r.memo||'']);
+    });
+    const csv='\uFEFF'+rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+    const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;a.download=`로드모니터점검_${kstToday()}.csv`;a.click();
+    URL.revokeObjectURL(url);
+    toast('CSV 다운로드','ok');
+  })();
+}
+
+/* ============ 유틸 ============ */
+async function testConnection(){
+  try{
+    const {error}=await supa.from('load_monitor_check').select('id').limit(1);
+    if(error){
+      if(error.code==='PGRST205')toast('테이블 없음 - SQL 실행 필요','err');
+      else toast('연결 오류: '+error.message,'err');
+    }else toast('✅ 연결 정상','ok');
+  }catch(e){
+    toast('연결 실패: '+e.message,'err');
+  }
+}
+
+function copyDDL(){
+  navigator.clipboard.writeText(DDL).then(()=>{
+    toast('SQL 복사 완료','ok');
+    window.open('https://supabase.com/dashboard/project/omngtyewdaqpphnzeate/sql','_blank');
+  });
+}
+
+function toast(msg,type){
+  const old=document.querySelector('.toast');if(old)old.remove();
+  const t=document.createElement('div');
+  t.className='toast '+(type||'');
+  t.textContent=msg;
+  document.body.appendChild(t);
+  setTimeout(()=>t.remove(),2500);
+}
+</script>
+</body>
+</html>
