@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>출하관리 체크시트 v1.8</title>
+<title>출하관리 체크시트 v1.9</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;900&display=swap">
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
@@ -78,7 +78,7 @@ input[type=radio]:checked + .okng-btn[for$=_ng] { background: var(--ng); color: 
 .btn-row { display: flex; gap: 8px; }
 .btn-row > * { flex: 1; }
 
-.toast { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,.92); color: #fff; padding: 12px 22px; border-radius: 22px; font-size: 13px; font-weight: 600; z-index: 10001; opacity: 0; transition: opacity .3s; pointer-events: none; box-shadow: 0 4px 14px rgba(0,0,0,.4); }
+.toast { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,.92); color: #fff; padding: 12px 22px; border-radius: 22px; font-size: 13px; font-weight: 600; z-index: 10001; opacity: 0; transition: opacity .3s; pointer-events: none; box-shadow: 0 4px 14px rgba(0,0,0,.4); max-width: calc(100vw - 40px); white-space: pre-wrap; word-break: break-word; line-height: 1.5; text-align: center; }
 .toast.show { opacity: 1; }
 .toast.error { background: rgba(220,38,38,.95); }
 .toast.success { background: rgba(22,163,74,.95); }
@@ -132,7 +132,7 @@ input[type=radio]:checked + .okng-btn[for$=_ng] { background: var(--ng); color: 
 <body>
 
 <div class="hdr">
-  <h1>📦 출하관리 Check Sheet v1.8</h1>
+  <h1>📦 출하관리 Check Sheet v1.9</h1>
   <p>품질팀 · 출하검사 일상점검 <span id="hdrUserBadge" class="user-badge" style="display:none"></span></p>
 </div>
 
@@ -456,51 +456,49 @@ async function loadItemsFromServer() {
 
 async function saveLinesToServer() {
   if (!isConfigured()) return false;
-  try {
-    // 1) 기존 그룹 전체 삭제
-    await fetch(getSbUrl() + '/rest/v1/common_code?code_group=eq.ship_machine_list', {
-      method: 'DELETE',
-      headers: { 'apikey': getSbKey(), 'Authorization': 'Bearer ' + getSbKey() }
-    });
-    // 2) 신규 일괄 INSERT
-    if (_lines.length === 0) return true;
-    const rows = _lines.map((nm, i) => ({
-      code_group: 'ship_machine_list',
-      code_value: nm,
-      code_name: nm,
-      sort_order: i + 1
-    }));
-    await sbInsert('common_code', rows);
-    return true;
-  } catch(e) {
-    console.log('라인 서버저장 실패:', e);
-    return false;
+  // 1) 기존 그룹 전체 삭제
+  const delRes = await fetch(getSbUrl() + '/rest/v1/common_code?code_group=eq.ship_machine_list', {
+    method: 'DELETE',
+    headers: { 'apikey': getSbKey(), 'Authorization': 'Bearer ' + getSbKey() }
+  });
+  if (!delRes.ok) {
+    const t = await delRes.text();
+    throw new Error('라인 DELETE 실패 HTTP ' + delRes.status + ' ' + t.substring(0,160));
   }
+  // 2) 신규 일괄 INSERT
+  if (_lines.length === 0) return true;
+  const rows = _lines.map((nm, i) => ({
+    code_group: 'ship_machine_list',
+    code_value: nm,
+    code_name: nm,
+    sort_order: i + 1
+  }));
+  await sbInsert('common_code', rows);
+  return true;
 }
 
 async function saveItemsToServer() {
   if (!isConfigured()) return false;
-  try {
-    // 1) 기존 그룹 전체 삭제
-    await fetch(getSbUrl() + '/rest/v1/common_code?code_group=eq.ship_check_items', {
-      method: 'DELETE',
-      headers: { 'apikey': getSbKey(), 'Authorization': 'Bearer ' + getSbKey() }
-    });
-    // 2) 신규 일괄 INSERT
-    if (_items.length === 0) return true;
-    const rows = _items.map((it, i) => ({
-      code_group: 'ship_check_items',
-      code_value: it.key,
-      code_name: it.label || '',
-      note: JSON.stringify({ std: it.std || '', method: it.method || '육안', no: i + 1 }),
-      sort_order: i + 1
-    }));
-    await sbInsert('common_code', rows);
-    return true;
-  } catch(e) {
-    console.log('항목 서버저장 실패:', e);
-    return false;
+  // 1) 기존 그룹 전체 삭제
+  const delRes = await fetch(getSbUrl() + '/rest/v1/common_code?code_group=eq.ship_check_items', {
+    method: 'DELETE',
+    headers: { 'apikey': getSbKey(), 'Authorization': 'Bearer ' + getSbKey() }
+  });
+  if (!delRes.ok) {
+    const t = await delRes.text();
+    throw new Error('항목 DELETE 실패 HTTP ' + delRes.status + ' ' + t.substring(0,160));
   }
+  // 2) 신규 일괄 INSERT
+  if (_items.length === 0) return true;
+  const rows = _items.map((it, i) => ({
+    code_group: 'ship_check_items',
+    code_value: it.key,
+    code_name: it.label || '',
+    note: JSON.stringify({ std: it.std || '', method: it.method || '육안', no: i + 1 }),
+    sort_order: i + 1
+  }));
+  await sbInsert('common_code', rows);
+  return true;
 }
 
 // ============ Supabase ============
@@ -528,7 +526,9 @@ function toast(msg, type) {
   const t = document.getElementById('toast');
   t.textContent = msg;
   t.className = 'toast show ' + (type || '');
-  setTimeout(() => { t.className = 'toast'; }, 2200);
+  // 에러 메시지는 길게(8초), 일반은 2.2초
+  const dur = (type === 'error') ? 8000 : 2200;
+  setTimeout(() => { t.className = 'toast'; }, dur);
 }
 
 // ============ 점검 항목 렌더링 ============
@@ -979,18 +979,24 @@ async function saveAllSettings() {
   renderCheckItems();
 
   // 5. Supabase 동기화 (다른 디바이스/사용자와 공유)
-  toast('⏳ 서버 동기화 중...');
-  const [okItems, okLines] = await Promise.all([
-    saveItemsToServer(),
-    saveLinesToServer()
-  ]);
-
-  if (okItems && okLines) {
-    toast('💾 저장 완료 · 서버 동기화됨 (' + _items.length + '개 항목 · ' + _lines.length + '개 라인)', 'success');
-  } else if (!isConfigured()) {
+  if (!isConfigured()) {
     toast('💾 로컬 저장됨 (Supabase 미설정 · 서버 동기화 안됨)', 'success');
+    return;
+  }
+  toast('⏳ 서버 동기화 중...');
+
+  let itemsErr = null, linesErr = null;
+  try { await saveItemsToServer(); } catch(e) { itemsErr = e.message || String(e); }
+  try { await saveLinesToServer(); } catch(e) { linesErr = e.message || String(e); }
+
+  if (!itemsErr && !linesErr) {
+    toast('💾 저장 완료 · 서버 동기화됨 (' + _items.length + '개 항목 · ' + _lines.length + '개 라인)', 'success');
   } else {
-    toast('⚠ 로컬 저장됨 / 서버 동기화 일부 실패 (콘솔 확인)', 'error');
+    const msgs = [];
+    if (itemsErr) msgs.push('항목: ' + itemsErr);
+    if (linesErr) msgs.push('라인: ' + linesErr);
+    console.error('서버 동기화 실패', { itemsErr, linesErr });
+    toast('⚠ 서버저장 실패 → ' + msgs.join(' / '), 'error');
   }
 }
 
