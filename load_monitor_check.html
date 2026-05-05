@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>로드모니터 하중 일일점검 v1.9</title>
+<title>로드모니터 하중 일일점검 v2.1</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <style>
@@ -95,6 +95,19 @@ table.hist tr:hover{background:#f0f7ff}
 .ocr-pick{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:8px}
 .ocr-pick button{padding:8px;border:1.5px solid #2c5282;background:#fff;color:#2c5282;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer}
 .ocr-pick button:active{background:#2c5282;color:#fff}
+
+/* 기종명 검색 드롭다운 */
+.model-search-wrap{position:relative}
+.model-search-wrap input{width:100%;padding:10px;border:1.5px solid #ddd;border-radius:8px;font-size:14px;font-family:inherit;background:#fff}
+.model-search-wrap input:focus{border-color:#2c5282;outline:none}
+.model-dropdown{position:absolute;top:100%;left:0;right:0;background:#fff;border:1.5px solid #2c5282;border-top:none;border-radius:0 0 8px 8px;max-height:240px;overflow-y:auto;z-index:100;display:none;box-shadow:0 4px 12px rgba(0,0,0,.12)}
+.model-dropdown.show{display:block}
+.model-dropdown .md-item{padding:10px 12px;font-size:13px;cursor:pointer;border-bottom:1px solid #f5f5f5;display:flex;align-items:center;gap:6px}
+.model-dropdown .md-item:hover,.model-dropdown .md-item.active{background:#e3f2fd}
+.model-dropdown .md-item .md-cust{font-size:10px;color:#1565c0;font-weight:600;background:#e3f2fd;padding:1px 6px;border-radius:4px}
+.model-dropdown .md-item .md-name{font-weight:600;color:#333}
+.model-dropdown .md-empty{padding:12px;text-align:center;color:#bbb;font-size:12px}
+.md-highlight{background:#fff176;padding:0 1px;border-radius:2px}
 </style>
 </head>
 <body>
@@ -124,8 +137,16 @@ table.hist tr:hover{background:#f0f7ff}
     </div>
     <div class="row2">
       <div class="fg">
-        <label>기종 <span id="itemSrc" style="font-size:10px;color:#888;font-weight:400"></span></label>
-        <input type="text" id="chkItem" placeholder="호기 선택 시 자동조회">
+        <label>고객사</label>
+        <select id="selCustomer" onchange="onCustomerSelect()"><option value="">전체 고객사</option></select>
+      </div>
+      <div class="fg">
+        <label>기종 <span id="modelSrc" style="font-size:10px;color:#888;font-weight:400"></span></label>
+        <div class="model-search-wrap">
+          <input type="text" id="selModelInput" placeholder="기종명 검색 (부분입력 가능)" autocomplete="off" oninput="onModelSearch(this.value)" onfocus="onModelSearch(this.value)">
+          <div class="model-dropdown" id="modelDropdown"></div>
+        </div>
+        <input type="hidden" id="chkItem" value="">
       </div>
       <div class="fg">
         <label>점검자 <span id="userSrc" style="font-size:10px;color:#888;font-weight:400"></span></label>
@@ -133,12 +154,8 @@ table.hist tr:hover{background:#f0f7ff}
       </div>
     </div>
     <div class="fg">
-      <label>일일 타발수 <span id="shotSrc" style="font-size:10px;color:#888;font-weight:400"></span></label>
-      <div style="display:flex;gap:6px">
-        <input type="number" id="chkDailyShot" placeholder="MES 자동조회 또는 수동입력" inputmode="numeric" style="flex:1">
-        <button class="btn btn-primary" onclick="fetchShotQty()" style="padding:8px 14px;font-size:12px;white-space:nowrap" id="btnShot">📡 MES조회</button>
-      </div>
-      <div id="shotHint" style="font-size:11px;color:#666;margin-top:4px"></div>
+      <label>일일 타발수</label>
+      <input type="number" id="chkDailyShot" placeholder="예: 14000" inputmode="numeric">
     </div>
   </div>
 
@@ -274,17 +291,18 @@ table.hist tr:hover{background:#f0f7ff}
     <div style="font-size:12px;color:#444;line-height:1.7">
       • <b>OCR 사용법</b>: 로드모니터 화면을 정면에서 밝은 환경으로 촬영<br>
       • <b>인식 값</b>: TOTAL(녹색 큰숫자) / CH1(노랑) / CH2(분홍)<br>
-      • <b>시간대 자동매칭</b>: 촬영 시각 기준 ±30분 이내 가장 가까운 시간대(8:30/10:30/11:30/14:00/15:10/16:30)에 자동 입력. 다른 시간대로 변경하려면 버튼 클릭<br>
+      • <b>시간대 자동매칭</b>: 촬영 시각 기준 ±30분 이내 가장 가까운 시간대(8:30/10:30/11:30/14:00/15:10/16:30)에 자동 입력<br>
       • <b>점검자 자동표시</b>: 로그인 정보(<code>ESG_USER</code>)에서 자동 입력<br>
-      • <b>호기 자동 저장/복원</b>: 호기 1회 선택 시 즉시 저장 (💾 저장됨 표시) → 다음 접속 시 자동 복원 (✓ 자동복원됨 표시)<br>
-      • <b>호기 마스터</b>: <code>machine_master_tj</code>에서 활성 호기만 로드<br>
-      • <b>기종 자동조회</b>: 호기 선택 시 MES → Supabase → work_order_cache 순으로 현재 작업 기종 조회<br>
-      • <b>일일타발수</b>: 📡 MES조회 버튼으로 가져오기<br>
+      • <b>호기 마스터</b>: <code>machine_master_tj</code>에서 활성 호기만 로드 → 마스터 미생성 시 기본 34대 목록<br>
+      • <b>호기 자동 저장/복원</b>: 호기 1회 선택 시 즉시 저장 → 다음 접속 시 자동 복원<br>
+      • <b>고객사 마스터</b>: <code>common_code</code>의 <code>code_group=customer</code>에서 로드<br>
+      • <b>기종 마스터</b>: <code>general_model_tj</code> + <code>defect_model</code> 통합 (부분 검색 + 자동완성). 마스터에 없어도 입력값 그대로 저장<br>
+      • <b>고객사/기종 자동 저장/복원</b>: 마지막 선택 자동 저장 → 다음 접속 시 자동 복원<br>
       • <b>저장 위치</b>: Supabase <code>load_monitor_check</code> 테이블
     </div>
   </div>
 
-  <div class="ver">v1.9 · 로드모니터 일일점검 · 태진다이텍 품질관리팀</div>
+  <div class="ver">v2.1 · 로드모니터 일일점검 · 태진다이텍 품질관리팀</div>
 </div>
 
 <script>
@@ -355,6 +373,15 @@ window.addEventListener('DOMContentLoaded',()=>{
   initDates();
   loadMachines();
   loadInspector();
+  loadCustomers();
+  loadModels();
+
+  // 드롭다운 외부 클릭 시 닫기
+  document.addEventListener('click',e=>{
+    if(!e.target.closest('.model-search-wrap')){
+      document.getElementById('modelDropdown')?.classList.remove('show');
+    }
+  });
 });
 
 function initDates(){
@@ -529,6 +556,170 @@ function loadInspector(){
     inp.removeAttribute('readonly');
     inp.style.background='#fff';
     inp.style.cursor='text';
+  }
+}
+
+/* ============ 고객사 / 기종 마스터 ============ */
+let cachedCustomers=[];
+let cachedModels=[];  // [{customer, name}]
+
+const LS_LAST_CUSTOMER='lmc_last_customer';
+const LS_LAST_MODEL='lmc_last_model';
+
+async function loadCustomers(){
+  try{
+    const res=await fetch(`${SB_URL}/rest/v1/common_code?code_group=eq.customer&select=code_value,sort_order&order=sort_order.asc`,{
+      headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY}
+    });
+    if(res.ok){
+      const data=await res.json();
+      cachedCustomers=(data||[]).map(r=>r.code_value||'').filter(Boolean);
+      console.log('[고객사]',cachedCustomers.length,'개');
+    }
+  }catch(e){console.warn('고객사 로드 실패:',e);cachedCustomers=[]}
+  renderCustomerSelect();
+}
+
+async function loadModels(){
+  // 1순위: general_model_tj (defect 패턴)
+  try{
+    const res=await fetch(`${SB_URL}/rest/v1/general_model_tj?select=customer,model_name&order=customer.asc,model_name.asc&limit=2000`,{
+      headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY}
+    });
+    if(res.ok){
+      const data=await res.json();
+      cachedModels=(data||[]).map(r=>({customer:r.customer||'',name:r.model_name||''})).filter(m=>m.name);
+      console.log('[기종] general_model_tj',cachedModels.length,'개');
+    }
+  }catch(e){console.warn('general_model_tj 로드:',e)}
+
+  // 2순위: defect_model 보강
+  try{
+    const res=await fetch(`${SB_URL}/rest/v1/defect_model?select=customer,model_name&limit=2000`,{
+      headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY}
+    });
+    if(res.ok){
+      const data=await res.json();
+      const seen=new Set(cachedModels.map(m=>m.customer+'||'+m.name));
+      (data||[]).forEach(r=>{
+        const k=(r.customer||'')+'||'+(r.model_name||'');
+        if(r.model_name && !seen.has(k)){
+          cachedModels.push({customer:r.customer||'',name:r.model_name});
+          seen.add(k);
+        }
+      });
+      console.log('[기종] 합계',cachedModels.length,'개');
+    }
+  }catch(e){console.warn('defect_model 로드:',e)}
+
+  // 마지막 선택 복원
+  restoreLastModelSelection();
+}
+
+function renderCustomerSelect(){
+  const sel=document.getElementById('selCustomer');
+  const cur=sel.value||localStorage.getItem(LS_LAST_CUSTOMER)||'';
+  sel.innerHTML='<option value="">전체 고객사</option>'+
+    cachedCustomers.map(c=>`<option value="${c}"${c===cur?' selected':''}>${c}</option>`).join('');
+}
+
+function onCustomerSelect(){
+  const cust=document.getElementById('selCustomer').value;
+  localStorage.setItem(LS_LAST_CUSTOMER,cust);
+  // 고객사 변경 시 기종 입력 초기화
+  document.getElementById('selModelInput').value='';
+  document.getElementById('chkItem').value='';
+  document.getElementById('modelSrc').textContent='';
+  document.getElementById('modelDropdown').classList.remove('show');
+}
+
+function _escH(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function _escA(s){return String(s||'').replace(/'/g,"\\'").replace(/"/g,'&quot;')}
+
+// 부분 입력으로 기종 검색 (고객사 필터 + 부분일치)
+function getFilteredModels(query){
+  const cust=document.getElementById('selCustomer').value;
+  const q=(query||'').trim().toLowerCase();
+  let models=[...cachedModels];
+  if(cust)models=models.filter(m=>m.customer===cust);
+  if(q)models=models.filter(m=>
+    m.name.toLowerCase().includes(q) ||
+    (m.customer||'').toLowerCase().includes(q)
+  );
+  // 정렬: 고객사 → 기종명
+  models.sort((a,b)=>(a.customer||'').localeCompare(b.customer||'','ko')||a.name.localeCompare(b.name,'ko'));
+  // 중복 제거
+  const seen=new Set();
+  return models.filter(m=>{
+    const k=m.customer+'||'+m.name;
+    if(seen.has(k))return false;
+    seen.add(k);
+    return true;
+  });
+}
+
+function onModelSearch(query){
+  // 입력값을 그대로 chkItem(hidden)에 저장 (드롭다운 선택 안해도 수동입력 가능)
+  document.getElementById('chkItem').value=(query||'').trim();
+  document.getElementById('modelSrc').textContent='';
+
+  const dd=document.getElementById('modelDropdown');
+  const models=getFilteredModels(query);
+  const q=(query||'').trim().toLowerCase();
+
+  if(!models.length){
+    dd.innerHTML='<div class="md-empty">검색 결과 없음 (입력값 그대로 저장됨)</div>';
+    dd.classList.add('show');
+    return;
+  }
+  const show=models.slice(0,50);
+  dd.innerHTML=show.map(m=>{
+    let nh=_escH(m.name);
+    if(q){
+      const idx=m.name.toLowerCase().indexOf(q);
+      if(idx>=0){
+        nh=_escH(m.name.substring(0,idx))+
+           '<span class="md-highlight">'+_escH(m.name.substring(idx,idx+q.length))+'</span>'+
+           _escH(m.name.substring(idx+q.length));
+      }
+    }
+    return '<div class="md-item" onclick="selectModel(\''+_escA(m.name)+'\',\''+_escA(m.customer)+'\')">'+
+      (m.customer?'<span class="md-cust">'+_escH(m.customer)+'</span>':'')+
+      '<span class="md-name">'+nh+'</span></div>';
+  }).join('');
+  if(models.length>50)dd.innerHTML+='<div class="md-empty">...외 '+(models.length-50)+'건</div>';
+  dd.classList.add('show');
+}
+
+function selectModel(name,customer){
+  document.getElementById('selModelInput').value=name;
+  document.getElementById('chkItem').value=name;
+  document.getElementById('modelDropdown').classList.remove('show');
+
+  // 고객사 같이 채우기 (선택된 게 없을 때만)
+  if(customer){
+    const sel=document.getElementById('selCustomer');
+    if(!sel.value){
+      sel.value=customer;
+      localStorage.setItem(LS_LAST_CUSTOMER,customer);
+    }
+  }
+  // 기종 자동저장
+  localStorage.setItem(LS_LAST_MODEL,name);
+  const src=document.getElementById('modelSrc');
+  src.textContent='💾 저장됨';
+  src.style.color='#388e3c';
+}
+
+function restoreLastModelSelection(){
+  const lastModel=localStorage.getItem(LS_LAST_MODEL);
+  if(!lastModel)return;
+  document.getElementById('selModelInput').value=lastModel;
+  document.getElementById('chkItem').value=lastModel;
+  const src=document.getElementById('modelSrc');
+  if(src){
+    src.textContent='✓ 자동 복원됨';
+    src.style.color='#388e3c';
   }
 }
 
@@ -733,9 +924,12 @@ async function saveCheck(){
   try{
     const {error}=await supa.from('load_monitor_check').upsert(row,{onConflict:'check_date,machine_code'});
     if(error)throw error;
-    // 저장 성공 시 호기를 localStorage에 확정 저장 (다음 접속 시 복원 보장)
+    // 저장 성공 시 호기/고객사/기종을 localStorage에 확정 저장 (다음 접속 시 복원 보장)
     localStorage.setItem(LS_LAST_MACHINE,machineFull);
     localStorage.setItem(LS_LAST_MACHINE_LABEL,machineFull);
+    const cust=document.getElementById('selCustomer').value;
+    if(cust)localStorage.setItem(LS_LAST_CUSTOMER,cust);
+    if(item)localStorage.setItem(LS_LAST_MODEL,item);
     toast('✅ 저장 완료','ok');
   }catch(e){
     console.error(e);
@@ -751,44 +945,36 @@ async function saveCheck(){
 
 function clearForm(){
   if(!confirm('현재 입력값을 모두 지울까요?'))return;
-  ['chkItem','chkDailyShot','chkMemo'].forEach(id=>document.getElementById(id).value='');
+  ['chkItem','chkDailyShot','chkMemo','selModelInput'].forEach(id=>{
+    const el=document.getElementById(id);
+    if(el)el.value='';
+  });
   ['0830','1030','1130','1400','1510','1630'].forEach(t=>{
     ['total','ch1','ch2'].forEach(k=>document.getElementById(`t_${t}_${k}`).value='');
   });
   document.getElementById('preview').style.display='none';
   document.getElementById('ocrResult').innerHTML='';
   document.getElementById('ocrStatus').textContent='사진을 찍거나 갤러리에서 선택하세요';
-  document.getElementById('shotSrc').textContent='';
-  document.getElementById('shotHint').textContent='';
-  document.getElementById('itemSrc').textContent='';
+  const ms=document.getElementById('modelSrc');
+  if(ms)ms.textContent='';
   toast('초기화','ok');
 }
 
-/* ============ MES 일일타발수 / 기종 조회 ============ */
-// Python 릴레이 API 후보 (mes_monitor.py)
-const MES_API_BASES=[
-  'http://192.168.1.250:5100',
-  'http://localhost:5100'
-];
-
+/* ============ 호기 자동저장/복원 ============ */
 const LS_LAST_MACHINE='lmc_last_machine';
 const LS_LAST_MACHINE_LABEL='lmc_last_machine_label';
 
-// 호기 변경 시: localStorage 저장 + 기종 자동조회
+// 호기 변경 시: localStorage에 저장만
 async function onMachineChange(){
   const sel=document.getElementById('chkMachine');
   const machine=sel.value;
   const src=document.getElementById('machineSrc');
   if(machine){
-    const label=sel.selectedOptions[0]?.text||'';
     localStorage.setItem(LS_LAST_MACHINE,machine);
-    localStorage.setItem(LS_LAST_MACHINE_LABEL,label);
+    localStorage.setItem(LS_LAST_MACHINE_LABEL,machine);
     src.textContent='💾 저장됨';
     src.style.color='#388e3c';
-    fetchItemCode(true);  // 기종은 자동, 타발수는 버튼으로만
   }else{
-    document.getElementById('chkItem').value='';
-    document.getElementById('itemSrc').textContent='';
     src.textContent='';
   }
 }
@@ -796,10 +982,9 @@ async function onMachineChange(){
 // 마지막 호기 복원 (loadMachines 완료 후 호출)
 function restoreLastMachine(){
   const last=localStorage.getItem(LS_LAST_MACHINE);
-  const lastLabel=localStorage.getItem(LS_LAST_MACHINE_LABEL);
   const src=document.getElementById('machineSrc');
   if(!last){
-    src.textContent='';
+    if(src)src.textContent='';
     return;
   }
   const sel=document.getElementById('chkMachine');
@@ -807,183 +992,26 @@ function restoreLastMachine(){
   // option에 존재하는지 확인
   if([...sel.options].some(o=>o.value===last)){
     sel.value=last;
-    src.textContent='✓ 자동 복원됨';
-    src.style.color='#388e3c';
-    fetchItemCode(true);
+    if(src){
+      src.textContent='✓ 자동 복원됨';
+      src.style.color='#388e3c';
+    }
     return;
   }
 
-  // 마스터에 없으면 임시 옵션 추가 (사용자가 다른 사람 호기 보고 있을 때 보호)
-  if(lastLabel){
-    const opt=document.createElement('option');
-    opt.value=last;
-    opt.textContent=lastLabel+' (이전 선택)';
-    sel.insertBefore(opt,sel.children[1]||null);
-    sel.value=last;
-    src.textContent='⚠ 마스터에 없음 - 이전 선택값 복원';
+  // 마스터에 없으면 임시 옵션 추가
+  const opt=document.createElement('option');
+  opt.value=last;
+  opt.textContent=last+' (이전 선택)';
+  sel.insertBefore(opt,sel.children[1]||null);
+  sel.value=last;
+  if(src){
+    src.textContent='⚠ 마스터에 없음 - 이전 선택값';
     src.style.color='#f57c00';
-    fetchItemCode(true);
   }
 }
 
-// 기종(품목) 자동 조회
-async function fetchItemCode(silent=false){
-  const machineName=document.getElementById('chkMachine').value;
-  const machineCode=getMachineCode(machineName);  // "36호기..." → "036"
-  const inp=document.getElementById('chkItem');
-  const src=document.getElementById('itemSrc');
-  if(!machineName)return;
 
-  let item=null,itemName=null,source=null;
-
-  // [1순위] Python 릴레이 - 호기코드로 조회
-  for(const base of MES_API_BASES){
-    try{
-      const ctrl=new AbortController();
-      const tid=setTimeout(()=>ctrl.abort(),3000);
-      const r=await fetch(`${base}/api/mes/current_wo?machine_code=${encodeURIComponent(machineCode)}`,{signal:ctrl.signal});
-      clearTimeout(tid);
-      if(r.ok){
-        const j=await r.json();
-        if(j && (j.item_code||j.ITEM_CODE)){
-          item=j.item_code||j.ITEM_CODE;
-          itemName=j.item_name||j.ITEM_NAME||j.model_name||j.MODEL_NAME||'';
-          source='MES (현재작업)';
-          break;
-        }
-      }
-    }catch(e){/* 다음 시도 */}
-  }
-
-  // [2순위] Supabase machine_status - 호기코드로 조회
-  if(!item){
-    try{
-      const {data,error}=await supa.from('machine_status')
-        .select('item_code,item_name,model_name,wo_no,work_order_no')
-        .eq('machine_code',machineCode)
-        .maybeSingle();
-      if(!error && data){
-        item=data.item_code||'';
-        itemName=data.item_name||data.model_name||'';
-        if(item)source='Supabase';
-      }
-    }catch(e){console.error('item lookup',e)}
-  }
-
-  // [3순위] work_order_cache (최근 작업지시)
-  if(!item){
-    try{
-      const {data}=await supa.from('work_order_cache')
-        .select('item_code,item_name,model_name,work_order_date')
-        .eq('machine_code',machineCode)
-        .order('work_order_date',{ascending:false})
-        .limit(1);
-      if(data && data.length){
-        item=data[0].item_code||'';
-        itemName=data[0].item_name||data[0].model_name||'';
-        if(item)source='work_order_cache';
-      }
-    }catch(e){/* 테이블 없을 수 있음 */}
-  }
-
-  if(item){
-    // 표시는 "기종명" 우선 (모델명/품번)
-    inp.value=itemName||item;
-    src.textContent=`✓ ${source}`;
-    src.style.color='#388e3c';
-  }else{
-    src.textContent=silent?'':'(조회실패 - 수동입력)';
-    src.style.color='#c62828';
-  }
-}
-
-async function fetchShotQty(silent=false){
-  const machineName=document.getElementById('chkMachine').value;
-  const machineCode=getMachineCode(machineName);  // "36호기..." → "036"
-  const date=document.getElementById('chkDate').value;
-  const inp=document.getElementById('chkDailyShot');
-  const src=document.getElementById('shotSrc');
-  const hint=document.getElementById('shotHint');
-  const btn=document.getElementById('btnShot');
-
-  if(!machineName){
-    if(!silent)toast('호기를 먼저 선택하세요','err');
-    return;
-  }
-  if(!date){
-    if(!silent)toast('점검일자를 먼저 선택하세요','err');
-    return;
-  }
-
-  btn.disabled=true;btn.textContent='조회중...';
-  src.textContent='';hint.textContent='';
-
-  let qty=null,source=null;
-
-  // [1순위] Python 릴레이 API (가장 정확 - 일자별 SHOT_QTY)
-  for(const base of MES_API_BASES){
-    try{
-      const ctrl=new AbortController();
-      const tid=setTimeout(()=>ctrl.abort(),3000);
-      const r=await fetch(`${base}/api/mes/shot_qty?machine_code=${encodeURIComponent(machineCode)}&date=${date}`,{signal:ctrl.signal});
-      clearTimeout(tid);
-      if(r.ok){
-        const j=await r.json();
-        if(j && (j.shot_qty!==undefined || j.SHOT_QTY!==undefined)){
-          qty=parseInt(j.shot_qty||j.SHOT_QTY)||0;
-          source='MES (Python릴레이)';
-          break;
-        }
-      }
-    }catch(e){/* 다음 시도 */}
-  }
-
-  // [2순위] Supabase machine_status (현재 누적값)
-  if(qty===null){
-    try{
-      const {data,error}=await supa.from('machine_status')
-        .select('shot_qty,actual_qty,last_update')
-        .eq('machine_code',machineCode)
-        .maybeSingle();
-      if(!error && data){
-        // shot_qty 우선, 없으면 actual_qty
-        qty=parseInt(data.shot_qty||data.actual_qty)||0;
-        source='Supabase (현재값)';
-        if(qty>0)hint.textContent=`⚠ 현재 누적값입니다. 일자별 정확값은 MES 연결 필요`;
-      }
-    }catch(e){console.error('Supabase shot_qty',e)}
-  }
-
-  btn.disabled=false;btn.textContent='📡 MES조회';
-
-  if(qty===null||qty===0){
-    if(!silent){
-      src.textContent='(조회실패 - 수동입력)';
-      src.style.color='#c62828';
-      toast('타발수 조회 실패. 수동 입력하세요','err');
-    }
-    return;
-  }
-
-  inp.value=qty;
-  src.textContent=`✓ ${source}`;
-  src.style.color='#388e3c';
-  if(!silent)toast(`타발수 ${qty.toLocaleString()} 조회됨`,'ok');
-}
-
-// 수동 입력 감지
-document.addEventListener('DOMContentLoaded',()=>{
-  setTimeout(()=>{
-    const inp=document.getElementById('chkDailyShot');
-    if(inp){
-      inp.addEventListener('input',()=>{
-        const src=document.getElementById('shotSrc');
-        src.textContent='(수동입력)';
-        src.style.color='#1565c0';
-      });
-    }
-  },300);
-});
 
 /* ============ 이력 조회 ============ */
 async function loadHistory(){
