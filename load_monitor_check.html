@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>로드모니터 하중 일일점검 v5.9</title>
+<title>로드모니터 하중 일일점검 v6.0</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
@@ -211,7 +211,7 @@ table.hist tr:hover{background:#f0f7ff}
 <body>
 
 <div class="hdr">
-  <h1>📊 로드모니터 하중 일일점검 <span class="rev-badge">Rev. 5.9</span></h1>
+  <h1>📊 로드모니터 하중 일일점검 <span class="rev-badge">Rev. 6.0</span></h1>
   <p>프레스 Smart Load Monitor · TOTAL / CH1좌 / CH2우</p>
 </div>
 
@@ -271,8 +271,8 @@ table.hist tr:hover{background:#f0f7ff}
           🖼 갤러리 선택
         </button>
       </div>
-      <input type="file" id="fileInputCamera" accept="image/*" capture="environment" style="display:none" onchange="handleImage(event)">
-      <input type="file" id="fileInputGallery" accept="image/*" style="display:none" onchange="handleImage(event)">
+      <input type="file" id="fileInputCamera" accept="image/jpeg,image/png" capture="environment" style="display:none" onchange="handleImage(event)">
+      <input type="file" id="fileInputGallery" accept="image/jpeg,image/png" style="display:none" onchange="handleImage(event)">
       <div class="ocr-status" id="ocrStatus">카메라 또는 갤러리에서 사진을 선택하세요</div>
       <div class="ocr-progress" id="ocrProgress"><div></div></div>
       <img class="preview" id="preview">
@@ -581,7 +581,7 @@ table.hist tr:hover{background:#f0f7ff}
     <button class="btn btn-ghost btn-block" onclick="copyDDL()" style="margin-top:8px">📋 SQL 복사</button>
   </div>
 
-  <div class="ver">v5.9 · 로드모니터 일일점검 · 태진다이텍 품질관리팀</div>
+  <div class="ver">v6.0 · 로드모니터 일일점검 · 태진다이텍 품질관리팀</div>
 </div>
 
 <script>
@@ -1392,6 +1392,14 @@ async function handleImage(ev){
   let file=ev.target.files[0];
   if(!file)return;
 
+  // iOS HEIC 감지 (canvas 호환 안됨)
+  const isHeic=/heic|heif/i.test(file.type)||/\.heic$|\.heif$/i.test(file.name||'');
+  if(isHeic){
+    toast('HEIC 형식 미지원 - 카메라 설정에서 "고효율" 대신 "호환성 우선"으로 변경하거나 갤러리에서 다른 사진 선택','err');
+    ev.target.value='';
+    return;
+  }
+
   // ★ 워커 백그라운드 사전 시작 (크롭/리사이즈 동안 병렬 초기화)
   preWarmTesseract();
 
@@ -1399,12 +1407,15 @@ async function handleImage(ev){
   file=await autoCrop169(file);
 
   // ★ 너무 큰 이미지는 OCR 속도 위해 다운스케일 (가로 2000px 이상이면 2000px로)
-  // 보라 OCR이 2.5배 확대하므로 원본을 너무 줄이면 6/8 구분이 어려워짐
+  // 보라 OCR이 3.5배 확대하므로 원본을 너무 줄이면 6/8 구분이 어려워짐
   file=await downscaleIfHuge(file,2000);
 
   _lastImageFile=file;
   // bitmap 캐시 (영역지정 모달에서 재사용)
-  try{_lastImageBitmap=await createImageBitmap(file)}catch(e){_lastImageBitmap=null}
+  try{_lastImageBitmap=await safeCreateImageBitmap(file)}catch(e){
+    console.warn('bitmap 생성 실패:',e);
+    _lastImageBitmap=null;
+  }
 
   const img=document.getElementById('preview');
   img.src=URL.createObjectURL(file);
@@ -1454,7 +1465,7 @@ async function handleImage(ev){
     // 원본 검증 (안전)
     if(_lastImageBitmap.width!==origW||_lastImageBitmap.height!==origH){
       console.warn('[경고] 원본 변경됨 - 재로드');
-      try{_lastImageBitmap=await createImageBitmap(_lastImageFile)}catch(e){}
+      try{_lastImageBitmap=await safeCreateImageBitmap(_lastImageFile)}catch(e){}
     }
     const r3=await tryColorOCR(_lastImageBitmap,'pink',30,150,status,'3/3 CH2 (보라)');
     const ch2=r3.value;
@@ -1498,7 +1509,7 @@ async function handleImage(ev){
 async function autoCrop169(file){
   const TARGET=16/9; // 1.7777...
   try{
-    const bitmap=await createImageBitmap(file);
+    const bitmap=await safeCreateImageBitmap(file);
     const w=bitmap.width,h=bitmap.height;
     const ratio=w/h;
     // 이미 16:9에 가까우면 원본 유지 (1.70 ~ 1.85)
@@ -1525,12 +1536,9 @@ async function autoCrop169(file){
     const c=document.createElement('canvas');
     c.width=cropW;c.height=cropH;
     c.getContext('2d').drawImage(bitmap,cropX,cropY,cropW,cropH,0,0,cropW,cropH);
-    return await new Promise(res=>{
-      c.toBlob(blob=>{
-        if(!blob){res(file);return}
-        res(new File([blob],file.name||'cropped.jpg',{type:'image/jpeg'}));
-      },'image/jpeg',0.92);
-    });
+    const blob=await canvasToBlob(c,'image/jpeg',0.92);
+    if(!blob)return file;
+    return new File([blob],file.name||'cropped.jpg',{type:'image/jpeg'});
   }catch(e){
     console.warn('자동 크롭 실패:',e);
     return file;
@@ -1541,7 +1549,7 @@ async function autoCrop169(file){
 // 가로 maxW 초과 시에만 비율 유지하며 축소
 async function downscaleIfHuge(file,maxW){
   try{
-    const bitmap=await createImageBitmap(file);
+    const bitmap=await safeCreateImageBitmap(file);
     const w=bitmap.width,h=bitmap.height;
     if(w<=maxW){
       console.log(`[다운스케일] ${w}x${h} - 작아서 그대로`);
@@ -1556,12 +1564,9 @@ async function downscaleIfHuge(file,maxW){
     ctx.imageSmoothingEnabled=true;
     ctx.imageSmoothingQuality='high';
     ctx.drawImage(bitmap,0,0,newW,newH);
-    return await new Promise(res=>{
-      c.toBlob(blob=>{
-        if(!blob){res(file);return}
-        res(new File([blob],file.name||'down.jpg',{type:'image/jpeg'}));
-      },'image/jpeg',0.9);
-    });
+    const blob=await canvasToBlob(c,'image/jpeg',0.9);
+    if(!blob)return file;
+    return new File([blob],file.name||'down.jpg',{type:'image/jpeg'});
   }catch(e){
     console.warn('다운스케일 실패:',e);
     return file;
@@ -1584,25 +1589,64 @@ async function openWebcamModal(){
 async function startCamera(){
   try{
     if(_camStream){_camStream.getTracks().forEach(t=>t.stop())}
-    // 모바일에서 후면 카메라 우선 (facingMode)
+    // iOS 호환: facingMode는 ideal로 (exact 사용 시 iOS에서 실패)
+    // iOS Safari는 max width/height 제약 시 실패하기 쉬움 → ideal만 사용
     const constraints={
       video:{
-        facingMode:{ideal:_camFacing},
-        width:{ideal:1920},
-        height:{ideal:1080}
+        facingMode:{ideal:_camFacing}
       },
       audio:false
     };
+    // 데스크톱/안드로이드는 해상도 힌트 추가 (iOS에서는 자주 실패함)
+    const isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent) ||
+                (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
+    if(!isIOS){
+      constraints.video.width={ideal:1920};
+      constraints.video.height={ideal:1080};
+    }
+
     _camStream=await navigator.mediaDevices.getUserMedia(constraints);
     const v=document.getElementById('camVideo');
     v.srcObject=_camStream;
-    await v.play();
+    // iOS Safari: playsinline + muted 필수 (자동재생 정책)
+    v.setAttribute('playsinline','');
+    v.setAttribute('webkit-playsinline','');
+    v.muted=true;
+    // iOS는 loadedmetadata 후 play 호출이 안정적
+    await new Promise((resolve,reject)=>{
+      const onReady=()=>{v.removeEventListener('loadedmetadata',onReady);resolve()};
+      if(v.readyState>=1)resolve();
+      else v.addEventListener('loadedmetadata',onReady,{once:true});
+      // 타임아웃 (3초)
+      setTimeout(resolve,3000);
+    });
+    try{
+      await v.play();
+    }catch(playErr){
+      // iOS는 play() 거부될 수 있음 - 사용자 제스처 후 자동 재생됨
+      console.warn('video.play() 거부:',playErr.message);
+    }
   }catch(e){
     console.error('카메라 시작 실패:',e);
     if(e.name==='NotAllowedError'){
-      toast('카메라 권한 거부됨 - 브라우저 설정에서 허용','err');
+      toast('카메라 권한 거부됨 - Safari 설정→웹사이트 권한에서 허용','err');
     }else if(e.name==='NotFoundError'){
       toast('카메라를 찾을 수 없음','err');
+    }else if(e.name==='NotReadableError'){
+      toast('카메라가 다른 앱에서 사용 중','err');
+    }else if(e.name==='OverconstrainedError'){
+      // 제약 조건 실패 → 최소 제약으로 재시도
+      try{
+        _camStream=await navigator.mediaDevices.getUserMedia({video:true,audio:false});
+        const v=document.getElementById('camVideo');
+        v.srcObject=_camStream;
+        v.setAttribute('playsinline','');
+        v.muted=true;
+        await v.play();
+        return;
+      }catch(e2){
+        toast('카메라 호환 실패: '+e2.message,'err');
+      }
     }else{
       toast('카메라 오류: '+e.message,'err');
     }
@@ -1673,12 +1717,11 @@ async function shootCamera(){
 
   closeCamera();
 
-  c.toBlob(async blob=>{
-    if(!blob){toast('촬영 실패','err');return}
-    const file=new File([blob],'capture_'+Date.now()+'.jpg',{type:'image/jpeg'});
-    const fakeEvent={target:{files:[file],value:''}};
-    await handleImage(fakeEvent);
-  },'image/jpeg',0.92);
+  const blob=await canvasToBlob(c,'image/jpeg',0.92);
+  if(!blob){toast('촬영 실패','err');return}
+  const file=new File([blob],'capture_'+Date.now()+'.jpg',{type:'image/jpeg'});
+  const fakeEvent={target:{files:[file],value:''}};
+  await handleImage(fakeEvent);
 }
 
 
@@ -1888,14 +1931,14 @@ async function ocrCropRegion(key){
 
   // 영역 비트맵 생성 (3필터 시도용 원본)
   let regionBitmap=null;
-  try{regionBitmap=await createImageBitmap(tmp)}catch(e){}
+  try{regionBitmap=await safeCreateImageBitmap(tmp)}catch(e){}
 
   let val=null,usedVariant=null;
   if(regionBitmap){
     // 색상별 최적 필터 순서로 시도
     const variants=FILTER_ORDER[targetColor]||['strict','loose','inverse'];
-    // 영역은 이미 4배 확대 → 분홍은 추가 1.5배 확대 (총 6배)
-    const extraScale=targetColor==='pink'?1.5:(targetColor==='yellow'?1.2:1);
+    // 영역은 이미 4배 확대 → 보라는 추가 1.8배 확대 (총 7.2배)
+    const extraScale=targetColor==='pink'?1.8:(targetColor==='yellow'?1.2:1);
     const worker=await getTessWorker();
     for(const v of variants){
       const {canvas:masked,matchCount}=createColorMaskedCanvas(regionBitmap,targetColor,v,extraScale);
@@ -1977,6 +2020,67 @@ function applyCropResult(){
 
 /* ============ OCR 헬퍼 함수 ============ */
 
+// iOS Safari 호환: Canvas → Blob 폴백 (toBlob 미지원/지연 대응)
+function canvasToBlob(canvas,mime,quality){
+  return new Promise((resolve)=>{
+    if(canvas.toBlob){
+      try{
+        canvas.toBlob(blob=>{
+          if(blob){resolve(blob);return}
+          // toBlob이 null 반환 시 dataURL 폴백
+          fallback();
+        },mime||'image/jpeg',quality||0.92);
+        return;
+      }catch(e){fallback()}
+    }else{
+      fallback();
+    }
+    function fallback(){
+      try{
+        const dataUrl=canvas.toDataURL(mime||'image/jpeg',quality||0.92);
+        const arr=dataUrl.split(',');
+        const m=arr[0].match(/:(.*?);/);
+        const type=m?m[1]:'image/jpeg';
+        const bstr=atob(arr[1]);
+        const u8=new Uint8Array(bstr.length);
+        for(let i=0;i<bstr.length;i++)u8[i]=bstr.charCodeAt(i);
+        resolve(new Blob([u8],{type}));
+      }catch(e){
+        console.error('canvasToBlob 실패:',e);
+        resolve(null);
+      }
+    }
+  });
+}
+
+// iOS Safari 호환: createImageBitmap 미지원 시 Image 엘리먼트로 폴백
+async function safeCreateImageBitmap(fileOrBlob){
+  // 1) 표준 API 시도
+  if(typeof window.createImageBitmap==='function'){
+    try{
+      return await window.createImageBitmap(fileOrBlob);
+    }catch(e){
+      console.warn('[bitmap] createImageBitmap 실패, Image 폴백:',e.message);
+    }
+  }
+  // 2) Image 엘리먼트로 폴백 (iOS Safari 14 이하 등)
+  return new Promise((resolve,reject)=>{
+    const url=URL.createObjectURL(fileOrBlob);
+    const img=new Image();
+    img.onload=()=>{
+      // Image 엘리먼트도 drawImage 가능 → bitmap 호환 객체로 사용
+      img.close=()=>{}; // ImageBitmap.close() 호환 더미
+      URL.revokeObjectURL(url);
+      resolve(img);
+    };
+    img.onerror=e=>{
+      URL.revokeObjectURL(url);
+      reject(new Error('이미지 로드 실패'));
+    };
+    img.src=url;
+  });
+}
+
 // 색상별 최적 필터 순서 (실사용 기반 최적화)
 const FILTER_ORDER={
   green:  ['strict','loose','inverse'],
@@ -1989,7 +2093,7 @@ const FILTER_ORDER={
 const OCR_SCALE={
   green: 1,
   yellow: 1.3,
-  pink: 3.0  // 6/8 구분 위해 충분히 크게 (이전 2.5 → 3.0)
+  pink: 3.5  // 6/8 구분 위해 충분히 크게
 };
 
 // 모폴로지 침식: 검은 영역(글자) 1픽셀씩 줄임 → 6의 곡선이 닫혀있고 8의 두 구멍이 분명해짐
