@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>일상점검 종합현황 v1.7</title>
+<title>일상점검 종합현황 v2.1</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 body{font-family:'Noto Sans KR','맑은 고딕',sans-serif;background:#f5f5f5;color:#222;font-size:13px;padding-bottom:30px}
@@ -53,11 +53,20 @@ tbody tr.cat-prod td.cat{background:#e3f2fd;color:#1565c0;border-left:3px solid 
 tbody tr.cat-qc td.cat{background:#fce4ec;color:#c2185b;border-left:3px solid #c2185b}
 tbody tr.cat-wash td.cat{background:#e8f5e9;color:#2e7d32;border-left:3px solid #2e7d32}
 tbody tr.cat-ship td.cat{background:#fff3e0;color:#e65100;border-left:3px solid #e65100}
+/* 로드모니터 부속 행: 생산설비 행 아래 따라붙는 보라색 얇은 행 */
+tbody tr.cat-load td{background:#faf4fb;font-size:10px;padding:3px 4px}
+tbody tr.cat-load td.cat{background:#f3e5f5;color:#7b1fa2;border-left:3px solid #7b1fa2;font-size:9px;padding:3px 4px}
+tbody tr.cat-load td.eq{background:#faf4fb;color:#7b1fa2;font-size:10px;padding-left:24px;font-weight:600}
+tbody tr.cat-load td.total{background:#f3e5f5;color:#7b1fa2;font-weight:700}
 
 .cell-ok{color:#2e7d32;font-weight:800}
 .cell-ng{color:#c62828;font-weight:800}
 .cell-mix{color:#ef6c00;font-weight:800}
 .cell-none{color:#bbb}
+
+/* 로드모니터 기록 횟수 (보라색 미니 배지) */
+.load-cnt{display:inline-block;min-width:18px;padding:1px 5px;border-radius:9px;background:#7b1fa2;color:#fff;font-size:9px;font-weight:800;line-height:1.4}
+.load-cnt-0{color:#ccc;background:transparent;font-weight:500}
 
 .empty{padding:50px 20px;text-align:center;color:#999}
 .empty-ic{font-size:42px;margin-bottom:10px}
@@ -91,13 +100,14 @@ tbody td.eq{padding-left:6px}
 
 <div class="hdr">
   <h1>📋 일상점검 종합현황</h1>
-  <p>생산설비 · 검사기 · 세척기 · 출하공정 통합 점검이력</p>
+  <p>생산설비 · 검사기 · 세척기 · 출하공정 · 로드모니터(300톤+) 통합 점검이력</p>
 </div>
 
 <div class="toolbar">
   <div class="tb-row">
     <div class="fg"><label>📅</label><input type="date" id="dtStart"></div>
     <div class="fg"><label>~</label><input type="date" id="dtEnd"></div>
+    <button class="btn btn-period" onclick="quickPeriod('4days')">📅 4일</button>
     <button class="btn btn-period" onclick="quickPeriod('week')">📅 일주일</button>
     <button class="btn btn-period" onclick="quickPeriod('month')">🗓️ 한달</button>
     <div class="fg">
@@ -119,6 +129,7 @@ tbody td.eq{padding-left:6px}
       <div class="lg-item"><span class="lg-icon" style="background:#ffebee;color:#c62828">✗</span>NG</div>
       <div class="lg-item"><span class="lg-icon" style="background:#fff3e0;color:#ef6c00">±</span>혼재</div>
       <div class="lg-item"><span class="lg-icon" style="background:#f5f5f5;color:#bbb">-</span>미점검</div>
+      <div class="lg-item"><span class="lg-icon" style="background:#7b1fa2;color:#fff">3</span>로드기록수(300톤+)</div>
       <div class="lg-item" style="margin-left:auto;color:#888;font-size:10px">셀 클릭→상세</div>
     </div>
   </div>
@@ -165,7 +176,11 @@ const CFG={
   ship:{table:'shipping_check',   label:'출하공정', color:'#e65100', icon:'📦'}
 };
 
-let CACHE={records:{prod:[],qc:[],wash:[],ship:[]}, equipments:{prod:[],qc:[],wash:[],ship:[]}, days:[], byKey:{}};
+/* 로드모니터는 별도 카테고리가 아닌 생산설비 부속 (300톤 이상에만 설치)
+   → 데이터는 별도 조회하여 호기별로 인덱싱 */
+const LOAD_CFG={table:'load_monitor_check', label:'로드', color:'#7b1fa2', icon:'📊', minTon:300};
+
+let CACHE={records:{prod:[],qc:[],wash:[],ship:[]}, loadRecords:[], equipments:{prod:[],qc:[],wash:[],ship:[]}, days:[], byKey:{}, loadByKey:{}};
 
 /* ========== 공통 함수 ========== */
 function $(id){return document.getElementById(id)}
@@ -179,22 +194,25 @@ async function sbGet(path){
   return r.json();
 }
 
-/* ========== 기간 프리셋 (week=최근7일, month=최근30일) ========== */
+/* ========== 기간 프리셋 (4days=최근4일, week=최근7일, month=최근30일) ========== */
 function setPeriod(p){
   const today=new Date();
   let s,e=ymd(today);
-  if(p==='week'){const a=new Date(today);a.setDate(a.getDate()-6);s=ymd(a)}
+  if(p==='4days'){const a=new Date(today);a.setDate(a.getDate()-3);s=ymd(a)}
+  else if(p==='week'){const a=new Date(today);a.setDate(a.getDate()-6);s=ymd(a)}
   else if(p==='month'){const a=new Date(today);a.setDate(a.getDate()-29);s=ymd(a)}
   const dtS=$('dtStart'), dtE=$('dtEnd');
   if(s && dtS && dtE){ dtS.value=s; dtE.value=e; }
 }
 
-/* 일주일/한달 버튼 → 기간설정 + 자동조회 + 활성표시 */
+/* 4일/일주일/한달 버튼 → 기간설정 + 자동조회 + 활성표시 */
 function quickPeriod(p){
   setPeriod(p);
   document.querySelectorAll('.btn-period').forEach(b=>b.classList.remove('active'));
   document.querySelectorAll('.btn-period').forEach(b=>{
-    if((p==='week'&&b.textContent.includes('일주일'))||(p==='month'&&b.textContent.includes('한달')))b.classList.add('active');
+    if((p==='4days'&&b.textContent.includes('4일'))||
+       (p==='week'&&b.textContent.includes('일주일'))||
+       (p==='month'&&b.textContent.includes('한달')))b.classList.add('active');
   });
   loadData();
 }
@@ -324,10 +342,12 @@ async function loadData(){
   $('tblWrap').innerHTML='<div class="loading">데이터 조회 중</div>';
 
   CACHE.records={prod:[],qc:[],wash:[],ship:[]};
+  CACHE.loadRecords=[];
   CACHE.byKey={};
+  CACHE.loadByKey={};
 
   try{
-    /* 4개 테이블 병렬 조회 */
+    /* 4개 점검 테이블 + 로드모니터 병렬 조회 */
     const tasks=Object.keys(CFG).map(async k=>{
       const t=CFG[k].table;
       try{
@@ -338,13 +358,23 @@ async function loadData(){
         CACHE.records[k]=[];
       }
     });
+    /* 로드모니터 별도 조회 */
+    tasks.push((async()=>{
+      try{
+        const rows=await sbGet(`${LOAD_CFG.table}?select=*&check_date=gte.${s}&check_date=lte.${e}&order=check_date.desc&limit=5000`);
+        CACHE.loadRecords=rows||[];
+      }catch(err){
+        console.warn(`${LOAD_CFG.table} 조회실패:`,err.message);
+        CACHE.loadRecords=[];
+      }
+    })());
     await Promise.all(tasks);
 
     /* 설비목록 갱신 */
     await loadEquipments();
 
     /* (cat, equipment, date) → records[] 인덱싱
-       생산설비는 정규화 키로 통합 (같은 호기 다른 표기를 같은 행으로) */
+       생산설비는 정규화 키로 통합 */
     for(const k of ['prod','qc','wash','ship']){
       CACHE.records[k].forEach(r=>{
         const raw=String(r.machine||r.machine_name||r.equipment_name||r.line||'').trim();
@@ -355,6 +385,15 @@ async function loadData(){
         (CACHE.byKey[key]=CACHE.byKey[key]||[]).push(r);
       });
     }
+    /* 로드모니터 인덱싱 (생산설비 정규화 키와 동일하게) */
+    CACHE.loadRecords.forEach(r=>{
+      const raw=String(r.machine_name||r.machine_code||'').trim();
+      const dt=r.check_date;
+      if(!raw||!dt)return;
+      const eq=normProdName(raw);
+      const key=`${eq}|${dt}`;
+      (CACHE.loadByKey[key]=CACHE.loadByKey[key]||[]).push(r);
+    });
     /* 일자 배열 생성 */
     CACHE.days=genDays(s,e);
     renderTable();
@@ -363,7 +402,7 @@ async function loadData(){
   }
 }
 
-/* ========== 셀 결과 판정 ========== */
+/* ========== 셀 결과 판정 (생산설비/검사기/세척기/출하공정) ========== */
 function judge(records){
   if(!records||!records.length)return {sign:'-',cls:'cell-none',count:0};
   let okCnt=0,ngCnt=0;
@@ -375,6 +414,37 @@ function judge(records){
   if(ngCnt===0)return {sign:'✓',cls:'cell-ok',count:okCnt+ngCnt};
   if(okCnt===0)return {sign:'✗',cls:'cell-ng',count:okCnt+ngCnt};
   return {sign:'±',cls:'cell-mix',count:okCnt+ngCnt};
+}
+
+/* 호기명에서 톤수 추출 (300톤 이상 판별용) */
+function extractTonnage(rawOrKey){
+  if(!rawOrKey)return 0;
+  const s=String(rawOrKey);
+  // "호기_톤수" 형태 (정규화키: "5_300")
+  const m1=s.match(/_(\d+)\b/);
+  if(m1)return parseInt(m1[1],10);
+  // "300톤" 형태
+  const m2=s.match(/(\d+)\s*톤/);
+  if(m2)return parseInt(m2[1],10);
+  return 0;
+}
+
+/* 로드모니터 셀: 기록 수만 표시 (300톤 이상 호기에만 적용) */
+function loadCellHtml(eqKey,date){
+  const recs=CACHE.loadByKey[`${eqKey}|${date}`]||[];
+  if(!recs.length)return `<span class="load-cnt-0">·</span>`;
+  // 시간대별 측정 횟수 계산 (TOTAL/CH1/CH2 중 하나라도 있으면 1회로 카운트)
+  let timeSlots=0;
+  const TS=['0830','1030','1130','1400','1510','1630'];
+  recs.forEach(r=>{
+    TS.forEach(t=>{
+      if(r['t'+t+'_total']!=null||r['t'+t+'_ch1']!=null||r['t'+t+'_ch2']!=null){
+        timeSlots++;
+      }
+    });
+  });
+  if(timeSlots===0)return `<span class="load-cnt-0">·</span>`;
+  return `<span class="load-cnt">${timeSlots}</span>`;
 }
 
 /* ========== 테이블 렌더 ========== */
@@ -436,6 +506,40 @@ function renderTable(){
       h+=rowHtml;
       h+=`<td class="total">${rowTotal||'-'}</td>`;
       h+='</tr>';
+
+      /* 생산설비이고 300톤 이상이면 로드모니터 부속 행 추가 */
+      if(k==='prod'){
+        const ton=extractTonnage(eq);
+        if(ton>=LOAD_CFG.minTon){
+          let loadTotal=0;
+          let loadRowHtml='';
+          days.forEach(d=>{
+            const dt=new Date(d);const dow=dt.getDay();
+            let cls='';
+            if(dow===0)cls='sunday';
+            else if(dow===6)cls='weekend';
+            if(d===today)cls=(cls?cls+' today':'today');
+            const recs=CACHE.loadByKey[`${eq}|${d}`]||[];
+            // 시간대 측정 횟수 누적
+            const TS=['0830','1030','1130','1400','1510','1630'];
+            let cnt=0;
+            recs.forEach(r=>{
+              TS.forEach(t=>{
+                if(r['t'+t+'_total']!=null||r['t'+t+'_ch1']!=null||r['t'+t+'_ch2']!=null)cnt++;
+              });
+            });
+            loadTotal+=cnt;
+            const onClick=recs.length?` onclick="showLoadDetail(${JSON.stringify(eq).replace(/"/g,'&quot;')},'${d}')" style="cursor:pointer"`:'';
+            loadRowHtml+=`<td class="${cls}"${onClick}>${cnt>0?`<span class="load-cnt">${cnt}</span>`:`<span class="load-cnt-0">·</span>`}</td>`;
+          });
+          h+='<tr class="cat-load">';
+          h+=`<td class="cat">${LOAD_CFG.icon}<br>${LOAD_CFG.label}</td>`;
+          h+=`<td class="eq">└ 로드모니터 (${ton}톤)</td>`;
+          h+=loadRowHtml;
+          h+=`<td class="total">${loadTotal||'-'}</td>`;
+          h+='</tr>';
+        }
+      }
     });
   });
 
@@ -443,7 +547,7 @@ function renderTable(){
   $('tblWrap').innerHTML=h;
 }
 
-/* ========== 셀 상세 모달 ========== */
+/* ========== 셀 상세 모달 (생산/검사/세척/출하) ========== */
 function showDetail(cat,eq,date){
   const recs=CACHE.byKey[`${cat}|${eq}|${date}`]||[];
   const cfg=CFG[cat];
@@ -483,6 +587,49 @@ function showDetail(cat,eq,date){
   $('modalBody').innerHTML=h;
   $('modal').classList.add('show');
 }
+
+/* ========== 로드모니터 셀 상세 모달 (시간대별 측정값) ========== */
+function showLoadDetail(eq,date){
+  const recs=CACHE.loadByKey[`${eq}|${date}`]||[];
+  const showName=getDisplayName(eq);
+  $('modalTitle').textContent=`${LOAD_CFG.icon} 로드모니터 · ${showName} · ${date}`;
+  if(!recs.length){$('modalBody').innerHTML='<div class="empty"><div>로드모니터 기록 없음</div></div>';$('modal').classList.add('show');return}
+  let h='';
+  const TS=[['0830','8:30'],['1030','10:30'],['1130','11:30'],['1400','14:00'],['1510','15:10'],['1630','16:30']];
+  recs.forEach((r,i)=>{
+    h+=`<div style="border:1px solid #e0e0e0;border-radius:8px;padding:10px;margin-bottom:8px;background:#fafbfc">`;
+    h+=`<div style="font-weight:800;color:${LOAD_CFG.color};margin-bottom:6px;font-size:13px">로드모니터 기록 ${i+1}/${recs.length}</div>`;
+    const fields=[];
+    if(r.inspector)fields.push(['점검자',r.inspector]);
+    if(r.customer)fields.push(['고객사',r.customer]);
+    if(r.item_code)fields.push(['기종',r.item_code]);
+    if(r.daily_shot)fields.push(['일일타발수',r.daily_shot]);
+    if(r.memo)fields.push(['비고',r.memo]);
+    fields.forEach(([k,v])=>{
+      h+=`<div class="detail-row"><span class="dt-label">${k}</span><span class="dt-val">${v}</span></div>`;
+    });
+    let lmHtml='';
+    let measureCnt=0;
+    TS.forEach(([t,lbl])=>{
+      const tot=r['t'+t+'_total'],c1=r['t'+t+'_ch1'],c2=r['t'+t+'_ch2'];
+      if(tot!=null||c1!=null||c2!=null){
+        measureCnt++;
+        lmHtml+=`<div style="display:flex;align-items:center;gap:6px;padding:4px 0;font-size:11px;border-bottom:1px dashed #eee">
+          <span style="display:inline-block;min-width:38px;background:#eef2f7;padding:2px 6px;border-radius:4px;font-weight:700">${lbl}</span>
+          <span style="background:#c8e6c9;color:#1b5e20;padding:2px 6px;border-radius:4px;font-weight:700">T ${tot??'-'}</span>
+          <span style="background:#fff9c4;color:#827717;padding:2px 6px;border-radius:4px;font-weight:700">CH1 ${c1??'-'}</span>
+          <span style="background:#fce4ec;color:#880e4f;padding:2px 6px;border-radius:4px;font-weight:700">CH2 ${c2??'-'}</span>
+        </div>`;
+      }
+    });
+    if(lmHtml){
+      h+=`<div style="margin-top:8px;padding-top:8px;border-top:1px dashed #ddd"><div style="font-size:11px;color:#666;font-weight:700;margin-bottom:4px">시간대별 측정값 (${measureCnt}/6)</div>${lmHtml}</div>`;
+    }
+    h+='</div>';
+  });
+  $('modalBody').innerHTML=h;
+  $('modal').classList.add('show');
+}
 function closeModal(){$('modal').classList.remove('show')}
 
 /* ========== 엑셀 다운로드 ========== */
@@ -511,6 +658,29 @@ function exportXlsx(){
       });
       row.push(total||'');
       data.push(row);
+
+      /* 생산설비 + 300톤 이상 → 로드모니터 부속 행 추가 */
+      if(k==='prod'){
+        const ton=extractTonnage(eq);
+        if(ton>=LOAD_CFG.minTon){
+          const loadRow=['로드모니터',`└ ${showName} (${ton}톤)`];
+          let loadTotal=0;
+          CACHE.days.forEach(d=>{
+            const recs=CACHE.loadByKey[`${eq}|${d}`]||[];
+            const TS=['0830','1030','1130','1400','1510','1630'];
+            let cnt=0;
+            recs.forEach(r=>{
+              TS.forEach(t=>{
+                if(r['t'+t+'_total']!=null||r['t'+t+'_ch1']!=null||r['t'+t+'_ch2']!=null)cnt++;
+              });
+            });
+            loadTotal+=cnt;
+            loadRow.push(cnt>0?cnt:'');
+          });
+          loadRow.push(loadTotal||'');
+          data.push(loadRow);
+        }
+      }
     });
   });
   const wb=XLSX.utils.book_new();
@@ -553,10 +723,10 @@ function _init(){
   const cf = $('catFilter');
   if(cf) cf.addEventListener('change', ()=>{ if(CACHE.days.length) renderTable() });
 
-  /* 기본: 최근 7일 자동 설정 + 조회 */
-  setPeriod('week');
+  /* 기본: 최근 4일 자동 설정 + 조회 */
+  setPeriod('4days');
   document.querySelectorAll('.btn-period').forEach(b=>{
-    if(b.textContent.includes('일주일')) b.classList.add('active');
+    if(b.textContent.includes('4일')) b.classList.add('active');
   });
   loadData();
 }
