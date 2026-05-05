@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>로드모니터 하중 일일점검 v6.7</title>
+<title>로드모니터 하중 일일점검 v6.8</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
@@ -220,7 +220,7 @@ table.hist tr:hover{background:#f0f7ff}
 <body>
 
 <div class="hdr">
-  <h1>📊 로드모니터 하중 일일점검 <span class="rev-badge">Rev. 6.7</span></h1>
+  <h1>📊 로드모니터 하중 일일점검 <span class="rev-badge">Rev. 6.8</span></h1>
   <p>프레스 Smart Load Monitor · TOTAL/CH1 OCR · CH2=TOTAL-CH1 자동계산</p>
 </div>
 
@@ -239,7 +239,7 @@ table.hist tr:hover{background:#f0f7ff}
     <div class="row2">
       <div class="fg"><label>점검일자</label><input type="date" id="chkDate"></div>
       <div class="fg">
-        <label>호기(설비) <span id="machineSrc" style="font-size:10px;color:#888;font-weight:400"></span></label>
+        <label>호기(설비) <span style="font-size:10px;color:#7b1fa2;font-weight:600">300톤+</span> <span id="machineSrc" style="font-size:10px;color:#888;font-weight:400"></span></label>
         <select id="chkMachine" onchange="onMachineChange()"><option value="">선택</option></select>
       </div>
     </div>
@@ -596,7 +596,7 @@ table.hist tr:hover{background:#f0f7ff}
     <button class="btn btn-ghost btn-block" onclick="copyDDL()" style="margin-top:8px">📋 SQL 복사</button>
   </div>
 
-  <div class="ver">v6.7 · 로드모니터 일일점검 · 태진다이텍 품질관리팀</div>
+  <div class="ver">v6.8 · 로드모니터 일일점검 · 태진다이텍 품질관리팀</div>
 </div>
 
 <script>
@@ -1147,6 +1147,16 @@ const DEFAULT_MACHINES=[
   '48호기 심팩300톤','49호기 심팩300톤'
 ];
 
+// 호기 이름에서 톤수 추출 ("49호기 심팩300톤" → 300, "43호기 화일800톤" → 800)
+function extractTonnageFromName(name){
+  if(!name)return 0;
+  const m=String(name).match(/(\d+)\s*톤/);
+  return m?parseInt(m[1],10):0;
+}
+
+// 로드모니터는 300톤 이상 호기에만 설치되므로 그것만 표시
+const LOAD_MIN_TONNAGE=300;
+
 async function loadMachines(){
   let list=[];
   let srcInfo='';
@@ -1161,6 +1171,11 @@ async function loadMachines(){
       console.log('[machine_master_tj]',rows.length,'건');
       list=(rows||[])
         .filter(r=>r.active!==false)
+        .filter(r=>{
+          // 300톤 이상만 (machine_master_tj의 tonnage 필드 우선)
+          const ton=parseInt(r.tonnage||0,10);
+          return ton>=LOAD_MIN_TONNAGE;
+        })
         .map(r=>{
           const name=composeMachineName(r.ho_code||'',r.maker||'',r.tonnage||'');
           return {name,sort:r.sort_order||0};
@@ -1173,30 +1188,33 @@ async function loadMachines(){
     }
   }catch(e){console.warn('machine_master_tj fetch 예외:',e)}
 
-  // [2순위] DEFAULT_MACHINES 폴백 (P_machine_check와 동일)
+  // [2순위] DEFAULT_MACHINES 폴백 - 300톤 이상만
   if(!list.length){
-    list=DEFAULT_MACHINES.map((name,i)=>({name,sort:i+1}));
+    list=DEFAULT_MACHINES
+      .filter(name=>extractTonnageFromName(name)>=LOAD_MIN_TONNAGE)
+      .map((name,i)=>({name,sort:i+1}));
     srcInfo=`default(${list.length})`;
-    console.log('호기 마스터 비어있음 - 기본값 사용');
+    console.log('호기 마스터 비어있음 - 기본값 사용 (300톤+ 만)');
   }
 
-  // 두 select에 적용 (value = name, 즉 "36호기 심팩300톤" 그대로)
+  // 두 select에 적용 (value = name)
   const sels=[
     {id:'chkMachine',first:'<option value="" disabled selected>선택</option>'},
     {id:'qMachine',first:'<option value="">전체</option>'}
   ];
   sels.forEach(s=>{
     const sel=document.getElementById(s.id);
+    if(!sel)return;
     sel.innerHTML=s.first+list.map(m=>`<option value="${m.name}">${m.name}</option>`).join('');
   });
 
   // 디버그 표시
   const dbg=document.getElementById('machineSrc');
   if(srcInfo.startsWith('default')){
-    dbg.textContent='⚠ 마스터 미사용 (기본 목록)';
+    dbg.textContent='⚠ 마스터 미사용 (기본 목록 · 300톤+)';
     dbg.style.color='#f57c00';
   }else{
-    dbg.textContent=`✓ 마스터 (${list.length}대)`;
+    dbg.textContent=`✓ 300톤+ ${list.length}대`;
     dbg.style.color='#388e3c';
   }
   console.log('[호기 로드 완료]',srcInfo);
