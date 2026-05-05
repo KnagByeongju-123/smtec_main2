@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>MES 가동설비 모니터링</title>
+<title>MES 가동설비 모니터링 v3.5</title>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
 <style>
@@ -283,7 +283,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 </style>
 </head>
 <body>
-<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">30초 갱신</span></div></div></div>
+<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v3.5</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">30초 갱신</span></div></div></div>
 <div class="tabs"><div class="tab active" data-tab="monitor" onclick="switchTab('monitor')">📊 모니터링</div><div class="tab" data-tab="settings" onclick="switchTab('settings')">📋 이력/설정</div></div>
 <div class="panel active" id="panel-monitor">
   <div class="stats"><div class="st"><div class="st-label">전체</div><div class="st-val" id="sTotal">-</div></div><div class="st run"><div class="st-label">가동</div><div class="st-val" id="sRun">-</div></div><div class="st stop"><div class="st-label">비가동</div><div class="st-val" id="sStop">-</div></div><div class="st warn"><div class="st-label">⏰30분이내</div><div class="st-val" id="sSoon">-</div></div><div class="st ng"><div class="st-label">NG</div><div class="st-val" id="sNg">-</div></div></div>
@@ -365,6 +365,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
     </div>
     <div class="hi-btns">
       <button class="btn btn-accent btn-sm" onclick="hiSearch()">🔍 조회</button>
+      <button class="btn btn-orange btn-sm" onclick="hiShowReport()">📋 보고서</button>
       <button class="btn btn-green btn-sm" onclick="hiExportCsv()">📥 엑셀 다운로드</button>
       <button class="btn btn-sm" style="background:#ef4444;color:#fff" onclick="hiDeleteSelected()">🗑 선택삭제</button>
     </div>
@@ -1610,8 +1611,22 @@ function compressImage(file,targetBytes,cb){
     var img=new Image();
     img.onload=function(){
       var canvas=document.createElement('canvas');
+      // 안전 마진: 목표의 95%로 설정 (Base64→Blob 변환 시 약간의 오차 보정)
+      var safeTarget=Math.floor(targetBytes*0.95);
       function tryCompress(maxDim,quality,attempt){
-        if(attempt>12){cb(canvas.toDataURL('image/jpeg',0.3),-1);return}
+        if(attempt>20){
+          // 최후 수단: 매우 작게
+          var w2=img.width,h2=img.height;
+          var dim2=300;
+          if(w2>dim2||h2>dim2){if(w2>h2){h2=Math.round(h2*dim2/w2);w2=dim2}else{w2=Math.round(w2*dim2/h2);h2=dim2}}
+          canvas.width=w2;canvas.height=h2;
+          var ctx2=canvas.getContext('2d');ctx2.fillStyle='#fff';ctx2.fillRect(0,0,w2,h2);
+          ctx2.drawImage(img,0,0,w2,h2);
+          var d2=canvas.toDataURL('image/jpeg',0.3);
+          var b22=d2.split(',')[1]||'';
+          cb(d2,Math.floor(b22.length*3/4));
+          return;
+        }
         var w=img.width,h=img.height;
         if(w>maxDim||h>maxDim){if(w>h){h=Math.round(h*maxDim/w);w=maxDim}else{w=Math.round(w*maxDim/h);h=maxDim}}
         canvas.width=w;canvas.height=h;
@@ -1620,12 +1635,18 @@ function compressImage(file,targetBytes,cb){
         var dataUrl=canvas.toDataURL('image/jpeg',quality);
         var b64=dataUrl.split(',')[1]||'';
         var bytes=Math.floor(b64.length*3/4);
-        if(bytes<=targetBytes||(maxDim<=200&&quality<=0.35)){cb(dataUrl,bytes);return}
-        var nq=quality>0.5?quality-0.1:quality-0.05;
-        if(nq<0.35){nq=0.7;maxDim=Math.round(maxDim*0.8)}
-        tryCompress(maxDim,nq,attempt+1);
+        // 목표 달성: safeTarget 이하면 OK
+        if(bytes<=safeTarget){cb(dataUrl,bytes);return}
+        // 품질을 먼저 낮춤
+        var nq=quality-0.08;
+        var nDim=maxDim;
+        // 품질이 한계 도달하면 크기를 줄이고 품질 리셋
+        if(nq<0.4){nq=0.7;nDim=Math.round(maxDim*0.75)}
+        // 너무 작아지면 품질만 더 낮춤
+        if(nDim<200){nDim=200;nq=Math.max(0.3,quality-0.05)}
+        tryCompress(nDim,nq,attempt+1);
       }
-      tryCompress(1200,0.85,0);
+      tryCompress(1000,0.82,0);
     };
     img.src=e.target.result;
   };
@@ -2252,6 +2273,247 @@ async function hiDeleteSelected(){
     hiSearch();
   }catch(e){showToast('삭제실패');console.log(e)}
 }
+
+/* ========= 소재불량 보고서 (신규) ========= */
+function hiShowReport(){
+  if(!hiData||!hiData.length){showToast('먼저 조회');return}
+  // 소재불량(mat) 카테고리만 추출
+  var matData=hiData.filter(function(d){return d.category==='mat'});
+  if(!matData.length){
+    showToast('소재불량 데이터 없음. 카테고리를 "🔩 소재불량"으로 선택 후 조회');
+    return;
+  }
+  var sDate=document.getElementById('hiStart').value||'';
+  var eDate=document.getElementById('hiEnd').value||'';
+  var html=_buildMatReportHtml(matData,sDate,eDate);
+  // 새창 열기 (모바일 대응 - 창 차단되면 모달로)
+  var win=window.open('','_blank','width=900,height=800,scrollbars=yes');
+  if(win&&win.document){
+    win.document.open();
+    win.document.write(html);
+    win.document.close();
+  }else{
+    // 팝업 차단된 경우 - 현재 페이지에 모달로 표시
+    _showReportInModal(html);
+  }
+}
+function _showReportInModal(html){
+  var ov=document.getElementById('matReportModal');
+  if(!ov){
+    ov=document.createElement('div');
+    ov.id='matReportModal';
+    ov.style.cssText='display:flex;position:fixed;inset:0;z-index:30000;background:rgba(0,0,0,.85);padding:8px;align-items:center;justify-content:center';
+    ov.innerHTML='<div style="background:#fff;width:100%;max-width:900px;height:95vh;border-radius:12px;overflow:hidden;display:flex;flex-direction:column">'+
+      '<div style="padding:8px 12px;background:#1e3a5f;color:#fff;display:flex;justify-content:space-between;align-items:center"><span style="font-weight:800;font-size:13px">📋 소재불량 보고서</span>'+
+      '<div style="display:flex;gap:6px">'+
+      '<button onclick="document.getElementById(\'matReportFrame\').contentWindow.print()" style="padding:6px 12px;background:#3b82f6;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer">🖨️ 인쇄</button>'+
+      '<button onclick="document.getElementById(\'matReportModal\').remove()" style="padding:6px 12px;background:#ef4444;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer">✕ 닫기</button>'+
+      '</div></div>'+
+      '<iframe id="matReportFrame" style="flex:1;width:100%;border:none;background:#fff"></iframe>'+
+      '</div>';
+    document.body.appendChild(ov);
+  }
+  var iframe=document.getElementById('matReportFrame');
+  var doc=iframe.contentDocument||iframe.contentWindow.document;
+  doc.open();doc.write(html);doc.close();
+}
+function _buildMatReportHtml(data,sDate,eDate){
+  var totalCnt=data.length;
+  var totalPhotos=0;
+  var byMachine={};   // 설비별 집계
+  var byItem={};      // 품번별 집계
+  var byDate={};      // 일자별 집계
+  var byDefect={};    // 불량유형별 집계
+  data.forEach(function(d){
+    var p=d.payload||{};
+    totalPhotos+=(+p.photo_count||0);
+    var mk=(d.machine_code||'-')+'|'+(d.machine_name||'');
+    byMachine[mk]=(byMachine[mk]||0)+1;
+    var ik=(d.item_code||'-')+'|'+(p.item_name||'');
+    byItem[ik]=(byItem[ik]||0)+1;
+    var dt=new Date(d.created_at);
+    var dk=dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0');
+    byDate[dk]=(byDate[dk]||0)+1;
+    // rows 분석
+    (p.rows||[]).forEach(function(r){
+      if(r.value||r.remark){
+        var nm=r.itemName||r.name||'기타';
+        byDefect[nm]=(byDefect[nm]||0)+1;
+      }
+    });
+  });
+  // 정렬
+  var machineList=Object.keys(byMachine).map(function(k){var ar=k.split('|');return{code:ar[0],name:ar[1],cnt:byMachine[k]}}).sort(function(a,b){return b.cnt-a.cnt});
+  var itemList=Object.keys(byItem).map(function(k){var ar=k.split('|');return{code:ar[0],name:ar[1],cnt:byItem[k]}}).sort(function(a,b){return b.cnt-a.cnt});
+  var dateList=Object.keys(byDate).sort().map(function(k){return{date:k,cnt:byDate[k]}});
+  var defectList=Object.keys(byDefect).map(function(k){return{name:k,cnt:byDefect[k]}}).sort(function(a,b){return b.cnt-a.cnt});
+
+  var now=new Date();
+  var nowStr=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0')+' '+String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
+
+  var css='<style>'
+    +'@page{size:A4;margin:14mm}'
+    +'*{box-sizing:border-box;margin:0;padding:0;font-family:"Malgun Gothic","맑은 고딕",sans-serif}'
+    +'body{padding:18px;background:#fff;color:#111;font-size:12px;line-height:1.5}'
+    +'.rpt-hdr{border-bottom:3px solid #1e40af;padding-bottom:10px;margin-bottom:16px}'
+    +'.rpt-hdr h1{font-size:22px;color:#1e40af;font-weight:800;margin-bottom:4px}'
+    +'.rpt-hdr .sub{font-size:11px;color:#555}'
+    +'.rpt-hdr .meta{font-size:11px;color:#333;margin-top:6px}'
+    +'.rpt-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px}'
+    +'.rpt-card{background:#f8fafc;border:1px solid #e2e8f0;border-left:4px solid #1e40af;border-radius:6px;padding:10px}'
+    +'.rpt-card.red{border-left-color:#dc2626}'
+    +'.rpt-card.green{border-left-color:#16a34a}'
+    +'.rpt-card.amber{border-left-color:#d97706}'
+    +'.rpt-card .lbl{font-size:11px;color:#64748b;font-weight:600}'
+    +'.rpt-card .val{font-size:24px;font-weight:800;color:#1e293b;margin-top:4px}'
+    +'.rpt-section{margin-bottom:20px;page-break-inside:avoid}'
+    +'.rpt-section h2{font-size:14px;color:#1e40af;font-weight:800;background:#dbeafe;padding:6px 10px;border-radius:5px;margin-bottom:8px;border-left:4px solid #1e40af}'
+    +'.rpt-tbl{width:100%;border-collapse:collapse;font-size:11px}'
+    +'.rpt-tbl th{background:#1e40af;color:#fff;padding:7px 6px;text-align:center;font-weight:700;border:1px solid #1e3a8a}'
+    +'.rpt-tbl td{padding:6px;border:1px solid #cbd5e1;text-align:center;vertical-align:top}'
+    +'.rpt-tbl tr:nth-child(even) td{background:#f8fafc}'
+    +'.rpt-tbl td.al-l{text-align:left}'
+    +'.rpt-tbl td.al-r{text-align:right}'
+    +'.rpt-tbl td.muted{color:#64748b;font-size:10px}'
+    +'.rpt-tbl .col-no{width:36px}'
+    +'.rpt-tbl .col-cnt{width:70px;font-weight:700;color:#dc2626}'
+    +'.rpt-detail{margin-bottom:14px;padding:10px;border:1px solid #cbd5e1;border-radius:6px;background:#fafbfd;page-break-inside:avoid}'
+    +'.rpt-detail .dt-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;border-bottom:1px solid #cbd5e1;padding-bottom:5px}'
+    +'.rpt-detail .dt-no{font-weight:800;color:#1e40af;font-size:13px}'
+    +'.rpt-detail .dt-time{font-size:11px;color:#64748b}'
+    +'.rpt-detail .dt-eq{display:inline-block;padding:2px 8px;background:#dbeafe;color:#1e40af;border-radius:4px;font-weight:700;font-size:11px;margin-right:6px}'
+    +'.rpt-detail .dt-grid{display:grid;grid-template-columns:90px 1fr;gap:4px 10px;font-size:11px;margin-bottom:6px}'
+    +'.rpt-detail .dt-lbl{color:#64748b;font-weight:600}'
+    +'.rpt-detail .dt-val{color:#1e293b}'
+    +'.rpt-detail .dt-rows{margin-top:6px;border-top:1px dashed #cbd5e1;padding-top:6px}'
+    +'.rpt-detail .dt-row{font-size:11px;padding:3px 0}'
+    +'.rpt-detail .dt-rk{color:#1e40af;font-weight:700}'
+    +'.rpt-detail .dt-rv{color:#dc2626;font-weight:700}'
+    +'.rpt-detail .dt-rr{color:#475569;font-style:italic}'
+    +'.rpt-detail .dt-photos{display:flex;gap:4px;flex-wrap:wrap;margin-top:8px}'
+    +'.rpt-detail .dt-photos img{width:120px;height:90px;object-fit:cover;border:1px solid #cbd5e1;border-radius:4px}'
+    +'.rpt-foot{margin-top:30px;padding-top:10px;border-top:1px solid #cbd5e1;font-size:10px;color:#64748b;text-align:center}'
+    +'.no-data{text-align:center;color:#64748b;padding:20px;font-size:12px}'
+    +'.btn-print{position:fixed;top:10px;right:10px;padding:10px 20px;background:#3b82f6;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 4px 10px rgba(0,0,0,.2);z-index:9999}'
+    +'.btn-close{position:fixed;top:10px;right:120px;padding:10px 20px;background:#64748b;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 4px 10px rgba(0,0,0,.2);z-index:9999}'
+    +'@media print{.btn-print,.btn-close{display:none}body{padding:0}}'
+    +'</style>';
+
+  var html='<!DOCTYPE html><html><head><meta charset="utf-8"><title>소재불량 보고서</title>'+css+'</head><body>';
+  html+='<button class="btn-print" onclick="window.print()">🖨️ 인쇄/PDF저장</button>';
+  html+='<button class="btn-close" onclick="window.close()">✕ 닫기</button>';
+
+  // 헤더
+  html+='<div class="rpt-hdr">';
+  html+='<h1>🔩 소재불량 점검 보고서</h1>';
+  html+='<div class="sub">태진다이텍 품질관리팀 · MES 점검시스템</div>';
+  html+='<div class="meta"><b>조회 기간:</b> '+_eh(sDate)+' ~ '+_eh(eDate)+' &nbsp;&nbsp;|&nbsp;&nbsp; <b>출력일시:</b> '+nowStr+'</div>';
+  html+='</div>';
+
+  // 요약
+  html+='<div class="rpt-summary">';
+  html+='<div class="rpt-card red"><div class="lbl">총 등록 건수</div><div class="val">'+totalCnt+'</div></div>';
+  html+='<div class="rpt-card amber"><div class="lbl">첨부 사진수</div><div class="val">'+totalPhotos+'</div></div>';
+  html+='<div class="rpt-card green"><div class="lbl">관련 설비수</div><div class="val">'+machineList.length+'</div></div>';
+  html+='<div class="rpt-card"><div class="lbl">관련 품번수</div><div class="val">'+itemList.length+'</div></div>';
+  html+='</div>';
+
+  // 일자별
+  if(dateList.length){
+    html+='<div class="rpt-section"><h2>📅 일자별 발생 건수</h2>';
+    html+='<table class="rpt-tbl"><thead><tr><th>일자</th><th>요일</th><th>건수</th><th>비율</th></tr></thead><tbody>';
+    dateList.forEach(function(it){
+      var d=new Date(it.date+'T00:00:00');
+      var wn=['일','월','화','수','목','금','토'][d.getDay()];
+      var pct=totalCnt?(it.cnt*100/totalCnt).toFixed(1):'0.0';
+      html+='<tr><td>'+it.date+'</td><td>'+wn+'</td><td class="col-cnt">'+it.cnt+'</td><td class="al-r">'+pct+'%</td></tr>';
+    });
+    html+='</tbody></table></div>';
+  }
+
+  // 설비별
+  if(machineList.length){
+    html+='<div class="rpt-section"><h2>🏭 설비별 발생 현황</h2>';
+    html+='<table class="rpt-tbl"><thead><tr><th class="col-no">No</th><th>설비코드</th><th>설비명</th><th>건수</th><th>비율</th></tr></thead><tbody>';
+    machineList.forEach(function(it,i){
+      var pct=totalCnt?(it.cnt*100/totalCnt).toFixed(1):'0.0';
+      html+='<tr><td>'+(i+1)+'</td><td>'+_eh(it.code)+'</td><td class="al-l">'+_eh(it.name||'-')+'</td><td class="col-cnt">'+it.cnt+'</td><td class="al-r">'+pct+'%</td></tr>';
+    });
+    html+='</tbody></table></div>';
+  }
+
+  // 품번별 (TOP 20)
+  if(itemList.length){
+    html+='<div class="rpt-section"><h2>📦 품번별 발생 현황 (TOP 20)</h2>';
+    html+='<table class="rpt-tbl"><thead><tr><th class="col-no">No</th><th>품번</th><th>품명</th><th>건수</th></tr></thead><tbody>';
+    itemList.slice(0,20).forEach(function(it,i){
+      html+='<tr><td>'+(i+1)+'</td><td>'+_eh(it.code)+'</td><td class="al-l">'+_eh(it.name||'-')+'</td><td class="col-cnt">'+it.cnt+'</td></tr>';
+    });
+    html+='</tbody></table></div>';
+  }
+
+  // 점검항목별
+  if(defectList.length){
+    html+='<div class="rpt-section"><h2>🔍 점검항목별 발생 현황</h2>';
+    html+='<table class="rpt-tbl"><thead><tr><th class="col-no">No</th><th>점검항목</th><th>건수</th><th>비율</th></tr></thead><tbody>';
+    var defTotal=defectList.reduce(function(s,x){return s+x.cnt},0);
+    defectList.forEach(function(it,i){
+      var pct=defTotal?(it.cnt*100/defTotal).toFixed(1):'0.0';
+      html+='<tr><td>'+(i+1)+'</td><td class="al-l">'+_eh(it.name)+'</td><td class="col-cnt">'+it.cnt+'</td><td class="al-r">'+pct+'%</td></tr>';
+    });
+    html+='</tbody></table></div>';
+  }
+
+  // 상세 내역
+  html+='<div class="rpt-section"><h2>📝 상세 내역 ('+totalCnt+'건)</h2>';
+  // 시간 역순 정렬 (최신부터)
+  var sorted=data.slice().sort(function(a,b){return new Date(b.created_at)-new Date(a.created_at)});
+  sorted.forEach(function(d,idx){
+    var p=d.payload||{};
+    var dt=new Date(d.created_at);
+    var tstr=dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0')+' '+String(dt.getHours()).padStart(2,'0')+':'+String(dt.getMinutes()).padStart(2,'0');
+    var eqLabel='';
+    try{eqLabel=parsePressLabel({machine_name:d.machine_name||'',machine_code:d.machine_code})}catch(e){eqLabel=d.machine_code||'-'}
+    html+='<div class="rpt-detail">';
+    html+='<div class="dt-hdr"><div><span class="dt-no">#'+(idx+1)+'</span> <span class="dt-eq">'+_eh(eqLabel)+'</span> <span style="font-size:11px;color:#475569">'+_eh(d.customer||'')+'</span></div><div class="dt-time">'+tstr+'</div></div>';
+    html+='<div class="dt-grid">';
+    html+='<div class="dt-lbl">품번/품명</div><div class="dt-val">'+_eh(d.item_code||'-')+' · '+_eh(p.item_name||'-')+'</div>';
+    if(p.mold)html+='<div class="dt-lbl">금형</div><div class="dt-val">'+_eh(p.mold)+'</div>';
+    if(p.worker)html+='<div class="dt-lbl">작업자</div><div class="dt-val">'+_eh(p.worker)+'</div>';
+    if(p.lot_no)html+='<div class="dt-lbl">LOT(HEAT)</div><div class="dt-val">'+_eh(p.lot_no)+'</div>';
+    if(p.raw_item_code)html+='<div class="dt-lbl">소재코드</div><div class="dt-val">'+_eh(p.raw_item_code)+'</div>';
+    html+='</div>';
+    // 점검내용
+    var rows=(p.rows||[]).filter(function(r){return r.value||r.remark});
+    if(rows.length){
+      html+='<div class="dt-rows"><div style="font-size:11px;color:#1e40af;font-weight:700;margin-bottom:4px">📋 점검 내용</div>';
+      rows.forEach(function(r){
+        html+='<div class="dt-row"><span class="dt-rk">▸ '+_eh(r.itemName||r.name||'-')+':</span> ';
+        if(r.value)html+='<span class="dt-rv">'+_eh(r.value)+'</span>';
+        if(r.remark)html+=' <span class="dt-rr">('+_eh(r.remark)+')</span>';
+        html+='</div>';
+      });
+      html+='</div>';
+    }
+    // 사진 (있는 경우)
+    if(p.photos&&p.photos.length){
+      html+='<div class="dt-photos">';
+      p.photos.forEach(function(ph){
+        if(ph.data)html+='<img src="'+ph.data+'" alt="첨부사진">';
+      });
+      html+='</div>';
+    }else if(p.photo_count){
+      html+='<div style="font-size:11px;color:#64748b;margin-top:6px">📷 첨부사진 '+p.photo_count+'장 (DB에 메타정보만 저장됨)</div>';
+    }
+    html+='</div>';
+  });
+  html+='</div>';
+
+  html+='<div class="rpt-foot">본 보고서는 MES 점검시스템에서 자동 생성되었습니다 · '+nowStr+'</div>';
+  html+='</body></html>';
+  return html;
+}
+function _eh(s){if(s==null)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
 
 function renderNtfyRules(){var rules=getNtfyRules();var c=document.getElementById('ntfyRules');c.innerHTML='';if(!rules.length){c.innerHTML='<div style="text-align:center;color:#666;font-size:11px;padding:8px 0">등록된 규칙 없음</div>';return}rules.forEach(function(r,i){var d=document.createElement('div');d.className='rule-item';d.innerHTML='<span class="ri-num">'+(i+1)+'</span><span class="ri-cond">'+_condLabel(r.cond)+'</span><span class="ri-val">#'+r.room+'</span>';var b=document.createElement('button');b.className='ri-del';b.textContent='✕';(function(x){b.onclick=function(e){e.stopPropagation();var arr=getNtfyRules();arr.splice(x,1);localStorage.setItem(NTFY_LS,JSON.stringify(arr));renderNtfyRules();_saveRulesToServer('mes_chk_ntfy',arr)}})(i);d.appendChild(b);c.appendChild(d)})}
 function addNtfyRule(){var cond=document.getElementById('ntfyCond').value,room=document.getElementById('ntfyRoom').value.trim();if(!room)return;var rules=getNtfyRules();rules.push({cond:(/^\d+$/.test(cond)?Number(cond):cond),room:room});localStorage.setItem(NTFY_LS,JSON.stringify(rules));document.getElementById('ntfyRoom').value='';renderNtfyRules();_saveRulesToServer('mes_chk_ntfy',rules)}
