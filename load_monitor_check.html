@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>로드모니터 하중 일일점검 v1.7</title>
+<title>로드모니터 하중 일일점검 v1.8</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <style>
@@ -284,7 +284,7 @@ table.hist tr:hover{background:#f0f7ff}
     </div>
   </div>
 
-  <div class="ver">v1.7 · 로드모니터 일일점검 · 태진다이텍 품질관리팀</div>
+  <div class="ver">v1.8 · 로드모니터 일일점검 · 태진다이텍 품질관리팀</div>
 </div>
 
 <script>
@@ -385,23 +385,44 @@ function swTab(i){
 /* ============ 호기/점검자 로드 ============ */
 async function loadMachines(){
   let list=[];
+  let srcInfo='';
+
   // [1순위] machine_master_tj (마스터 - 호기/메이커/톤수)
   try{
     const {data,error}=await supa.from('machine_master_tj')
-      .select('ho_code,machine_code,machine_name,maker,tonnage,active,sort_order')
+      .select('id,ho_code,machine_code,machine_name,maker,tonnage,active,sort_order')
       .order('sort_order',{ascending:true})
       .order('ho_code',{ascending:true});
-    if(!error && data && data.length){
-      list=data.filter(m=>m.active!==false).map(m=>{
-        const code=m.machine_code||(m.ho_code||'').padStart(3,'0');
-        const ton=m.tonnage?` ${m.tonnage}톤`:'';
-        const maker=m.maker?` (${m.maker})`:'';
-        const ho=m.ho_code?`${m.ho_code}호기`:'';
-        const label=[ho,ton,maker].filter(v=>v).join('').trim()||code;
-        return {code,label};
-      });
+    console.log('[machine_master_tj] error=',error,'count=',data?.length);
+    if(error){
+      console.warn('machine_master_tj 조회 오류:',error.code,error.message);
+    }else if(data && data.length){
+      list=data
+        .filter(m=>m.active!==false)
+        .map(m=>{
+          // ho_code를 문자열로 안전하게 처리
+          const ho_str=m.ho_code!=null?String(m.ho_code).trim():'';
+          // code 우선순위: machine_code > ho_code 패딩 > id
+          let code='';
+          if(m.machine_code && String(m.machine_code).trim()){
+            code=String(m.machine_code).trim();
+          }else if(ho_str){
+            code=ho_str.padStart(3,'0');
+          }else{
+            code='M'+m.id;
+          }
+          // 라벨 만들기
+          const ton=m.tonnage?`${m.tonnage}톤`:'';
+          const maker=m.maker?String(m.maker).trim():'';
+          const ho=ho_str?`${ho_str}호기`:'';
+          const parts=[ho,ton,maker].filter(v=>v);
+          const label=parts.length?parts.join(' '):code;
+          return {code,label};
+        })
+        .filter(m=>m.code);
+      srcInfo=`master_tj(${list.length})`;
     }
-  }catch(e){console.warn('machine_master_tj 미사용',e)}
+  }catch(e){console.warn('machine_master_tj 예외:',e)}
 
   // [폴백] machine_status (마스터 없을 때)
   if(!list.length){
@@ -409,13 +430,17 @@ async function loadMachines(){
       const {data,error}=await supa.from('machine_status')
         .select('machine_code,machine_name')
         .order('machine_code');
+      console.log('[machine_status] error=',error,'count=',data?.length);
       if(!error && data){
-        list=data.map(m=>({
-          code:m.machine_code,
-          label:`${m.machine_code} ${m.machine_name||''}`.trim()
-        }));
+        list=data
+          .filter(m=>m.machine_code)
+          .map(m=>({
+            code:String(m.machine_code).trim(),
+            label:`${m.machine_code} ${m.machine_name||''}`.trim()
+          }));
+        srcInfo=`machine_status(${list.length})`;
       }
-    }catch(e){console.error('호기로드 실패',e)}
+    }catch(e){console.error('machine_status 예외:',e)}
   }
 
   // 두 select에 적용
@@ -427,6 +452,16 @@ async function loadMachines(){
     const sel=document.getElementById(s.id);
     sel.innerHTML=s.first+list.map(m=>`<option value="${m.code}">${m.label}</option>`).join('');
   });
+
+  // 디버그 표시
+  const dbg=document.getElementById('machineSrc');
+  if(!list.length){
+    dbg.textContent='⚠ 호기 마스터 비어있음 (콘솔 확인)';
+    dbg.style.color='#c62828';
+    toast('호기 마스터 데이터 없음. F12 콘솔 확인','err');
+  }else{
+    console.log('[호기 로드 완료]',srcInfo,list);
+  }
 
   // 마지막 사용 호기 자동 복원
   restoreLastMachine();
