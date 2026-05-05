@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>로드모니터 하중 일일점검 v2.1</title>
+<title>로드모니터 하중 일일점검 v2.3</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <style>
@@ -137,7 +137,7 @@ table.hist tr:hover{background:#f0f7ff}
     </div>
     <div class="row2">
       <div class="fg">
-        <label>고객사</label>
+        <label>고객사 <span id="custSrc" style="font-size:10px;color:#888;font-weight:400"></span></label>
         <select id="selCustomer" onchange="onCustomerSelect()"><option value="">전체 고객사</option></select>
       </div>
       <div class="fg">
@@ -302,13 +302,13 @@ table.hist tr:hover{background:#f0f7ff}
     </div>
   </div>
 
-  <div class="ver">v2.1 · 로드모니터 일일점검 · 태진다이텍 품질관리팀</div>
+  <div class="ver">v2.3 · 로드모니터 일일점검 · 태진다이텍 품질관리팀</div>
 </div>
 
 <script>
 /* ============ 설정 ============ */
 const SB_URL='https://omngtyewdaqpphnzeate.supabase.co';
-const SB_KEY='sb_publishable_lF5QLYPHsZOMJT2PFkM3LQ_Rxt35VtO';
+const SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tbmd0eWV3ZGFxcHBobnplYXRlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4ODk4ODksImV4cCI6MjA5MDQ2NTg4OX0.Zxur3t02JHtOcXforCMSwO3i2mMaf5sViE0tXXUC0-s';
 let supa=null;
 
 const DDL=`-- 로드모니터 하중 일일점검 테이블
@@ -559,65 +559,83 @@ function loadInspector(){
   }
 }
 
-/* ============ 고객사 / 기종 마스터 ============ */
+/* ============ 고객사 / 기종 마스터 (defect.html 패턴 그대로) ============ */
 let cachedCustomers=[];
-let cachedModels=[];  // [{customer, name}]
+let cachedModels=[];          // general_model_tj
+let cachedDefectModels=[];    // defect_model
 
 const LS_LAST_CUSTOMER='lmc_last_customer';
 const LS_LAST_MODEL='lmc_last_model';
 
+// defect.html과 동일한 sbSelect 패턴
+function sbHeaders(){return{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Content-Type':'application/json','Prefer':'return=representation'}}
+function sbUrl(t,q){return SB_URL.replace(/\/$/,'')+'/rest/v1/'+t+(q?'?'+q:'')}
+async function sbSelect(t,f,o,l){
+  const p=new URLSearchParams();
+  if(f)Object.entries(f).forEach(([k,v])=>{if(v!==undefined&&v!==null&&v!=='')p.append(k,v)});
+  if(o)p.append('order',o);
+  if(l)p.append('limit',l);
+  p.append('select','*');
+  const r=await fetch(sbUrl(t,p.toString()),{headers:sbHeaders()});
+  if(!r.ok)throw new Error('SELECT '+t+': '+r.status+' '+await r.text());
+  return await r.json();
+}
+
 async function loadCustomers(){
   try{
-    const res=await fetch(`${SB_URL}/rest/v1/common_code?code_group=eq.customer&select=code_value,sort_order&order=sort_order.asc`,{
-      headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY}
-    });
-    if(res.ok){
-      const data=await res.json();
-      cachedCustomers=(data||[]).map(r=>r.code_value||'').filter(Boolean);
-      console.log('[고객사]',cachedCustomers.length,'개');
-    }
-  }catch(e){console.warn('고객사 로드 실패:',e);cachedCustomers=[]}
+    const d=await sbSelect('common_code',{code_group:'eq.customer'},'sort_order.asc',200);
+    cachedCustomers=d.map(r=>r.code_value||'').filter(Boolean);
+    console.log('[고객사] common_code',cachedCustomers.length,'건',cachedCustomers);
+  }catch(e){
+    console.log('고객사 로드 실패:',e.message);
+    cachedCustomers=[];
+  }
   renderCustomerSelect();
+  // 디버그 표시
+  const dbg=document.getElementById('custSrc');
+  if(dbg){
+    if(cachedCustomers.length){
+      dbg.textContent=`✓ ${cachedCustomers.length}개`;
+      dbg.style.color='#388e3c';
+    }else{
+      dbg.textContent='⚠ 데이터 없음';
+      dbg.style.color='#c62828';
+    }
+  }
+}
+
+async function loadGeneralModels(){
+  try{
+    const d=await sbSelect('general_model_tj',{},'customer.asc,model_name.asc',2000);
+    cachedModels=d.map(r=>({id:r.id,customer:r.customer||'',name:r.model_name||''}));
+    console.log('[기종] general_model_tj',cachedModels.length,'건');
+  }catch(e){
+    console.log('일반기종 로드 실패:',e.message);
+    cachedModels=[];
+  }
+}
+
+async function loadDefectModels(){
+  try{
+    const d=await sbSelect('defect_model',{},'id.asc',2000);
+    cachedDefectModels=d.map(r=>({id:r.id,name:r.model_name||'',customer:r.customer||''}));
+    console.log('[기종] defect_model',cachedDefectModels.length,'건');
+  }catch(e){
+    console.log('defect_model 로드 실패:',e.message);
+    cachedDefectModels=[];
+  }
 }
 
 async function loadModels(){
-  // 1순위: general_model_tj (defect 패턴)
-  try{
-    const res=await fetch(`${SB_URL}/rest/v1/general_model_tj?select=customer,model_name&order=customer.asc,model_name.asc&limit=2000`,{
-      headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY}
-    });
-    if(res.ok){
-      const data=await res.json();
-      cachedModels=(data||[]).map(r=>({customer:r.customer||'',name:r.model_name||''})).filter(m=>m.name);
-      console.log('[기종] general_model_tj',cachedModels.length,'개');
-    }
-  }catch(e){console.warn('general_model_tj 로드:',e)}
-
-  // 2순위: defect_model 보강
-  try{
-    const res=await fetch(`${SB_URL}/rest/v1/defect_model?select=customer,model_name&limit=2000`,{
-      headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY}
-    });
-    if(res.ok){
-      const data=await res.json();
-      const seen=new Set(cachedModels.map(m=>m.customer+'||'+m.name));
-      (data||[]).forEach(r=>{
-        const k=(r.customer||'')+'||'+(r.model_name||'');
-        if(r.model_name && !seen.has(k)){
-          cachedModels.push({customer:r.customer||'',name:r.model_name});
-          seen.add(k);
-        }
-      });
-      console.log('[기종] 합계',cachedModels.length,'개');
-    }
-  }catch(e){console.warn('defect_model 로드:',e)}
-
-  // 마지막 선택 복원
+  await loadGeneralModels();
+  await loadDefectModels();
+  console.log('[기종] 통합:',cachedModels.length+cachedDefectModels.length,'건');
   restoreLastModelSelection();
 }
 
 function renderCustomerSelect(){
   const sel=document.getElementById('selCustomer');
+  if(!sel)return;
   const cur=sel.value||localStorage.getItem(LS_LAST_CUSTOMER)||'';
   sel.innerHTML='<option value="">전체 고객사</option>'+
     cachedCustomers.map(c=>`<option value="${c}"${c===cur?' selected':''}>${c}</option>`).join('');
@@ -636,30 +654,21 @@ function onCustomerSelect(){
 function _escH(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function _escA(s){return String(s||'').replace(/'/g,"\\'").replace(/"/g,'&quot;')}
 
-// 부분 입력으로 기종 검색 (고객사 필터 + 부분일치)
+// defect.html의 getFilteredModels 그대로
 function getFilteredModels(query){
   const cust=document.getElementById('selCustomer').value;
   const q=(query||'').trim().toLowerCase();
-  let models=[...cachedModels];
+  let models=cachedModels.map(m=>({name:m.name,customer:m.customer}));
+  cachedDefectModels.forEach(dm=>{if(!models.find(m=>m.name===dm.name))models.push({name:dm.name,customer:dm.customer})});
   if(cust)models=models.filter(m=>m.customer===cust);
-  if(q)models=models.filter(m=>
-    m.name.toLowerCase().includes(q) ||
-    (m.customer||'').toLowerCase().includes(q)
-  );
-  // 정렬: 고객사 → 기종명
+  if(q)models=models.filter(m=>m.name.toLowerCase().includes(q)||m.customer.toLowerCase().includes(q));
   models.sort((a,b)=>(a.customer||'').localeCompare(b.customer||'','ko')||a.name.localeCompare(b.name,'ko'));
-  // 중복 제거
   const seen=new Set();
-  return models.filter(m=>{
-    const k=m.customer+'||'+m.name;
-    if(seen.has(k))return false;
-    seen.add(k);
-    return true;
-  });
+  return models.filter(m=>{const k=m.customer+'||'+m.name;if(seen.has(k))return false;seen.add(k);return true});
 }
 
+// defect.html의 onModelSearch 그대로
 function onModelSearch(query){
-  // 입력값을 그대로 chkItem(hidden)에 저장 (드롭다운 선택 안해도 수동입력 가능)
   document.getElementById('chkItem').value=(query||'').trim();
   document.getElementById('modelSrc').textContent='';
 
@@ -696,7 +705,6 @@ function selectModel(name,customer){
   document.getElementById('chkItem').value=name;
   document.getElementById('modelDropdown').classList.remove('show');
 
-  // 고객사 같이 채우기 (선택된 게 없을 때만)
   if(customer){
     const sel=document.getElementById('selCustomer');
     if(!sel.value){
@@ -704,7 +712,6 @@ function selectModel(name,customer){
       localStorage.setItem(LS_LAST_CUSTOMER,customer);
     }
   }
-  // 기종 자동저장
   localStorage.setItem(LS_LAST_MODEL,name);
   const src=document.getElementById('modelSrc');
   src.textContent='💾 저장됨';
