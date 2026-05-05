@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>로드모니터 하중 일일점검 v5.8</title>
+<title>로드모니터 하중 일일점검 v5.9</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
@@ -211,7 +211,7 @@ table.hist tr:hover{background:#f0f7ff}
 <body>
 
 <div class="hdr">
-  <h1>📊 로드모니터 하중 일일점검 <span class="rev-badge">Rev. 5.8</span></h1>
+  <h1>📊 로드모니터 하중 일일점검 <span class="rev-badge">Rev. 5.9</span></h1>
   <p>프레스 Smart Load Monitor · TOTAL / CH1좌 / CH2우</p>
 </div>
 
@@ -581,7 +581,7 @@ table.hist tr:hover{background:#f0f7ff}
     <button class="btn btn-ghost btn-block" onclick="copyDDL()" style="margin-top:8px">📋 SQL 복사</button>
   </div>
 
-  <div class="ver">v5.8 · 로드모니터 일일점검 · 태진다이텍 품질관리팀</div>
+  <div class="ver">v5.9 · 로드모니터 일일점검 · 태진다이텍 품질관리팀</div>
 </div>
 
 <script>
@@ -1985,12 +1985,41 @@ const FILTER_ORDER={
   pink:   ['strict','inverse','loose']
 };
 
-// 색상별 OCR 입력 확대 배수 (분홍은 6/8 구분 위해 가장 크게)
+// 색상별 OCR 입력 확대 배수 (보라는 6/8 구분 위해 가장 크게)
 const OCR_SCALE={
   green: 1,
   yellow: 1.3,
-  pink: 2.5  // 6/8 구분 위해 충분히 크게
+  pink: 3.0  // 6/8 구분 위해 충분히 크게 (이전 2.5 → 3.0)
 };
+
+// 모폴로지 침식: 검은 영역(글자) 1픽셀씩 줄임 → 6의 곡선이 닫혀있고 8의 두 구멍이 분명해짐
+// 노이즈 픽셀 제거 + 글자 윤곽 분명화
+function erodeBlackPixels(canvas){
+  const ctx=canvas.getContext('2d',{willReadFrequently:true});
+  const w=canvas.width, h=canvas.height;
+  const src=ctx.getImageData(0,0,w,h);
+  const sd=src.data;
+  // 결과 버퍼 (원본 흰색으로 시작)
+  const dst=new Uint8ClampedArray(sd.length);
+  for(let i=0;i<dst.length;i+=4){dst[i]=255;dst[i+1]=255;dst[i+2]=255;dst[i+3]=255}
+  // 각 픽셀: 자기 자신과 4방향 이웃이 모두 검정이면 검정 유지, 아니면 흰색
+  for(let y=1;y<h-1;y++){
+    for(let x=1;x<w-1;x++){
+      const idx=(y*w+x)*4;
+      // 자기 자신이 검정인지 (R<128 && G<128 && B<128)
+      if(sd[idx]<128 && sd[idx+1]<128 && sd[idx+2]<128){
+        // 4방향 이웃도 모두 검정인지
+        const left=(y*w+(x-1))*4, right=(y*w+(x+1))*4;
+        const top=((y-1)*w+x)*4, bot=((y+1)*w+x)*4;
+        if(sd[left]<128 && sd[right]<128 && sd[top]<128 && sd[bot]<128){
+          dst[idx]=0;dst[idx+1]=0;dst[idx+2]=0;
+        }
+      }
+    }
+  }
+  const out=new ImageData(dst,w,h);
+  ctx.putImageData(out,0,0);
+}
 
 // ★ Tesseract worker 재사용 (한 번만 초기화 → 모든 OCR에서 재사용)
 // 장점: 초기화 오버헤드 1~2초 × 9회 = 9~18초 절약
@@ -2040,8 +2069,12 @@ async function tryColorOCR(bitmap,targetColor,minVal,maxVal,statusEl,statusPrefi
   const scale=OCR_SCALE[targetColor]||1;
   const worker=await getTessWorker();
 
-  // 분홍은 6/8 구분 어려움 → 2개 PSM으로 검증
-  const psmsToTry=targetColor==='pink'?[7,8]:[7];
+  // 보라(CH2)는 6/8 구분 어려움 → 다중 PSM + 모든 필터 합산 빈도 결정
+  const isPink=targetColor==='pink';
+  const psmsToTry=isPink?[7,8,6]:[7];  // 보라는 PSM 7,8,6 세 모드
+
+  // 보라 전용: 모든 필터의 모든 OCR 결과 누적 → 최종 빈도 우선 선택
+  const pinkAllNums=[];
 
   for(let i=0;i<variants.length;i++){
     const v=variants[i];
@@ -2057,6 +2090,11 @@ async function tryColorOCR(bitmap,targetColor,minVal,maxVal,statusEl,statusPrefi
       continue;
     }
 
+    // 보라 전용: 모폴로지 침식으로 6/8 윤곽 강화
+    if(isPink){
+      try{erodeBlackPixels(canvas)}catch(e){console.warn('erode 실패:',e)}
+    }
+
     try{
       const t0=Date.now();
       const results=[];
@@ -2067,7 +2105,6 @@ async function tryColorOCR(bitmap,targetColor,minVal,maxVal,statusEl,statusPrefi
       }
       const dt=Date.now()-t0;
 
-      // 결과 통합: 모든 PSM에서 같은 값이 나오면 확정 (분홍 6/8 혼동 방지)
       const valid=results.filter(r=>r.best!=null);
       if(valid.length===0){
         canvas.width=0;canvas.height=0;
@@ -2075,17 +2112,36 @@ async function tryColorOCR(bitmap,targetColor,minVal,maxVal,statusEl,statusPrefi
       }
 
       let val=null,confident=true;
-      if(valid.length===1){
+
+      if(isPink){
+        // 보라: 모든 PSM 결과를 누적 (필터 끝나면 빈도 우선 선택)
+        valid.forEach(r=>{
+          if(r.best!=null)pinkAllNums.push(r.best);
+          // 모든 후보 숫자도 누적 (정상 범위)
+          (r.nums||[]).forEach(n=>{
+            if(n>=minVal&&n<=maxVal)pinkAllNums.push(n);
+          });
+        });
+        // 모든 PSM이 같은 값이면 그 즉시 성공 (가장 신뢰)
+        const allSame=valid.every(r=>r.best===valid[0].best);
+        if(allSame && valid.length>=2){
+          val=valid[0].best;
+          console.log(`[OCR ${targetColor}] ✓ ${valid.length}개 PSM 모두 일치: ${val}`);
+          canvas.width=0;canvas.height=0;
+          return {value:val,variant:v};
+        }
+        // 일치 안하면 다음 필터로 (누적 후 결정)
+        console.log(`[OCR ${targetColor}/${v}] PSM 결과 다양 → 다음 필터로`);
+        canvas.width=0;canvas.height=0;
+        continue;
+      }else if(valid.length===1){
         val=valid[0].best;
       }else{
-        // PSM 7과 8 결과 비교
         const v0=valid[0].best,v1=valid[1].best;
         if(v0===v1){
           val=v0;
           console.log(`[OCR ${targetColor}] ✓ 두 PSM 결과 일치: ${val}`);
         }else{
-          // 결과 다름 → 둘 다 후보로 보고 더 자주 나온 것 선택
-          // 모든 nums를 모아서 빈도 체크
           const allNums=[...valid[0].nums,...valid[1].nums].filter(n=>n>=minVal&&n<=maxVal);
           const freq={};
           allNums.forEach(n=>{freq[n]=(freq[n]||0)+1});
@@ -2106,6 +2162,18 @@ async function tryColorOCR(bitmap,targetColor,minVal,maxVal,statusEl,statusPrefi
       canvas.width=0;canvas.height=0;
     }
   }
+
+  // 보라: 모든 필터 끝나도 PSM 일치 못하면 누적 빈도로 결정
+  if(isPink && pinkAllNums.length>0){
+    const freq={};
+    pinkAllNums.forEach(n=>{freq[n]=(freq[n]||0)+1});
+    const sorted=Object.entries(freq).sort((a,b)=>b[1]-a[1]);
+    const val=parseFloat(sorted[0][0]);
+    const top2=sorted.slice(0,3).map(([n,c])=>`${n}:${c}회`).join(', ');
+    console.warn(`[OCR pink] ⚠ 최종 빈도 우선: ${val} (후보: ${top2})`);
+    return {value:val,variant:'freq?'};
+  }
+
   console.log(`[OCR ${targetColor}] ✗ 모든 필터 실패`);
   return {value:null,variant:null};
 }
