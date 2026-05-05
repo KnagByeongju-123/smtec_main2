@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>출하관리 체크시트 v1.7</title>
+<title>출하관리 체크시트 v1.8</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;900&display=swap">
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
@@ -132,7 +132,7 @@ input[type=radio]:checked + .okng-btn[for$=_ng] { background: var(--ng); color: 
 <body>
 
 <div class="hdr">
-  <h1>📦 출하관리 Check Sheet</h1>
+  <h1>📦 출하관리 Check Sheet v1.8</h1>
   <p>품질팀 · 출하검사 일상점검 <span id="hdrUserBadge" class="user-badge" style="display:none"></span></p>
 </div>
 
@@ -313,7 +313,8 @@ GRANT USAGE, SELECT ON SEQUENCE shipping_check_id_seq TO anon, authenticated;</p
   <!-- 통합 저장 -->
   <div class="card" style="position:sticky;bottom:8px;background:var(--surface);border:2px solid var(--accent);box-shadow:0 4px 14px rgba(6,182,212,.3)">
     <div class="section-info" style="margin-bottom:10px">
-      • 점검 항목 · 검사실/라인 · 텔레그램 알림 설정을 한 번에 저장합니다.
+      • 점검 항목 · 검사실/라인 · 텔레그램 알림 설정을 저장합니다.<br>
+      • 점검항목/검사실은 <b>Supabase에 동기화</b>되어 모든 디바이스·사용자가 동일한 설정을 사용합니다.
     </div>
     <button class="btn-primary" onclick="saveAllSettings()" style="font-size:16px">💾 모든 설정 저장</button>
   </div>
@@ -413,6 +414,94 @@ function loadLines() {
 
 function persistItems() { const s=getSettings(); s.items=JSON.stringify(_items); setSettings(s); }
 function persistLines() { const s=getSettings(); s.lines=JSON.stringify(_lines); setSettings(s); }
+
+// ============ Supabase 동기화 (검사실 라인 / 점검항목) ============
+// 저장 패턴 (common_code 테이블)
+//   라인: code_group='ship_machine_list', code_value=라인명, sort_order=순서
+//   점검항목: code_group='ship_check_items', code_value=key, code_name=label,
+//             note=JSON({std,method,no}), sort_order=순서
+async function loadLinesFromServer() {
+  if (!isConfigured()) return false;
+  try {
+    const data = await sbSelect('common_code', 'select=*&code_group=eq.ship_machine_list&order=sort_order.asc&limit=200');
+    if (Array.isArray(data) && data.length > 0) {
+      _lines = data.map(r => String(r.code_value || '').trim()).filter(v => v);
+      return true;
+    }
+  } catch(e) { console.log('라인 서버로드 실패:', e); }
+  return false;
+}
+
+async function loadItemsFromServer() {
+  if (!isConfigured()) return false;
+  try {
+    const data = await sbSelect('common_code', 'select=*&code_group=eq.ship_check_items&order=sort_order.asc&limit=200');
+    if (Array.isArray(data) && data.length > 0) {
+      _items = data.map((r, idx) => {
+        let extra = {};
+        try { if (r.note) extra = JSON.parse(r.note); } catch(e) {}
+        return {
+          key: String(r.code_value || ('item_' + idx)),
+          label: String(r.code_name || ''),
+          std: extra.std || '',
+          method: extra.method || '육안',
+          no: extra.no || (idx + 1)
+        };
+      }).filter(it => it.label);
+      if (_items.length > 0) return true;
+    }
+  } catch(e) { console.log('항목 서버로드 실패:', e); }
+  return false;
+}
+
+async function saveLinesToServer() {
+  if (!isConfigured()) return false;
+  try {
+    // 1) 기존 그룹 전체 삭제
+    await fetch(getSbUrl() + '/rest/v1/common_code?code_group=eq.ship_machine_list', {
+      method: 'DELETE',
+      headers: { 'apikey': getSbKey(), 'Authorization': 'Bearer ' + getSbKey() }
+    });
+    // 2) 신규 일괄 INSERT
+    if (_lines.length === 0) return true;
+    const rows = _lines.map((nm, i) => ({
+      code_group: 'ship_machine_list',
+      code_value: nm,
+      code_name: nm,
+      sort_order: i + 1
+    }));
+    await sbInsert('common_code', rows);
+    return true;
+  } catch(e) {
+    console.log('라인 서버저장 실패:', e);
+    return false;
+  }
+}
+
+async function saveItemsToServer() {
+  if (!isConfigured()) return false;
+  try {
+    // 1) 기존 그룹 전체 삭제
+    await fetch(getSbUrl() + '/rest/v1/common_code?code_group=eq.ship_check_items', {
+      method: 'DELETE',
+      headers: { 'apikey': getSbKey(), 'Authorization': 'Bearer ' + getSbKey() }
+    });
+    // 2) 신규 일괄 INSERT
+    if (_items.length === 0) return true;
+    const rows = _items.map((it, i) => ({
+      code_group: 'ship_check_items',
+      code_value: it.key,
+      code_name: it.label || '',
+      note: JSON.stringify({ std: it.std || '', method: it.method || '육안', no: i + 1 }),
+      sort_order: i + 1
+    }));
+    await sbInsert('common_code', rows);
+    return true;
+  } catch(e) {
+    console.log('항목 서버저장 실패:', e);
+    return false;
+  }
+}
 
 // ============ Supabase ============
 async function sbInsert(table, data) {
@@ -857,7 +946,7 @@ function resetItems() {
 }
 
 // ============ 통합 저장 ============
-function saveAllSettings() {
+async function saveAllSettings() {
   // 1. 점검 항목: 빈 항목 제거 + 번호 재할당
   _items = _items.filter(it => (it.label || '').trim());
   _items.forEach((it, i) => { it.no = i + 1; });
@@ -871,7 +960,7 @@ function saveAllSettings() {
     return;
   }
 
-  // 2. 영구 저장
+  // 2. 로컬 영구 저장 (오프라인 대비 캐시)
   persistItems();
   persistLines();
 
@@ -889,7 +978,20 @@ function saveAllSettings() {
   renderRefPhotoList();
   renderCheckItems();
 
-  toast('💾 모든 설정이 저장되었습니다 (' + _items.length + '개 항목 · ' + _lines.length + '개 라인)', 'success');
+  // 5. Supabase 동기화 (다른 디바이스/사용자와 공유)
+  toast('⏳ 서버 동기화 중...');
+  const [okItems, okLines] = await Promise.all([
+    saveItemsToServer(),
+    saveLinesToServer()
+  ]);
+
+  if (okItems && okLines) {
+    toast('💾 저장 완료 · 서버 동기화됨 (' + _items.length + '개 항목 · ' + _lines.length + '개 라인)', 'success');
+  } else if (!isConfigured()) {
+    toast('💾 로컬 저장됨 (Supabase 미설정 · 서버 동기화 안됨)', 'success');
+  } else {
+    toast('⚠ 로컬 저장됨 / 서버 동기화 일부 실패 (콘솔 확인)', 'error');
+  }
 }
 
 // ============ 기준사진 ============
@@ -1101,6 +1203,7 @@ function loadCurrentUser() {
 
 // ============ 초기화 ============
 window.addEventListener('DOMContentLoaded', async () => {
+  // 1) 로컬 캐시/기본값 우선 로드 (즉시 UI 표시)
   loadItems();
   loadLines();
 
@@ -1108,6 +1211,33 @@ window.addEventListener('DOMContentLoaded', async () => {
   loadCurrentUser();
   setKstNow();
   renderCheckItems();
+
+  // 2) Supabase 에서 최신 설정 비동기 로드 → 성공 시 UI 갱신
+  if (isConfigured()) {
+    try {
+      const [okLines, okItems] = await Promise.all([
+        loadLinesFromServer(),
+        loadItemsFromServer()
+      ]);
+      if (okLines || okItems) {
+        // 로컬 캐시도 갱신
+        if (okItems) persistItems();
+        if (okLines) persistLines();
+        // UI 다시 그림
+        fillLineSelects();
+        renderCheckItems();
+        // 설정 탭이 열려있으면 편집기도 갱신
+        const settingPane = document.getElementById('pane-setting');
+        if (settingPane && settingPane.classList.contains('active')) {
+          renderItemEditor();
+          renderLineList();
+        }
+      }
+    } catch(e) { console.log('서버 설정 로드 오류:', e); }
+
+    // 3) 기준사진 로드
+    await loadRefPhotosFromServer();
+  }
 
   // 1분마다 시간 갱신 (사용자가 페이지 오래 열어둔 경우 대비)
   setInterval(() => {
@@ -1125,10 +1255,6 @@ window.addEventListener('DOMContentLoaded', async () => {
   document.querySelectorAll('.tab').forEach(t => {
     t.addEventListener('click', () => switchTab(t.dataset.pane));
   });
-
-  if (isConfigured()) {
-    await loadRefPhotosFromServer();
-  }
 });
 </script>
 
