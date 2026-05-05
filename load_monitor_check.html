@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>로드모니터 하중 일일점검 v6.3</title>
+<title>로드모니터 하중 일일점검 v6.4</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
@@ -219,7 +219,7 @@ table.hist tr:hover{background:#f0f7ff}
 <body>
 
 <div class="hdr">
-  <h1>📊 로드모니터 하중 일일점검 <span class="rev-badge">Rev. 6.3</span></h1>
+  <h1>📊 로드모니터 하중 일일점검 <span class="rev-badge">Rev. 6.4</span></h1>
   <p>프레스 Smart Load Monitor · CH1좌 + CH2우 = TOTAL 자동계산</p>
 </div>
 
@@ -594,7 +594,7 @@ table.hist tr:hover{background:#f0f7ff}
     <button class="btn btn-ghost btn-block" onclick="copyDDL()" style="margin-top:8px">📋 SQL 복사</button>
   </div>
 
-  <div class="ver">v6.3 · 로드모니터 일일점검 · 태진다이텍 품질관리팀</div>
+  <div class="ver">v6.4 · 로드모니터 일일점검 · 태진다이텍 품질관리팀</div>
 </div>
 
 <script>
@@ -2194,8 +2194,9 @@ async function safeCreateImageBitmap(fileOrBlob){
 const FILTER_ORDER={
   green:  ['strict','loose','inverse'],
   yellow: ['loose','strict','inverse'],
-  // 보라색 CH2: strict(HSV hue 250~330)가 가장 정확, 실패시 inverse(RGB) → loose
-  pink:   ['strict','inverse','loose']
+  // 보라색 CH2: binarize(Otsu 2치화) 1순위 - 채도 무시 + 명도 기반 → 6/8 가장 정확
+  // 실패시 strict(HSV) → inverse(RGB) → loose
+  pink:   ['binarize','strict','inverse','loose']
 };
 
 // 색상별 OCR 입력 확대 배수 (보라는 6/8 구분 위해 가장 크게)
@@ -2293,9 +2294,19 @@ async function tryColorOCR(bitmap,targetColor,minVal,maxVal,statusEl,statusPrefi
   for(let i=0;i<variants.length;i++){
     const v=variants[i];
     if(statusEl){
-      statusEl.innerHTML=`<span class="spinner"></span> ${statusPrefix} ${i+1}/3 (${v})...`;
+      statusEl.innerHTML=`<span class="spinner"></span> ${statusPrefix} ${i+1}/${variants.length} (${v})...`;
     }
-    const {canvas,matchCount}=createColorMaskedCanvas(bitmap,targetColor,v,scale);
+    // 보라 'binarize' variant → Otsu 2치화 함수 사용 (채도 무시, 명도 기반)
+    let canvas,matchCount;
+    if(isPink && v==='binarize'){
+      const r=createPinkBinarizedCanvas(bitmap,scale);
+      canvas=r.canvas;
+      matchCount=r.matchCount;
+    }else{
+      const r=createColorMaskedCanvas(bitmap,targetColor,v,scale);
+      canvas=r.canvas;
+      matchCount=r.matchCount;
+    }
 
     const minMatch=Math.round(30*scale*scale);
     if(matchCount<minMatch){
@@ -2304,8 +2315,8 @@ async function tryColorOCR(bitmap,targetColor,minVal,maxVal,statusEl,statusPrefi
       continue;
     }
 
-    // 보라 전용: 모폴로지 침식으로 6/8 윤곽 강화
-    if(isPink){
+    // 보라 전용: 모폴로지 침식으로 6/8 윤곽 강화 (binarize에서는 이미 깔끔하므로 스킵)
+    if(isPink && v!=='binarize'){
       try{erodeBlackPixels(canvas)}catch(e){console.warn('erode 실패:',e)}
     }
 
@@ -2390,6 +2401,100 @@ async function tryColorOCR(bitmap,targetColor,minVal,maxVal,statusEl,statusPrefi
 
   console.log(`[OCR ${targetColor}] ✗ 모든 필터 실패`);
   return {value:null,variant:null};
+}
+
+// 보라(CH2) 전용: 채도 무시 + 명도 기반 Otsu 2치화
+// 보라 픽셀은 R≥G && B≥G인 픽셀만 후보로 → 명도값(V = max(R,G,B))으로 2치화
+// Otsu 알고리즘으로 자동 임계값 결정 (그림자/색 변화에 강함)
+function createPinkBinarizedCanvas(bitmap,scale){
+  scale=scale||1;
+  // iOS Safari 캔버스 한도
+  const isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent) ||
+              (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
+  const MAX_SIDE=isIOS?4096:8192;
+  const MAX_PX=isIOS?16777216:67108864;
+  let outW=Math.round(bitmap.width*scale);
+  let outH=Math.round(bitmap.height*scale);
+  if(outW>MAX_SIDE||outH>MAX_SIDE||outW*outH>MAX_PX){
+    const limitScale=Math.min(MAX_SIDE/outW,MAX_SIDE/outH,Math.sqrt(MAX_PX/(outW*outH)),1);
+    outW=Math.floor(outW*limitScale);
+    outH=Math.floor(outH*limitScale);
+  }
+  const canvas=document.createElement('canvas');
+  canvas.width=outW;canvas.height=outH;
+  const ctx=canvas.getContext('2d',{willReadFrequently:true});
+  ctx.imageSmoothingEnabled=true;
+  ctx.imageSmoothingQuality='high';
+  ctx.drawImage(bitmap,0,0,outW,outH);
+  const imgData=ctx.getImageData(0,0,outW,outH);
+  const d=imgData.data;
+  const N=d.length/4;
+
+  // 1단계: 보라 후보 픽셀(R≥G && B≥G && B>일정값) 식별 + 명도값 히스토그램 수집
+  // 검정 배경의 보라 글씨 → 보라 픽셀의 명도가 배경보다 높음
+  const isPinkCandidate=new Uint8Array(N);
+  const histogram=new Array(256).fill(0);
+  let pinkCnt=0;
+
+  for(let i=0,j=0;i<d.length;i+=4,j++){
+    const r=d[i],g=d[i+1],b=d[i+2];
+    // 보라/마젠타 후보: B와 R이 G보다 충분히 큼 (G가 약함 = 녹/노랑 배제)
+    // 채도는 무시 (희미한 보라도 인정)
+    if(b>g+8 && r>=g-5 && (b+r)>g*1.5){
+      isPinkCandidate[j]=1;
+      pinkCnt++;
+      // 명도값 = max(R,G,B) → 보라 픽셀의 밝기
+      const v=Math.max(r,g,b);
+      histogram[v]++;
+    }
+  }
+
+  console.log(`[보라 2치화] 보라 후보 픽셀: ${pinkCnt}/${N} (${(pinkCnt/N*100).toFixed(1)}%)`);
+
+  if(pinkCnt<50){
+    console.log('[보라 2치화] 후보 부족 → 빈 캔버스');
+    // 결과: 전체 흰색 (매칭 없음)
+    for(let i=0;i<d.length;i+=4){d[i]=255;d[i+1]=255;d[i+2]=255}
+    ctx.putImageData(imgData,0,0);
+    return {canvas,matchCount:0};
+  }
+
+  // 2단계: Otsu 알고리즘으로 명도 임계값 자동 결정
+  // 보라 픽셀들 중에서 밝은 픽셀(글씨)과 어두운 픽셀(배경 잔여) 분리
+  let total=0;
+  for(let i=0;i<256;i++)total+=histogram[i]*i;
+  let sumB=0,wB=0,maxVar=0,threshold=128;
+  for(let t=0;t<256;t++){
+    wB+=histogram[t];
+    if(wB===0)continue;
+    const wF=pinkCnt-wB;
+    if(wF===0)break;
+    sumB+=t*histogram[t];
+    const mB=sumB/wB;
+    const mF=(total-sumB)/wF;
+    const between=wB*wF*(mB-mF)*(mB-mF);
+    if(between>maxVar){maxVar=between;threshold=t}
+  }
+  console.log(`[보라 2치화] Otsu 임계값: ${threshold}`);
+
+  // 3단계: 2치화 - 보라 후보 + 명도≥임계값 → 검정(글씨) / 그 외 → 흰색
+  let matchCount=0;
+  for(let i=0,j=0;i<d.length;i+=4,j++){
+    if(isPinkCandidate[j]){
+      const v=Math.max(d[i],d[i+1],d[i+2]);
+      if(v>=threshold){
+        d[i]=0;d[i+1]=0;d[i+2]=0;
+        matchCount++;
+      }else{
+        d[i]=255;d[i+1]=255;d[i+2]=255;
+      }
+    }else{
+      d[i]=255;d[i+1]=255;d[i+2]=255;
+    }
+  }
+  ctx.putImageData(imgData,0,0);
+  console.log(`[보라 2치화] 글씨 픽셀: ${matchCount}/${N} (${(matchCount/N*100).toFixed(1)}%)`);
+  return {canvas,matchCount};
 }
 
 // 색상 채널 마스킹: 검정배경 네온숫자 → 흰배경 검은글씨
