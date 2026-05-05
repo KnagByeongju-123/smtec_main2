@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>출하관리 체크시트 v1.9</title>
+<title>출하관리 체크시트 v2.0</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;900&display=swap">
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
@@ -132,7 +132,7 @@ input[type=radio]:checked + .okng-btn[for$=_ng] { background: var(--ng); color: 
 <body>
 
 <div class="hdr">
-  <h1>📦 출하관리 Check Sheet v1.9</h1>
+  <h1>📦 출하관리 Check Sheet v2.0</h1>
   <p>품질팀 · 출하검사 일상점검 <span id="hdrUserBadge" class="user-badge" style="display:none"></span></p>
 </div>
 
@@ -416,14 +416,13 @@ function persistItems() { const s=getSettings(); s.items=JSON.stringify(_items);
 function persistLines() { const s=getSettings(); s.lines=JSON.stringify(_lines); setSettings(s); }
 
 // ============ Supabase 동기화 (검사실 라인 / 점검항목) ============
-// 저장 패턴 (common_code 테이블)
-//   라인: code_group='ship_machine_list', code_value=라인명, sort_order=순서
-//   점검항목: code_group='ship_check_items', code_value=key, code_name=label,
-//             note=JSON({std,method,no}), sort_order=순서
+// common_code 테이블에는 code_group, code_value 컬럼만 사용한다 (다른 컬럼이 스키마에 없을 수 있음)
+//   라인:     code_group='ship_machine_list', code_value=라인명
+//   점검항목: code_group='ship_check_items',  code_value=JSON({key,label,std,method,no})
 async function loadLinesFromServer() {
   if (!isConfigured()) return false;
   try {
-    const data = await sbSelect('common_code', 'select=*&code_group=eq.ship_machine_list&order=sort_order.asc&limit=200');
+    const data = await sbSelect('common_code', 'select=code_value&code_group=eq.ship_machine_list&limit=200');
     if (Array.isArray(data) && data.length > 0) {
       _lines = data.map(r => String(r.code_value || '').trim()).filter(v => v);
       return true;
@@ -435,20 +434,28 @@ async function loadLinesFromServer() {
 async function loadItemsFromServer() {
   if (!isConfigured()) return false;
   try {
-    const data = await sbSelect('common_code', 'select=*&code_group=eq.ship_check_items&order=sort_order.asc&limit=200');
+    const data = await sbSelect('common_code', 'select=code_value&code_group=eq.ship_check_items&limit=200');
     if (Array.isArray(data) && data.length > 0) {
-      _items = data.map((r, idx) => {
-        let extra = {};
-        try { if (r.note) extra = JSON.parse(r.note); } catch(e) {}
-        return {
-          key: String(r.code_value || ('item_' + idx)),
-          label: String(r.code_name || ''),
-          std: extra.std || '',
-          method: extra.method || '육안',
-          no: extra.no || (idx + 1)
-        };
-      }).filter(it => it.label);
-      if (_items.length > 0) return true;
+      const parsed = [];
+      data.forEach((r, idx) => {
+        const raw = String(r.code_value || '').trim();
+        if (!raw) return;
+        try {
+          const o = JSON.parse(raw);
+          if (o && o.label) {
+            parsed.push({
+              key: String(o.key || ('item_' + idx)),
+              label: String(o.label),
+              std: String(o.std || ''),
+              method: String(o.method || '육안'),
+              no: Number(o.no) || (idx + 1)
+            });
+          }
+        } catch(e) { /* JSON 아니면 무시 */ }
+      });
+      // no 순으로 정렬
+      parsed.sort((a, b) => (a.no || 0) - (b.no || 0));
+      if (parsed.length > 0) { _items = parsed; return true; }
     }
   } catch(e) { console.log('항목 서버로드 실패:', e); }
   return false;
@@ -465,13 +472,11 @@ async function saveLinesToServer() {
     const t = await delRes.text();
     throw new Error('라인 DELETE 실패 HTTP ' + delRes.status + ' ' + t.substring(0,160));
   }
-  // 2) 신규 일괄 INSERT
+  // 2) 신규 일괄 INSERT (code_group + code_value 만 사용)
   if (_lines.length === 0) return true;
-  const rows = _lines.map((nm, i) => ({
+  const rows = _lines.map(nm => ({
     code_group: 'ship_machine_list',
-    code_value: nm,
-    code_name: nm,
-    sort_order: i + 1
+    code_value: nm
   }));
   await sbInsert('common_code', rows);
   return true;
@@ -488,14 +493,17 @@ async function saveItemsToServer() {
     const t = await delRes.text();
     throw new Error('항목 DELETE 실패 HTTP ' + delRes.status + ' ' + t.substring(0,160));
   }
-  // 2) 신규 일괄 INSERT
+  // 2) 신규 일괄 INSERT (code_value 에 JSON 통째 저장)
   if (_items.length === 0) return true;
   const rows = _items.map((it, i) => ({
     code_group: 'ship_check_items',
-    code_value: it.key,
-    code_name: it.label || '',
-    note: JSON.stringify({ std: it.std || '', method: it.method || '육안', no: i + 1 }),
-    sort_order: i + 1
+    code_value: JSON.stringify({
+      key: it.key,
+      label: it.label || '',
+      std: it.std || '',
+      method: it.method || '육안',
+      no: i + 1
+    })
   }));
   await sbInsert('common_code', rows);
   return true;
