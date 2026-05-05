@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>로드모니터 하중 일일점검 v2.3</title>
+<title>로드모니터 하중 일일점검 v2.4</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <style>
@@ -108,6 +108,43 @@ table.hist tr:hover{background:#f0f7ff}
 .model-dropdown .md-item .md-name{font-weight:600;color:#333}
 .model-dropdown .md-empty{padding:12px;text-align:center;color:#bbb;font-size:12px}
 .md-highlight{background:#fff176;padding:0 1px;border-radius:2px}
+
+/* 영역 지정 모달 */
+.crop-modal{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.85);z-index:9999;flex-direction:column}
+.crop-modal.show{display:flex}
+.crop-header{background:#1e3a5f;color:#fff;padding:10px 14px;display:flex;justify-content:space-between;align-items:center}
+.crop-header h3{font-size:14px;margin:0}
+.crop-header .crop-close{background:none;border:none;color:#fff;font-size:20px;cursor:pointer}
+.crop-toolbar{background:#fff;padding:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;border-bottom:1px solid #ddd}
+.crop-toolbar button{padding:6px 10px;border:1.5px solid #2c5282;background:#fff;color:#2c5282;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit}
+.crop-toolbar button:active{background:#2c5282;color:#fff}
+.crop-toolbar button.active{background:#2c5282;color:#fff}
+.crop-toolbar .crop-target{display:inline-flex;gap:3px}
+.crop-toolbar .crop-target button{flex:1;min-width:60px}
+.crop-toolbar .crop-target button[data-target=total]{border-color:#388e3c;color:#388e3c}
+.crop-toolbar .crop-target button[data-target=total].active{background:#388e3c;color:#fff}
+.crop-toolbar .crop-target button[data-target=ch1]{border-color:#f57c00;color:#f57c00}
+.crop-toolbar .crop-target button[data-target=ch1].active{background:#f57c00;color:#fff}
+.crop-toolbar .crop-target button[data-target=ch2]{border-color:#c2185b;color:#c2185b}
+.crop-toolbar .crop-target button[data-target=ch2].active{background:#c2185b;color:#fff}
+.crop-canvas-wrap{flex:1;overflow:auto;display:flex;justify-content:center;align-items:flex-start;padding:8px;-webkit-overflow-scrolling:touch}
+.crop-canvas-inner{position:relative;display:inline-block;transform-origin:0 0}
+.crop-canvas-inner canvas{display:block;max-width:100%;height:auto;touch-action:none;cursor:crosshair}
+.crop-rect{position:absolute;border:2px solid;background:rgba(255,255,255,.15);font-size:10px;color:#fff;font-weight:700;text-shadow:0 0 2px #000;padding:1px 4px;pointer-events:none}
+.crop-rect.total{border-color:#66bb6a;background:rgba(76,175,80,.25)}
+.crop-rect.ch1{border-color:#ffa726;background:rgba(255,167,38,.25)}
+.crop-rect.ch2{border-color:#ec407a;background:rgba(236,64,122,.25)}
+.crop-result{padding:10px 12px;background:#fff;border-top:1px solid #ddd;font-size:11px;display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.crop-result > div{padding:6px;border-radius:6px;text-align:center}
+.crop-result .cr-total{background:#e8f5e9;color:#1b5e20}
+.crop-result .cr-ch1{background:#fff3e0;color:#e65100}
+.crop-result .cr-ch2{background:#fce4ec;color:#880e4f}
+.crop-result b{display:block;font-size:18px;margin-top:2px}
+.crop-footer{background:#fff;padding:10px;display:flex;gap:8px;border-top:1px solid #ddd}
+.crop-footer button{flex:1;padding:11px;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit}
+.crop-footer .cf-cancel{background:#eee;color:#333}
+.crop-footer .cf-apply{background:#388e3c;color:#fff}
+.crop-footer .cf-apply:disabled{background:#aaa}
 </style>
 </head>
 <body>
@@ -161,7 +198,7 @@ table.hist tr:hover{background:#f0f7ff}
 
   <div class="card">
     <div class="card-tit">📷 OCR 자동 인식</div>
-    <div class="info-box">로드모니터 화면을 촬영하면 TOTAL / CH1 / CH2 값을 자동 인식합니다. 인식 후 시간대를 선택해 입력하세요.</div>
+    <div class="info-box">로드모니터 화면을 촬영하면 TOTAL / CH1 / CH2 값을 자동 인식합니다. 인식 안 되면 <b>"영역 직접 지정"</b>으로 드래그해서 정확히 OCR 가능합니다.</div>
     <div class="ocr-zone" id="ocrZone">
       <button class="ocr-btn" onclick="document.getElementById('fileInput').click()" id="btnOCR">
         📷 로드모니터 촬영/업로드
@@ -171,6 +208,46 @@ table.hist tr:hover{background:#f0f7ff}
       <div class="ocr-progress" id="ocrProgress"><div></div></div>
       <img class="preview" id="preview">
       <div id="ocrResult"></div>
+      <button id="btnCropOpen" onclick="openCropModal()" style="display:none;margin-top:8px;padding:10px 16px;background:#f57c00;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;width:100%">✂ 영역 직접 지정 (정확도 향상)</button>
+    </div>
+  </div>
+
+  <!-- 영역 지정 모달 -->
+  <div class="crop-modal" id="cropModal">
+    <div class="crop-header">
+      <h3>✂ 영역 지정 OCR</h3>
+      <button class="crop-close" onclick="closeCropModal()">✕</button>
+    </div>
+    <div class="crop-toolbar">
+      <span style="font-size:11px;color:#555;font-weight:600">선택:</span>
+      <div class="crop-target">
+        <button data-target="total" class="active" onclick="setCropTarget('total')">TOTAL</button>
+        <button data-target="ch1" onclick="setCropTarget('ch1')">CH1</button>
+        <button data-target="ch2" onclick="setCropTarget('ch2')">CH2</button>
+      </div>
+      <div style="display:flex;gap:4px;margin-left:auto">
+        <button onclick="cropZoom(-0.2)">➖</button>
+        <button onclick="cropZoom(0.2)">➕</button>
+        <button onclick="cropToggleFilter()" id="btnFilter">🔆 필터</button>
+        <button onclick="cropClearRect()" style="border-color:#c62828;color:#c62828">🔄 초기화</button>
+      </div>
+    </div>
+    <div class="crop-canvas-wrap" id="cropCanvasWrap">
+      <div class="crop-canvas-inner" id="cropCanvasInner">
+        <canvas id="cropCanvas"></canvas>
+        <div class="crop-rect total" id="rectTotal" style="display:none"></div>
+        <div class="crop-rect ch1" id="rectCh1" style="display:none"></div>
+        <div class="crop-rect ch2" id="rectCh2" style="display:none"></div>
+      </div>
+    </div>
+    <div class="crop-result">
+      <div class="cr-total"><span>TOTAL</span><b id="crResultTotal">-</b></div>
+      <div class="cr-ch1"><span>CH1</span><b id="crResultCh1">-</b></div>
+      <div class="cr-ch2"><span>CH2</span><b id="crResultCh2">-</b></div>
+    </div>
+    <div class="crop-footer">
+      <button class="cf-cancel" onclick="closeCropModal()">취소</button>
+      <button class="cf-apply" id="btnCropApply" onclick="applyCropResult()" disabled>적용</button>
     </div>
   </div>
 
@@ -291,18 +368,19 @@ table.hist tr:hover{background:#f0f7ff}
     <div style="font-size:12px;color:#444;line-height:1.7">
       • <b>OCR 사용법</b>: 로드모니터 화면을 정면에서 밝은 환경으로 촬영<br>
       • <b>인식 값</b>: TOTAL(녹색 큰숫자) / CH1(노랑) / CH2(분홍)<br>
-      • <b>시간대 자동매칭</b>: 촬영 시각 기준 ±30분 이내 가장 가까운 시간대(8:30/10:30/11:30/14:00/15:10/16:30)에 자동 입력<br>
+      • <b>영역 직접 지정</b>: 자동 OCR이 안되면 ✂ 버튼 → 사진 위에서 TOTAL/CH1/CH2 영역을 드래그. 4배 확대 + 필터로 정확도 향상. 영역 좌표는 다음 사진에서 자동 재사용<br>
+      • <b>시간대 자동매칭</b>: 촬영 시각 기준 ±30분 이내 가장 가까운 시간대에 자동 입력<br>
       • <b>점검자 자동표시</b>: 로그인 정보(<code>ESG_USER</code>)에서 자동 입력<br>
-      • <b>호기 마스터</b>: <code>machine_master_tj</code>에서 활성 호기만 로드 → 마스터 미생성 시 기본 34대 목록<br>
+      • <b>호기 마스터</b>: <code>machine_master_tj</code>에서 활성 호기만 로드<br>
       • <b>호기 자동 저장/복원</b>: 호기 1회 선택 시 즉시 저장 → 다음 접속 시 자동 복원<br>
-      • <b>고객사 마스터</b>: <code>common_code</code>의 <code>code_group=customer</code>에서 로드<br>
-      • <b>기종 마스터</b>: <code>general_model_tj</code> + <code>defect_model</code> 통합 (부분 검색 + 자동완성). 마스터에 없어도 입력값 그대로 저장<br>
+      • <b>고객사 마스터</b>: <code>common_code</code>의 <code>code_group=customer</code><br>
+      • <b>기종 마스터</b>: <code>general_model_tj</code> + <code>defect_model</code> 통합 (부분 검색)<br>
       • <b>고객사/기종 자동 저장/복원</b>: 마지막 선택 자동 저장 → 다음 접속 시 자동 복원<br>
       • <b>저장 위치</b>: Supabase <code>load_monitor_check</code> 테이블
     </div>
   </div>
 
-  <div class="ver">v2.3 · 로드모니터 일일점검 · 태진다이텍 품질관리팀</div>
+  <div class="ver">v2.4 · 로드모니터 일일점검 · 태진다이텍 품질관리팀</div>
 </div>
 
 <script>
@@ -731,12 +809,23 @@ function restoreLastModelSelection(){
 }
 
 /* ============ OCR ============ */
+// 영역지정 모달용 원본 이미지 보관
+let _lastImageFile=null;
+let _lastImageBitmap=null;
+
 async function handleImage(ev){
   const file=ev.target.files[0];
   if(!file)return;
+  _lastImageFile=file;
+  // bitmap 캐시 (영역지정 모달에서 재사용)
+  try{_lastImageBitmap=await createImageBitmap(file)}catch(e){_lastImageBitmap=null}
+
   const img=document.getElementById('preview');
   img.src=URL.createObjectURL(file);
   img.style.display='block';
+
+  // 영역지정 버튼 표시
+  document.getElementById('btnCropOpen').style.display='block';
 
   const zone=document.getElementById('ocrZone');
   const status=document.getElementById('ocrStatus');
@@ -759,7 +848,7 @@ async function handleImage(ev){
     });
     parseOCR(text);
   }catch(e){
-    status.textContent='❌ OCR 실패: '+e.message;
+    status.textContent='❌ OCR 실패 - "영역 직접 지정" 버튼을 눌러보세요';
     toast('OCR 실패','err');
   }finally{
     zone.classList.remove('busy');
@@ -767,6 +856,303 @@ async function handleImage(ev){
     btn.disabled=false;
   }
   ev.target.value='';
+}
+
+/* ============ 영역 지정 OCR ============ */
+let _cropTarget='total';      // 현재 드래그 대상
+let _cropRects={};            // {total:{x,y,w,h}, ch1:..., ch2:...} (캔버스 픽셀 좌표)
+let _cropResults={};          // {total:121.3, ch1:59.6, ch2:61.7}
+let _cropZoom=1.0;
+let _cropFilter=false;
+let _cropDragging=false;
+let _cropStart={x:0,y:0};
+const LS_CROP_RECTS='lmc_crop_rects';
+
+// 모달 열기: 캔버스에 이미지 그리기
+async function openCropModal(){
+  if(!_lastImageBitmap){
+    toast('이미지 없음 - 먼저 촬영','err');
+    return;
+  }
+  const canvas=document.getElementById('cropCanvas');
+  const ctx=canvas.getContext('2d');
+  // 원본 크기 그대로
+  canvas.width=_lastImageBitmap.width;
+  canvas.height=_lastImageBitmap.height;
+  drawCropImage();
+
+  // 모바일 화면에 맞게 초기 줌 자동 조정
+  const wrap=document.getElementById('cropCanvasWrap');
+  const innerW=wrap.clientWidth-16;
+  if(canvas.width>innerW){
+    _cropZoom=innerW/canvas.width;
+  }else{
+    _cropZoom=1.0;
+  }
+  applyCropZoom();
+
+  // 마지막 영역 좌표 복원
+  try{
+    const saved=localStorage.getItem(LS_CROP_RECTS);
+    if(saved){
+      const obj=JSON.parse(saved);
+      // 같은 비율 이미지에서만 복원 (안전장치)
+      if(obj._w===canvas.width && obj._h===canvas.height){
+        ['total','ch1','ch2'].forEach(k=>{
+          if(obj[k]){
+            _cropRects[k]=obj[k];
+            renderRect(k);
+          }
+        });
+      }
+    }
+  }catch(e){}
+
+  document.getElementById('cropModal').classList.add('show');
+  setupCropEvents();
+  updateCropApplyBtn();
+}
+
+function closeCropModal(){
+  document.getElementById('cropModal').classList.remove('show');
+}
+
+function drawCropImage(){
+  const canvas=document.getElementById('cropCanvas');
+  const ctx=canvas.getContext('2d');
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.drawImage(_lastImageBitmap,0,0);
+  if(_cropFilter){
+    // 대비/밝기 향상 + 그레이스케일 (텍스트 선명도 향상)
+    const imgData=ctx.getImageData(0,0,canvas.width,canvas.height);
+    const d=imgData.data;
+    for(let i=0;i<d.length;i+=4){
+      // 그레이스케일 (luminance)
+      let g=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
+      // 대비 강화 (S 곡선)
+      g=g<128?g*0.6:Math.min(255,(g-128)*1.5+128);
+      d[i]=d[i+1]=d[i+2]=g;
+    }
+    ctx.putImageData(imgData,0,0);
+  }
+}
+
+function applyCropZoom(){
+  const inner=document.getElementById('cropCanvasInner');
+  inner.style.transform=`scale(${_cropZoom})`;
+}
+
+function cropZoom(delta){
+  _cropZoom=Math.max(0.2,Math.min(3.0,_cropZoom+delta));
+  applyCropZoom();
+}
+
+function cropToggleFilter(){
+  _cropFilter=!_cropFilter;
+  document.getElementById('btnFilter').classList.toggle('active',_cropFilter);
+  drawCropImage();
+}
+
+function cropClearRect(){
+  if(!confirm('지정된 영역을 모두 지울까요?'))return;
+  _cropRects={};_cropResults={};
+  ['total','ch1','ch2'].forEach(k=>{
+    document.getElementById('rect'+k.charAt(0).toUpperCase()+k.slice(1)).style.display='none';
+    document.getElementById('crResult'+k.charAt(0).toUpperCase()+k.slice(1)).textContent='-';
+  });
+  updateCropApplyBtn();
+}
+
+function setCropTarget(t){
+  _cropTarget=t;
+  document.querySelectorAll('.crop-target button').forEach(b=>{
+    b.classList.toggle('active',b.dataset.target===t);
+  });
+}
+
+function setupCropEvents(){
+  const canvas=document.getElementById('cropCanvas');
+  // 기존 핸들러 제거를 위해 cloneNode
+  const newCanvas=canvas.cloneNode(false);
+  canvas.parentNode.replaceChild(newCanvas,canvas);
+  // 이미지 다시 그리기
+  const ctx=newCanvas.getContext('2d');
+  ctx.drawImage(_lastImageBitmap,0,0);
+  if(_cropFilter)drawCropImage();
+
+  // 마우스/터치 통합
+  const getPoint=e=>{
+    const rect=newCanvas.getBoundingClientRect();
+    const t=e.touches?e.touches[0]:e;
+    return {
+      x:(t.clientX-rect.left)/_cropZoom,
+      y:(t.clientY-rect.top)/_cropZoom
+    };
+  };
+
+  newCanvas.addEventListener('mousedown',startDrag);
+  newCanvas.addEventListener('touchstart',startDrag,{passive:false});
+  function startDrag(e){
+    e.preventDefault();
+    _cropDragging=true;
+    _cropStart=getPoint(e);
+  }
+
+  document.addEventListener('mousemove',moveDrag);
+  document.addEventListener('touchmove',moveDrag,{passive:false});
+  function moveDrag(e){
+    if(!_cropDragging)return;
+    e.preventDefault();
+    const p=getPoint(e);
+    const x=Math.min(_cropStart.x,p.x);
+    const y=Math.min(_cropStart.y,p.y);
+    const w=Math.abs(p.x-_cropStart.x);
+    const h=Math.abs(p.y-_cropStart.y);
+    _cropRects[_cropTarget]={x,y,w,h};
+    renderRect(_cropTarget);
+  }
+
+  document.addEventListener('mouseup',endDrag);
+  document.addEventListener('touchend',endDrag);
+  async function endDrag(e){
+    if(!_cropDragging)return;
+    _cropDragging=false;
+    const r=_cropRects[_cropTarget];
+    if(r && r.w>10 && r.h>10){
+      // 영역이 충분히 크면 OCR 실행
+      await ocrCropRegion(_cropTarget);
+      // 다음 타겟 자동 이동
+      const order=['total','ch1','ch2'];
+      const idx=order.indexOf(_cropTarget);
+      if(idx<order.length-1)setCropTarget(order[idx+1]);
+    }
+  }
+}
+
+function renderRect(key){
+  const r=_cropRects[key];
+  if(!r)return;
+  const el=document.getElementById('rect'+key.charAt(0).toUpperCase()+key.slice(1));
+  el.style.display='block';
+  el.style.left=r.x+'px';
+  el.style.top=r.y+'px';
+  el.style.width=r.w+'px';
+  el.style.height=r.h+'px';
+  el.textContent=key.toUpperCase();
+}
+
+async function ocrCropRegion(key){
+  const r=_cropRects[key];
+  if(!r)return;
+
+  // 영역 잘라서 OCR
+  const tmp=document.createElement('canvas');
+  // 4배 확대 (텍스트 선명도)
+  const scale=4;
+  tmp.width=r.w*scale;
+  tmp.height=r.h*scale;
+  const tctx=tmp.getContext('2d');
+  tctx.imageSmoothingEnabled=true;
+  tctx.imageSmoothingQuality='high';
+
+  // 원본 → 확대 그리기
+  tctx.drawImage(_lastImageBitmap, r.x, r.y, r.w, r.h, 0, 0, tmp.width, tmp.height);
+
+  // 필터 (그레이스케일 + 대비)
+  if(_cropFilter){
+    const imgData=tctx.getImageData(0,0,tmp.width,tmp.height);
+    const d=imgData.data;
+    for(let i=0;i<d.length;i+=4){
+      let g=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
+      g=g<128?g*0.5:Math.min(255,(g-128)*1.7+128);
+      d[i]=d[i+1]=d[i+2]=g;
+    }
+    tctx.putImageData(imgData,0,0);
+  }
+
+  const resultEl=document.getElementById('crResult'+key.charAt(0).toUpperCase()+key.slice(1));
+  resultEl.innerHTML='<span class="spinner" style="border-color:#888;border-top-color:transparent"></span>';
+
+  try{
+    // 숫자/소수점만 인식
+    const {data:{text}}=await Tesseract.recognize(tmp,'eng',{
+      tessedit_char_whitelist:'0123456789.'
+    });
+    // 가장 그럴듯한 숫자 추출 (소수점 1자리 우선)
+    const matches=text.match(/\d+\.?\d*/g)||[];
+    const nums=matches.map(s=>parseFloat(s)).filter(n=>!isNaN(n)&&n>0);
+    let val=null;
+    if(nums.length){
+      // 합리적 범위(10~999) 우선
+      const valid=nums.filter(n=>n>=10&&n<=999);
+      val=valid.length?valid[0]:nums[0];
+    }
+    if(val!==null){
+      _cropResults[key]=val;
+      resultEl.textContent=val;
+    }else{
+      _cropResults[key]=null;
+      resultEl.textContent='?';
+    }
+  }catch(e){
+    console.error('영역 OCR 실패:',e);
+    _cropResults[key]=null;
+    resultEl.textContent='실패';
+  }
+  updateCropApplyBtn();
+}
+
+function updateCropApplyBtn(){
+  const btn=document.getElementById('btnCropApply');
+  // 3개 모두 인식돼야 활성화
+  const ok=_cropResults.total!=null && _cropResults.ch1!=null && _cropResults.ch2!=null;
+  btn.disabled=!ok;
+}
+
+function applyCropResult(){
+  const t=_cropResults.total,a=_cropResults.ch1,b=_cropResults.ch2;
+  if(t==null||a==null||b==null){toast('3개 영역 모두 OCR 필요','err');return}
+
+  // 좌표 저장 (다음 사진에서 재사용)
+  const canvas=document.getElementById('cropCanvas');
+  try{
+    localStorage.setItem(LS_CROP_RECTS,JSON.stringify({
+      _w:canvas.width,_h:canvas.height,
+      total:_cropRects.total,ch1:_cropRects.ch1,ch2:_cropRects.ch2
+    }));
+  }catch(e){}
+
+  closeCropModal();
+
+  // 시간대 자동매칭 + 적용
+  const matched=findNearestTimeSlot();
+  const result=document.getElementById('ocrResult');
+  let autoMsg='';
+  if(matched){
+    document.getElementById(`t_${matched.time}_total`).value=t;
+    document.getElementById(`t_${matched.time}_ch1`).value=a;
+    document.getElementById(`t_${matched.time}_ch2`).value=b;
+    autoMsg=`<div style="background:#e8f5e9;border:1px solid #66bb6a;border-radius:6px;padding:8px;margin:8px 0;font-size:12px;color:#1b5e20;font-weight:600">⏰ 영역 OCR ${matched.label} 자동 입력 (오차 ${matched.diffMin}분)</div>`;
+    toast(`✂ ${matched.label} 자동 등록`,'ok');
+  }
+
+  result.innerHTML=`
+    <div class="ocr-result">
+      <div class="ocr-result-row"><span>TOTAL (영역지정)</span><b style="color:#1b5e20;font-size:18px">${t}</b></div>
+      <div class="ocr-result-row"><span>CH1 (좌)</span><b style="color:#8d6e00;font-size:16px">${a}</b></div>
+      <div class="ocr-result-row"><span>CH2 (우)</span><b style="color:#a02550;font-size:16px">${b}</b></div>
+      ${autoMsg}
+      <div style="margin-top:8px;font-size:11px;color:#666">${matched?'↓ 다른 시간대로 변경:':'↓ 시간대 선택:'}</div>
+      <div class="ocr-pick">
+        <button onclick="applyOCR('0830',${t},${a},${b})" ${matched&&matched.time==='0830'?'style="background:#388e3c;color:#fff"':''}>8:30</button>
+        <button onclick="applyOCR('1030',${t},${a},${b})" ${matched&&matched.time==='1030'?'style="background:#388e3c;color:#fff"':''}>10:30</button>
+        <button onclick="applyOCR('1130',${t},${a},${b})" ${matched&&matched.time==='1130'?'style="background:#388e3c;color:#fff"':''}>11:30</button>
+        <button onclick="applyOCR('1400',${t},${a},${b})" ${matched&&matched.time==='1400'?'style="background:#388e3c;color:#fff"':''}>14:00</button>
+        <button onclick="applyOCR('1510',${t},${a},${b})" ${matched&&matched.time==='1510'?'style="background:#388e3c;color:#fff"':''}>15:10</button>
+        <button onclick="applyOCR('1630',${t},${a},${b})" ${matched&&matched.time==='1630'?'style="background:#388e3c;color:#fff"':''}>16:30</button>
+      </div>
+    </div>`;
+  document.getElementById('ocrStatus').innerHTML=`✅ 영역 OCR 완료${matched?` - ${matched.label} 자동 등록`:''}`;
 }
 
 function parseOCR(text){
@@ -962,6 +1348,9 @@ function clearForm(){
   document.getElementById('preview').style.display='none';
   document.getElementById('ocrResult').innerHTML='';
   document.getElementById('ocrStatus').textContent='사진을 찍거나 갤러리에서 선택하세요';
+  document.getElementById('btnCropOpen').style.display='none';
+  _lastImageFile=null;_lastImageBitmap=null;
+  _cropRects={};_cropResults={};
   const ms=document.getElementById('modelSrc');
   if(ms)ms.textContent='';
   toast('초기화','ok');
