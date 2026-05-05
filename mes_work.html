@@ -3,10 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>MES 가동설비 모니터링 v3.8</title>
+<title>MES 가동설비 모니터링 v3.9</title>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&display=swap');
 *{box-sizing:border-box;margin:0;padding:0}
@@ -310,7 +311,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 </style>
 </head>
 <body>
-<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v3.8</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">30초 갱신</span></div></div></div>
+<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v3.9</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">30초 갱신</span></div></div></div>
 <div class="tabs"><div class="tab active" data-tab="monitor" onclick="switchTab('monitor')">📊 모니터링</div><div class="tab" data-tab="settings" onclick="switchTab('settings')">📋 이력/설정</div></div>
 <div class="panel active" id="panel-monitor">
   <div class="stats"><div class="st"><div class="st-label">전체</div><div class="st-val" id="sTotal">-</div></div><div class="st run"><div class="st-label">가동</div><div class="st-val" id="sRun">-</div></div><div class="st stop"><div class="st-label">비가동</div><div class="st-val" id="sStop">-</div></div><div class="st warn"><div class="st-label">⏰30분이내</div><div class="st-val" id="sSoon">-</div></div><div class="st ng"><div class="st-label">NG</div><div class="st-val" id="sNg">-</div></div></div>
@@ -2654,7 +2655,13 @@ function _hiPhotoZoom(src){
 async function hiSavePDF(recId){
   var rec=window._hiDetailRec;
   if(!rec){showToast('데이터 없음');return}
-  if(typeof html2pdf==='undefined'){showToast('PDF 라이브러리 로딩중 - 잠시 후 재시도');return}
+  // jsPDF 노출 위치 확인 (UMD 빌드는 window.jspdf.jsPDF 또는 window.jsPDF로 노출됨)
+  var jsPDFCtor=(window.jspdf&&window.jspdf.jsPDF)||window.jsPDF||(window.jspdf||null);
+  if(!jsPDFCtor||typeof jsPDFCtor!=='function'){
+    if(window.jspdf&&window.jspdf.jsPDF)jsPDFCtor=window.jspdf.jsPDF;
+    else{showToast('PDF 라이브러리 로딩중 - 잠시 후 재시도');console.error('jsPDF 미발견. window.jspdf=',window.jspdf,'window.jsPDF=',window.jsPDF);return}
+  }
+  if(typeof html2canvas==='undefined'){showToast('html2canvas 로딩중 - 잠시 후 재시도');return}
   showToast('⏳PDF 생성중...');
 
   var p=rec.payload||{};
@@ -2735,9 +2742,7 @@ async function hiSavePDF(recId){
   document.body.appendChild(tmpDiv);
 
   try{
-    // ===== 2) jsPDF 객체 생성 (html2pdf 번들에 포함된 jsPDF 사용) =====
-    var jsPDFCtor=(window.jspdf&&window.jspdf.jsPDF)||window.jsPDF;
-    if(!jsPDFCtor){throw new Error('jsPDF를 찾을 수 없음')}
+    // ===== 2) jsPDF 객체 생성 =====
     var pdf=new jsPDFCtor({unit:'mm',format:'a4',orientation:'landscape',compress:true});
     var PAGE_W=297, PAGE_H=210;
     var MARGIN=10;
@@ -3053,7 +3058,7 @@ async function testMesApi(){
   }
 }
 
-async function checkConnections(){var grid=document.getElementById('connGrid');var checks=[{name:'Supabase',fn:async function(){return(await sbGet('machine_status','select=id&limit=1'))!==null}},{name:'ntfy',fn:async function(){try{return(await fetch('https://ntfy.sh/health')).ok}catch(e){return false}}},{name:'비가동집계',fn:async function(){var t=new Date();var ymd=t.getFullYear()+'-'+String(t.getMonth()+1).padStart(2,'0')+'-'+String(t.getDate()).padStart(2,'0');var d=await sbGet('daily_downtime','select=updated_at&ymd=eq.'+ymd+'&order=updated_at.desc&limit=1');if(!d||!d.length)return false;return(Date.now()-new Date(d[0].updated_at).getTime())/60000<15}},{name:'MES DB',fn:async function(){var d=await sbGet('machine_status','select=updated_at&order=updated_at.desc&limit=1');if(!d||!d.length)return false;return(Date.now()-new Date(d[0].updated_at).getTime())/60000<15}}];var html='';checks.forEach(function(c){html+='<div class="conn-item"><div class="conn-dot wait"></div><div><div class="ci-name">'+c.name+'</div><div class="ci-status">…</div></div></div>'});grid.innerHTML=html;for(var i=0;i<checks.length;i++){try{var ok=await checks[i].fn();var dots=grid.querySelectorAll('.conn-dot'),stats=grid.querySelectorAll('.ci-status');if(ok===null){dots[i].className='conn-dot wait';stats[i].textContent='미설정'}else if(ok){dots[i].className='conn-dot ok';stats[i].textContent='연결'}else{dots[i].className='conn-dot fail';stats[i].textContent='실패'}}catch(e){grid.querySelectorAll('.conn-dot')[i].className='conn-dot fail';grid.querySelectorAll('.ci-status')[i].textContent='오류'}}}
+async function checkConnections(){var grid=document.getElementById('connGrid');var checks=[{name:'Supabase',fn:async function(){return(await sbGet('machine_status','select=id&limit=1'))!==null}},{name:'ntfy',fn:async function(){try{var r=getNtfyRules();if(!r||!r.length)return null;return true}catch(e){return false}}},{name:'비가동집계',fn:async function(){var t=new Date();var ymd=t.getFullYear()+'-'+String(t.getMonth()+1).padStart(2,'0')+'-'+String(t.getDate()).padStart(2,'0');var d=await sbGet('daily_downtime','select=updated_at&ymd=eq.'+ymd+'&order=updated_at.desc&limit=1');if(!d||!d.length)return false;return(Date.now()-new Date(d[0].updated_at).getTime())/60000<15}},{name:'MES DB',fn:async function(){var d=await sbGet('machine_status','select=updated_at&order=updated_at.desc&limit=1');if(!d||!d.length)return false;return(Date.now()-new Date(d[0].updated_at).getTime())/60000<15}}];var html='';checks.forEach(function(c){html+='<div class="conn-item"><div class="conn-dot wait"></div><div><div class="ci-name">'+c.name+'</div><div class="ci-status">…</div></div></div>'});grid.innerHTML=html;for(var i=0;i<checks.length;i++){try{var ok=await checks[i].fn();var dots=grid.querySelectorAll('.conn-dot'),stats=grid.querySelectorAll('.ci-status');if(ok===null){dots[i].className='conn-dot wait';stats[i].textContent='미설정'}else if(ok){dots[i].className='conn-dot ok';stats[i].textContent='연결'}else{dots[i].className='conn-dot fail';stats[i].textContent='실패'}}catch(e){grid.querySelectorAll('.conn-dot')[i].className='conn-dot fail';grid.querySelectorAll('.ci-status')[i].textContent='오류'}}}
 
 
 async function init(){
