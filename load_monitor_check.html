@@ -3,9 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>로드모니터 하중 일일점검 v3.9</title>
+<title>로드모니터 하중 일일점검 v4.4</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 body{font-family:'Malgun Gothic','맑은 고딕',sans-serif;background:#f5f5f5;color:#222;font-size:14px;padding-bottom:80px}
@@ -181,14 +182,15 @@ table.hist tr:hover{background:#f0f7ff}
 <body>
 
 <div class="hdr">
-  <h1>📊 로드모니터 하중 일일점검 <span class="rev-badge">Rev. 3.9</span></h1>
+  <h1>📊 로드모니터 하중 일일점검 <span class="rev-badge">Rev. 4.4</span></h1>
   <p>프레스 Smart Load Monitor · TOTAL / CH1좌 / CH2우</p>
 </div>
 
 <div class="tabs">
   <div class="tab on" onclick="swTab(0)">📝 점검입력</div>
   <div class="tab" onclick="swTab(1)">📋 이력조회</div>
-  <div class="tab" onclick="swTab(2)">⚙ 설정</div>
+  <div class="tab" onclick="swTab(2)">📈 분석</div>
+  <div class="tab" onclick="swTab(3)">⚙ 설정</div>
 </div>
 
 <!-- ===== 점검 입력 ===== -->
@@ -229,7 +231,7 @@ table.hist tr:hover{background:#f0f7ff}
 
   <div class="card">
     <div class="card-tit">📷 OCR 자동 인식</div>
-    <div class="info-box">로드모니터 화면을 촬영하면 TOTAL / CH1 / CH2 값을 자동 인식합니다. 인식 안 되면 <b>"영역 직접 지정"</b>으로 드래그해서 정확히 OCR 가능합니다.</div>
+    <div class="info-box">로드모니터 화면을 촬영하면 <b>중앙 2:1 영역</b>만 자동 잘라서 OCR 합니다. TOTAL/CH1/CH2 가 노란 영역에 들어오게 촬영하세요. 인식 안되면 <b>"영역 직접 지정"</b>으로 드래그 가능.</div>
     <div class="ocr-zone" id="ocrZone">
       <div style="display:flex;gap:6px;justify-content:center;flex-wrap:wrap">
         <button class="ocr-btn" onclick="openCamera()" id="btnOCR" style="flex:1;min-width:140px;max-width:200px">
@@ -285,6 +287,47 @@ table.hist tr:hover{background:#f0f7ff}
     <div class="crop-footer">
       <button class="cf-cancel" onclick="closeCropModal()">취소</button>
       <button class="cf-apply" id="btnCropApply" onclick="applyCropResult()" disabled>적용</button>
+    </div>
+  </div>
+
+  <!-- 이력 수정 모달 -->
+  <div class="numpad-modal" id="editModal" onclick="if(event.target===this)closeEditModal()" style="align-items:flex-start;padding-top:30px;overflow-y:auto">
+    <div class="numpad-box" style="max-width:480px;max-height:calc(100vh - 60px);overflow-y:auto">
+      <div class="numpad-header" style="position:sticky;top:0;z-index:5">
+        <div class="np-title">📝 점검 이력 수정</div>
+        <div class="np-target" id="editModalTitle">-</div>
+      </div>
+      <div style="padding:14px;background:#f5f7fa">
+        <div class="row2">
+          <div class="fg"><label>일자</label><input type="date" id="eDate"></div>
+          <div class="fg"><label>호기</label><input type="text" id="eMachineName" readonly style="background:#eee;color:#444"></div>
+        </div>
+        <div class="row2">
+          <div class="fg"><label>고객사</label><input type="text" id="eCustomer" placeholder="예: NSK"></div>
+          <div class="fg"><label>기종 (SBC앞4자리)</label><input type="text" id="eItem" placeholder="예: SBC1"></div>
+        </div>
+        <div class="fg"><label>일일타발수</label><input type="number" id="eDailyShot" inputmode="numeric"></div>
+      </div>
+
+      <div style="padding:0 14px 14px;background:#f5f7fa">
+        <div style="font-size:11px;font-weight:700;color:#1e3a5f;margin-bottom:6px">📋 시간대별 측정값 (셀 더블클릭으로 수정)</div>
+        <div class="measure-head" style="font-size:10px">
+          <div>시간</div>
+          <div class="h-total">TOTAL</div>
+          <div class="h-ch1">CH1(좌)</div>
+          <div class="h-ch2">CH2(우)</div>
+        </div>
+        <div id="eMeasureRows"></div>
+      </div>
+
+      <div style="padding:0 14px 14px;background:#f5f7fa">
+        <div class="fg"><label>비고/메모</label><textarea id="eMemo" rows="2" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid #ddd;border-radius:6px;font-family:inherit;font-size:12px"></textarea></div>
+      </div>
+
+      <div class="numpad-footer">
+        <button class="np-cancel" onclick="closeEditModal()">취소</button>
+        <button class="np-ok" onclick="saveEditRow()">💾 저장</button>
+      </div>
     </div>
   </div>
 
@@ -397,25 +440,79 @@ table.hist tr:hover{background:#f0f7ff}
     </div>
     <div class="fg"><label>호기</label><select id="qMachine"><option value="">전체</option></select></div>
     <div class="row2">
+      <div class="fg"><label>고객사</label><select id="qCustomer"><option value="">전체</option></select></div>
+      <div class="fg"><label>기종 (부분일치)</label><input type="text" id="qModel" placeholder="예: SBC1" onkeypress="if(event.key==='Enter')loadHistory()"></div>
+    </div>
+    <div class="row2">
       <button class="btn btn-primary" onclick="loadHistory()">🔍 조회</button>
       <button class="btn btn-warn" onclick="exportCSV()">📥 CSV</button>
+    </div>
+    <div id="qStat" style="margin-top:6px;font-size:11px;color:#666;display:flex;justify-content:space-between;align-items:center;gap:6px">
+      <span id="qCount">조회 결과 0건</span>
+      <button class="btn btn-danger" onclick="bulkDelete()" style="padding:5px 10px;font-size:11px">🗑 조회 결과 일괄 삭제</button>
     </div>
     <div class="hist-wrap">
       <table class="hist" id="histTable">
         <thead><tr>
-          <th>일자</th><th>호기</th><th>기종</th>
+          <th>일자</th><th>호기</th><th>고객사</th><th>기종</th>
           <th>8:30</th><th>10:30</th><th>11:30</th>
           <th>14:00</th><th>15:10</th><th>16:30</th>
           <th>타발</th><th>관리</th>
         </tr></thead>
-        <tbody id="histBody"><tr><td colspan="11" style="padding:20px;color:#999">조회 버튼을 눌러주세요</td></tr></tbody>
+        <tbody id="histBody"><tr><td colspan="12" style="padding:20px;color:#999">조회 버튼을 눌러주세요</td></tr></tbody>
       </table>
     </div>
   </div>
 </div>
 
-<!-- ===== 설정 ===== -->
+<!-- ===== 분석 ===== -->
 <div class="pnl" id="pnl2">
+  <div class="card">
+    <div class="card-tit">📈 추이 분석 조건</div>
+    <div class="row2">
+      <div class="fg"><label>시작일</label><input type="date" id="aFrom"></div>
+      <div class="fg"><label>종료일</label><input type="date" id="aTo"></div>
+    </div>
+    <div class="fg"><label>호기</label><select id="aMachine"><option value="">전체</option></select></div>
+    <div class="row2">
+      <div class="fg"><label>고객사</label><select id="aCustomer"><option value="">전체</option></select></div>
+      <div class="fg"><label>기종 (부분일치)</label><input type="text" id="aModel" placeholder="예: SBC1" onkeypress="if(event.key==='Enter')runAnalyze()"></div>
+    </div>
+    <div class="row2">
+      <div class="fg"><label>집계방식</label>
+        <select id="aAggr">
+          <option value="avg">일자별 평균</option>
+          <option value="max">일자별 최대</option>
+          <option value="min">일자별 최소</option>
+          <option value="all">시간대별 모든 측정값 (점)</option>
+        </select>
+      </div>
+      <div class="fg"><label>표시 채널</label>
+        <select id="aShow">
+          <option value="all">TOTAL + CH1 + CH2</option>
+          <option value="total">TOTAL만</option>
+          <option value="ch">CH1 + CH2</option>
+          <option value="balance">CH1/CH2 차이 (밸런스)</option>
+        </select>
+      </div>
+    </div>
+    <button class="btn btn-primary btn-block" onclick="runAnalyze()">📈 분석 실행</button>
+  </div>
+
+  <div class="card">
+    <div class="card-tit">📊 추이 그래프</div>
+    <div id="aSummary" style="font-size:12px;color:#444;margin-bottom:10px;line-height:1.6"></div>
+    <div style="position:relative;height:340px"><canvas id="aChart"></canvas></div>
+  </div>
+
+  <div class="card">
+    <div class="card-tit">📋 통계 요약</div>
+    <div id="aStats" style="font-size:12px"></div>
+  </div>
+</div>
+
+<!-- ===== 설정 ===== -->
+<div class="pnl" id="pnl3">
   <div class="card">
     <div class="card-tit">⚙ Supabase 연결</div>
     <div class="info-box">기본값이 미리 설정되어 있습니다. 연결만 확인하세요.</div>
@@ -455,7 +552,7 @@ table.hist tr:hover{background:#f0f7ff}
     </div>
   </div>
 
-  <div class="ver">v3.9 · 로드모니터 일일점검 · 태진다이텍 품질관리팀</div>
+  <div class="ver">v4.4 · 로드모니터 일일점검 · 태진다이텍 품질관리팀</div>
 </div>
 
 <script>
@@ -470,6 +567,7 @@ CREATE TABLE IF NOT EXISTS public.load_monitor_check (
   check_date   DATE NOT NULL,
   machine_code TEXT NOT NULL,
   machine_name TEXT,
+  customer     TEXT,
   item_code    TEXT,
   inspector    TEXT,
   daily_shot   INTEGER,
@@ -501,8 +599,13 @@ CREATE TABLE IF NOT EXISTS public.load_monitor_check (
   UNIQUE(check_date, machine_code)
 );
 
+-- 기존 테이블 마이그레이션 (customer 컬럼 누락 시 자동 추가)
+ALTER TABLE public.load_monitor_check ADD COLUMN IF NOT EXISTS customer TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_lmc_date ON public.load_monitor_check(check_date DESC);
 CREATE INDEX IF NOT EXISTS idx_lmc_machine ON public.load_monitor_check(machine_code);
+CREATE INDEX IF NOT EXISTS idx_lmc_customer ON public.load_monitor_check(customer);
+CREATE INDEX IF NOT EXISTS idx_lmc_item ON public.load_monitor_check(item_code);
 
 ALTER TABLE public.load_monitor_check DISABLE ROW LEVEL SECURITY;
 
@@ -842,6 +945,7 @@ function swTab(i){
   document.querySelectorAll('.tab').forEach((t,k)=>t.classList.toggle('on',k===i));
   document.querySelectorAll('.pnl').forEach((p,k)=>p.classList.toggle('on',k===i));
   if(i===1)loadHistory();
+  if(i===2)initAnalyzePanel();
 }
 
 /* ============ 호기/점검자 로드 ============ */
@@ -1070,10 +1174,18 @@ async function loadModels(){
 
 function renderCustomerSelect(){
   const sel=document.getElementById('selCustomer');
-  if(!sel)return;
-  const cur=sel.value||localStorage.getItem(LS_LAST_CUSTOMER)||'';
-  sel.innerHTML='<option value="">전체 고객사</option>'+
-    cachedCustomers.map(c=>`<option value="${c}"${c===cur?' selected':''}>${c}</option>`).join('');
+  if(sel){
+    const cur=sel.value||localStorage.getItem(LS_LAST_CUSTOMER)||'';
+    sel.innerHTML='<option value="">전체 고객사</option>'+
+      cachedCustomers.map(c=>`<option value="${c}"${c===cur?' selected':''}>${c}</option>`).join('');
+  }
+  // 이력조회 탭의 고객사 셀렉트도 채우기
+  const qsel=document.getElementById('qCustomer');
+  if(qsel){
+    const cur=qsel.value;
+    qsel.innerHTML='<option value="">전체</option>'+
+      cachedCustomers.map(c=>`<option value="${c}"${c===cur?' selected':''}>${c}</option>`).join('');
+  }
 }
 
 function onCustomerSelect(){
@@ -1194,8 +1306,12 @@ function openCamera(){document.getElementById('fileInputCamera').click()}
 function openGallery(){document.getElementById('fileInputGallery').click()}
 
 async function handleImage(ev){
-  const file=ev.target.files[0];
+  let file=ev.target.files[0];
   if(!file)return;
+
+  // 자동 2:1 크롭 (갤러리/카메라 모두 - 카메라는 이미 2:1이므로 그대로 유지)
+  file=await autoCrop21(file);
+
   _lastImageFile=file;
   // bitmap 캐시 (영역지정 모달에서 재사용)
   try{_lastImageBitmap=await createImageBitmap(file)}catch(e){_lastImageBitmap=null}
@@ -1280,6 +1396,49 @@ async function handleImage(ev){
   }
   ev.target.value='';
 }
+
+// 사진 중앙 2:1 영역만 자동 크롭 (갤러리/카메라 모두 적용)
+async function autoCrop21(file){
+  try{
+    const bitmap=await createImageBitmap(file);
+    const w=bitmap.width,h=bitmap.height;
+    const ratio=w/h;
+    // 이미 2:1에 가까우면 원본 유지
+    if(ratio>=1.85 && ratio<=2.15){
+      console.log(`[자동크롭] ${w}x${h} 비율 ${ratio.toFixed(2)} - 원본 유지`);
+      return file;
+    }
+    // 2:1 비율로 중앙 크롭
+    let cropW,cropH,cropX,cropY;
+    if(ratio>2){
+      // 가로로 김 → 좌우 자르기
+      cropH=h;
+      cropW=h*2;
+      cropX=Math.round((w-cropW)/2);
+      cropY=0;
+    }else{
+      // 세로로 김 → 위아래 자르기 (대부분의 케이스)
+      cropW=w;
+      cropH=Math.round(w/2);
+      cropX=0;
+      cropY=Math.round((h-cropH)/2);
+    }
+    console.log(`[자동크롭] ${w}x${h} → ${cropW}x${cropH} (중앙 2:1)`);
+    const c=document.createElement('canvas');
+    c.width=cropW;c.height=cropH;
+    c.getContext('2d').drawImage(bitmap,cropX,cropY,cropW,cropH,0,0,cropW,cropH);
+    return await new Promise(res=>{
+      c.toBlob(blob=>{
+        if(!blob){res(file);return}
+        res(new File([blob],file.name||'cropped.jpg',{type:'image/jpeg'}));
+      },'image/jpeg',0.92);
+    });
+  }catch(e){
+    console.warn('자동 크롭 실패:',e);
+    return file;
+  }
+}
+
 
 /* ============ 영역 지정 OCR ============ */
 let _cropTarget='total';      // 현재 드래그 대상
@@ -1493,9 +1652,12 @@ async function ocrCropRegion(key){
   if(regionBitmap){
     // 색상별 최적 필터 순서로 시도
     const variants=FILTER_ORDER[targetColor]||['strict','loose','inverse'];
+    // 영역은 이미 4배 확대 → 분홍은 추가 1.5배 확대 (총 6배)
+    const extraScale=targetColor==='pink'?1.5:(targetColor==='yellow'?1.2:1);
     for(const v of variants){
-      const {canvas:masked,matchCount}=createColorMaskedCanvas(regionBitmap,targetColor,v);
-      if(matchCount<10){
+      const {canvas:masked,matchCount}=createColorMaskedCanvas(regionBitmap,targetColor,v,extraScale);
+      const minMatch=Math.round(10*extraScale*extraScale);
+      if(matchCount<minMatch){
         masked.width=0;masked.height=0;
         continue;
       }
@@ -1503,7 +1665,7 @@ async function ocrCropRegion(key){
         const {data:{text}}=await Tesseract.recognize(masked,'eng',{
           tessedit_char_whitelist:'0123456789.'
         });
-        console.log(`[영역OCR ${key}/${targetColor}/${v}]`,text.trim());
+        console.log(`[영역OCR ${key}/${targetColor}/${v}/${extraScale}x]`,text.trim());
         const matches=text.match(/\d+\.?\d*/g)||[];
         const nums=matches.map(s=>parseFloat(s)).filter(n=>!isNaN(n)&&n>0);
         const valid=nums.filter(n=>n>=10&&n<=999);
@@ -1581,20 +1743,29 @@ const FILTER_ORDER={
   pink:   ['inverse','loose','strict']
 };
 
+// 색상별 OCR 입력 확대 배수 (분홍은 6/8 구분 위해 2배 확대)
+const OCR_SCALE={
+  green: 1,
+  yellow: 1.3,
+  pink: 2.0
+};
+
 // 색상별로 필터 시도 → 첫 성공값 반환 (필터 전엔 원본 보존)
 async function tryColorOCR(bitmap,targetColor,minVal,maxVal,statusEl,statusPrefix){
   const variants=FILTER_ORDER[targetColor]||['strict','loose','inverse'];
+  const scale=OCR_SCALE[targetColor]||1;
   for(let i=0;i<variants.length;i++){
     const v=variants[i];
     if(statusEl){
-      statusEl.innerHTML=`<span class="spinner"></span> ${statusPrefix} 필터 ${i+1}/3 (${v})...`;
+      statusEl.innerHTML=`<span class="spinner"></span> ${statusPrefix} 필터 ${i+1}/3 (${v}, ${scale}x)...`;
     }
     // ★ 매번 원본 bitmap에서 새로 시작 (이전 필터 결과 무관)
-    const {canvas,matchCount}=createColorMaskedCanvas(bitmap,targetColor,v);
+    const {canvas,matchCount}=createColorMaskedCanvas(bitmap,targetColor,v,scale);
 
-    // 매칭 픽셀이 너무 적으면 OCR 안 돌리고 다음 필터로
-    if(matchCount<30){
-      console.log(`[${targetColor}/${v}] 매칭 너무 적음 (${matchCount}) - 다음 필터로`);
+    // 매칭 픽셀 임계값도 scale^2 비례 조정
+    const minMatch=Math.round(30*scale*scale);
+    if(matchCount<minMatch){
+      console.log(`[${targetColor}/${v}/${scale}x] 매칭 너무 적음 (${matchCount}<${minMatch}) - 다음 필터로`);
       canvas.width=0;canvas.height=0;
       continue;
     }
@@ -1604,11 +1775,11 @@ async function tryColorOCR(bitmap,targetColor,minVal,maxVal,statusEl,statusPrefi
         tessedit_char_whitelist:'0123456789.'
       });
       const nums=extractNumbers(r.data.text);
-      console.log(`[OCR ${targetColor}/${v}]`,r.data.text.trim(),'→',nums);
+      console.log(`[OCR ${targetColor}/${v}/${scale}x]`,r.data.text.trim(),'→',nums);
       const val=pickBestNumber(nums,minVal,maxVal);
       canvas.width=0;canvas.height=0;
       if(val!=null){
-        console.log(`[OCR ${targetColor}] ✓ ${v} 필터에서 성공: ${val}`);
+        console.log(`[OCR ${targetColor}] ✓ ${v} 필터(${scale}x)에서 성공: ${val}`);
         return {value:val,variant:v};
       }
     }catch(e){
@@ -1623,15 +1794,19 @@ async function tryColorOCR(bitmap,targetColor,minVal,maxVal,statusEl,statusPrefi
 // 색상 채널 마스킹: 검정배경 네온숫자 → 흰배경 검은글씨
 // targetColor: 'green' | 'yellow' | 'pink'
 // variant: 'strict'(엄격) | 'loose'(관대) | 'inverse'(RGB 임계값)
+// scale: 마스킹 전 원본 확대 배수 (기본 1, 분홍은 2배 권장)
 // ★ 매번 원본 bitmap에서 새 캔버스에 그려서 처리 (이전 호출과 완전 독립)
-function createColorMaskedCanvas(bitmap,targetColor,variant){
+function createColorMaskedCanvas(bitmap,targetColor,variant,scale){
   variant=variant||'strict';
+  scale=scale||1;
   const canvas=document.createElement('canvas');
-  canvas.width=bitmap.width;
-  canvas.height=bitmap.height;
+  canvas.width=Math.round(bitmap.width*scale);
+  canvas.height=Math.round(bitmap.height*scale);
   const ctx=canvas.getContext('2d',{willReadFrequently:true});
-  // ★ 원본을 그대로 그려서 시작 (이전 마스킹 결과 영향 없음)
-  ctx.drawImage(bitmap,0,0);
+  // 확대해서 원본 그대로 그리기 (이중선형 보간)
+  ctx.imageSmoothingEnabled=true;
+  ctx.imageSmoothingQuality='high';
+  ctx.drawImage(bitmap,0,0,canvas.width,canvas.height);
   const imgData=ctx.getImageData(0,0,canvas.width,canvas.height);
   const d=imgData.data;
   let matchCount=0;
@@ -1676,14 +1851,15 @@ function createColorMaskedCanvas(bitmap,targetColor,variant){
       }
     }else if(targetColor==='pink'){
       if(variant==='strict'){
-        // 진한 분홍/마젠타 (HSV)
-        isTarget=(hue>=280 && hue<=345 && sat>0.30 && val>0.30);
+        // 진한 분홍/마젠타 (HSV) - 충분한 채도로 6/8 윤곽 분명히
+        isTarget=(hue>=275 && hue<=345 && sat>0.35 && val>0.35);
       }else if(variant==='loose'){
-        // 보라~분홍~자주 광범위
-        isTarget=(hue>=240 && hue<=360 && sat>0.15 && val>0.20);
+        // 보라~분홍~자주 광범위 + 채도/명도 더 까다롭게 (희미한 픽셀 제외)
+        isTarget=(hue>=240 && hue<=360 && sat>0.20 && val>0.25);
       }else{ // inverse
-        // R, B 모두 G보다 충분히 큼 (자주색 계열)
-        isTarget=(r>g+10 && b>g+8 && (r+b)>g*2.0 && (r+b+g)>100);
+        // R, B 모두 G보다 충분히 큼 (자주색 계열) + 합 조건 강화
+        // 6/8 구분 위해 너무 어두운 픽셀은 제외 (노이즈 차단)
+        isTarget=(r>g+15 && b>g+12 && (r+b)>g*2.2 && (r+b+g)>140 && Math.max(r,b)>90);
       }
     }
 
@@ -1953,9 +2129,15 @@ function applyOCR(time,total,ch1,ch2){
 /* ============ 저장 ============ */
 async function saveCheck(){
   const date=document.getElementById('chkDate').value;
-  const machineFull=document.getElementById('chkMachine').value;  // "36호기 심팩300톤"
-  const machineCode=getMachineCode(machineFull);  // "036"
-  const item=document.getElementById('chkItem').value.trim();
+  const machineFull=document.getElementById('chkMachine').value;
+  const machineCode=getMachineCode(machineFull);
+  // SBC 기종은 4자리로 정규화 후 저장
+  let item=document.getElementById('chkItem').value.trim();
+  if(item){
+    item=normalizeModelName(item);
+    document.getElementById('chkItem').value=item;
+    document.getElementById('selModelInput').value=item;
+  }
   const inspectorInp=document.getElementById('chkInspector');
   const inspector=inspectorInp.value.trim();
   const empNo=inspectorInp.dataset.empNo||'';
@@ -1967,10 +2149,12 @@ async function saveCheck(){
   if(!inspector){toast('점검자 정보 없음 (로그인 필요)','err');return}
 
   const times=['0830','1030','1130','1400','1510','1630'];
+  const customer=document.getElementById('selCustomer').value||null;
   const row={
     check_date:date,
     machine_code:machineCode,           // "036"
     machine_name:machineFull,            // "36호기 심팩300톤"
+    customer:customer,                   // 고객사
     item_code:item||null,
     inspector:inspector||null,
     daily_shot:dailyShot,
@@ -2097,29 +2281,40 @@ function restoreLastMachine(){
 
 
 /* ============ 이력 조회 ============ */
+let _histLastResult=[]; // 마지막 조회 결과 (일괄삭제용)
+
 async function loadHistory(){
   const from=document.getElementById('qFrom').value;
   const to=document.getElementById('qTo').value;
   const machineFull=document.getElementById('qMachine').value;
   const machineCode=machineFull?getMachineCode(machineFull):'';
+  const customer=document.getElementById('qCustomer').value;
+  const modelQuery=(document.getElementById('qModel').value||'').trim();
   const tbody=document.getElementById('histBody');
-  tbody.innerHTML='<tr><td colspan="11" style="padding:20px">조회 중...</td></tr>';
+  const cntEl=document.getElementById('qCount');
+  tbody.innerHTML='<tr><td colspan="12" style="padding:20px">조회 중...</td></tr>';
+  cntEl.textContent='조회 중...';
   try{
     let q=supa.from('load_monitor_check').select('*').order('check_date',{ascending:false}).order('machine_code');
     if(from)q=q.gte('check_date',from);
     if(to)q=q.lte('check_date',to);
     if(machineCode)q=q.eq('machine_code',machineCode);
-    const {data,error}=await q.limit(200);
+    if(customer)q=q.eq('customer',customer);
+    if(modelQuery)q=q.ilike('item_code','%'+modelQuery+'%');
+    const {data,error}=await q.limit(500);
     if(error)throw error;
-    if(!data||!data.length){
-      tbody.innerHTML='<tr><td colspan="11" style="padding:20px;color:#999">데이터 없음</td></tr>';
+    _histLastResult=data||[];
+    cntEl.textContent=`조회 결과 ${_histLastResult.length}건`;
+    if(!_histLastResult.length){
+      tbody.innerHTML='<tr><td colspan="12" style="padding:20px;color:#999">데이터 없음</td></tr>';
       return;
     }
-    tbody.innerHTML=data.map(r=>{
+    tbody.innerHTML=_histLastResult.map(r=>{
       const cell=t=>r[`t${t}_total`]?`${r[`t${t}_total`]}<br><span style="font-size:9px;color:#888">${r[`t${t}_ch1`]||'-'}/${r[`t${t}_ch2`]||'-'}</span>`:'-';
       return `<tr>
-        <td>${r.check_date}</td>
-        <td>${r.machine_name||r.machine_code}</td>
+        <td>${r.check_date||''}</td>
+        <td>${r.machine_name||r.machine_code||''}</td>
+        <td>${r.customer||'-'}</td>
         <td>${r.item_code||'-'}</td>
         <td>${cell('0830')}</td>
         <td>${cell('1030')}</td>
@@ -2128,12 +2323,30 @@ async function loadHistory(){
         <td>${cell('1510')}</td>
         <td>${cell('1630')}</td>
         <td>${r.daily_shot||'-'}</td>
-        <td><button class="btn btn-danger" style="padding:4px 8px;font-size:11px" onclick="delRow(${r.id})">삭제</button></td>
+        <td style="white-space:nowrap"><button class="btn btn-warn" style="padding:4px 6px;font-size:10px;margin-right:2px" onclick="openEditRow(${r.id})">수정</button><button class="btn btn-danger" style="padding:4px 6px;font-size:10px" onclick="delRow(${r.id})">삭제</button></td>
       </tr>`;
     }).join('');
   }catch(e){
     console.error(e);
-    tbody.innerHTML=`<tr><td colspan="11" style="padding:20px;color:#c62828">오류: ${e.message||e.code}</td></tr>`;
+    cntEl.textContent='오류';
+    tbody.innerHTML=`<tr><td colspan="12" style="padding:20px;color:#c62828">오류: ${e.message||e.code}</td></tr>`;
+  }
+}
+
+async function bulkDelete(){
+  if(!_histLastResult.length){toast('조회 결과 없음','err');return}
+  if(!confirm(`현재 조회된 ${_histLastResult.length}건을 모두 삭제하시겠습니까?\n복구 불가능합니다.`))return;
+  if(!confirm('정말 삭제하시겠습니까? (확인 1/2)'))return;
+  try{
+    const ids=_histLastResult.map(r=>r.id).filter(Boolean);
+    const {error}=await supa.from('load_monitor_check').delete().in('id',ids);
+    if(error)throw error;
+    toast(`✅ ${ids.length}건 삭제 완료`,'ok');
+    _histLastResult=[];
+    loadHistory();
+  }catch(e){
+    console.error(e);
+    toast('일괄삭제 실패: '+(e.message||e.code),'err');
   }
 }
 
@@ -2149,22 +2362,363 @@ async function delRow(id){
   }
 }
 
+/* ============ 이력 수정 모달 ============ */
+let _editRowId=null;
+const TIME_KEYS=['0830','1030','1130','1400','1510','1630'];
+const TIME_LABELS={'0830':'8:30','1030':'10:30','1130':'11:30','1400':'14:00','1510':'15:10','1630':'16:30'};
+
+async function openEditRow(id){
+  try{
+    const {data,error}=await supa.from('load_monitor_check').select('*').eq('id',id).single();
+    if(error)throw error;
+    _editRowId=id;
+    document.getElementById('editModalTitle').textContent=`${data.check_date} · ${data.machine_name||data.machine_code}`;
+    document.getElementById('eDate').value=data.check_date||'';
+    document.getElementById('eMachineName').value=data.machine_name||data.machine_code||'';
+    document.getElementById('eCustomer').value=data.customer||'';
+    document.getElementById('eItem').value=data.item_code||'';
+    document.getElementById('eDailyShot').value=data.daily_shot||'';
+    document.getElementById('eMemo').value=data.memo||'';
+
+    // 측정값 18개 셀 동적 생성 (더블클릭 키패드)
+    const wrap=document.getElementById('eMeasureRows');
+    wrap.innerHTML=TIME_KEYS.map(t=>{
+      const inputs=['total','ch1','ch2'].map(k=>{
+        const id=`e_${t}_${k}`;
+        const v=data[`t${t}_${k}`]??'';
+        const cls=k==='total'?'total':(k==='ch1'?'ch1':'ch2');
+        return `<input type="text" readonly id="${id}" value="${v}" class="${cls}" style="text-align:center;padding:7px 4px;font-size:13px;font-weight:600;border:1.5px solid #ddd;border-radius:5px;cursor:pointer;caret-color:transparent" ondblclick="openNumpad('${id}','${TIME_LABELS[t]} · ${k.toUpperCase()}')">`;
+      }).join('');
+      return `<div class="measure-grid" style="margin-bottom:5px"><label>${TIME_LABELS[t]}</label>${inputs}</div>`;
+    }).join('');
+
+    // 측정값 셀에 모바일 두번탭 + 자동 저장 트리거 등록
+    setTimeout(()=>{
+      TIME_KEYS.forEach(t=>{
+        ['total','ch1','ch2'].forEach(k=>{
+          const id=`e_${t}_${k}`;
+          const el=document.getElementById(id);
+          if(!el)return;
+          let lastTap=0;
+          el.addEventListener('touchend',e=>{
+            e.preventDefault();
+            const now=Date.now();
+            if(now-lastTap<400){
+              el.blur();
+              openNumpad(id,`${TIME_LABELS[t]} · ${k.toUpperCase()}`);
+              lastTap=0;
+            }else{
+              lastTap=now;
+            }
+          });
+          el.addEventListener('focus',()=>setTimeout(()=>el.blur(),0));
+        });
+      });
+    },50);
+
+    document.getElementById('editModal').classList.add('show');
+  }catch(e){
+    console.error(e);
+    toast('이력 로드 실패: '+(e.message||e.code),'err');
+  }
+}
+
+function closeEditModal(){
+  _editRowId=null;
+  document.getElementById('editModal').classList.remove('show');
+}
+
+async function saveEditRow(){
+  if(!_editRowId){closeEditModal();return}
+  // SBC 4자리 정규화
+  let item=document.getElementById('eItem').value.trim();
+  if(item){
+    item=normalizeModelName(item);
+    document.getElementById('eItem').value=item;
+  }
+  const upd={
+    check_date:document.getElementById('eDate').value||null,
+    customer:document.getElementById('eCustomer').value.trim()||null,
+    item_code:item||null,
+    daily_shot:parseInt(document.getElementById('eDailyShot').value)||null,
+    memo:document.getElementById('eMemo').value.trim()||null,
+    modify_date:new Date().toISOString()
+  };
+  TIME_KEYS.forEach(t=>{
+    ['total','ch1','ch2'].forEach(k=>{
+      const v=document.getElementById(`e_${t}_${k}`).value;
+      upd[`t${t}_${k}`]=v?parseFloat(v):null;
+    });
+  });
+
+  try{
+    const {error}=await supa.from('load_monitor_check').update(upd).eq('id',_editRowId);
+    if(error)throw error;
+    toast('✅ 수정 완료','ok');
+    closeEditModal();
+    loadHistory();
+  }catch(e){
+    console.error(e);
+    toast('수정 실패: '+(e.message||e.code),'err');
+  }
+}
+
+/* ============ 분석 탭 (추이 그래프) ============ */
+let _analyzeChart=null;
+
+function initAnalyzePanel(){
+  // 기본 날짜 설정 (최근 30일)
+  const aFrom=document.getElementById('aFrom');
+  const aTo=document.getElementById('aTo');
+  if(!aFrom.value){
+    const d30=new Date();d30.setDate(d30.getDate()-30);
+    aFrom.value=fmtDate(d30);
+    aTo.value=kstToday();
+  }
+  // 호기/고객사 select 동기화
+  const qm=document.getElementById('qMachine');
+  const am=document.getElementById('aMachine');
+  if(qm && am && am.options.length<=1){
+    am.innerHTML=qm.innerHTML;
+  }
+  const qc=document.getElementById('qCustomer');
+  const ac=document.getElementById('aCustomer');
+  if(qc && ac && ac.options.length<=1){
+    ac.innerHTML=qc.innerHTML;
+  }
+}
+
+async function runAnalyze(){
+  const from=document.getElementById('aFrom').value;
+  const to=document.getElementById('aTo').value;
+  const machineFull=document.getElementById('aMachine').value;
+  const machineCode=machineFull?getMachineCode(machineFull):'';
+  const customer=document.getElementById('aCustomer').value;
+  const modelQuery=(document.getElementById('aModel').value||'').trim();
+  const aggr=document.getElementById('aAggr').value;
+  const show=document.getElementById('aShow').value;
+
+  const summary=document.getElementById('aSummary');
+  const stats=document.getElementById('aStats');
+  summary.textContent='분석 중...';
+  stats.textContent='';
+
+  try{
+    let q=supa.from('load_monitor_check').select('*').order('check_date',{ascending:true}).order('machine_code');
+    if(from)q=q.gte('check_date',from);
+    if(to)q=q.lte('check_date',to);
+    if(machineCode)q=q.eq('machine_code',machineCode);
+    if(customer)q=q.eq('customer',customer);
+    if(modelQuery)q=q.ilike('item_code','%'+modelQuery+'%');
+    const {data,error}=await q.limit(2000);
+    if(error)throw error;
+
+    if(!data||!data.length){
+      summary.textContent='⚠ 데이터 없음';
+      drawAnalyzeChart([],[],[],[],show);
+      stats.innerHTML='<div style="color:#999;padding:10px">데이터 없음</div>';
+      return;
+    }
+
+    // 모든 측정값 펼치기 (시간대 6개 × 행 수)
+    const flat=[]; // {date, time, total, ch1, ch2, machine, item}
+    data.forEach(r=>{
+      TIME_KEYS.forEach(t=>{
+        const tt=r[`t${t}_total`],c1=r[`t${t}_ch1`],c2=r[`t${t}_ch2`];
+        if(tt!=null||c1!=null||c2!=null){
+          flat.push({
+            date:r.check_date,
+            time:t,
+            total:tt,ch1:c1,ch2:c2,
+            machine:r.machine_name||r.machine_code,
+            item:r.item_code
+          });
+        }
+      });
+    });
+
+    // 집계
+    const labels=[];
+    const totalArr=[],ch1Arr=[],ch2Arr=[],balArr=[];
+
+    if(aggr==='all'){
+      // 모든 측정값을 시계열 점으로
+      flat.sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));
+      flat.forEach(p=>{
+        labels.push(`${p.date.substring(5)} ${TIME_LABELS[p.time]}`);
+        totalArr.push(p.total);
+        ch1Arr.push(p.ch1);
+        ch2Arr.push(p.ch2);
+        balArr.push((p.ch1!=null&&p.ch2!=null)?+(p.ch1-p.ch2).toFixed(2):null);
+      });
+    }else{
+      // 일자별 집계
+      const byDate={};
+      flat.forEach(p=>{
+        if(!byDate[p.date])byDate[p.date]={total:[],ch1:[],ch2:[]};
+        if(p.total!=null)byDate[p.date].total.push(p.total);
+        if(p.ch1!=null)byDate[p.date].ch1.push(p.ch1);
+        if(p.ch2!=null)byDate[p.date].ch2.push(p.ch2);
+      });
+      const reduceFn=aggr==='avg'?
+        arr=>arr.length?+(arr.reduce((s,n)=>s+n,0)/arr.length).toFixed(2):null
+        :aggr==='max'?
+        arr=>arr.length?Math.max(...arr):null
+        :arr=>arr.length?Math.min(...arr):null;
+
+      Object.keys(byDate).sort().forEach(d=>{
+        labels.push(d.substring(5));
+        const v=byDate[d];
+        totalArr.push(reduceFn(v.total));
+        ch1Arr.push(reduceFn(v.ch1));
+        ch2Arr.push(reduceFn(v.ch2));
+        const c1=reduceFn(v.ch1),c2=reduceFn(v.ch2);
+        balArr.push((c1!=null&&c2!=null)?+(c1-c2).toFixed(2):null);
+      });
+    }
+
+    drawAnalyzeChart(labels,totalArr,ch1Arr,ch2Arr,show,balArr);
+
+    // 요약 통계
+    const stat=(arr)=>{
+      const v=arr.filter(x=>x!=null);
+      if(!v.length)return null;
+      const avg=v.reduce((s,n)=>s+n,0)/v.length;
+      return {n:v.length,min:Math.min(...v),max:Math.max(...v),avg:+avg.toFixed(2),
+              std:+Math.sqrt(v.reduce((s,n)=>s+(n-avg)**2,0)/v.length).toFixed(2)};
+    };
+    const sT=stat(totalArr),s1=stat(ch1Arr),s2=stat(ch2Arr),sB=stat(balArr);
+
+    summary.innerHTML=`✅ <b>${data.length}</b>건 / 측정값 <b>${flat.length}</b>개 (${labels.length}개 집계점)`;
+
+    const statRow=(label,s,color)=>s?`<tr>
+      <td style="padding:4px 6px;background:${color};color:#fff;font-weight:700;border-radius:4px;text-align:center">${label}</td>
+      <td style="padding:4px 8px;text-align:right">${s.n}</td>
+      <td style="padding:4px 8px;text-align:right;font-weight:700">${s.avg}</td>
+      <td style="padding:4px 8px;text-align:right;color:#1565c0">${s.min}</td>
+      <td style="padding:4px 8px;text-align:right;color:#c62828">${s.max}</td>
+      <td style="padding:4px 8px;text-align:right;color:#666">${s.std}</td>
+    </tr>`:'';
+
+    stats.innerHTML=`
+      <table style="width:100%;border-collapse:collapse;font-size:11px">
+        <thead><tr style="background:#eef2f7">
+          <th style="padding:6px">항목</th>
+          <th style="padding:6px;text-align:right">건수</th>
+          <th style="padding:6px;text-align:right">평균</th>
+          <th style="padding:6px;text-align:right">최소</th>
+          <th style="padding:6px;text-align:right">최대</th>
+          <th style="padding:6px;text-align:right">표준편차</th>
+        </tr></thead>
+        <tbody>
+          ${statRow('TOTAL',sT,'#388e3c')}
+          ${statRow('CH1',s1,'#f57c00')}
+          ${statRow('CH2',s2,'#c2185b')}
+          ${sB?statRow('CH1-CH2',sB,'#7b1fa2'):''}
+        </tbody>
+      </table>
+      ${sB&&Math.abs(sB.avg)>5?`<div style="margin-top:8px;padding:8px;background:#fff3e0;border-radius:6px;font-size:11px;color:#e65100">⚠ <b>채널 불균형</b> 감지: CH1과 CH2의 평균 차이가 ${sB.avg}로 큽니다. 점검이 필요할 수 있습니다.</div>`:''}
+    `;
+  }catch(e){
+    console.error(e);
+    summary.textContent='오류: '+(e.message||e.code);
+  }
+}
+
+function drawAnalyzeChart(labels,total,ch1,ch2,show,balance){
+  const ctx=document.getElementById('aChart');
+  if(!ctx||!window.Chart)return;
+  if(_analyzeChart){_analyzeChart.destroy();_analyzeChart=null}
+
+  const datasets=[];
+  if(show==='all'||show==='total'){
+    datasets.push({
+      label:'TOTAL',
+      data:total,
+      borderColor:'#388e3c',
+      backgroundColor:'rgba(56,142,60,.1)',
+      borderWidth:2.5,
+      pointRadius:3,
+      pointHoverRadius:6,
+      tension:0.25,
+      spanGaps:true
+    });
+  }
+  if(show==='all'||show==='ch'){
+    datasets.push({
+      label:'CH1 (좌)',
+      data:ch1,
+      borderColor:'#f57c00',
+      backgroundColor:'rgba(245,124,0,.08)',
+      borderWidth:2,
+      pointRadius:2.5,
+      tension:0.25,
+      spanGaps:true
+    });
+    datasets.push({
+      label:'CH2 (우)',
+      data:ch2,
+      borderColor:'#c2185b',
+      backgroundColor:'rgba(194,24,91,.08)',
+      borderWidth:2,
+      pointRadius:2.5,
+      tension:0.25,
+      spanGaps:true
+    });
+  }
+  if(show==='balance' && balance){
+    datasets.push({
+      label:'CH1 - CH2 (밸런스)',
+      data:balance,
+      borderColor:'#7b1fa2',
+      backgroundColor:'rgba(123,31,162,.1)',
+      borderWidth:2.5,
+      pointRadius:3,
+      tension:0.25,
+      spanGaps:true,
+      fill:true
+    });
+  }
+
+  _analyzeChart=new Chart(ctx,{
+    type:'line',
+    data:{labels,datasets},
+    options:{
+      responsive:true,
+      maintainAspectRatio:false,
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{position:'top',labels:{font:{size:11},boxWidth:14}},
+        tooltip:{titleFont:{size:11},bodyFont:{size:11}}
+      },
+      scales:{
+        x:{ticks:{font:{size:9},maxRotation:50,minRotation:0,autoSkip:true,maxTicksLimit:14}},
+        y:{ticks:{font:{size:10}},beginAtZero:show==='balance'?false:false}
+      }
+    }
+  });
+}
+
 function exportCSV(){
   const tbody=document.getElementById('histBody');
   if(!tbody.querySelector('tr td button')){toast('데이터 없음','err');return}
-  const rows=[['일자','호기','기종','8:30 TOTAL','8:30 CH1','8:30 CH2','10:30 TOTAL','10:30 CH1','10:30 CH2','11:30 TOTAL','11:30 CH1','11:30 CH2','14:00 TOTAL','14:00 CH1','14:00 CH2','15:10 TOTAL','15:10 CH1','15:10 CH2','16:30 TOTAL','16:30 CH1','16:30 CH2','일일타발수','비고']];
+  const rows=[['일자','호기','고객사','기종','8:30 TOTAL','8:30 CH1','8:30 CH2','10:30 TOTAL','10:30 CH1','10:30 CH2','11:30 TOTAL','11:30 CH1','11:30 CH2','14:00 TOTAL','14:00 CH1','14:00 CH2','15:10 TOTAL','15:10 CH1','15:10 CH2','16:30 TOTAL','16:30 CH1','16:30 CH2','일일타발수','비고']];
   const from=document.getElementById('qFrom').value;
   const to=document.getElementById('qTo').value;
   const machineFull=document.getElementById('qMachine').value;
   const machineCode=machineFull?getMachineCode(machineFull):'';
+  const customer=document.getElementById('qCustomer').value;
+  const modelQuery=(document.getElementById('qModel').value||'').trim();
   (async()=>{
     let q=supa.from('load_monitor_check').select('*').order('check_date',{ascending:false}).order('machine_code');
     if(from)q=q.gte('check_date',from);
     if(to)q=q.lte('check_date',to);
     if(machineCode)q=q.eq('machine_code',machineCode);
+    if(customer)q=q.eq('customer',customer);
+    if(modelQuery)q=q.ilike('item_code','%'+modelQuery+'%');
     const {data}=await q.limit(500);
     (data||[]).forEach(r=>{
-      rows.push([r.check_date,r.machine_name||r.machine_code,r.item_code||'',
+      rows.push([r.check_date,r.machine_name||r.machine_code,r.customer||'',r.item_code||'',
         r.t0830_total||'',r.t0830_ch1||'',r.t0830_ch2||'',
         r.t1030_total||'',r.t1030_ch1||'',r.t1030_ch2||'',
         r.t1130_total||'',r.t1130_ch1||'',r.t1130_ch2||'',
