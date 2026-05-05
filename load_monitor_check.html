@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>로드모니터 하중 일일점검 v2.5</title>
+<title>로드모니터 하중 일일점검 v2.6</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <style>
@@ -386,7 +386,7 @@ table.hist tr:hover{background:#f0f7ff}
     </div>
   </div>
 
-  <div class="ver">v2.5 · 로드모니터 일일점검 · 태진다이텍 품질관리팀</div>
+  <div class="ver">v2.6 · 로드모니터 일일점검 · 태진다이텍 품질관리팀</div>
 </div>
 
 <script>
@@ -843,20 +843,82 @@ async function handleImage(ev){
   zone.classList.add('busy');
   prog.classList.add('on');
   btn.disabled=true;
-  status.innerHTML='<span class="spinner"></span> OCR 분석 중...';
+  status.innerHTML='<span class="spinner"></span> OCR 분석 중 (색상 분리)...';
 
   try{
-    const {data:{text}}=await Tesseract.recognize(file,'eng',{
-      logger:m=>{
-        if(m.status==='recognizing text'){
-          const p=Math.round(m.progress*100);
-          prog.firstElementChild.style.width=p+'%';
-          status.innerHTML=`<span class="spinner"></span> 인식 중 ${p}%`;
-        }
+    // 로드모니터: 검정 배경 + 녹/노랑/분홍 네온 숫자
+    // → 색상별로 마스킹해서 흰배경 검은글씨로 변환 후 OCR (각 색상별 1번)
+    let total=null,ch1=null,ch2=null;
+
+    if(_lastImageBitmap){
+      // 1) 녹색 채널 (TOTAL) — 가장 큰 숫자
+      status.innerHTML='<span class="spinner"></span> 인식 중 1/3 (TOTAL 녹색)...';
+      prog.firstElementChild.style.width='10%';
+      const greenCanvas=createColorMaskedCanvas(_lastImageBitmap,'green');
+      const r1=await Tesseract.recognize(greenCanvas,'eng',{
+        tessedit_char_whitelist:'0123456789.'
+      });
+      const greenNums=extractNumbers(r1.data.text);
+      console.log('[OCR 녹색]',r1.data.text.trim(),'→',greenNums);
+      // 가장 큰 숫자 (보통 TOTAL은 100~200대)
+      total=pickBestNumber(greenNums,80,300);
+
+      // 2) 노랑 채널 (CH1)
+      status.innerHTML='<span class="spinner"></span> 인식 중 2/3 (CH1 노랑)...';
+      prog.firstElementChild.style.width='40%';
+      const yellowCanvas=createColorMaskedCanvas(_lastImageBitmap,'yellow');
+      const r2=await Tesseract.recognize(yellowCanvas,'eng',{
+        tessedit_char_whitelist:'0123456789.'
+      });
+      const yellowNums=extractNumbers(r2.data.text);
+      console.log('[OCR 노랑]',r2.data.text.trim(),'→',yellowNums);
+      ch1=pickBestNumber(yellowNums,30,150);
+
+      // 3) 분홍 채널 (CH2)
+      status.innerHTML='<span class="spinner"></span> 인식 중 3/3 (CH2 분홍)...';
+      prog.firstElementChild.style.width='70%';
+      const pinkCanvas=createColorMaskedCanvas(_lastImageBitmap,'pink');
+      const r3=await Tesseract.recognize(pinkCanvas,'eng',{
+        tessedit_char_whitelist:'0123456789.'
+      });
+      const pinkNums=extractNumbers(r3.data.text);
+      console.log('[OCR 분홍]',r3.data.text.trim(),'→',pinkNums);
+      ch2=pickBestNumber(pinkNums,30,150);
+
+      prog.firstElementChild.style.width='100%';
+    }
+
+    // 색상 분리로 못 찾았으면 원본 전체 OCR로 폴백
+    if(total===null||ch1===null||ch2===null){
+      status.innerHTML='<span class="spinner"></span> 인식 중 (전체 분석)...';
+      const r=await Tesseract.recognize(file,'eng',{
+        tessedit_char_whitelist:'0123456789.'
+      });
+      const allNums=extractNumbers(r.data.text);
+      console.log('[OCR 전체]',r.data.text.trim(),'→',allNums);
+      // TOTAL ≈ CH1 + CH2 관계로 보정
+      const r2=findTotalCh1Ch2(allNums);
+      if(r2){
+        if(total===null)total=r2.total;
+        if(ch1===null)ch1=r2.ch1;
+        if(ch2===null)ch2=r2.ch2;
       }
-    });
-    parseOCR(text);
+    }
+
+    if(total!==null && ch1!==null && ch2!==null){
+      handleOCRResult(total,ch1,ch2);
+    }else{
+      status.innerHTML='⚠ 자동 인식 부분 실패 - <b>"영역 직접 지정"</b> 버튼을 누르세요';
+      document.getElementById('ocrResult').innerHTML=`
+        <div class="ocr-result">
+          <div class="ocr-result-row"><span>TOTAL</span><b style="color:${total!==null?'#1b5e20':'#c62828'};font-size:18px">${total!==null?total:'?'}</b></div>
+          <div class="ocr-result-row"><span>CH1 (좌)</span><b style="color:${ch1!==null?'#8d6e00':'#c62828'};font-size:16px">${ch1!==null?ch1:'?'}</b></div>
+          <div class="ocr-result-row"><span>CH2 (우)</span><b style="color:${ch2!==null?'#a02550':'#c62828'};font-size:16px">${ch2!==null?ch2:'?'}</b></div>
+          <div style="margin-top:8px;font-size:11px;color:#c62828">↓ ✂ 영역 직접 지정 사용을 권장합니다</div>
+        </div>`;
+    }
   }catch(e){
+    console.error('OCR 오류:',e);
     status.textContent='❌ OCR 실패 - "영역 직접 지정" 버튼을 눌러보세요';
     toast('OCR 실패','err');
   }finally{
@@ -1054,27 +1116,37 @@ async function ocrCropRegion(key){
   const r=_cropRects[key];
   if(!r)return;
 
-  // 영역 잘라서 OCR
+  // 영역에 맞는 색상 자동 선택
+  const colorMap={total:'green',ch1:'yellow',ch2:'pink'};
+  const targetColor=colorMap[key];
+
+  // 영역 잘라서 4배 확대
   const tmp=document.createElement('canvas');
-  // 4배 확대 (텍스트 선명도)
   const scale=4;
   tmp.width=r.w*scale;
   tmp.height=r.h*scale;
   const tctx=tmp.getContext('2d');
   tctx.imageSmoothingEnabled=true;
   tctx.imageSmoothingQuality='high';
-
-  // 원본 → 확대 그리기
   tctx.drawImage(_lastImageBitmap, r.x, r.y, r.w, r.h, 0, 0, tmp.width, tmp.height);
 
-  // 필터 (그레이스케일 + 대비)
-  if(_cropFilter){
+  // 색상 마스킹 (검정배경 네온 → 흰배경 검은글씨)
+  // 사용자가 필터 토글 OFF한 경우엔 적용 안함
+  if(_cropFilter || true){  // 영역 OCR은 항상 색상 마스킹 적용 (성능 위해)
     const imgData=tctx.getImageData(0,0,tmp.width,tmp.height);
     const d=imgData.data;
     for(let i=0;i<d.length;i+=4){
-      let g=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
-      g=g<128?g*0.5:Math.min(255,(g-128)*1.7+128);
-      d[i]=d[i+1]=d[i+2]=g;
+      const rr=d[i],g=d[i+1],b=d[i+2];
+      let isTarget=false;
+      if(targetColor==='green'){
+        isTarget=(g>120 && g>rr+20 && g>b+20);
+      }else if(targetColor==='yellow'){
+        isTarget=(rr>140 && g>120 && b<150 && Math.abs(rr-g)<60 && rr>b+30);
+      }else if(targetColor==='pink'){
+        isTarget=(rr>140 && b>100 && g<rr-20 && g<b+30);
+      }
+      if(isTarget){d[i]=0;d[i+1]=0;d[i+2]=0}
+      else{d[i]=255;d[i+1]=255;d[i+2]=255}
     }
     tctx.putImageData(imgData,0,0);
   }
@@ -1083,16 +1155,14 @@ async function ocrCropRegion(key){
   resultEl.innerHTML='<span class="spinner" style="border-color:#888;border-top-color:transparent"></span>';
 
   try{
-    // 숫자/소수점만 인식
     const {data:{text}}=await Tesseract.recognize(tmp,'eng',{
       tessedit_char_whitelist:'0123456789.'
     });
-    // 가장 그럴듯한 숫자 추출 (소수점 1자리 우선)
+    console.log(`[영역OCR ${key}/${targetColor}]`,text.trim());
     const matches=text.match(/\d+\.?\d*/g)||[];
     const nums=matches.map(s=>parseFloat(s)).filter(n=>!isNaN(n)&&n>0);
     let val=null;
     if(nums.length){
-      // 합리적 범위(10~999) 우선
       const valid=nums.filter(n=>n>=10&&n<=999);
       val=valid.length?valid[0]:nums[0];
     }
@@ -1164,63 +1234,94 @@ function applyCropResult(){
   document.getElementById('ocrStatus').innerHTML=`✅ 영역 OCR 완료${matched?` - ${matched.label} 자동 등록`:''}`;
 }
 
-function parseOCR(text){
-  // Smart Load Monitor 화면에서 숫자 추출
-  // TOTAL은 가장 큰 숫자 (보통 100~200대), CH1/CH2는 작은 숫자 (50~70대)
-  const nums=text.match(/\d+\.?\d*/g)||[];
-  console.log('OCR raw:',text);
-  console.log('OCR nums:',nums);
+/* ============ OCR 헬퍼 함수 ============ */
 
-  // 합리적 범위(10~999)의 소수점 1자리 숫자 우선
-  const candidates=nums.map(n=>parseFloat(n)).filter(n=>!isNaN(n)&&n>=10&&n<=999);
+// 색상 채널 마스킹: 검정배경 네온숫자 → 흰배경 검은글씨
+// targetColor: 'green' | 'yellow' | 'pink'
+function createColorMaskedCanvas(bitmap,targetColor){
+  const canvas=document.createElement('canvas');
+  canvas.width=bitmap.width;
+  canvas.height=bitmap.height;
+  const ctx=canvas.getContext('2d');
+  ctx.drawImage(bitmap,0,0);
+  const imgData=ctx.getImageData(0,0,canvas.width,canvas.height);
+  const d=imgData.data;
 
-  // 보통 화면에는 [TOTAL, CH1, CH2, 임계값] 4개 정도가 큰 숫자로 나옴
-  // TOTAL = CH1 + CH2 인 점을 활용해 매칭 시도
-  let total=null,ch1=null,ch2=null;
+  for(let i=0;i<d.length;i+=4){
+    const r=d[i],g=d[i+1],b=d[i+2];
+    let isTarget=false;
 
-  // 가장 큰 값을 TOTAL 후보로
+    if(targetColor==='green'){
+      // 녹색: G가 R, B보다 충분히 크고, 어느정도 밝음
+      isTarget=(g>120 && g>r+20 && g>b+20);
+    }else if(targetColor==='yellow'){
+      // 노랑: R, G 모두 높고 B 낮음
+      isTarget=(r>140 && g>120 && b<150 && Math.abs(r-g)<60 && r>b+30);
+    }else if(targetColor==='pink'){
+      // 분홍: R 높고 B 높음, G 낮음 (마젠타/핑크)
+      isTarget=(r>140 && b>100 && g<r-20 && g<b+30);
+    }
+
+    if(isTarget){
+      // 검은색으로 (텍스트)
+      d[i]=0;d[i+1]=0;d[i+2]=0;
+    }else{
+      // 흰색으로 (배경)
+      d[i]=255;d[i+1]=255;d[i+2]=255;
+    }
+  }
+  ctx.putImageData(imgData,0,0);
+  return canvas;
+}
+
+// 텍스트에서 숫자 추출 (10~999 범위)
+function extractNumbers(text){
+  const matches=text.match(/\d+\.?\d*/g)||[];
+  return matches
+    .map(s=>parseFloat(s))
+    .filter(n=>!isNaN(n)&&n>=10&&n<=999);
+}
+
+// 후보 중 가장 적절한 숫자 선택 (지정 범위 우선)
+function pickBestNumber(nums,minVal,maxVal){
+  if(!nums.length)return null;
+  // 범위 내 첫번째
+  const inRange=nums.filter(n=>n>=minVal&&n<=maxVal);
+  if(inRange.length)return inRange[0];
+  // 범위 외에선 가장 가까운 값
+  return nums[0];
+}
+
+// TOTAL ≈ CH1 + CH2 관계로 매칭
+function findTotalCh1Ch2(candidates){
+  if(candidates.length<3)return null;
   const sorted=[...candidates].sort((a,b)=>b-a);
   for(let i=0;i<sorted.length;i++){
     const cand_total=sorted[i];
-    // 나머지에서 CH1+CH2 ≈ TOTAL 조합 찾기
     for(let j=0;j<candidates.length;j++){
       for(let k=0;k<candidates.length;k++){
         if(j===k)continue;
         const a=candidates[j],b=candidates[k];
         if(a===cand_total||b===cand_total)continue;
-        if(Math.abs((a+b)-cand_total)<=2.0 && a>=20&&a<=150&&b>=20&&b<=150){
-          total=cand_total;ch1=a;ch2=b;
-          break;
+        if(Math.abs((a+b)-cand_total)<=3.0 && a>=20&&a<=150&&b>=20&&b<=150){
+          return {total:cand_total,ch1:a,ch2:b};
         }
       }
-      if(total!==null)break;
     }
-    if(total!==null)break;
   }
+  return null;
+}
 
-  // 매칭 실패 시 단순히 가장 큰 3개
-  if(total===null && candidates.length>=3){
-    total=sorted[0];
-    ch1=sorted[1];
-    ch2=sorted[2];
-  }
-
+// OCR 결과 처리 + UI 표시 + 시간대 자동매칭
+function handleOCRResult(total,ch1,ch2){
   const status=document.getElementById('ocrStatus');
   const result=document.getElementById('ocrResult');
 
-  if(total===null){
-    status.textContent='❌ 숫자 인식 실패. 더 선명한 사진을 촬영하세요.';
-    result.innerHTML='';
-    return;
-  }
-
   // ===== 현재 시각 기준 자동 시간대 매칭 (±30분) =====
   const matched=findNearestTimeSlot();
-  // matched: {time:'0830', label:'8:30', diffMin:5} 또는 null
 
   let autoMsg='';
   if(matched){
-    // 자동 적용
     document.getElementById(`t_${matched.time}_total`).value=total;
     document.getElementById(`t_${matched.time}_ch1`).value=ch1;
     document.getElementById(`t_${matched.time}_ch2`).value=ch2;
