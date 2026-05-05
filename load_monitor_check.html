@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>로드모니터 하중 일일점검 v1.8</title>
+<title>로드모니터 하중 일일점검 v1.9</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <style>
@@ -284,7 +284,7 @@ table.hist tr:hover{background:#f0f7ff}
     </div>
   </div>
 
-  <div class="ver">v1.8 · 로드모니터 일일점검 · 태진다이텍 품질관리팀</div>
+  <div class="ver">v1.9 · 로드모니터 일일점검 · 태진다이텍 품질관리팀</div>
 </div>
 
 <script>
@@ -383,85 +383,107 @@ function swTab(i){
 }
 
 /* ============ 호기/점검자 로드 ============ */
+// 설비명 조립: "36호기 심팩300톤" 형식
+function composeMachineName(ho,maker,ton){
+  const parts=[];
+  if(ho)parts.push(ho+'호기');
+  if(maker||ton){
+    let tail=(maker||'').trim();
+    if(ton)tail+=ton+'톤';
+    if(tail)parts.push(tail);
+  }
+  return parts.join(' ');
+}
+
+// 설비명 파싱: "36호기 심팩300톤" → {ho:"36", maker:"심팩", ton:300}
+function parseMachineName(name){
+  if(!name)return {ho:'',maker:'',ton:null};
+  const s=String(name).trim();
+  const mHo=s.match(/^(\d{1,3})호기/);
+  const ho=mHo?mHo[1]:'';
+  const mTon=s.match(/(\d{1,4})\s*톤/);
+  const ton=mTon?parseInt(mTon[1]):null;
+  let maker=s.replace(/^\d+호기\s*/,'').replace(/\s*\d+\s*톤.*$/,'').trim();
+  return {ho,maker,ton};
+}
+
+// 호기번호로 변환 (MES/Supabase 조회용 코드)
+// "36호기 심팩300톤" → "036" (3자리 패딩) 또는 호기번호 그대로
+function getMachineCode(name){
+  const p=parseMachineName(name);
+  if(!p.ho)return name;
+  // MES 호기 코드는 보통 3자리 패딩 (예: 036)
+  return p.ho.padStart(3,'0');
+}
+
+// P_machine_check.html과 동일한 기본 호기 목록 (마스터 비어있을 때 폴백)
+const DEFAULT_MACHINES=[
+  '1호기 쌍용200톤','2호기 심팩200톤','3호기 심팩150톤','4호기 심팩150톤',
+  '5호기 심팩110톤','6호기 심팩110톤','7호기 심팩80톤','8호기 심팩80톤',
+  '9호기 심팩80톤','10호기 심팩80톤','11호기 심팩80톤','12호기 심팩80톤',
+  '13호기 심팩80톤','17호기 심팩80톤',
+  '28호기 국일200톤','29호기 국일200톤','30호기 국일160톤',
+  '31호기 심팩150톤','32호기 심팩200톤','33호기 심팩250톤',
+  '34호기 심팩250톤','35호기 심팩250톤','36호기 심팩300톤',
+  '37호기 국일200톤','38호기 국일200톤','39호기 심팩250톤',
+  '40호기 심팩200톤','41호기 국일200톤','43호기 화일800톤',
+  '45호기 심팩300톤','46호기 심팩300톤','47호기 심팩300톤',
+  '48호기 심팩300톤','49호기 심팩300톤'
+];
+
 async function loadMachines(){
   let list=[];
   let srcInfo='';
 
-  // [1순위] machine_master_tj (마스터 - 호기/메이커/톤수)
+  // [1순위] machine_master_tj - fetch 직접 호출 (P_machine_check 패턴)
   try{
-    const {data,error}=await supa.from('machine_master_tj')
-      .select('id,ho_code,machine_code,machine_name,maker,tonnage,active,sort_order')
-      .order('sort_order',{ascending:true})
-      .order('ho_code',{ascending:true});
-    console.log('[machine_master_tj] error=',error,'count=',data?.length);
-    if(error){
-      console.warn('machine_master_tj 조회 오류:',error.code,error.message);
-    }else if(data && data.length){
-      list=data
-        .filter(m=>m.active!==false)
-        .map(m=>{
-          // ho_code를 문자열로 안전하게 처리
-          const ho_str=m.ho_code!=null?String(m.ho_code).trim():'';
-          // code 우선순위: machine_code > ho_code 패딩 > id
-          let code='';
-          if(m.machine_code && String(m.machine_code).trim()){
-            code=String(m.machine_code).trim();
-          }else if(ho_str){
-            code=ho_str.padStart(3,'0');
-          }else{
-            code='M'+m.id;
-          }
-          // 라벨 만들기
-          const ton=m.tonnage?`${m.tonnage}톤`:'';
-          const maker=m.maker?String(m.maker).trim():'';
-          const ho=ho_str?`${ho_str}호기`:'';
-          const parts=[ho,ton,maker].filter(v=>v);
-          const label=parts.length?parts.join(' '):code;
-          return {code,label};
+    const res=await fetch(`${SB_URL}/rest/v1/machine_master_tj?select=*&order=sort_order.asc,ho_code.asc`,{
+      headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY}
+    });
+    if(res.ok){
+      const rows=await res.json();
+      console.log('[machine_master_tj]',rows.length,'건');
+      list=(rows||[])
+        .filter(r=>r.active!==false)
+        .map(r=>{
+          const name=composeMachineName(r.ho_code||'',r.maker||'',r.tonnage||'');
+          return {name,sort:r.sort_order||0};
         })
-        .filter(m=>m.code);
-      srcInfo=`master_tj(${list.length})`;
+        .filter(x=>x.name);
+      list.sort((a,b)=>a.sort-b.sort);
+      if(list.length)srcInfo=`master_tj(${list.length})`;
+    }else{
+      console.warn('machine_master_tj HTTP',res.status);
     }
-  }catch(e){console.warn('machine_master_tj 예외:',e)}
+  }catch(e){console.warn('machine_master_tj fetch 예외:',e)}
 
-  // [폴백] machine_status (마스터 없을 때)
+  // [2순위] DEFAULT_MACHINES 폴백 (P_machine_check와 동일)
   if(!list.length){
-    try{
-      const {data,error}=await supa.from('machine_status')
-        .select('machine_code,machine_name')
-        .order('machine_code');
-      console.log('[machine_status] error=',error,'count=',data?.length);
-      if(!error && data){
-        list=data
-          .filter(m=>m.machine_code)
-          .map(m=>({
-            code:String(m.machine_code).trim(),
-            label:`${m.machine_code} ${m.machine_name||''}`.trim()
-          }));
-        srcInfo=`machine_status(${list.length})`;
-      }
-    }catch(e){console.error('machine_status 예외:',e)}
+    list=DEFAULT_MACHINES.map((name,i)=>({name,sort:i+1}));
+    srcInfo=`default(${list.length})`;
+    console.log('호기 마스터 비어있음 - 기본값 사용');
   }
 
-  // 두 select에 적용
+  // 두 select에 적용 (value = name, 즉 "36호기 심팩300톤" 그대로)
   const sels=[
-    {id:'chkMachine',first:'<option value="">선택</option>'},
+    {id:'chkMachine',first:'<option value="" disabled selected>선택</option>'},
     {id:'qMachine',first:'<option value="">전체</option>'}
   ];
   sels.forEach(s=>{
     const sel=document.getElementById(s.id);
-    sel.innerHTML=s.first+list.map(m=>`<option value="${m.code}">${m.label}</option>`).join('');
+    sel.innerHTML=s.first+list.map(m=>`<option value="${m.name}">${m.name}</option>`).join('');
   });
 
   // 디버그 표시
   const dbg=document.getElementById('machineSrc');
-  if(!list.length){
-    dbg.textContent='⚠ 호기 마스터 비어있음 (콘솔 확인)';
-    dbg.style.color='#c62828';
-    toast('호기 마스터 데이터 없음. F12 콘솔 확인','err');
+  if(srcInfo.startsWith('default')){
+    dbg.textContent='⚠ 마스터 미사용 (기본 목록)';
+    dbg.style.color='#f57c00';
   }else{
-    console.log('[호기 로드 완료]',srcInfo,list);
+    dbg.textContent=`✓ 마스터 (${list.length}대)`;
+    dbg.style.color='#388e3c';
   }
+  console.log('[호기 로드 완료]',srcInfo);
 
   // 마지막 사용 호기 자동 복원
   restoreLastMachine();
@@ -677,8 +699,8 @@ function applyOCR(time,total,ch1,ch2){
 /* ============ 저장 ============ */
 async function saveCheck(){
   const date=document.getElementById('chkDate').value;
-  const machine=document.getElementById('chkMachine').value;
-  const machineName=document.getElementById('chkMachine').selectedOptions[0]?.text||'';
+  const machineFull=document.getElementById('chkMachine').value;  // "36호기 심팩300톤"
+  const machineCode=getMachineCode(machineFull);  // "036"
   const item=document.getElementById('chkItem').value.trim();
   const inspectorInp=document.getElementById('chkInspector');
   const inspector=inspectorInp.value.trim();
@@ -687,14 +709,14 @@ async function saveCheck(){
   const memo=document.getElementById('chkMemo').value.trim();
 
   if(!date){toast('점검일자 입력','err');return}
-  if(!machine){toast('호기 선택','err');return}
+  if(!machineFull){toast('호기 선택','err');return}
   if(!inspector){toast('점검자 정보 없음 (로그인 필요)','err');return}
 
   const times=['0830','1030','1130','1400','1510','1630'];
   const row={
     check_date:date,
-    machine_code:machine,
-    machine_name:machineName.replace(machine,'').trim(),
+    machine_code:machineCode,           // "036"
+    machine_name:machineFull,            // "36호기 심팩300톤"
     item_code:item||null,
     inspector:inspector||null,
     daily_shot:dailyShot,
@@ -712,8 +734,8 @@ async function saveCheck(){
     const {error}=await supa.from('load_monitor_check').upsert(row,{onConflict:'check_date,machine_code'});
     if(error)throw error;
     // 저장 성공 시 호기를 localStorage에 확정 저장 (다음 접속 시 복원 보장)
-    localStorage.setItem(LS_LAST_MACHINE,machine);
-    localStorage.setItem(LS_LAST_MACHINE_LABEL,machineName);
+    localStorage.setItem(LS_LAST_MACHINE,machineFull);
+    localStorage.setItem(LS_LAST_MACHINE_LABEL,machineFull);
     toast('✅ 저장 완료','ok');
   }catch(e){
     console.error(e);
@@ -806,19 +828,20 @@ function restoreLastMachine(){
 
 // 기종(품목) 자동 조회
 async function fetchItemCode(silent=false){
-  const machine=document.getElementById('chkMachine').value;
+  const machineName=document.getElementById('chkMachine').value;
+  const machineCode=getMachineCode(machineName);  // "36호기..." → "036"
   const inp=document.getElementById('chkItem');
   const src=document.getElementById('itemSrc');
-  if(!machine)return;
+  if(!machineName)return;
 
   let item=null,itemName=null,source=null;
 
-  // [1순위] Python 릴레이 - 현재 작업 중인 호기의 진행중 작업지시
+  // [1순위] Python 릴레이 - 호기코드로 조회
   for(const base of MES_API_BASES){
     try{
       const ctrl=new AbortController();
       const tid=setTimeout(()=>ctrl.abort(),3000);
-      const r=await fetch(`${base}/api/mes/current_wo?machine_code=${encodeURIComponent(machine)}`,{signal:ctrl.signal});
+      const r=await fetch(`${base}/api/mes/current_wo?machine_code=${encodeURIComponent(machineCode)}`,{signal:ctrl.signal});
       clearTimeout(tid);
       if(r.ok){
         const j=await r.json();
@@ -832,12 +855,12 @@ async function fetchItemCode(silent=false){
     }catch(e){/* 다음 시도 */}
   }
 
-  // [2순위] Supabase machine_status (현재 표시 중인 작업)
+  // [2순위] Supabase machine_status - 호기코드로 조회
   if(!item){
     try{
       const {data,error}=await supa.from('machine_status')
         .select('item_code,item_name,model_name,wo_no,work_order_no')
-        .eq('machine_code',machine)
+        .eq('machine_code',machineCode)
         .maybeSingle();
       if(!error && data){
         item=data.item_code||'';
@@ -852,7 +875,7 @@ async function fetchItemCode(silent=false){
     try{
       const {data}=await supa.from('work_order_cache')
         .select('item_code,item_name,model_name,work_order_date')
-        .eq('machine_code',machine)
+        .eq('machine_code',machineCode)
         .order('work_order_date',{ascending:false})
         .limit(1);
       if(data && data.length){
@@ -875,14 +898,15 @@ async function fetchItemCode(silent=false){
 }
 
 async function fetchShotQty(silent=false){
-  const machine=document.getElementById('chkMachine').value;
+  const machineName=document.getElementById('chkMachine').value;
+  const machineCode=getMachineCode(machineName);  // "36호기..." → "036"
   const date=document.getElementById('chkDate').value;
   const inp=document.getElementById('chkDailyShot');
   const src=document.getElementById('shotSrc');
   const hint=document.getElementById('shotHint');
   const btn=document.getElementById('btnShot');
 
-  if(!machine){
+  if(!machineName){
     if(!silent)toast('호기를 먼저 선택하세요','err');
     return;
   }
@@ -901,7 +925,7 @@ async function fetchShotQty(silent=false){
     try{
       const ctrl=new AbortController();
       const tid=setTimeout(()=>ctrl.abort(),3000);
-      const r=await fetch(`${base}/api/mes/shot_qty?machine_code=${encodeURIComponent(machine)}&date=${date}`,{signal:ctrl.signal});
+      const r=await fetch(`${base}/api/mes/shot_qty?machine_code=${encodeURIComponent(machineCode)}&date=${date}`,{signal:ctrl.signal});
       clearTimeout(tid);
       if(r.ok){
         const j=await r.json();
@@ -919,7 +943,7 @@ async function fetchShotQty(silent=false){
     try{
       const {data,error}=await supa.from('machine_status')
         .select('shot_qty,actual_qty,last_update')
-        .eq('machine_code',machine)
+        .eq('machine_code',machineCode)
         .maybeSingle();
       if(!error && data){
         // shot_qty 우선, 없으면 actual_qty
@@ -965,14 +989,15 @@ document.addEventListener('DOMContentLoaded',()=>{
 async function loadHistory(){
   const from=document.getElementById('qFrom').value;
   const to=document.getElementById('qTo').value;
-  const machine=document.getElementById('qMachine').value;
+  const machineFull=document.getElementById('qMachine').value;
+  const machineCode=machineFull?getMachineCode(machineFull):'';
   const tbody=document.getElementById('histBody');
   tbody.innerHTML='<tr><td colspan="11" style="padding:20px">조회 중...</td></tr>';
   try{
     let q=supa.from('load_monitor_check').select('*').order('check_date',{ascending:false}).order('machine_code');
     if(from)q=q.gte('check_date',from);
     if(to)q=q.lte('check_date',to);
-    if(machine)q=q.eq('machine_code',machine);
+    if(machineCode)q=q.eq('machine_code',machineCode);
     const {data,error}=await q.limit(200);
     if(error)throw error;
     if(!data||!data.length){
@@ -983,7 +1008,7 @@ async function loadHistory(){
       const cell=t=>r[`t${t}_total`]?`${r[`t${t}_total`]}<br><span style="font-size:9px;color:#888">${r[`t${t}_ch1`]||'-'}/${r[`t${t}_ch2`]||'-'}</span>`:'-';
       return `<tr>
         <td>${r.check_date}</td>
-        <td>${r.machine_code}</td>
+        <td>${r.machine_name||r.machine_code}</td>
         <td>${r.item_code||'-'}</td>
         <td>${cell('0830')}</td>
         <td>${cell('1030')}</td>
@@ -1019,15 +1044,16 @@ function exportCSV(){
   const rows=[['일자','호기','기종','8:30 TOTAL','8:30 CH1','8:30 CH2','10:30 TOTAL','10:30 CH1','10:30 CH2','11:30 TOTAL','11:30 CH1','11:30 CH2','14:00 TOTAL','14:00 CH1','14:00 CH2','15:10 TOTAL','15:10 CH1','15:10 CH2','16:30 TOTAL','16:30 CH1','16:30 CH2','일일타발수','비고']];
   const from=document.getElementById('qFrom').value;
   const to=document.getElementById('qTo').value;
-  const machine=document.getElementById('qMachine').value;
+  const machineFull=document.getElementById('qMachine').value;
+  const machineCode=machineFull?getMachineCode(machineFull):'';
   (async()=>{
     let q=supa.from('load_monitor_check').select('*').order('check_date',{ascending:false}).order('machine_code');
     if(from)q=q.gte('check_date',from);
     if(to)q=q.lte('check_date',to);
-    if(machine)q=q.eq('machine_code',machine);
+    if(machineCode)q=q.eq('machine_code',machineCode);
     const {data}=await q.limit(500);
     (data||[]).forEach(r=>{
-      rows.push([r.check_date,r.machine_code,r.item_code||'',
+      rows.push([r.check_date,r.machine_name||r.machine_code,r.item_code||'',
         r.t0830_total||'',r.t0830_ch1||'',r.t0830_ch2||'',
         r.t1030_total||'',r.t1030_ch1||'',r.t1030_ch2||'',
         r.t1130_total||'',r.t1130_ch1||'',r.t1130_ch2||'',
