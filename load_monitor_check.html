@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>로드모니터 하중 일일점검 v4.7</title>
+<title>로드모니터 하중 일일점검 v4.9</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
@@ -211,7 +211,7 @@ table.hist tr:hover{background:#f0f7ff}
 <body>
 
 <div class="hdr">
-  <h1>📊 로드모니터 하중 일일점검 <span class="rev-badge">Rev. 4.7</span></h1>
+  <h1>📊 로드모니터 하중 일일점검 <span class="rev-badge">Rev. 4.9</span></h1>
   <p>프레스 Smart Load Monitor · TOTAL / CH1좌 / CH2우</p>
 </div>
 
@@ -574,10 +574,33 @@ table.hist tr:hover{background:#f0f7ff}
   </div>
 
   <div class="card">
-    <div class="card-tit">📋 Supabase 테이블 SQL</div>
+    <div class="card-tit">📋 Supabase 테이블 SQL (최초 설치)</div>
     <div class="warn-box">최초 1회 Supabase SQL Editor에서 실행하세요</div>
     <textarea id="ddlText" readonly style="width:100%;height:280px;padding:10px;border:1px solid #ddd;border-radius:6px;font-family:monospace;font-size:11px;background:#f8f8f8"></textarea>
     <button class="btn btn-ghost btn-block" onclick="copyDDL()" style="margin-top:8px">📋 SQL 복사</button>
+  </div>
+
+  <div class="card">
+    <div class="card-tit">🔧 DB 마이그레이션 (customer 컬럼 추가)</div>
+    <div class="warn-box">저장 시 <code>Could not find the 'customer' column</code> 에러 시 실행. 한 번만 실행하면 됨.</div>
+    <div style="background:#1e3a5f;color:#a5d6ff;padding:14px;border-radius:8px;font-family:'Consolas',monospace;font-size:13px;line-height:1.5;word-break:break-all;margin:8px 0;user-select:all">
+      ALTER TABLE public.load_monitor_check ADD COLUMN IF NOT EXISTS customer TEXT;
+    </div>
+    <div class="row2">
+      <button class="btn btn-warn" onclick="copyMig()">📋 복사 후 SQL Editor 열기</button>
+      <button class="btn btn-ghost" onclick="checkSchema()">🔍 스키마 검증</button>
+    </div>
+    <div id="schemaResult" style="margin-top:6px;font-size:11px"></div>
+    <div style="margin-top:10px;padding:10px;background:#fff8e1;border-radius:6px;font-size:11px;color:#333;line-height:1.6">
+      <b>실행 방법:</b><br>
+      1. 위 <b>📋 복사</b> 버튼 클릭 → Supabase SQL Editor 자동 열림<br>
+      2. <b>새 쿼리 (New query)</b> 클릭<br>
+      3. 빈 영역에 붙여넣기 (Ctrl+V)<br>
+      4. <b>Run</b> 버튼 클릭<br>
+      5. 다시 이 화면 와서 <b>🔍 스키마 검증</b> 클릭하여 ✅ 확인<br>
+      <br>
+      <b>⚠ 주의:</b> 점 3개(<code>...</code>)가 보이면 복사가 잘못된 것. 위 코드 박스를 꾹 눌러 전체 선택 후 복사하거나, <b>📋 복사</b> 버튼 사용 권장.
+    </div>
   </div>
 
   <div class="card">
@@ -604,7 +627,7 @@ table.hist tr:hover{background:#f0f7ff}
     </div>
   </div>
 
-  <div class="ver">v4.7 · 로드모니터 일일점검 · 태진다이텍 품질관리팀</div>
+  <div class="ver">v4.9 · 로드모니터 일일점검 · 태진다이텍 품질관리팀</div>
 </div>
 
 <script>
@@ -671,6 +694,9 @@ END $$;
 
 GRANT ALL ON public.load_monitor_check TO anon, authenticated;
 GRANT USAGE, SELECT ON SEQUENCE public.load_monitor_check_id_seq TO anon, authenticated;`;
+
+// 마이그레이션 SQL (기존 테이블에 누락 컬럼 추가)
+const MIG_SQL=`ALTER TABLE public.load_monitor_check ADD COLUMN IF NOT EXISTS customer TEXT;`;
 
 /* ============ 초기화 ============ */
 window.addEventListener('DOMContentLoaded',()=>{
@@ -2458,10 +2484,25 @@ async function saveCheck(){
     });
   });
 
+  // upsert 실행: customer 컬럼이 없으면 자동으로 빼고 재시도
+  async function tryUpsert(rowData){
+    return await supa.from('load_monitor_check').upsert(rowData,{onConflict:'check_date,machine_code'});
+  }
+
   try{
-    const {error}=await supa.from('load_monitor_check').upsert(row,{onConflict:'check_date,machine_code'});
+    let {error}=await tryUpsert(row);
+    // customer 컬럼 누락 (PGRST204) → customer 빼고 재시도
+    if(error && (error.code==='PGRST204' || /column.*customer/i.test(error.message||''))){
+      console.warn('[저장] customer 컬럼 없음 → 빼고 재시도');
+      delete row.customer;
+      const r2=await tryUpsert(row);
+      error=r2.error;
+      if(!error){
+        toast('⚠ DB에 customer 컬럼 없음 → 설정탭 마이그레이션 SQL 실행 필요','err');
+      }
+    }
     if(error)throw error;
-    // 저장 성공 시 호기/고객사/기종을 localStorage에 확정 저장 (다음 접속 시 복원 보장)
+    // 저장 성공 시 호기/고객사/기종을 localStorage에 확정 저장
     localStorage.setItem(LS_LAST_MACHINE,machineFull);
     localStorage.setItem(LS_LAST_MACHINE_LABEL,machineFull);
     const cust=document.getElementById('selCustomer').value;
@@ -2491,6 +2532,8 @@ async function saveCheck(){
       toast('테이블 없음 - 설정탭 SQL 실행','err');
     }else if(e.code==='42501'){
       toast('권한 오류 - RLS 확인','err');
+    }else if(e.code==='PGRST204'||/column/i.test(e.message||'')){
+      toast('컬럼 누락 - 설정탭 "DB 마이그레이션" 실행','err');
     }else{
       toast('저장 실패: '+(e.message||e.code||''),'err');
     }
@@ -3045,6 +3088,55 @@ function copyDDL(){
     toast('SQL 복사 완료','ok');
     window.open('https://supabase.com/dashboard/project/omngtyewdaqpphnzeate/sql','_blank');
   });
+}
+
+function copyMig(){
+  navigator.clipboard.writeText(MIG_SQL).then(()=>{
+    toast('마이그레이션 SQL 복사 완료','ok');
+    window.open('https://supabase.com/dashboard/project/omngtyewdaqpphnzeate/sql','_blank');
+  });
+}
+
+async function checkSchema(){
+  const out=document.getElementById('schemaResult');
+  out.innerHTML='<span class="spinner"></span> 확인 중...';
+  try{
+    const {data,error}=await supa.from('load_monitor_check').select('*').limit(1);
+    if(error){
+      if(error.code==='PGRST205'){
+        out.innerHTML='<span style="color:#c62828">❌ 테이블 없음 - 위쪽 "Supabase 테이블 SQL" 실행 필요</span>';
+      }else{
+        out.innerHTML=`<span style="color:#c62828">❌ ${error.message||error.code}</span>`;
+      }
+      return;
+    }
+    // sample row가 있으면 컬럼 확인 / 없으면 dummy 행으로 컬럼 체크
+    const required=['check_date','machine_code','machine_name','customer','item_code','daily_shot','memo',
+      't0830_total','t0830_ch1','t0830_ch2','t1030_total','t1030_ch1','t1030_ch2',
+      't1130_total','t1130_ch1','t1130_ch2','t1400_total','t1400_ch1','t1400_ch2',
+      't1510_total','t1510_ch1','t1510_ch2','t1630_total','t1630_ch1','t1630_ch2'];
+
+    let cols=null;
+    if(data&&data[0])cols=Object.keys(data[0]);
+    if(!cols){
+      // 빈 테이블이면 customer만 별도 체크
+      const r2=await supa.from('load_monitor_check').select('customer').limit(1);
+      if(r2.error && (r2.error.code==='PGRST204'||/customer/i.test(r2.error.message||''))){
+        out.innerHTML='<span style="color:#c62828">⚠ <b>customer 컬럼 누락</b> - 위쪽 마이그레이션 SQL 실행 필요</span>';
+        return;
+      }
+      out.innerHTML='<span style="color:#388e3c">✅ 테이블 정상 (빈 테이블이라 컬럼 상세 확인 어려움)</span>';
+      return;
+    }
+    const missing=required.filter(c=>!cols.includes(c));
+    if(missing.length){
+      out.innerHTML=`<span style="color:#c62828">⚠ <b>누락 컬럼:</b> ${missing.join(', ')}<br>위쪽 마이그레이션 SQL 실행 필요</span>`;
+    }else{
+      out.innerHTML=`<span style="color:#388e3c">✅ 모든 컬럼 정상 (${cols.length}개)</span>`;
+    }
+  }catch(e){
+    out.innerHTML=`<span style="color:#c62828">❌ ${e.message}</span>`;
+  }
 }
 
 function toast(msg,type){
