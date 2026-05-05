@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>로드모니터 하중 일일점검 v4.6</title>
+<title>로드모니터 하중 일일점검 v4.7</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
@@ -211,7 +211,7 @@ table.hist tr:hover{background:#f0f7ff}
 <body>
 
 <div class="hdr">
-  <h1>📊 로드모니터 하중 일일점검 <span class="rev-badge">Rev. 4.6</span></h1>
+  <h1>📊 로드모니터 하중 일일점검 <span class="rev-badge">Rev. 4.7</span></h1>
   <p>프레스 Smart Load Monitor · TOTAL / CH1좌 / CH2우</p>
 </div>
 
@@ -604,7 +604,7 @@ table.hist tr:hover{background:#f0f7ff}
     </div>
   </div>
 
-  <div class="ver">v4.6 · 로드모니터 일일점검 · 태진다이텍 품질관리팀</div>
+  <div class="ver">v4.7 · 로드모니터 일일점검 · 태진다이텍 품질관리팀</div>
 </div>
 
 <script>
@@ -1370,8 +1370,9 @@ async function handleImage(ev){
   // 자동 2:1 크롭 (갤러리/카메라 모두 - 카메라는 이미 2:1이므로 그대로 유지)
   file=await autoCrop21(file);
 
-  // ★ 너무 큰 이미지는 OCR 속도 위해 다운스케일 (가로 1600px 이상이면 1600px로)
-  file=await downscaleIfHuge(file,1600);
+  // ★ 너무 큰 이미지는 OCR 속도 위해 다운스케일 (가로 2000px 이상이면 2000px로)
+  // 분홍 OCR이 2.5배 확대하므로 원본을 너무 줄이면 6/8 구분이 어려워짐
+  file=await downscaleIfHuge(file,2000);
 
   _lastImageFile=file;
   // bitmap 캐시 (영역지정 모달에서 재사용)
@@ -1436,9 +1437,16 @@ async function handleImage(ev){
     // 시간대 자동매칭 + 최종 상태
     finalizeOCRResult(total,ch1,ch2);
 
+    // 의심 결과 (PSM 불일치) 체크
+    const suspect=[r1,r2,r3].some(r=>r.variant&&r.variant.endsWith('?'));
+
     if(total!==null && ch1!==null && ch2!==null){
       const usedFilters=[r1.variant,r2.variant,r3.variant].join('/');
-      status.innerHTML=`✅ 3개 모두 인식 완료 (필터: ${usedFilters}) - ✅ 확인`;
+      if(suspect){
+        status.innerHTML=`⚠ 인식 완료지만 일부 값 의심 - <b>값 확인 후 수정</b> 필요 (필터: ${usedFilters})`;
+      }else{
+        status.innerHTML=`✅ 3개 모두 인식 완료 (필터: ${usedFilters}) - ✅ 확인`;
+      }
     }else{
       const failed=[];
       if(total===null)failed.push('TOTAL');
@@ -1870,6 +1878,7 @@ async function ocrCropRegion(key){
       }
       try{
         const t0=Date.now();
+        await setTessPSM(worker,7);
         const r=await worker.recognize(masked);
         const text=r.data.text;
         console.log(`[영역OCR ${key}/${targetColor}/${v} ${Date.now()-t0}ms]`,text.trim());
@@ -1947,11 +1956,11 @@ const FILTER_ORDER={
   pink:   ['inverse','loose','strict']
 };
 
-// 색상별 OCR 입력 확대 배수 (분홍은 6/8 구분 위해 2배 확대)
+// 색상별 OCR 입력 확대 배수 (분홍은 6/8 구분 위해 가장 크게)
 const OCR_SCALE={
   green: 1,
   yellow: 1.3,
-  pink: 1.8  // 2.0 → 1.8로 약간 줄여 속도 향상
+  pink: 2.5  // 6/8 구분 위해 충분히 크게
 };
 
 // ★ Tesseract worker 재사용 (한 번만 초기화 → 모든 OCR에서 재사용)
@@ -1966,11 +1975,7 @@ async function getTessWorker(){
     console.log('[Tesseract] 워커 초기화 시작...');
     const t0=Date.now();
     const w=await Tesseract.createWorker('eng',1,{
-      // logger:m=>console.log('[Tess]',m.status,m.progress) // 디버그 시
-    });
-    await w.setParameters({
-      tessedit_char_whitelist:'0123456789.',
-      tessedit_pageseg_mode:'7'  // PSM 7: 단일 라인 (숫자 한 줄)
+      // logger:m=>console.log('[Tess]',m.status,m.progress)
     });
     _tessWorker=w;
     console.log(`[Tesseract] 워커 준비 완료 (${Date.now()-t0}ms)`);
@@ -1979,9 +1984,25 @@ async function getTessWorker(){
   return _tessWorkerPromise;
 }
 
+// PSM 모드 변경 (7=단일라인, 8=단일단어, 6=균일블록)
+async function setTessPSM(worker,psm){
+  await worker.setParameters({
+    tessedit_char_whitelist:'0123456789.',
+    tessedit_pageseg_mode:String(psm)
+  });
+}
+
 // 워커 미리 시작 (사진 업로드 직후 백그라운드에서)
 function preWarmTesseract(){
   getTessWorker().catch(e=>console.warn('워커 사전로드 실패:',e));
+}
+
+// OCR 한 번 실행 (현재 worker 설정 사용)
+async function recognizeWithPSM(worker,canvas,psm,minVal,maxVal){
+  await setTessPSM(worker,psm);
+  const r=await worker.recognize(canvas);
+  const nums=extractNumbers(r.data.text);
+  return {text:r.data.text.trim(),nums,best:pickBestNumber(nums,minVal,maxVal)};
 }
 
 // 색상별로 필터 시도 → 첫 성공값 반환 (필터 전엔 원본 보존)
@@ -1989,6 +2010,9 @@ async function tryColorOCR(bitmap,targetColor,minVal,maxVal,statusEl,statusPrefi
   const variants=FILTER_ORDER[targetColor]||['strict','loose','inverse'];
   const scale=OCR_SCALE[targetColor]||1;
   const worker=await getTessWorker();
+
+  // 분홍은 6/8 구분 어려움 → 2개 PSM으로 검증
+  const psmsToTry=targetColor==='pink'?[7,8]:[7];
 
   for(let i=0;i<variants.length;i++){
     const v=variants[i];
@@ -2006,15 +2030,47 @@ async function tryColorOCR(bitmap,targetColor,minVal,maxVal,statusEl,statusPrefi
 
     try{
       const t0=Date.now();
-      const r=await worker.recognize(canvas);
+      const results=[];
+      for(const psm of psmsToTry){
+        const res=await recognizeWithPSM(worker,canvas,psm,minVal,maxVal);
+        console.log(`[OCR ${targetColor}/${v}/PSM${psm}]`,res.text,'→',res.nums);
+        results.push(res);
+      }
       const dt=Date.now()-t0;
-      const nums=extractNumbers(r.data.text);
-      console.log(`[OCR ${targetColor}/${v}/${scale}x ${dt}ms]`,r.data.text.trim(),'→',nums);
-      const val=pickBestNumber(nums,minVal,maxVal);
+
+      // 결과 통합: 모든 PSM에서 같은 값이 나오면 확정 (분홍 6/8 혼동 방지)
+      const valid=results.filter(r=>r.best!=null);
+      if(valid.length===0){
+        canvas.width=0;canvas.height=0;
+        continue;
+      }
+
+      let val=null,confident=true;
+      if(valid.length===1){
+        val=valid[0].best;
+      }else{
+        // PSM 7과 8 결과 비교
+        const v0=valid[0].best,v1=valid[1].best;
+        if(v0===v1){
+          val=v0;
+          console.log(`[OCR ${targetColor}] ✓ 두 PSM 결과 일치: ${val}`);
+        }else{
+          // 결과 다름 → 둘 다 후보로 보고 더 자주 나온 것 선택
+          // 모든 nums를 모아서 빈도 체크
+          const allNums=[...valid[0].nums,...valid[1].nums].filter(n=>n>=minVal&&n<=maxVal);
+          const freq={};
+          allNums.forEach(n=>{freq[n]=(freq[n]||0)+1});
+          const sorted=Object.entries(freq).sort((a,b)=>b[1]-a[1]);
+          val=parseFloat(sorted[0][0]);
+          confident=false;
+          console.warn(`[OCR ${targetColor}] ⚠ PSM 결과 불일치: ${v0} vs ${v1} → 빈도 우선: ${val}`);
+        }
+      }
+
       canvas.width=0;canvas.height=0;
       if(val!=null){
-        console.log(`[OCR ${targetColor}] ✓ ${v} 성공: ${val}`);
-        return {value:val,variant:v};
+        console.log(`[OCR ${targetColor}] ✓ ${v} 성공 (${dt}ms): ${val}${confident?'':' (의심)'}`);
+        return {value:val,variant:v+(confident?'':'?')};
       }
     }catch(e){
       console.warn(`[OCR ${targetColor}/${v}] 실패:`,e.message);
