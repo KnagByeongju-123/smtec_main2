@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>로드모니터 하중 일일점검 v1.4</title>
+<title>로드모니터 하중 일일점검 v1.7</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <style>
@@ -117,7 +117,10 @@ table.hist tr:hover{background:#f0f7ff}
     <div class="card-tit">📝 기본 정보</div>
     <div class="row2">
       <div class="fg"><label>점검일자</label><input type="date" id="chkDate"></div>
-      <div class="fg"><label>호기(설비)</label><select id="chkMachine" onchange="onMachineChange()"><option value="">선택</option></select></div>
+      <div class="fg">
+        <label>호기(설비) <span id="machineSrc" style="font-size:10px;color:#888;font-weight:400"></span></label>
+        <select id="chkMachine" onchange="onMachineChange()"><option value="">선택</option></select>
+      </div>
     </div>
     <div class="row2">
       <div class="fg">
@@ -271,17 +274,17 @@ table.hist tr:hover{background:#f0f7ff}
     <div style="font-size:12px;color:#444;line-height:1.7">
       • <b>OCR 사용법</b>: 로드모니터 화면을 정면에서 밝은 환경으로 촬영<br>
       • <b>인식 값</b>: TOTAL(녹색 큰숫자) / CH1(노랑) / CH2(분홍)<br>
-      • <b>시간대 적용</b>: OCR 인식 후 어느 시간(8:30/10:30/...)에 넣을지 버튼 선택<br>
-      • <b>점검자 자동표시</b>: 로그인 정보(<code>ESG_USER</code>)에서 자동 입력. 미로그인 시 수동 가능<br>
-      • <b>호기 자동 기억</b>: 마지막 선택한 호기를 다음 접속 시 자동 복원 (브라우저 localStorage)<br>
+      • <b>시간대 자동매칭</b>: 촬영 시각 기준 ±30분 이내 가장 가까운 시간대(8:30/10:30/11:30/14:00/15:10/16:30)에 자동 입력. 다른 시간대로 변경하려면 버튼 클릭<br>
+      • <b>점검자 자동표시</b>: 로그인 정보(<code>ESG_USER</code>)에서 자동 입력<br>
+      • <b>호기 자동 저장/복원</b>: 호기 1회 선택 시 즉시 저장 (💾 저장됨 표시) → 다음 접속 시 자동 복원 (✓ 자동복원됨 표시)<br>
+      • <b>호기 마스터</b>: <code>machine_master_tj</code>에서 활성 호기만 로드<br>
       • <b>기종 자동조회</b>: 호기 선택 시 MES → Supabase → work_order_cache 순으로 현재 작업 기종 조회<br>
-      • <b>일일타발수</b>: 📡 MES조회 버튼으로 가져오기. ① Python릴레이 → ② Supabase machine_status<br>
-      • <b>저장 위치</b>: Supabase <code>load_monitor_check</code> 테이블<br>
-      • <b>호기 마스터</b>: <code>machine_status</code> 테이블에서 자동 로드
+      • <b>일일타발수</b>: 📡 MES조회 버튼으로 가져오기<br>
+      • <b>저장 위치</b>: Supabase <code>load_monitor_check</code> 테이블
     </div>
   </div>
 
-  <div class="ver">v1.4 · 로드모니터 일일점검 · 태진다이텍 품질관리팀</div>
+  <div class="ver">v1.7 · 로드모니터 일일점검 · 태진다이텍 품질관리팀</div>
 </div>
 
 <script>
@@ -381,19 +384,52 @@ function swTab(i){
 
 /* ============ 호기/점검자 로드 ============ */
 async function loadMachines(){
+  let list=[];
+  // [1순위] machine_master_tj (마스터 - 호기/메이커/톤수)
   try{
-    const {data,error}=await supa.from('machine_status').select('machine_code,machine_name').order('machine_code');
-    if(error){console.error(error);return;}
-    const sels=['chkMachine','qMachine'];
-    sels.forEach(id=>{
-      const sel=document.getElementById(id);
-      const cur=sel.innerHTML;
-      const first=id==='qMachine'?'<option value="">전체</option>':'<option value="">선택</option>';
-      sel.innerHTML=first+(data||[]).map(m=>`<option value="${m.machine_code}">${m.machine_code} ${m.machine_name||''}</option>`).join('');
-    });
-    // 마지막 사용 호기 자동 복원
-    restoreLastMachine();
-  }catch(e){console.error('호기로드',e)}
+    const {data,error}=await supa.from('machine_master_tj')
+      .select('ho_code,machine_code,machine_name,maker,tonnage,active,sort_order')
+      .order('sort_order',{ascending:true})
+      .order('ho_code',{ascending:true});
+    if(!error && data && data.length){
+      list=data.filter(m=>m.active!==false).map(m=>{
+        const code=m.machine_code||(m.ho_code||'').padStart(3,'0');
+        const ton=m.tonnage?` ${m.tonnage}톤`:'';
+        const maker=m.maker?` (${m.maker})`:'';
+        const ho=m.ho_code?`${m.ho_code}호기`:'';
+        const label=[ho,ton,maker].filter(v=>v).join('').trim()||code;
+        return {code,label};
+      });
+    }
+  }catch(e){console.warn('machine_master_tj 미사용',e)}
+
+  // [폴백] machine_status (마스터 없을 때)
+  if(!list.length){
+    try{
+      const {data,error}=await supa.from('machine_status')
+        .select('machine_code,machine_name')
+        .order('machine_code');
+      if(!error && data){
+        list=data.map(m=>({
+          code:m.machine_code,
+          label:`${m.machine_code} ${m.machine_name||''}`.trim()
+        }));
+      }
+    }catch(e){console.error('호기로드 실패',e)}
+  }
+
+  // 두 select에 적용
+  const sels=[
+    {id:'chkMachine',first:'<option value="">선택</option>'},
+    {id:'qMachine',first:'<option value="">전체</option>'}
+  ];
+  sels.forEach(s=>{
+    const sel=document.getElementById(s.id);
+    sel.innerHTML=s.first+list.map(m=>`<option value="${m.code}">${m.label}</option>`).join('');
+  });
+
+  // 마지막 사용 호기 자동 복원
+  restoreLastMachine();
 }
 
 function loadInspector(){
@@ -528,22 +564,72 @@ function parseOCR(text){
     return;
   }
 
-  status.innerHTML=`✅ 인식 완료`;
+  // ===== 현재 시각 기준 자동 시간대 매칭 (±30분) =====
+  const matched=findNearestTimeSlot();
+  // matched: {time:'0830', label:'8:30', diffMin:5} 또는 null
+
+  let autoMsg='';
+  if(matched){
+    // 자동 적용
+    document.getElementById(`t_${matched.time}_total`).value=total;
+    document.getElementById(`t_${matched.time}_ch1`).value=ch1;
+    document.getElementById(`t_${matched.time}_ch2`).value=ch2;
+    autoMsg=`<div style="background:#e8f5e9;border:1px solid #66bb6a;border-radius:6px;padding:8px;margin:8px 0;font-size:12px;color:#1b5e20;font-weight:600">⏰ 현재 시각 기준 <b>${matched.label}</b> 칸에 자동 입력 (오차 ${matched.diffMin}분)</div>`;
+    status.innerHTML=`✅ 인식 완료 - ${matched.label} 자동 등록`;
+    toast(`⏰ ${matched.label} 자동 등록`,'ok');
+  }else{
+    status.innerHTML=`✅ 인식 완료 - 시간대 직접 선택 필요`;
+  }
+
   result.innerHTML=`
     <div class="ocr-result">
       <div class="ocr-result-row"><span>TOTAL</span><b style="color:#1b5e20;font-size:18px">${total}</b></div>
       <div class="ocr-result-row"><span>CH1 (좌)</span><b style="color:#8d6e00;font-size:16px">${ch1}</b></div>
       <div class="ocr-result-row"><span>CH2 (우)</span><b style="color:#a02550;font-size:16px">${ch2}</b></div>
-      <div style="margin-top:8px;font-size:11px;color:#666">↓ 어느 시간대에 입력할까요?</div>
+      ${autoMsg}
+      <div style="margin-top:8px;font-size:11px;color:#666">${matched?'↓ 다른 시간대로 변경하려면 클릭':'↓ 어느 시간대에 입력할까요?'}</div>
       <div class="ocr-pick">
-        <button onclick="applyOCR('0830',${total},${ch1},${ch2})">8:30</button>
-        <button onclick="applyOCR('1030',${total},${ch1},${ch2})">10:30</button>
-        <button onclick="applyOCR('1130',${total},${ch1},${ch2})">11:30</button>
-        <button onclick="applyOCR('1400',${total},${ch1},${ch2})">14:00</button>
-        <button onclick="applyOCR('1510',${total},${ch1},${ch2})">15:10</button>
-        <button onclick="applyOCR('1630',${total},${ch1},${ch2})">16:30</button>
+        <button onclick="applyOCR('0830',${total},${ch1},${ch2})" ${matched&&matched.time==='0830'?'style="background:#388e3c;color:#fff"':''}>8:30</button>
+        <button onclick="applyOCR('1030',${total},${ch1},${ch2})" ${matched&&matched.time==='1030'?'style="background:#388e3c;color:#fff"':''}>10:30</button>
+        <button onclick="applyOCR('1130',${total},${ch1},${ch2})" ${matched&&matched.time==='1130'?'style="background:#388e3c;color:#fff"':''}>11:30</button>
+        <button onclick="applyOCR('1400',${total},${ch1},${ch2})" ${matched&&matched.time==='1400'?'style="background:#388e3c;color:#fff"':''}>14:00</button>
+        <button onclick="applyOCR('1510',${total},${ch1},${ch2})" ${matched&&matched.time==='1510'?'style="background:#388e3c;color:#fff"':''}>15:10</button>
+        <button onclick="applyOCR('1630',${total},${ch1},${ch2})" ${matched&&matched.time==='1630'?'style="background:#388e3c;color:#fff"':''}>16:30</button>
       </div>
     </div>`;
+}
+
+// 점검 시간대 정의 (KST)
+const TIME_SLOTS=[
+  {time:'0830',label:'8:30',  hour:8,  minute:30},
+  {time:'1030',label:'10:30', hour:10, minute:30},
+  {time:'1130',label:'11:30', hour:11, minute:30},
+  {time:'1400',label:'14:00', hour:14, minute:0},
+  {time:'1510',label:'15:10', hour:15, minute:10},
+  {time:'1630',label:'16:30', hour:16, minute:30}
+];
+
+// 현재 시각(KST) 기준 ±30분 이내의 가장 가까운 시간대 반환
+function findNearestTimeSlot(){
+  const now=new Date();
+  // KST 변환
+  const kst=new Date(now.getTime()+(9*60-now.getTimezoneOffset())*60000);
+  const curMin=kst.getHours()*60+kst.getMinutes();
+
+  let best=null,minDiff=999;
+  for(const s of TIME_SLOTS){
+    const slotMin=s.hour*60+s.minute;
+    const diff=Math.abs(curMin-slotMin);
+    if(diff<minDiff){
+      minDiff=diff;
+      best=s;
+    }
+  }
+  // ±30분 이내일 때만 매칭
+  if(best && minDiff<=30){
+    return {time:best.time,label:best.label,diffMin:minDiff};
+  }
+  return null;
 }
 
 function applyOCR(time,total,ch1,ch2){
@@ -590,6 +676,9 @@ async function saveCheck(){
   try{
     const {error}=await supa.from('load_monitor_check').upsert(row,{onConflict:'check_date,machine_code'});
     if(error)throw error;
+    // 저장 성공 시 호기를 localStorage에 확정 저장 (다음 접속 시 복원 보장)
+    localStorage.setItem(LS_LAST_MACHINE,machine);
+    localStorage.setItem(LS_LAST_MACHINE_LABEL,machineName);
     toast('✅ 저장 완료','ok');
   }catch(e){
     console.error(e);
@@ -626,27 +715,56 @@ const MES_API_BASES=[
 ];
 
 const LS_LAST_MACHINE='lmc_last_machine';
+const LS_LAST_MACHINE_LABEL='lmc_last_machine_label';
 
 // 호기 변경 시: localStorage 저장 + 기종 자동조회
 async function onMachineChange(){
-  const machine=document.getElementById('chkMachine').value;
+  const sel=document.getElementById('chkMachine');
+  const machine=sel.value;
+  const src=document.getElementById('machineSrc');
   if(machine){
+    const label=sel.selectedOptions[0]?.text||'';
     localStorage.setItem(LS_LAST_MACHINE,machine);
+    localStorage.setItem(LS_LAST_MACHINE_LABEL,label);
+    src.textContent='💾 저장됨';
+    src.style.color='#388e3c';
     fetchItemCode(true);  // 기종은 자동, 타발수는 버튼으로만
   }else{
     document.getElementById('chkItem').value='';
     document.getElementById('itemSrc').textContent='';
+    src.textContent='';
   }
 }
 
-// 마지막 호기 복원
+// 마지막 호기 복원 (loadMachines 완료 후 호출)
 function restoreLastMachine(){
   const last=localStorage.getItem(LS_LAST_MACHINE);
-  if(!last)return;
+  const lastLabel=localStorage.getItem(LS_LAST_MACHINE_LABEL);
+  const src=document.getElementById('machineSrc');
+  if(!last){
+    src.textContent='';
+    return;
+  }
   const sel=document.getElementById('chkMachine');
+
   // option에 존재하는지 확인
   if([...sel.options].some(o=>o.value===last)){
     sel.value=last;
+    src.textContent='✓ 자동 복원됨';
+    src.style.color='#388e3c';
+    fetchItemCode(true);
+    return;
+  }
+
+  // 마스터에 없으면 임시 옵션 추가 (사용자가 다른 사람 호기 보고 있을 때 보호)
+  if(lastLabel){
+    const opt=document.createElement('option');
+    opt.value=last;
+    opt.textContent=lastLabel+' (이전 선택)';
+    sel.insertBefore(opt,sel.children[1]||null);
+    sel.value=last;
+    src.textContent='⚠ 마스터에 없음 - 이전 선택값 복원';
+    src.style.color='#f57c00';
     fetchItemCode(true);
   }
 }
