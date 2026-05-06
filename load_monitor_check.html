@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>로드모니터 하중 일일점검 v6.8</title>
+<title>로드모니터 하중 일일점검 v6.9</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
@@ -215,12 +215,23 @@ table.hist tr:hover{background:#f0f7ff}
 .cam-shoot:active{transform:scale(.92)}
 .cam-cancel{background:#444;color:#fff;border:none;border-radius:8px;padding:10px 14px;font-size:13px;font-weight:600}
 .cam-flip{background:#666;color:#fff;border:none;width:44px;height:44px;border-radius:50%;font-size:18px;padding:0;flex-shrink:0}
+
+/* 줌 컨트롤 - 우측 세로 패널 */
+.cam-zoom-wrap{position:absolute;right:8px;top:calc(50% - 28.125vw);height:56.25vw;width:52px;display:none;flex-direction:column;align-items:center;justify-content:center;gap:8px;z-index:6;pointer-events:none}
+.cam-zoom-wrap.show{display:flex}
+.cam-zoom-display{background:rgba(0,0,0,.75);color:#ffeb3b;font-weight:800;font-size:13px;padding:4px 7px;border-radius:6px;font-family:'Courier New',monospace;min-width:42px;text-align:center;pointer-events:auto;border:1px solid rgba(255,235,59,.4)}
+.cam-zoom-btn{background:rgba(0,0,0,.7);color:#fff;border:1.5px solid rgba(255,255,255,.4);width:38px;height:38px;border-radius:50%;font-size:20px;font-weight:700;pointer-events:auto;padding:0;cursor:pointer;line-height:1;font-family:inherit}
+.cam-zoom-btn:active{background:rgba(255,235,59,.4);border-color:#ffeb3b}
+.cam-zoom-btn:disabled{opacity:.35;cursor:not-allowed}
+.cam-zoom-preset{display:flex;flex-direction:column;gap:4px;pointer-events:auto}
+.cam-zoom-preset button{background:rgba(0,0,0,.6);color:#fff;border:1px solid rgba(255,255,255,.3);font-size:11px;font-weight:700;padding:4px 8px;border-radius:14px;cursor:pointer;min-width:38px;font-family:inherit}
+.cam-zoom-preset button.active{background:#ffeb3b;color:#000;border-color:#ffeb3b}
 </style>
 </head>
 <body>
 
 <div class="hdr">
-  <h1>📊 로드모니터 하중 일일점검 <span class="rev-badge">Rev. 6.8</span></h1>
+  <h1>📊 로드모니터 하중 일일점검 <span class="rev-badge">Rev. 6.9</span></h1>
   <p>프레스 Smart Load Monitor · TOTAL/CH1 OCR · CH2=TOTAL-CH1 자동계산</p>
 </div>
 
@@ -239,7 +250,7 @@ table.hist tr:hover{background:#f0f7ff}
     <div class="row2">
       <div class="fg"><label>점검일자</label><input type="date" id="chkDate"></div>
       <div class="fg">
-        <label>호기(설비) <span style="font-size:10px;color:#7b1fa2;font-weight:600">300톤+</span> <span id="machineSrc" style="font-size:10px;color:#888;font-weight:400"></span></label>
+        <label>호기(설비) <span id="machineSrc" style="font-size:10px;color:#888;font-weight:400"></span></label>
         <select id="chkMachine" onchange="onMachineChange()"><option value="">선택</option></select>
       </div>
     </div>
@@ -415,7 +426,18 @@ table.hist tr:hover{background:#f0f7ff}
       <div class="cam-third-label l-tot">TOTAL(녹색)</div>
       <div class="cam-third-label l-ch1">CH1(좌)</div>
       <div class="cam-third-label l-ch2">CH2 자동</div>
-      <div class="cam-tip">💡 상단=TOTAL, 하단좌=CH1 가이드선 안에 들어오게 / CH2는 자동계산</div>
+      <!-- 줌 컨트롤 -->
+      <div class="cam-zoom-wrap" id="camZoomWrap">
+        <button class="cam-zoom-btn" id="camZoomIn" onclick="adjustZoom(0.5)" title="확대">+</button>
+        <div class="cam-zoom-display" id="camZoomDisplay">1.0x</div>
+        <div class="cam-zoom-preset">
+          <button onclick="setZoomPreset(1)" id="camZ1" class="active">1x</button>
+          <button onclick="setZoomPreset(2)" id="camZ2">2x</button>
+          <button onclick="setZoomPreset(3)" id="camZ3">3x</button>
+        </div>
+        <button class="cam-zoom-btn" id="camZoomOut" onclick="adjustZoom(-0.5)" title="축소">−</button>
+      </div>
+      <div class="cam-tip">💡 상단=TOTAL, 하단좌=CH1 가이드선 안에 정렬 · 우측 줌(+/-)으로 확대</div>
     </div>
     <div class="cam-footer">
       <button class="cam-cancel" onclick="closeCamera()">취소</button>
@@ -596,7 +618,7 @@ table.hist tr:hover{background:#f0f7ff}
     <button class="btn btn-ghost btn-block" onclick="copyDDL()" style="margin-top:8px">📋 SQL 복사</button>
   </div>
 
-  <div class="ver">v6.8 · 로드모니터 일일점검 · 태진다이텍 품질관리팀</div>
+  <div class="ver">v6.9 · 로드모니터 일일점검 · 태진다이텍 품질관리팀</div>
 </div>
 
 <script>
@@ -671,6 +693,11 @@ window.addEventListener('DOMContentLoaded',()=>{
   document.getElementById('ddlText').value=DDL;
   supa=window.supabase.createClient(SB_URL,SB_KEY);
   initDates();
+
+  // ★ 즉시 임시 복원 (옵션 로드 전이라도 화면에 표시되게)
+  // 옵션이 비동기 로드되는 동안 빈 select가 보이는 문제 회피
+  preFillFromLocalStorage();
+
   loadMachines();
   loadInspector();
   loadCustomers();
@@ -1072,6 +1099,62 @@ function numpadOK(){
   closeNumpad();
 }
 
+/* ============ 즉시 임시 복원 (옵션 로딩 전 화면 채우기) ============ */
+function preFillFromLocalStorage(){
+  // 호기 - 임시 옵션 즉시 추가
+  try{
+    const lastM=localStorage.getItem('lmc_last_machine');
+    if(lastM){
+      const sel=document.getElementById('chkMachine');
+      if(sel){
+        const opt=document.createElement('option');
+        opt.value=lastM;
+        opt.textContent=lastM;
+        opt.dataset.preFill='1';  // 나중에 식별용
+        // 첫 번째 "선택" 옵션 다음에 삽입
+        if(sel.children.length>0)sel.insertBefore(opt,sel.children[1]||null);
+        else sel.appendChild(opt);
+        sel.value=lastM;
+        const src=document.getElementById('machineSrc');
+        if(src){src.textContent='✓ 자동 복원됨';src.style.color='#388e3c'}
+      }
+    }
+  }catch(e){console.warn('preFill 호기 실패:',e)}
+
+  // 고객사 - 임시 옵션 즉시 추가
+  try{
+    const lastC=localStorage.getItem('lmc_last_customer');
+    if(lastC){
+      const sel=document.getElementById('selCustomer');
+      if(sel){
+        const opt=document.createElement('option');
+        opt.value=lastC;
+        opt.textContent=lastC;
+        opt.dataset.preFill='1';
+        if(sel.children.length>0)sel.insertBefore(opt,sel.children[1]||null);
+        else sel.appendChild(opt);
+        sel.value=lastC;
+      }
+    }
+  }catch(e){console.warn('preFill 고객사 실패:',e)}
+
+  // 기종 - input 즉시 채우기
+  try{
+    const lastModel=localStorage.getItem('lmc_last_model');
+    if(lastModel){
+      const inp=document.getElementById('selModelInput');
+      const itemEl=document.getElementById('chkItem');
+      if(inp)inp.value=lastModel;
+      if(itemEl)itemEl.value=lastModel;
+      const src=document.getElementById('modelSrc');
+      if(src){src.textContent='✓ 자동 복원됨';src.style.color='#388e3c'}
+    }
+  }catch(e){console.warn('preFill 기종 실패:',e)}
+
+  console.log('[즉시 임시 복원] 완료 - 옵션 로딩 후 정식 복원됨');
+}
+
+
 function initDates(){
   const today=kstToday();
   document.getElementById('chkDate').value=today;
@@ -1147,16 +1230,6 @@ const DEFAULT_MACHINES=[
   '48호기 심팩300톤','49호기 심팩300톤'
 ];
 
-// 호기 이름에서 톤수 추출 ("49호기 심팩300톤" → 300, "43호기 화일800톤" → 800)
-function extractTonnageFromName(name){
-  if(!name)return 0;
-  const m=String(name).match(/(\d+)\s*톤/);
-  return m?parseInt(m[1],10):0;
-}
-
-// 로드모니터는 300톤 이상 호기에만 설치되므로 그것만 표시
-const LOAD_MIN_TONNAGE=300;
-
 async function loadMachines(){
   let list=[];
   let srcInfo='';
@@ -1171,11 +1244,6 @@ async function loadMachines(){
       console.log('[machine_master_tj]',rows.length,'건');
       list=(rows||[])
         .filter(r=>r.active!==false)
-        .filter(r=>{
-          // 300톤 이상만 (machine_master_tj의 tonnage 필드 우선)
-          const ton=parseInt(r.tonnage||0,10);
-          return ton>=LOAD_MIN_TONNAGE;
-        })
         .map(r=>{
           const name=composeMachineName(r.ho_code||'',r.maker||'',r.tonnage||'');
           return {name,sort:r.sort_order||0};
@@ -1188,33 +1256,30 @@ async function loadMachines(){
     }
   }catch(e){console.warn('machine_master_tj fetch 예외:',e)}
 
-  // [2순위] DEFAULT_MACHINES 폴백 - 300톤 이상만
+  // [2순위] DEFAULT_MACHINES 폴백 (P_machine_check와 동일)
   if(!list.length){
-    list=DEFAULT_MACHINES
-      .filter(name=>extractTonnageFromName(name)>=LOAD_MIN_TONNAGE)
-      .map((name,i)=>({name,sort:i+1}));
+    list=DEFAULT_MACHINES.map((name,i)=>({name,sort:i+1}));
     srcInfo=`default(${list.length})`;
-    console.log('호기 마스터 비어있음 - 기본값 사용 (300톤+ 만)');
+    console.log('호기 마스터 비어있음 - 기본값 사용');
   }
 
-  // 두 select에 적용 (value = name)
+  // 두 select에 적용 (value = name, 즉 "36호기 심팩300톤" 그대로)
   const sels=[
     {id:'chkMachine',first:'<option value="" disabled selected>선택</option>'},
     {id:'qMachine',first:'<option value="">전체</option>'}
   ];
   sels.forEach(s=>{
     const sel=document.getElementById(s.id);
-    if(!sel)return;
     sel.innerHTML=s.first+list.map(m=>`<option value="${m.name}">${m.name}</option>`).join('');
   });
 
   // 디버그 표시
   const dbg=document.getElementById('machineSrc');
   if(srcInfo.startsWith('default')){
-    dbg.textContent='⚠ 마스터 미사용 (기본 목록 · 300톤+)';
+    dbg.textContent='⚠ 마스터 미사용 (기본 목록)';
     dbg.style.color='#f57c00';
   }else{
-    dbg.textContent=`✓ 300톤+ ${list.length}대`;
+    dbg.textContent=`✓ 마스터 (${list.length}대)`;
     dbg.style.color='#388e3c';
   }
   console.log('[호기 로드 완료]',srcInfo);
@@ -1344,8 +1409,15 @@ function renderCustomerSelect(){
   const sel=document.getElementById('selCustomer');
   if(sel){
     const cur=sel.value||localStorage.getItem(LS_LAST_CUSTOMER)||'';
-    sel.innerHTML='<option value="">전체 고객사</option>'+
+    let opts='<option value="">전체 고객사</option>'+
       cachedCustomers.map(c=>`<option value="${c}"${c===cur?' selected':''}>${c}</option>`).join('');
+    // 마지막 사용 고객사가 마스터에 없으면 임시 옵션 추가 (자동 복원 보장)
+    if(cur && !cachedCustomers.includes(cur)){
+      opts='<option value="">전체 고객사</option>'+
+        `<option value="${cur}" selected>${cur} (이전)</option>`+
+        cachedCustomers.map(c=>`<option value="${c}">${c}</option>`).join('');
+    }
+    sel.innerHTML=opts;
   }
   // 이력조회 탭의 고객사 셀렉트도 채우기
   const qsel=document.getElementById('qCustomer');
@@ -1709,6 +1781,13 @@ async function startCamera(){
       // iOS는 play() 거부될 수 있음 - 사용자 제스처 후 자동 재생됨
       console.warn('video.play() 거부:',playErr.message);
     }
+    // 줌 활성화: capability 감지 → UI 표시 → 핀치 줌 등록
+    detectZoomCapability();
+    const zw=document.getElementById('camZoomWrap');
+    if(zw)zw.classList.add('show');
+    _camZoomLevel=1;
+    applyZoom(1);
+    setupPinchZoom();
   }catch(e){
     console.error('카메라 시작 실패:',e);
     if(e.name==='NotAllowedError'){
@@ -1746,7 +1825,114 @@ function closeCamera(){
   if(_camStream){_camStream.getTracks().forEach(t=>t.stop());_camStream=null}
   document.getElementById('camModal').classList.remove('show');
   const v=document.getElementById('camVideo');
-  if(v)v.srcObject=null;
+  if(v){v.srcObject=null;v.style.transform='';v.style.transformOrigin=''}
+  // 줌 UI 숨김 + 상태 리셋
+  const zw=document.getElementById('camZoomWrap');
+  if(zw)zw.classList.remove('show');
+  _camZoomLevel=1;
+  _camZoomMode='digital';
+  _camZoomCaps=null;
+}
+
+/* ============ 카메라 줌 (하드웨어 + 디지털 폴백) ============ */
+let _camZoomLevel=1;
+let _camZoomMode='digital';
+let _camZoomCaps=null;
+
+function detectZoomCapability(){
+  if(!_camStream){_camZoomCaps=null;_camZoomMode='digital';return}
+  const track=_camStream.getVideoTracks()[0];
+  if(!track){_camZoomCaps=null;_camZoomMode='digital';return}
+  try{
+    const caps=track.getCapabilities?.();
+    if(caps&&caps.zoom){
+      _camZoomCaps={min:caps.zoom.min||1,max:caps.zoom.max||5,step:caps.zoom.step||0.1};
+      _camZoomMode='hardware';
+      console.log('[카메라 줌] 하드웨어 지원:',_camZoomCaps);
+      return;
+    }
+  }catch(e){console.warn('zoom caps 감지 실패:',e)}
+  _camZoomCaps=null;
+  _camZoomMode='digital';
+  console.log('[카메라 줌] 하드웨어 미지원 → 디지털 줌 사용');
+}
+
+function applyZoom(level){
+  const min=1, max=_camZoomMode==='hardware'?(_camZoomCaps?.max||5):5;
+  level=Math.max(min,Math.min(max,level));
+  _camZoomLevel=level;
+
+  const disp=document.getElementById('camZoomDisplay');
+  if(disp)disp.textContent=level.toFixed(1)+'x';
+
+  ['camZ1','camZ2','camZ3'].forEach((id,i)=>{
+    const el=document.getElementById(id);
+    if(el){
+      const target=[1,2,3][i];
+      el.classList.toggle('active',Math.abs(level-target)<0.05);
+    }
+  });
+
+  const btnIn=document.getElementById('camZoomIn');
+  const btnOut=document.getElementById('camZoomOut');
+  if(btnIn)btnIn.disabled=level>=max;
+  if(btnOut)btnOut.disabled=level<=min;
+
+  if(_camZoomMode==='hardware' && _camStream){
+    const track=_camStream.getVideoTracks()[0];
+    if(track){
+      const hwLevel=Math.max(_camZoomCaps.min,Math.min(_camZoomCaps.max,level));
+      try{
+        track.applyConstraints({advanced:[{zoom:hwLevel}]}).catch(e=>{
+          console.warn('하드웨어 줌 실패, 디지털 폴백:',e.message);
+          _camZoomMode='digital';
+          applyDigitalZoom(level);
+        });
+      }catch(e){
+        console.warn('applyConstraints 예외:',e);
+        applyDigitalZoom(level);
+      }
+    }
+  }else{
+    applyDigitalZoom(level);
+  }
+}
+
+function applyDigitalZoom(level){
+  const v=document.getElementById('camVideo');
+  if(!v)return;
+  v.style.transformOrigin='center center';
+  v.style.transform=`scale(${level})`;
+}
+
+function adjustZoom(delta){applyZoom(_camZoomLevel+delta)}
+function setZoomPreset(level){applyZoom(level)}
+
+// 핀치 줌 (모바일 두 손가락)
+let _pinchStartDist=0;
+let _pinchStartZoom=1;
+function setupPinchZoom(){
+  const stage=document.getElementById('camStage');
+  if(!stage || stage.dataset.pinchSet)return;
+  stage.dataset.pinchSet='1';
+  stage.addEventListener('touchstart',e=>{
+    if(e.touches.length===2){
+      const dx=e.touches[0].clientX-e.touches[1].clientX;
+      const dy=e.touches[0].clientY-e.touches[1].clientY;
+      _pinchStartDist=Math.sqrt(dx*dx+dy*dy);
+      _pinchStartZoom=_camZoomLevel;
+    }
+  },{passive:true});
+  stage.addEventListener('touchmove',e=>{
+    if(e.touches.length===2 && _pinchStartDist>0){
+      e.preventDefault();
+      const dx=e.touches[0].clientX-e.touches[1].clientX;
+      const dy=e.touches[0].clientY-e.touches[1].clientY;
+      const dist=Math.sqrt(dx*dx+dy*dy);
+      applyZoom(_pinchStartZoom*(dist/_pinchStartDist));
+    }
+  },{passive:false});
+  stage.addEventListener('touchend',()=>{_pinchStartDist=0},{passive:true});
 }
 
 // 촬영: 화면에 보이는 노란 가이드(2:1) 영역을 비디오에 매핑하여 정확히 잘라냄
@@ -1785,12 +1971,30 @@ async function shootCamera(){
   const guideWidth=sw;
 
   // 화면 좌표 → 비디오 픽셀 좌표 역변환
-  const cropX=Math.max(0,(guideLeft-offsetX)/scale);
-  const cropY=Math.max(0,(guideTop-offsetY)/scale);
-  const cropW=Math.min(vw-cropX,guideWidth/scale);
-  const cropH=Math.min(vh-cropY,guideHeight/scale);
+  let cropX=Math.max(0,(guideLeft-offsetX)/scale);
+  let cropY=Math.max(0,(guideTop-offsetY)/scale);
+  let cropW=Math.min(vw-cropX,guideWidth/scale);
+  let cropH=Math.min(vh-cropY,guideHeight/scale);
 
-  console.log(`[촬영] 비디오: ${vw}x${vh}, 가이드(화면): ${guideWidth}x${guideHeight}, 크롭(비디오): ${cropX.toFixed(0)},${cropY.toFixed(0)} ${cropW.toFixed(0)}x${cropH.toFixed(0)}`);
+  // ★ 디지털 줌 보정: 디지털 줌 시 비디오 중앙 1/zoom 영역만 화면에 표시됨
+  // → 가이드에 해당하는 비디오 영역도 1/zoom 만큼 좁게, 중앙으로 보정
+  // (하드웨어 줌은 비디오 자체가 확대된 상태로 들어오므로 보정 불필요)
+  if(_camZoomMode==='digital' && _camZoomLevel>1.05){
+    const z=_camZoomLevel;
+    const visibleW=vw/z;
+    const visibleH=vh/z;
+    const visibleX=(vw-visibleW)/2;
+    const visibleY=(vh-visibleH)/2;
+    const ratioX=cropX/vw, ratioY=cropY/vh;
+    const ratioW=cropW/vw, ratioH=cropH/vh;
+    cropX=visibleX+ratioX*visibleW;
+    cropY=visibleY+ratioY*visibleH;
+    cropW=ratioW*visibleW;
+    cropH=ratioH*visibleH;
+    console.log(`[촬영 디지털줌 ${z.toFixed(1)}x] 가시영역(${visibleX.toFixed(0)},${visibleY.toFixed(0)},${visibleW.toFixed(0)}x${visibleH.toFixed(0)})`);
+  }
+
+  console.log(`[촬영] 비디오: ${vw}x${vh}, 가이드(화면): ${guideWidth}x${guideHeight}, 크롭(비디오): ${cropX.toFixed(0)},${cropY.toFixed(0)} ${cropW.toFixed(0)}x${cropH.toFixed(0)}, 줌: ${_camZoomLevel.toFixed(1)}x(${_camZoomMode})`);
 
   // 크롭 캔버스
   const c=document.createElement('canvas');
