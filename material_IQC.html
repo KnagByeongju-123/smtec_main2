@@ -3,7 +3,7 @@
 <html lang="ko"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>소재 수입검사 통합 관리 시스템 v3.4 | (주)태진다이텍</title>
+<title>소재 수입검사 통합 관리 시스템 v3.5 | (주)태진다이텍</title>
 <!-- PDF.js for 밀시트 자동 분석 -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>
@@ -1792,7 +1792,7 @@
 <body>
 
 <div class="header">
-  <h1>📋 소재 수입검사 통합 관리 시스템 v3.4</h1>
+  <h1>📋 소재 수입검사 통합 관리 시스템 v3.5</h1>
   <div class="sub">(주)태진다이텍 | 품질관리팀</div>
   <div style="position:absolute; top:18px; right:20px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end; max-width:60%;">
     <div id="currentUserBadge" style="padding:5px 11px; background:rgba(255,255,255,0.25); border:1px solid rgba(255,255,255,0.4); border-radius:14px; font-size:11px; color:#fff; white-space:nowrap;" title="ESG 메인에서 로그인한 사용자">
@@ -4569,7 +4569,7 @@ function closeCertModal(){
   if(dbg) dbg.remove();
 }
 
-function saveCert(){
+async function saveCert(){
   const idx = parseInt(document.getElementById('certIdx').value);
   
   // [v2.2] 밀시트 PDF 카드 삭제됨 - 강제 다운로드 검사 비활성화
@@ -4621,7 +4621,43 @@ function saveCert(){
   // dirty 보호: 방금 저장한 ID는 pullFromSupabase가 일정 시간 동안 덮어쓰지 못하게 마킹
   if (typeof markCertAsDirty === 'function') markCertAsDirty(c.id);
 
-  saveCertToLS();
+  // [v3.5] 서버 우선 저장 - Supabase 응답 기다림 후 로컬 캐시
+  // 수입검사대기는 다른 PC에서도 보여야 하므로 서버 저장 실패 시 사용자에게 명확히 알림
+  if (!appSettings.supabaseUrl || !appSettings.supabaseKey) {
+    saveCertToLS();
+    alert('⚠ Supabase 미설정 - 로컬에만 저장됨 (다른 PC에서 안 보임)\n설정 탭에서 Supabase URL/Key 입력 후 사용하세요');
+  } else {
+    // 저장 진행 표시
+    const saveBtn = document.querySelector('#certModal button[onclick="saveCert()"]');
+    let oldBtnText = '';
+    if (saveBtn) {
+      oldBtnText = saveBtn.textContent;
+      saveBtn.disabled = true;
+      saveBtn.textContent = '⏳ 서버 저장 중...';
+    }
+    try {
+      await pushCertToSupabase(c);
+      // 서버 저장 성공 → 로컬 캐시 동기화
+      saveCertToLS();
+    } catch (e) {
+      console.error('Supabase 저장 실패:', e);
+      // 로컬에는 일단 저장 (다음 동기화 시 재시도)
+      saveCertToLS();
+      addPendingOp({ type: 'cert', action: 'upsert', data: c });
+      if (saveBtn) {
+        saveBtn.disabled = false;
+        saveBtn.textContent = oldBtnText;
+      }
+      alert('❌ 서버 저장 실패 - 임시 로컬 저장됨\n\n사유: ' + (e.message || '네트워크 오류') +
+            '\n\n네트워크 복구 후 자동 재시도됩니다.\n다른 PC에서 즉시 보이게 하려면 인터넷 연결 확인 후 다시 저장하세요.');
+      // 모달 유지 (사용자가 재시도 가능하게)
+      return;
+    }
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = oldBtnText;
+    }
+  }
 
   // ⭐ 수요자 작성 완료시 수입검사일보에 자동 반영
   const customerCompleted = isCustomerWorkCompleted(c);
@@ -4629,19 +4665,13 @@ function saveCert(){
     syncCertToLog(c);
   }
 
-  // ⭐ Supabase에 즉시 push (debounce 없이 바로)
-  if (appSettings.supabaseUrl && appSettings.supabaseKey && typeof pushCertToSupabase === 'function') {
-    pushCertToSupabase(c).catch(e => {
-      console.warn('Supabase 즉시 push 실패 (대기큐 추가):', e.message);
-      addPendingOp({ type: 'cert', action: 'upsert', data: c });
-    });
-  }
-
   closeCertModal();
   renderCert();
   renderLog();
   if (customerCompleted) {
-    showToast('✅ 관리대장에도 자동 반영되었습니다');
+    showToast('✅ 서버 저장 완료 - 관리대장에도 자동 반영되었습니다');
+  } else {
+    showToast('✅ 서버 저장 완료');
   }
 }
 
@@ -4884,12 +4914,28 @@ closeCertModal = function(){
   _origCloseCertModal();
 };
 
-function delCert(idx){
-  if (!confirm('정말 삭제하시겠습니까?')) return;
+async function delCert(idx){
+  if (!confirm('정말 삭제하시겠습니까?\n(서버에서도 삭제됩니다)')) return;
   const c = certData[idx];
+
+  // [v3.5] 서버 우선 삭제
+  if (appSettings.supabaseUrl && appSettings.supabaseKey && c.id && typeof deleteCertFromSupabase === 'function') {
+    try {
+      await deleteCertFromSupabase(c.id);
+    } catch (e) {
+      console.error('Supabase 삭제 실패:', e);
+      addPendingOp({ type: 'cert', action: 'delete', data: { id: c.id } });
+      if (!confirm('❌ 서버 삭제 실패: ' + (e.message || '네트워크 오류') +
+                   '\n\n로컬에서만 삭제됩니다 (다른 PC에는 남음).\n네트워크 복구 후 재시도됩니다.\n\n그래도 진행하시겠습니까?')) {
+        return;
+      }
+    }
+  }
+
   certData.splice(idx,1);
   saveCertToLS();
   renderCert();
+  showToast('🗑️ 삭제 완료');
 }
 
 function exportCert(){
