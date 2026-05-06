@@ -3,7 +3,7 @@
 <html lang="ko"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>소재 수입검사 통합 관리 시스템 v2.9 | (주)태진다이텍</title>
+<title>소재 수입검사 통합 관리 시스템 v3.1 | (주)태진다이텍</title>
 <!-- PDF.js for 밀시트 자동 분석 -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>
@@ -1786,7 +1786,7 @@
 <body>
 
 <div class="header">
-  <h1>📋 소재 수입검사 통합 관리 시스템 v2.9</h1>
+  <h1>📋 소재 수입검사 통합 관리 시스템 v3.1</h1>
   <div class="sub">(주)태진다이텍 | 품질관리팀</div>
   <div style="position:absolute; top:18px; right:20px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end; max-width:60%;">
     <div id="currentUserBadge" style="padding:5px 11px; background:rgba(255,255,255,0.25); border:1px solid rgba(255,255,255,0.4); border-radius:14px; font-size:11px; color:#fff; white-space:nowrap;" title="ESG 메인에서 로그인한 사용자">
@@ -2158,10 +2158,11 @@
           <button class="btn" onclick="deleteFilteredLog()" style="width:100%; background:#fef2f2; color:#991b1b; border:1px solid #fecaca; padding:12px; font-size:14px; font-weight:700;">🗑️ 선택범위 삭제</button>
         </div>
 
-        <!-- 추가 액션: 신규 등록 / 인쇄 (작은 보조 버튼) -->
+        <!-- 추가 액션: 신규 등록 / 성적서 일괄 인쇄 / 인쇄 -->
         <div style="display:flex; gap:8px; margin-bottom:14px;">
           <button class="btn btn-primary" onclick="openLogModal()" style="flex:1; padding:8px; font-size:12px;">＋ 신규 등록</button>
-          <button class="btn btn-secondary" onclick="window.print()" style="flex:1; padding:8px; font-size:12px;">🖨️ 인쇄</button>
+          <button class="btn" onclick="batchPrintCerts()" style="flex:1; padding:8px; font-size:12px; background:#10b981; color:#fff;" title="현재 필터 결과의 모든 성적서 일괄 인쇄/PDF">📄 성적서 일괄 인쇄</button>
+          <button class="btn btn-secondary" onclick="window.print()" style="flex:1; padding:8px; font-size:12px;">🖨️ 화면 인쇄</button>
         </div>
 
         <div style="overflow-x: auto; -webkit-overflow-scrolling: touch;">
@@ -2173,7 +2174,9 @@
                 <th>실측 두께</th><th>실측 폭</th>
                 <th>입고(KG)</th><th>검사수</th><th>불량(KG)</th>
                 <th>HEAT-NO</th><th>부적합/처리</th>
-                <th>입고라벨</th><th>판정</th>
+                <th>입고라벨</th>
+                <th style="background:#dbeafe; color:#1e40af;">공급자<br>판정</th>
+                <th style="background:#dcfce7; color:#166534;">수요자<br>판정</th>
                 <th>담당</th><th>부서장</th>
                 <th>관리</th>
               </tr>
@@ -2555,7 +2558,10 @@ CREATE TRIGGER trg_cert_updated BEFORE UPDATE ON material_cert FOR EACH ROW EXEC
         <div class="form-item"><label>검사수 (롤)</label><input type="number" id="f_count" value="1"></div>
         <div class="form-item"><label>불량 (KG)</label><input type="number" id="f_bad_kg" value="0"></div>
         <div class="form-item"><label>HEAT-NO</label><input type="text" id="f_heat"></div>
-        <div class="form-item"><label>최종판정</label>
+        <div class="form-item"><label>공급자 판정</label>
+          <select id="f_supplier_judge"><option value="OK">OK</option><option value="NG">NG</option></select>
+        </div>
+        <div class="form-item"><label>수요자 최종판정</label>
           <select id="f_judge"><option value="OK">OK</option><option value="NG">NG</option></select>
         </div>
         <div class="form-item"><label>입고라벨 부착</label>
@@ -2976,7 +2982,35 @@ if (!certData) {
 function saveLogToLS(){ localStorage.setItem(LS_LOG, JSON.stringify(logData)); }
 function saveCertToLS(){ localStorage.setItem(LS_CERT, JSON.stringify(certData)); }
 function migrateCertData(){return 0;}
-function migrateLogData(){return 0;}
+function migrateLogData(){
+  // [v3.0] 공급자판정(supplier_judge) 누락된 logData 자동 보강
+  // certData에서 같은 heat+date 매칭하여 supplier_judge 채움
+  if(!logData||!logData.length)return 0;
+  if(!certData||!certData.length)return 0;
+  let fixed=0;
+  logData.forEach(log=>{
+    if(log.supplier_judge && (log.supplier_judge==='OK'||log.supplier_judge==='NG'))return;
+    // 매칭되는 cert 찾기
+    const cert=certData.find(c=>c.heat===log.heat && (c.recv_date===log.date||c.date===log.date));
+    if(cert){
+      const sj=cert.supplier_judge||'OK';
+      if(log.supplier_judge!==sj){
+        log.supplier_judge=sj;
+        fixed++;
+        if(typeof markLogAsDirty==='function'&&log.id)markLogAsDirty(log.id);
+      }
+    }else if(!log.supplier_judge){
+      // cert 매칭 안되면 공급자 판정은 OK로 기본값 (기존 데이터 호환)
+      log.supplier_judge='OK';
+      fixed++;
+    }
+  });
+  if(fixed>0){
+    if(typeof saveLogToLS==='function')saveLogToLS();
+    console.log('[LOG v3.0] 공급자판정 보강:',fixed+'건');
+  }
+  return fixed;
+}
 async function manualMigrateCertData(){alert('데이터 정리는 이미 완료되었습니다.');}
 async function manualMigrateLogData(){alert('데이터 정리는 이미 완료되었습니다.');}
 async function forceResetCertData(){if(confirm('전체 데이터를 재설정하시겠습니까?')){localStorage.clear();location.reload();}}
@@ -3131,7 +3165,7 @@ function renderLog(){
       return !logData.some(l=>l.heat===c.heat && l.date===c.recv_date);
     }).length;
     
-    tbody.innerHTML = `<tr><td colspan="17" style="padding:30px 20px; text-align:center; color:#64748b;">
+    tbody.innerHTML = `<tr><td colspan="18" style="padding:30px 20px; text-align:center; color:#64748b;">
       <div style="font-size:48px; margin-bottom:10px; opacity:0.4;">📒</div>
       <div style="font-size:14px; margin-bottom:8px;">${filterActive?'필터 조건에 맞는 데이터가 없습니다':'관리대장 데이터가 없습니다'}</div>
       <div style="display:inline-block; margin:12px auto; padding:12px 20px; background:#f8fafc; border:1px dashed #cbd5e1; border-radius:8px; font-size:11px; color:#64748b; text-align:left; line-height:1.7;">
@@ -3152,6 +3186,11 @@ function renderLog(){
   }
   tbody.innerHTML = data.map(d=>{
     const idx = logData.indexOf(d);
+    // [v3.0] 공급자/수요자 판정 분리 표시
+    const supJ = d.supplier_judge || '-';
+    const cusJ = d.judge || '-';
+    const supBadge = supJ==='OK'?'ok':(supJ==='NG'?'ng':'warn');
+    const cusBadge = cusJ==='OK'?'ok':(cusJ==='NG'?'ng':'warn');
     return `
     <tr>
       <td>${d.date}</td>
@@ -3167,10 +3206,12 @@ function renderLog(){
       <td>${d.heat||'-'}</td>
       <td>${d.nc||'-'}</td>
       <td>${d.label||'-'}</td>
-      <td><span class="badge badge-${d.judge==='OK'?'ok':'ng'}">${d.judge}</span></td>
+      <td style="background:#eff6ff;"><span class="badge badge-${supBadge}">${supJ}</span></td>
+      <td style="background:#f0fdf4;"><span class="badge badge-${cusBadge}">${cusJ}</span></td>
       <td>${d.charge||'-'}</td>
       <td>${d.boss||'-'}</td>
       <td>
+        <button class="btn" style="padding:3px 8px; font-size:11px; background:#0ea5e9; color:#fff;" onclick="viewCertFromLog(${idx})" title="성적서 조회/인쇄">📄</button>
         <button class="btn btn-primary" style="padding:3px 8px; font-size:11px;" onclick="editLog(${idx})">수정</button>
         <button class="btn btn-danger" style="padding:3px 8px; font-size:11px;" onclick="delLog(${idx})">삭제</button>
       </td>
@@ -3182,10 +3223,11 @@ function openLogModal(){
   document.getElementById('logModalTitle').textContent = '관리대장 신규 등록';
   document.getElementById('logIdx').value = -1;
   document.getElementById('f_date').value = new Date().toISOString().split('T')[0];
-  ['f_material','f_appear','f_thick_spec','f_width_spec','f_thick','f_width','f_in_kg','f_count','f_bad_kg','f_heat','f_judge','f_label','f_charge','f_boss','f_nc'].forEach(id=>{
+  ['f_material','f_appear','f_thick_spec','f_width_spec','f_thick','f_width','f_in_kg','f_count','f_bad_kg','f_heat','f_supplier_judge','f_judge','f_label','f_charge','f_boss','f_nc'].forEach(id=>{
     const el = document.getElementById(id);
+    if (!el) return;
     if (id==='f_material') el.value='SPCC';
-    else if (id==='f_appear'||id==='f_judge') el.value='OK';
+    else if (id==='f_appear'||id==='f_judge'||id==='f_supplier_judge') el.value='OK';
     else if (id==='f_label') el.value='부착';
     else if (id==='f_thick_spec') el.value=0.6;
     else if (id==='f_count') el.value=1;
@@ -3210,6 +3252,7 @@ function editLog(idx){
   document.getElementById('f_count').value = d.count;
   document.getElementById('f_bad_kg').value = d.bad_kg;
   document.getElementById('f_heat').value = d.heat;
+  if(document.getElementById('f_supplier_judge'))document.getElementById('f_supplier_judge').value = d.supplier_judge||'OK';
   document.getElementById('f_judge').value = d.judge;
   document.getElementById('f_label').value = d.label;
   document.getElementById('f_charge').value = d.charge;
@@ -3234,6 +3277,7 @@ function saveLog(){
     count: parseInt(document.getElementById('f_count').value)||0,
     bad_kg: parseFloat(document.getElementById('f_bad_kg').value)||0,
     heat: document.getElementById('f_heat').value,
+    supplier_judge: (document.getElementById('f_supplier_judge')||{}).value || 'OK',
     judge: document.getElementById('f_judge').value,
     label: document.getElementById('f_label').value,
     charge: document.getElementById('f_charge').value,
@@ -3283,8 +3327,8 @@ function exportLog(){
     alert('내보낼 데이터가 없습니다. 검색 조건을 확인하세요.');
     return;
   }
-  const headers = ['입고일','재질','외관','두께SPEC','폭SPEC','실측두께','실측폭','입고량(KG)','검사수','불량(KG)','HEAT-NO','부적합내용','입고라벨','판정','담당','부서장'];
-  const rows = data.map(d=>[d.date,d.material,d.appear,d.thick_spec,d.width_spec,d.thick,d.width,d.in_kg,d.count,d.bad_kg,d.heat,d.nc,d.label,d.judge,d.charge,d.boss]);
+  const headers = ['입고일','재질','외관','두께SPEC','폭SPEC','실측두께','실측폭','입고량(KG)','검사수','불량(KG)','HEAT-NO','부적합내용','입고라벨','공급자판정','수요자판정','담당','부서장'];
+  const rows = data.map(d=>[d.date,d.material,d.appear,d.thick_spec,d.width_spec,d.thick,d.width,d.in_kg,d.count,d.bad_kg,d.heat,d.nc,d.label,d.supplier_judge||'',d.judge,d.charge,d.boss]);
   const today = (typeof getTodayKST === 'function') ? getTodayKST() : new Date().toISOString().split('T')[0];
   downloadCSV([headers,...rows], `검사이력_${today}.csv`);
 }
@@ -4544,7 +4588,8 @@ function syncCertToLog(cert){
     heat: cert.heat,
     nc: cert.remark || '',
     label: cert.label || '부착',
-    judge: cert.judge || 'OK',
+    supplier_judge: cert.supplier_judge || 'OK',  // [v3.0] 공급자 판정
+    judge: cert.judge || 'OK',                     // 수요자(태진) 판정
     charge: cert.recv_charge || '',
     boss: cert.customer_sign || '',
     linked_cert_id: cert.id || null  // 연결된 성적서 ID
@@ -5538,6 +5583,7 @@ async function pushLogToSupabase(log){
     heat: log.heat || null,
     nc: log.nc || null,
     label: log.label || null,
+    supplier_judge: log.supplier_judge || null,  // [v3.0] 공급자 판정
     judge: log.judge || null,
     charge: log.charge || null,
     boss: log.boss || null
@@ -6412,6 +6458,274 @@ async function recoverOrphanCertsToLog(){
   await new Promise(r=>setTimeout(r,1500));
   await loadLogFromSupabase();
   alert(`✅ 복구 완료\n• 성공: ${ok}건\n• 실패: ${fail}건\n\n잠시 후 화면이 자동 갱신됩니다.`);
+}
+
+// ============================================================================
+// [v3.1] 검사이력 → 성적서 조회/인쇄 (PDF 출력)
+// ============================================================================
+function viewCertFromLog(idx){
+  const log = logData[idx];
+  if(!log){alert('데이터를 찾을 수 없습니다');return;}
+  // 매칭되는 cert 찾기 (linked_cert_id 우선 → heat+date 매칭)
+  let cert = null;
+  if(log.linked_cert_id){
+    cert = (certData||[]).find(c=>c.id===log.linked_cert_id);
+  }
+  if(!cert){
+    cert = (certData||[]).find(c=>c.heat===log.heat && (c.recv_date===log.date||c.date===log.date));
+  }
+  // cert가 없으면 logData만으로 합성
+  const html = generateCertHTML(log, cert);
+  // 새 창에서 열기
+  const w = window.open('', '_blank', 'width=900,height=1200');
+  if(!w){alert('팝업이 차단되었습니다. 브라우저 팝업 차단 해제 후 다시 시도하세요.');return;}
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+}
+
+// [v3.1] 현재 필터된 결과의 모든 성적서를 한 번에 새 창에 출력
+function batchPrintCerts(){
+  // renderLog와 동일한 필터 로직 적용
+  const fMat = (document.getElementById('filterMat')||{}).value||'';
+  const fJudge = (document.getElementById('filterJudge')||{}).value||'';
+  const fText = ((document.getElementById('filterText')||{}).value||'').toLowerCase();
+  const fDateFrom = (document.getElementById('filterDateFrom')||{}).value||'';
+  const fDateTo = (document.getElementById('filterDateTo')||{}).value||'';
+  let data = [...(logData||[])];
+  if(fMat) data = data.filter(d=>d.material===fMat);
+  if(fJudge) data = data.filter(d=>d.judge===fJudge);
+  if(fText) data = data.filter(d=>
+    (d.heat||'').toLowerCase().includes(fText)||
+    (d.charge||'').toLowerCase().includes(fText)||
+    (d.boss||'').toLowerCase().includes(fText));
+  if(fDateFrom) data = data.filter(d=>(d.date||'')>=fDateFrom);
+  if(fDateTo) data = data.filter(d=>(d.date||'')<=fDateTo);
+  data.sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  
+  if(!data.length){alert('인쇄할 데이터가 없습니다.\n필터 조건을 확인하세요.');return;}
+  if(data.length>50){
+    if(!confirm(`${data.length}건의 성적서를 한 번에 인쇄합니다.\n많은 양으로 인해 브라우저가 느려질 수 있습니다.\n계속하시겠습니까?`))return;
+  }
+  
+  // 각 log에 매칭되는 cert 합성
+  const sheets = data.map(log=>{
+    let cert = null;
+    if(log.linked_cert_id) cert = (certData||[]).find(c=>c.id===log.linked_cert_id);
+    if(!cert) cert = (certData||[]).find(c=>c.heat===log.heat && (c.recv_date===log.date||c.date===log.date));
+    return generateCertHTML(log, cert);
+  });
+  
+  // 각 성적서를 페이지 분리하여 합치기 (toolbar 중복 제거 - 첫 페이지에만)
+  // 각 성적서의 <body> 내용만 추출하여 page-break로 구분
+  const bodies = sheets.map((s,i)=>{
+    const m = s.match(/<body[^>]*>([\s\S]*?)<\/body>/);
+    let inner = m?m[1]:s;
+    // 첫 페이지가 아니면 toolbar 제거
+    if(i>0)inner = inner.replace(/<div class="toolbar">[\s\S]*?<\/div>/,'');
+    return `<div style="page-break-after:always">${inner}</div>`;
+  }).join('');
+  
+  const styles = sheets[0].match(/<style[^>]*>([\s\S]*?)<\/style>/);
+  const styleBlock = styles?styles[0]:'';
+  
+  const finalHtml = `<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8">
+<title>수입검사성적서 일괄 인쇄 (${data.length}건)</title>
+${styleBlock}
+<style>
+  .batch-info{position:fixed;top:8px;right:8px;background:#1a237e;color:#fff;padding:6px 14px;border-radius:6px;font-size:11pt;font-weight:700;z-index:1000;box-shadow:0 2px 6px rgba(0,0,0,0.2)}
+  @media print{.batch-info{display:none}}
+</style>
+</head><body>
+<div class="batch-info">📄 일괄 인쇄: ${data.length}건</div>
+${bodies}
+</body></html>`;
+  
+  const w = window.open('','_blank','width=900,height=1200');
+  if(!w){alert('팝업이 차단되었습니다.');return;}
+  w.document.open();
+  w.document.write(finalHtml);
+  w.document.close();
+}
+
+function generateCertHTML(log, cert){
+  // cert에서 추출 가능한 측정값/규격 사용, 없으면 log에서 보완
+  const c = cert || {};
+  const commodity = c.commodity || ((log.material||'').includes('SUS')?'STS CR COIL':'CR COIL (SPCC)');
+  const spec = c.spec || log.material || '';
+  const surface = c.surface || ((log.material||'').includes('SUS')?'NO. 2B':'DULL(S)');
+  const size = c.size || ((log.thick_spec||'')+'(T) X '+(log.width_spec||'')+'(W)mm');
+  const supplier = c.supplier || '-';
+  const customer = c.customer || '㈜태진다이텍';
+  const date = c.date || log.date || '';
+  const weight = c.weight || log.in_kg || '';
+  const cut = c.cut || ((log.count||1)+'CUT');
+  const lot = c.lot || log.heat || '';
+  const heat = c.heat || log.heat || '';
+  const lots_detail = c.lots_detail || '';
+  const supplier_judge = c.supplier_judge || log.supplier_judge || 'OK';
+  const supplier_sign = c.supplier_sign || supplier;
+  const recv_date = c.recv_date || log.date || '';
+  const recv_charge = c.recv_charge || log.charge || '';
+  const customer_sign = c.customer_sign || log.boss || '';
+  const judge = c.judge || log.judge || 'OK';
+  const label = c.label || log.label || '미부착';
+  const remark = c.remark || log.nc || '';
+  
+  // 측정값 행: 표면/재질/폭/두께 (4개 항목)
+  const isSUS = /SUS|STS|스테인|304|430/i.test(supplier+' '+spec+' '+commodity);
+  const widthSpec = (log.width_spec||c.r3?.spec||'')+'mm ±0.1';
+  const thickSpec = (log.thick_spec||c.r4?.spec||'')+'T ±0.05';
+  
+  const r1 = c.r1 || {spec:'결함없을것', x1:'OK', x2:'OK', x3:'OK', j:'OK'};
+  const r2 = c.r2 || {spec:spec, x1:'OK', x2:'OK', x3:'OK', j:'OK'};
+  const r3 = c.r3 || {spec:widthSpec, x1:log.width||'', x2:log.width||'', x3:log.width||'', j:'OK'};
+  const r4 = c.r4 || {spec:thickSpec, x1:log.thick||'', x2:log.thick||'', x3:log.thick||'', j:'OK'};
+  const cr1 = c.c_r1 || r1;
+  const cr2 = c.c_r2 || r2;
+  const cr3 = c.c_r3 || r3;
+  const cr4 = c.c_r4 || r4;
+  
+  const fmtNum = v => v===undefined||v===''||v===null?'-':v;
+  const fmtCell = (v, j) => {
+    const cls = j==='NG'?'ng':(j==='OK'?'ok':'');
+    return `<td class="${cls}">${fmtNum(v)}</td>`;
+  };
+  
+  const measRow = (label, sup, cus) => `
+    <tr>
+      <td class="lbl">${label}</td>
+      <td class="spec">${sup.spec||cus.spec||'-'}</td>
+      ${fmtCell(sup.x1)}${fmtCell(sup.x2)}${fmtCell(sup.x3)}
+      ${fmtCell(cus.x1)}${fmtCell(cus.x2)}${fmtCell(cus.x3)}
+      <td class="${(cus.j||sup.j)==='NG'?'ng':'ok'}"><b>${cus.j||sup.j||'OK'}</b></td>
+    </tr>`;
+  
+  const finalBadgeColor = judge==='OK'?'#16a34a':(judge==='NG'?'#dc2626':'#f59e0b');
+  const lotsDetailLine = lots_detail && lots_detail.split(',').filter(Boolean).length>1
+    ? `<div style="font-size:10px; color:#1565c0; margin-top:3px;">개별 LOT: ${lots_detail.split(',').map(s=>s.trim()).join(', ')}</div>`
+    : '';
+  
+  return `<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8">
+<title>수입검사성적서 ${heat||lot||''}</title>
+<style>
+@page{size:A4;margin:12mm 10mm}
+*{box-sizing:border-box;font-family:'Malgun Gothic','맑은 고딕',sans-serif}
+body{margin:0;padding:14px;background:#f5f5f5;color:#1a202c;font-size:11pt}
+.sheet{background:#fff;max-width:794px;margin:0 auto;padding:18px 22px;box-shadow:0 2px 12px rgba(0,0,0,0.1)}
+.title-bar{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #1a237e;padding-bottom:10px;margin-bottom:14px}
+.title-bar h1{margin:0;font-size:22pt;color:#1a237e;letter-spacing:2px;font-weight:800}
+.title-bar .doc-no{font-size:9pt;color:#64748b;text-align:right;line-height:1.6}
+.final-badge{display:inline-block;padding:6px 16px;font-size:14pt;font-weight:800;color:#fff;border-radius:8px;background:${finalBadgeColor};letter-spacing:2px}
+.section{margin-bottom:12px}
+.section h2{font-size:11pt;color:#1a237e;margin:0 0 6px 0;padding:4px 8px;background:#e8eaf6;border-left:4px solid #1a237e}
+table{width:100%;border-collapse:collapse;font-size:10pt}
+.info-tbl td{padding:5px 8px;border:1px solid #cbd5e0}
+.info-tbl td.lbl{background:#f1f5f9;font-weight:700;color:#475569;width:90px;text-align:center}
+.info-tbl td.val{background:#fff;font-weight:600}
+.meas-tbl th{background:#1a237e;color:#fff;padding:6px 4px;font-size:9pt;border:1px solid #cbd5e0;font-weight:700}
+.meas-tbl th.sup{background:#1e40af}
+.meas-tbl th.cus{background:#166534}
+.meas-tbl td{padding:5px 4px;border:1px solid #cbd5e0;text-align:center;font-size:10pt}
+.meas-tbl td.lbl{background:#f1f5f9;font-weight:700;color:#1a237e;width:60px}
+.meas-tbl td.spec{background:#fffbeb;font-weight:600;width:140px;text-align:left;padding-left:8px}
+.meas-tbl td.ok{color:#16a34a;font-weight:700}
+.meas-tbl td.ng{color:#dc2626;font-weight:700}
+.sign-row{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}
+.sign-box{border:1.5px solid #cbd5e0;border-radius:6px;padding:10px 14px;background:#fafafa}
+.sign-box h3{margin:0 0 6px 0;font-size:10pt;color:#1a237e;border-bottom:1px solid #cbd5e0;padding-bottom:4px}
+.sign-box .row{display:flex;justify-content:space-between;font-size:10pt;padding:3px 0}
+.sign-box .row .lbl{color:#64748b;font-weight:600}
+.sign-box .row .val{font-weight:700;color:#1a202c}
+.remark{margin-top:10px;padding:8px 12px;background:#fef3c7;border-left:4px solid #f59e0b;font-size:9.5pt;color:#78350f;border-radius:3px;min-height:28px}
+.toolbar{position:sticky;top:0;background:#1a237e;padding:8px 14px;border-radius:6px;margin-bottom:14px;display:flex;gap:8px;justify-content:flex-end;box-shadow:0 2px 6px rgba(0,0,0,0.2)}
+.toolbar button{padding:7px 16px;border:none;border-radius:5px;font-weight:700;cursor:pointer;font-size:11pt}
+.toolbar .btn-print{background:#fbbf24;color:#1a237e}
+.toolbar .btn-pdf{background:#10b981;color:#fff}
+.toolbar .btn-close{background:#ef4444;color:#fff}
+@media print{
+  body{background:#fff;padding:0}
+  .toolbar{display:none}
+  .sheet{box-shadow:none;max-width:none;padding:0}
+}
+</style></head><body>
+<div class="toolbar">
+  <button class="btn-print" onclick="window.print()">🖨 인쇄</button>
+  <button class="btn-pdf" onclick="window.print()" title="인쇄 대화상자에서 'PDF로 저장' 선택">💾 PDF로 저장</button>
+  <button class="btn-close" onclick="window.close()">✕ 닫기</button>
+</div>
+<div class="sheet">
+  <div class="title-bar">
+    <h1>수입검사성적서</h1>
+    <div class="doc-no">
+      문서번호 : TKS001-1A<br>
+      발행일자 : ${recv_date||date||'-'}<br>
+      <span class="final-badge">최종 ${judge}</span>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>1. 자재 기본정보</h2>
+    <table class="info-tbl">
+      <tr><td class="lbl">품명</td><td class="val" colspan="3">${commodity}</td><td class="lbl">규격</td><td class="val">${spec}</td></tr>
+      <tr><td class="lbl">표면</td><td class="val">${surface}</td><td class="lbl">SIZE</td><td class="val" colspan="3">${size}</td></tr>
+      <tr><td class="lbl">공급자</td><td class="val">${supplier}</td><td class="lbl">수요자</td><td class="val" colspan="3">${customer}</td></tr>
+      <tr><td class="lbl">Lot NO</td><td class="val" colspan="3">${lot}${lotsDetailLine}</td><td class="lbl">Heat NO</td><td class="val">${heat}</td></tr>
+      <tr><td class="lbl">Weight</td><td class="val">${weight?Number(weight).toLocaleString()+' KG':'-'}</td><td class="lbl">Cut</td><td class="val">${cut}</td><td class="lbl">입고일</td><td class="val">${date||'-'}</td></tr>
+    </table>
+  </div>
+
+  <div class="section">
+    <h2>2. 검사 측정값 (공급자 + 수요자 통합)</h2>
+    <table class="meas-tbl">
+      <thead>
+        <tr>
+          <th rowspan="2" style="width:60px">검사<br>항목</th>
+          <th rowspan="2" style="width:140px">규격</th>
+          <th colspan="3" class="sup">🏭 공급자 측정</th>
+          <th colspan="3" class="cus">🏢 수요자(태진) 측정</th>
+          <th rowspan="2" style="width:60px">판정</th>
+        </tr>
+        <tr>
+          <th class="sup">X1</th><th class="sup">X2</th><th class="sup">X3</th>
+          <th class="cus">X1</th><th class="cus">X2</th><th class="cus">X3</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${measRow('표면', r1, cr1)}
+        ${measRow('재질', r2, cr2)}
+        ${measRow('폭(mm)', r3, cr3)}
+        ${measRow('두께(mm)', r4, cr4)}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="section">
+    <h2>3. 판정 및 서명</h2>
+    <div class="sign-row">
+      <div class="sign-box">
+        <h3>🏭 공급자 판정</h3>
+        <div class="row"><span class="lbl">검사 일자</span><span class="val">${date||'-'}</span></div>
+        <div class="row"><span class="lbl">공급자 판정</span><span class="val" style="color:${supplier_judge==='NG'?'#dc2626':'#16a34a'};font-size:12pt">${supplier_judge}</span></div>
+        <div class="row"><span class="lbl">서명자</span><span class="val">${supplier_sign||supplier}</span></div>
+      </div>
+      <div class="sign-box">
+        <h3>🏢 수요자(태진) 판정</h3>
+        <div class="row"><span class="lbl">수입검사일</span><span class="val">${recv_date||'-'}</span></div>
+        <div class="row"><span class="lbl">최종 판정</span><span class="val" style="color:${judge==='NG'?'#dc2626':'#16a34a'};font-size:12pt">${judge}</span></div>
+        <div class="row"><span class="lbl">담당자</span><span class="val">${recv_charge||'-'}</span></div>
+        <div class="row"><span class="lbl">승인자</span><span class="val">${customer_sign||'-'}</span></div>
+        <div class="row"><span class="lbl">입고라벨</span><span class="val">${label}</span></div>
+      </div>
+    </div>
+  </div>
+
+  ${remark?`<div class="section"><h2>4. 비고 / 부적합 처리</h2><div class="remark">${String(remark).replace(/</g,'&lt;').replace(/\n/g,'<br>')}</div></div>`:''}
+</div>
+<scr`+`ipt>
+  setTimeout(function(){window.focus()}, 100);
+</scr`+`ipt>
+</body></html>`;
 }
 
 // 페이지 진입 시 + 5분마다 재조회
