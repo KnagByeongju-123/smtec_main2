@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>로드모니터 하중 일일점검 v6.8</title>
+<title>로드모니터 하중 일일점검 v6.9</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
@@ -231,7 +231,7 @@ table.hist tr:hover{background:#f0f7ff}
 <body>
 
 <div class="hdr">
-  <h1>📊 로드모니터 하중 일일점검 <span class="rev-badge">Rev. 6.8</span></h1>
+  <h1>📊 로드모니터 하중 일일점검 <span class="rev-badge">Rev. 6.9</span></h1>
   <p>프레스 Smart Load Monitor · TOTAL/CH1 OCR · CH2=TOTAL-CH1 자동계산</p>
 </div>
 
@@ -618,7 +618,7 @@ table.hist tr:hover{background:#f0f7ff}
     <button class="btn btn-ghost btn-block" onclick="copyDDL()" style="margin-top:8px">📋 SQL 복사</button>
   </div>
 
-  <div class="ver">v6.8 · 로드모니터 일일점검 · 태진다이텍 품질관리팀</div>
+  <div class="ver">v6.9 · 로드모니터 일일점검 · 태진다이텍 품질관리팀</div>
 </div>
 
 <script>
@@ -693,6 +693,11 @@ window.addEventListener('DOMContentLoaded',()=>{
   document.getElementById('ddlText').value=DDL;
   supa=window.supabase.createClient(SB_URL,SB_KEY);
   initDates();
+
+  // ★ 즉시 임시 복원 (옵션 로드 전이라도 화면에 표시되게)
+  // 옵션이 비동기 로드되는 동안 빈 select가 보이는 문제 회피
+  preFillFromLocalStorage();
+
   loadMachines();
   loadInspector();
   loadCustomers();
@@ -1094,6 +1099,62 @@ function numpadOK(){
   closeNumpad();
 }
 
+/* ============ 즉시 임시 복원 (옵션 로딩 전 화면 채우기) ============ */
+function preFillFromLocalStorage(){
+  // 호기 - 임시 옵션 즉시 추가
+  try{
+    const lastM=localStorage.getItem('lmc_last_machine');
+    if(lastM){
+      const sel=document.getElementById('chkMachine');
+      if(sel){
+        const opt=document.createElement('option');
+        opt.value=lastM;
+        opt.textContent=lastM;
+        opt.dataset.preFill='1';  // 나중에 식별용
+        // 첫 번째 "선택" 옵션 다음에 삽입
+        if(sel.children.length>0)sel.insertBefore(opt,sel.children[1]||null);
+        else sel.appendChild(opt);
+        sel.value=lastM;
+        const src=document.getElementById('machineSrc');
+        if(src){src.textContent='✓ 자동 복원됨';src.style.color='#388e3c'}
+      }
+    }
+  }catch(e){console.warn('preFill 호기 실패:',e)}
+
+  // 고객사 - 임시 옵션 즉시 추가
+  try{
+    const lastC=localStorage.getItem('lmc_last_customer');
+    if(lastC){
+      const sel=document.getElementById('selCustomer');
+      if(sel){
+        const opt=document.createElement('option');
+        opt.value=lastC;
+        opt.textContent=lastC;
+        opt.dataset.preFill='1';
+        if(sel.children.length>0)sel.insertBefore(opt,sel.children[1]||null);
+        else sel.appendChild(opt);
+        sel.value=lastC;
+      }
+    }
+  }catch(e){console.warn('preFill 고객사 실패:',e)}
+
+  // 기종 - input 즉시 채우기
+  try{
+    const lastModel=localStorage.getItem('lmc_last_model');
+    if(lastModel){
+      const inp=document.getElementById('selModelInput');
+      const itemEl=document.getElementById('chkItem');
+      if(inp)inp.value=lastModel;
+      if(itemEl)itemEl.value=lastModel;
+      const src=document.getElementById('modelSrc');
+      if(src){src.textContent='✓ 자동 복원됨';src.style.color='#388e3c'}
+    }
+  }catch(e){console.warn('preFill 기종 실패:',e)}
+
+  console.log('[즉시 임시 복원] 완료 - 옵션 로딩 후 정식 복원됨');
+}
+
+
 function initDates(){
   const today=kstToday();
   document.getElementById('chkDate').value=today;
@@ -1348,8 +1409,15 @@ function renderCustomerSelect(){
   const sel=document.getElementById('selCustomer');
   if(sel){
     const cur=sel.value||localStorage.getItem(LS_LAST_CUSTOMER)||'';
-    sel.innerHTML='<option value="">전체 고객사</option>'+
+    let opts='<option value="">전체 고객사</option>'+
       cachedCustomers.map(c=>`<option value="${c}"${c===cur?' selected':''}>${c}</option>`).join('');
+    // 마지막 사용 고객사가 마스터에 없으면 임시 옵션 추가 (자동 복원 보장)
+    if(cur && !cachedCustomers.includes(cur)){
+      opts='<option value="">전체 고객사</option>'+
+        `<option value="${cur}" selected>${cur} (이전)</option>`+
+        cachedCustomers.map(c=>`<option value="${c}">${c}</option>`).join('');
+    }
+    sel.innerHTML=opts;
   }
   // 이력조회 탭의 고객사 셀렉트도 채우기
   const qsel=document.getElementById('qCustomer');
@@ -2498,68 +2566,4 @@ async function tryColorOCR(bitmap,targetColor,minVal,maxVal,statusEl,statusPrefi
       const t0=Date.now();
       const results=[];
       for(const psm of psmsToTry){
-        const res=await recognizeWithPSM(worker,canvas,psm,minVal,maxVal);
-        console.log(`[OCR ${targetColor}/${v}/PSM${psm}]`,res.text,'→',res.nums);
-        results.push(res);
-      }
-      const dt=Date.now()-t0;
-
-      const valid=results.filter(r=>r.best!=null);
-      if(valid.length===0){
-        canvas.width=0;canvas.height=0;
-        continue;
-      }
-
-      let val=null,confident=true;
-
-      if(isPink){
-        // 보라: 모든 PSM 결과를 누적 (필터 끝나면 빈도 우선 선택)
-        valid.forEach(r=>{
-          if(r.best!=null)pinkAllNums.push(r.best);
-          // 모든 후보 숫자도 누적 (정상 범위)
-          (r.nums||[]).forEach(n=>{
-            if(n>=minVal&&n<=maxVal)pinkAllNums.push(n);
-          });
-        });
-        // 모든 PSM이 같은 값이면 그 즉시 성공 (가장 신뢰)
-        const allSame=valid.every(r=>r.best===valid[0].best);
-        if(allSame && valid.length>=2){
-          val=valid[0].best;
-          console.log(`[OCR ${targetColor}] ✓ ${valid.length}개 PSM 모두 일치: ${val}`);
-          canvas.width=0;canvas.height=0;
-          return {value:val,variant:v};
-        }
-        // 일치 안하면 다음 필터로 (누적 후 결정)
-        console.log(`[OCR ${targetColor}/${v}] PSM 결과 다양 → 다음 필터로`);
-        canvas.width=0;canvas.height=0;
-        continue;
-      }else if(valid.length===1){
-        val=valid[0].best;
-      }else{
-        const v0=valid[0].best,v1=valid[1].best;
-        if(v0===v1){
-          val=v0;
-          console.log(`[OCR ${targetColor}] ✓ 두 PSM 결과 일치: ${val}`);
-        }else{
-          const allNums=[...valid[0].nums,...valid[1].nums].filter(n=>n>=minVal&&n<=maxVal);
-          const freq={};
-          allNums.forEach(n=>{freq[n]=(freq[n]||0)+1});
-          const sorted=Object.entries(freq).sort((a,b)=>b[1]-a[1]);
-          val=parseFloat(sorted[0][0]);
-          confident=false;
-          console.warn(`[OCR ${targetColor}] ⚠ PSM 결과 불일치: ${v0} vs ${v1} → 빈도 우선: ${val}`);
-        }
-      }
-
-      canvas.width=0;canvas.height=0;
-      if(val!=null){
-        console.log(`[OCR ${targetColor}] ✓ ${v} 성공 (${dt}ms): ${val}${confident?'':' (의심)'}`);
-        return {value:val,variant:v+(confident?'':'?')};
-      }
-    }catch(e){
-      console.warn(`[OCR ${targetColor}/${v}] 실패:`,e.message);
-      canvas.width=0;canvas.height=0;
-    }
-  }
-
-  // 보라: 모든 필터 끝나도 PSM 일치 못하면
+        const res=awa
