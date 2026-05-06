@@ -3,7 +3,7 @@
 <html lang="ko"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>소재 수입검사 통합 관리 시스템 v2.6 | (주)태진다이텍</title>
+<title>소재 수입검사 통합 관리 시스템 v2.8 | (주)태진다이텍</title>
 <!-- PDF.js for 밀시트 자동 분석 -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>
@@ -1786,7 +1786,7 @@
 <body>
 
 <div class="header">
-  <h1>📋 소재 수입검사 통합 관리 시스템 v2.6</h1>
+  <h1>📋 소재 수입검사 통합 관리 시스템 v2.8</h1>
   <div class="sub">(주)태진다이텍 | 품질관리팀</div>
   <div style="position:absolute; top:18px; right:20px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end; max-width:60%;">
     <div id="currentUserBadge" style="padding:5px 11px; background:rgba(255,255,255,0.25); border:1px solid rgba(255,255,255,0.4); border-radius:14px; font-size:11px; color:#fff; white-space:nowrap;" title="ESG 메인에서 로그인한 사용자">
@@ -4123,7 +4123,7 @@ function renderCert(){
     return `
     <div class="inspection-cert collapsed">
       <div class="cert-header">
-        <span>${c.commodity||''} / ${c.size||''}${c.coil_count&&c.coil_count>1?' <span style="display:inline-block; background:#3b82f6; color:#fff; font-size:13px; padding:5px 12px; border-radius:14px; margin-left:8px; font-weight:700; vertical-align:middle;">'+c.coil_count+'코일</span>':''}${c.lot?' <span style="display:inline-block; background:#475569; color:#fff; font-size:13px; padding:5px 12px; border-radius:14px; margin-left:6px; font-weight:700; vertical-align:middle;">LOT '+c.lot+'</span>':''}${c.date?' <span style="display:inline-block; background:#7c3aed; color:#fff; font-size:13px; padding:5px 12px; border-radius:14px; margin-left:6px; font-weight:700; vertical-align:middle;" title="공급자 검사일자">📅 '+c.date+'</span>':''}${c.millsheet_pdf_path?' <span style="display:inline-block; background:#0ea5e9; color:#fff; font-size:13px; padding:5px 12px; border-radius:14px; margin-left:6px; font-weight:700; letter-spacing:0.5px; vertical-align:middle;">📎 밀시트</span>':''}</span>
+        <span>${c.supplier?'<span style="display:inline-block; background:#0f172a; color:#fff; font-size:13px; padding:5px 12px; border-radius:14px; margin-right:10px; font-weight:700; vertical-align:middle;">🏭 '+c.supplier+'</span>':''}${c.commodity||''} / ${c.size||''}${c.coil_count&&c.coil_count>1?' <span style="display:inline-block; background:#3b82f6; color:#fff; font-size:13px; padding:5px 12px; border-radius:14px; margin-left:8px; font-weight:700; vertical-align:middle;">'+c.coil_count+'코일</span>':''}${c.lot?' <span style="display:inline-block; background:#475569; color:#fff; font-size:13px; padding:5px 12px; border-radius:14px; margin-left:6px; font-weight:700; vertical-align:middle;">LOT '+c.lot+'</span>':''}${c.date?' <span style="display:inline-block; background:#7c3aed; color:#fff; font-size:13px; padding:5px 12px; border-radius:14px; margin-left:6px; font-weight:700; vertical-align:middle;" title="공급자 검사일자">📅 '+c.date+'</span>':''}${c.millsheet_pdf_path?' <span style="display:inline-block; background:#0ea5e9; color:#fff; font-size:13px; padding:5px 12px; border-radius:14px; margin-left:6px; font-weight:700; letter-spacing:0.5px; vertical-align:middle;">📎 밀시트</span>':''}</span>
         <span style="display:flex; align-items:center; gap:6px;">
           <button class="btn btn-primary" style="padding:3px 10px; font-size:11px;" onclick="editCert(${idx})">수정</button>
           <button class="btn btn-danger" style="padding:3px 10px; font-size:11px;" onclick="delCert(${idx})">삭제</button>
@@ -6035,11 +6035,104 @@ async function loadCertsFromSupabase(){
       // 둘 다 같으면 created_at desc (최신 먼저)
       return String(b.created_at||'').localeCompare(String(a.created_at||''));
     });
+    
+    // [v2.8] LOT 일련번호 머지 패스 — 과거 DB에 따로 INSERT된 행들을 표시 시점에 통합
+    //   같은 (공급자|재질|두께|폭|LOT베이스)의 행들을 하나로 합치고 코일수/lots_detail 누적
+    //   예: QGZ0217-A2, A3, A4, A5, A6 5건 → 1건 (5코일, lots_detail="QGZ0217-A2,A3,...")
+    function _getLotBaseIQC(lot){
+      if(!lot)return '';
+      let s=String(lot).trim();
+      s=s.replace(/\s*[\(\[]\s*[A-Za-z]?\d{1,4}\s*[\)\]]\s*$/,'');
+      s=s.replace(/[\s\-_\/\.\#]+(?:[A-Za-z]{1,2}\d{1,3}|\d{1,4})$/,'');
+      return s.trim();
+    }
+    function _baseKey(rc){
+      const _n=v=>String(v||'').trim().toUpperCase().replace(/\s+/g,'');
+      const _num=v=>{const n=parseFloat(v);return isFinite(n)?n.toString():_n(v);};
+      return _n(rc.supplier)+'|'+_n(rc.material_type)+'|'+_num(rc.thickness)+'|'+_num(rc.width_mm)+'|'+_n(_getLotBaseIQC(rc.lot_no));
+    }
+    const _mergeMap = new Map();
+    remoteCerts.forEach(rc=>{
+      const k = _baseKey(rc);
+      if(!_mergeMap.has(k)){
+        _mergeMap.set(k, rc);
+        return;
+      }
+      // 기존 그룹에 누적
+      const head = _mergeMap.get(k);
+      // 측정값 보존 우선순위: head에 cert_data 없고 rc에 있으면 rc로 교체
+      if(!head.cert_data && rc.cert_data){
+        // rc를 헤드로 승격하되 head의 누적 정보는 인계
+        rc._merged_lots = (head._merged_lots||[head.lot_no]).concat([rc.lot_no]);
+        rc._merged_count = (head._merged_count||(head.coil_count||1)) + (rc.coil_count||1);
+        rc._merged_weight = (head._merged_weight!=null?head._merged_weight:(parseFloat(head.weight)||0)) + (parseFloat(rc.weight)||0);
+        _mergeMap.set(k, rc);
+        return;
+      }
+      head._merged_lots = (head._merged_lots||[head.lot_no]).concat([rc.lot_no]);
+      head._merged_count = (head._merged_count||(head.coil_count||1)) + (rc.coil_count||1);
+      head._merged_weight = (head._merged_weight!=null?head._merged_weight:(parseFloat(head.weight)||0)) + (parseFloat(rc.weight)||0);
+      // 가장 최신 created_at 유지
+      if(String(rc.created_at||'') > String(head.created_at||'')){
+        head.created_at = rc.created_at;
+      }
+    });
+    // 머지 결과로 remoteCerts 재구성 + 누적값 반영
+    const _mergedCerts = Array.from(_mergeMap.values()).map(rc=>{
+      if(rc._merged_lots && rc._merged_lots.length>1){
+        // 일련번호 일부 중복 제거 (sort 시 같은 LOT 두 번 들어올 수 있음)
+        const uniqLots = [...new Set(rc._merged_lots.filter(Boolean))];
+        rc.lots_detail = uniqLots.join(',');
+        rc.coil_count = rc._merged_count || uniqLots.length;
+        if(rc._merged_weight) rc.weight = rc._merged_weight;
+        // 대표 lot_no/heat_no는 베이스로 통일 (UI 일관성)
+        rc.lot_no = _getLotBaseIQC(rc.lot_no) || rc.lot_no;
+        rc.heat_no = _getLotBaseIQC(rc.heat_no) || rc.heat_no;
+      }
+      delete rc._merged_lots; delete rc._merged_count; delete rc._merged_weight;
+      return rc;
+    });
+    // 이후 로직이 사용하는 변수명 유지를 위해 재할당
+    remoteCerts.length = 0;
+    _mergedCerts.forEach(c=>remoteCerts.push(c));
+    
     // 기존 certData와 중복 체크 (lot+heat+supplier+재질+두께+폭 기준)
     // [v2.3] 같은 LOT/HEAT라도 폭·두께·재질이 다르면 별개 항목으로 처리
     //        (예: 태경스틸 SP34446 LOT가 폭 90mm와 102mm 두 종류로 입고되는 경우)
     if(!certData)certData=[];
-    let added=0,skipped=0,updated=0;
+    let added=0,skipped=0,updated=0,cleaned=0;
+    
+    // [v2.8] certData(로컬)에서 같은 베이스키 그룹의 잔여 행 정리
+    //   서버 머지로 1건이 된 그룹이 로컬에 5건으로 있었다면, 미검사(_uninspected) 잔여 4건 제거
+    //   단, 수요자가 OK/NG 판정한 행은 보존 (이미 처리된 데이터)
+    {
+      const _n=v=>String(v||'').trim().toUpperCase().replace(/\s+/g,'');
+      const _num=v=>{const n=parseFloat(v);return isFinite(n)?n.toString():_n(v);};
+      const _stw=sz=>{
+        const m1=String(sz||'').match(/([\d.]+)\s*\(?\s*T/i);
+        const m2=String(sz||'').match(/([\d.]+)\s*\(?\s*W/i);
+        return [m1?_num(m1[1]):'', m2?_num(m2[1]):''];
+      };
+      const _bk=(supp, mt, th, w, lot)=>_n(supp)+'|'+_n(mt)+'|'+_num(th)+'|'+_num(w)+'|'+_n(_getLotBaseIQC(lot));
+      const serverGroups = new Set(_mergedCerts.map(rc=>_bk(rc.supplier, rc.material_type, rc.thickness, rc.width_mm, rc.lot_no)));
+      const before = certData.length;
+      certData = certData.filter(c=>{
+        const [tFromSize, wFromSize] = _stw(c.size);
+        const cT = c.thickness != null ? c.thickness : tFromSize;
+        const cW = c.width_mm  != null ? c.width_mm  : wFromSize;
+        const ck = _bk(c.supplier, c.spec||c.material_type, cT, cW, c.lot);
+        const customerInspected = c.judge==='OK'||c.judge==='NG';
+        if(serverGroups.has(ck) && !customerInspected){
+          return false;  // 제거 (서버 머지 결과 1건이 다음 forEach에서 새로 들어옴)
+        }
+        return true;
+      });
+      cleaned = before - certData.length;
+      if(cleaned > 0){
+        console.log('[IQC v2.8] LOT 머지 정리: '+before+' → '+certData.length+'건 ('+cleaned+'건 제거)');
+      }
+    }
+    
     // 정규화 헬퍼 (소문자/공백 제거 + 숫자만 추출)
     const _norm = v => String(v||'').trim().toUpperCase().replace(/\s+/g,'');
     const _numKey = v => {
@@ -6148,7 +6241,7 @@ async function loadCertsFromSupabase(){
         added++;
       }
     });
-    if(added>0||updated>0){
+    if(added>0||updated>0||cleaned>0){
       saveCertToLS();
       renderCert();
     }else{
