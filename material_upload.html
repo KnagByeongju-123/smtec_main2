@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>소재입고 등록 (Rev5.0)</title>
+  <title>소재입고 등록 (Rev5.1)</title>
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
@@ -102,7 +102,7 @@
 </head>
 <body>
 <div class="hdr">
-  <h1>📤 소재입고 등록 (Rev5.0)</h1>
+  <h1>📤 소재입고 등록 (Rev5.1)</h1>
   <p>소재업체 템플릿 업로드 → DB 저장 · <span style="color:#ffeb3b;font-weight:700">성적서, 밀시트 첨부 가능</span></p>
 </div>
 <div class="tabs">
@@ -242,6 +242,24 @@
     </div>
   </div>
   <div class="card">
+    <div class="card-tit">📢 공지사항 (접속 시 팝업)</div>
+    <div class="info-box blue" style="font-size:10px">💡 입력한 공지가 페이지 접속 시 자동 팝업됩니다.<br>비워두고 저장하면 팝업이 표시되지 않습니다. 사용자가 "오늘 하루 보지 않기" 선택 가능.</div>
+    <div class="fg">
+      <label>제목</label>
+      <input type="text" id="noticeTitle" placeholder="예: 추석 연휴 입고 일정 안내" style="padding:10px 12px;font-size:14px;border:1.5px solid #ddd;border-radius:8px;font-family:inherit;width:100%;box-sizing:border-box">
+    </div>
+    <div class="fg">
+      <label>내용 (줄바꿈 가능)</label>
+      <textarea id="noticeBody" rows="5" placeholder="예: 9/15(월) ~ 9/17(수) 입고 불가&#10;9/18(목)부터 정상 운영" style="padding:10px 12px;font-size:13px;border:1.5px solid #ddd;border-radius:8px;font-family:inherit;width:100%;box-sizing:border-box;resize:vertical;line-height:1.6"></textarea>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-sm btn-blue" onclick="saveNotice()" style="flex:1">💾 공지 저장</button>
+      <button class="btn btn-sm btn-gray" onclick="clearNotice()" style="flex:0 0 auto">🗑 삭제</button>
+      <button class="btn btn-sm" onclick="previewNotice()" style="background:#10b981;color:#fff;flex:0 0 auto">👁 미리보기</button>
+    </div>
+    <div id="noticeStatus" style="font-size:11px;margin-top:6px;color:#888"></div>
+  </div>
+  <div class="card">
     <div class="card-tit">🔔 ntfy 알림</div>
     <div class="info-box blue" style="font-size:10px">💡 <b>소재업체에서 파일 업로드 완료 시</b> 등록된 ntfy 방으로 자동 발송됩니다.</div>
     <div id="ntfyRuleList"></div>
@@ -295,6 +313,23 @@ CREATE POLICY "anon_all" ON move_history_tj FOR ALL TO anon USING (true) WITH CH
   <div style="text-align:center"><span id="stgSaveStatus" style="font-size:11px;color:#888"></span></div>
   <div class="card" style="margin-top:8px"><div class="card-tit">ℹ️ 연결 상태</div><div id="connStatusInfo" style="font-size:12px;color:#555;line-height:1.8"></div></div>
 </div>
+</div>
+
+<!-- 공지사항 팝업 모달 -->
+<div id="noticeModal" style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.55);z-index:9999;align-items:center;justify-content:center;padding:16px;box-sizing:border-box">
+  <div style="background:#fff;max-width:520px;width:100%;border-radius:14px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,0.3);max-height:90vh;display:flex;flex-direction:column">
+    <div style="background:linear-gradient(135deg,#1a237e,#3f51b5);color:#fff;padding:16px 20px;font-size:18px;font-weight:700;display:flex;align-items:center;gap:8px">
+      <span>📢</span><span id="noticeModalTitle">공지사항</span>
+    </div>
+    <div id="noticeModalBody" style="padding:20px 22px;font-size:14px;line-height:1.7;color:#333;white-space:pre-wrap;word-break:break-word;overflow-y:auto;flex:1;max-height:60vh"></div>
+    <div style="padding:12px 20px;background:#f7f8fc;border-top:1px solid #e0e0e0;display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap">
+      <label style="font-size:12px;color:#666;display:flex;align-items:center;gap:6px;cursor:pointer">
+        <input type="checkbox" id="noticeHideToday" style="width:16px;height:16px;cursor:pointer">
+        오늘 하루 보지 않기
+      </label>
+      <button onclick="closeNoticeModal()" style="background:#1a237e;color:#fff;border:none;padding:10px 24px;border-radius:8px;font-weight:700;font-size:14px;cursor:pointer">확인</button>
+    </div>
+  </div>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -1207,12 +1242,144 @@ document.addEventListener('DOMContentLoaded',()=>{
   loadMailGasCfg();
   _loadAllRulesFromServer();
   loadVendorsAndRender();
+  loadNoticeAndShow();  // [공지] 페이지 로드 시 공지 자동 팝업
 });
 
 async function _saveRulesToServer(cg,rules){const json=JSON.stringify(rules);try{await fetch(getSbUrl()+'/rest/v1/common_code?code_group=eq.'+cg,{method:'DELETE',headers:{'apikey':getSbKey(),'Authorization':'Bearer '+getSbKey()}});if(rules.length){await fetch(getSbUrl()+'/rest/v1/common_code',{method:'POST',headers:{'Content-Type':'application/json','apikey':getSbKey(),'Authorization':'Bearer '+getSbKey(),'Prefer':'return=representation'},body:JSON.stringify({code_group:cg,code_value:json,sort_order:0})})}}catch(e){console.log('서버 저장 실패('+cg+'):',e)}}
 async function _loadRulesFromServer(cg,lsKey,renderFn){try{const res=await fetch(getSbUrl()+'/rest/v1/common_code?select=*&code_group=eq.'+cg+'&limit=1',{headers:{'apikey':getSbKey(),'Authorization':'Bearer '+getSbKey()}});if(res.ok){const data=await res.json();if(data&&data.length&&data[0].code_value){localStorage.setItem(lsKey,data[0].code_value);if(renderFn)renderFn()}}}catch(e){console.log('서버 로드 실패('+cg+'):',e)}}
 async function _saveAllRulesToServer(){await _saveRulesToServer('mat_chk_ntfy',getNtfyRules())}
 async function _loadAllRulesFromServer(){await _loadRulesFromServer('mat_chk_ntfy','MAT_NTFY_RULES',renderNtfyRules)}
+
+/* ===== 공지사항 (mat_notice) ===== */
+const NOTICE_HIDE_LS = 'MAT_NOTICE_HIDE';  // 오늘 하루 안보기 (날짜 + 공지해시 저장)
+
+function _kstTodayStr(){
+  const d=new Date(Date.now()+9*3600*1000);
+  return d.toISOString().slice(0,10);
+}
+
+async function loadNoticeFromServer(){
+  try{
+    const res=await fetch(getSbUrl()+'/rest/v1/common_code?select=code_value,description&code_group=eq.mat_notice&limit=1',{
+      headers:{'apikey':getSbKey(),'Authorization':'Bearer '+getSbKey()}
+    });
+    if(!res.ok)return null;
+    const data=await res.json();
+    if(!data||!data.length)return null;
+    // code_value=제목, description=내용
+    const title=String(data[0].code_value||'').trim();
+    const body=String(data[0].description||'').trim();
+    if(!title && !body)return null;
+    return {title,body};
+  }catch(e){
+    console.log('공지 로드 실패:',e);
+    return null;
+  }
+}
+
+async function loadNoticeAndShow(){
+  // 설정 화면 입력란에도 미리 채워두기
+  const n=await loadNoticeFromServer();
+  const tEl=document.getElementById('noticeTitle');
+  const bEl=document.getElementById('noticeBody');
+  if(tEl) tEl.value=n?n.title:'';
+  if(bEl) bEl.value=n?n.body:'';
+  if(!n)return;
+  // "오늘 하루 보지 않기" 체크 여부
+  try{
+    const hide=JSON.parse(localStorage.getItem(NOTICE_HIDE_LS)||'{}');
+    const hash=(n.title+'|'+n.body).slice(0,200);
+    if(hide.date===_kstTodayStr() && hide.hash===hash)return;
+  }catch(e){}
+  // 팝업 표시
+  showNoticeModal(n.title,n.body);
+}
+
+function showNoticeModal(title,body){
+  const m=document.getElementById('noticeModal');
+  if(!m)return;
+  document.getElementById('noticeModalTitle').textContent=title||'공지사항';
+  document.getElementById('noticeModalBody').textContent=body||'';
+  document.getElementById('noticeHideToday').checked=false;
+  m.style.display='flex';
+}
+
+function closeNoticeModal(){
+  const m=document.getElementById('noticeModal');
+  if(!m)return;
+  if(document.getElementById('noticeHideToday').checked){
+    const title=document.getElementById('noticeModalTitle').textContent||'';
+    const body=document.getElementById('noticeModalBody').textContent||'';
+    const hash=(title+'|'+body).slice(0,200);
+    localStorage.setItem(NOTICE_HIDE_LS,JSON.stringify({date:_kstTodayStr(),hash}));
+  }
+  m.style.display='none';
+}
+
+async function saveNotice(){
+  const st=document.getElementById('noticeStatus');
+  const title=(document.getElementById('noticeTitle').value||'').trim();
+  const body=(document.getElementById('noticeBody').value||'').trim();
+  st.textContent='저장 중...';st.style.color='#1565c0';
+  try{
+    // 기존 행 삭제 후 1건만 INSERT
+    await fetch(getSbUrl()+'/rest/v1/common_code?code_group=eq.mat_notice',{
+      method:'DELETE',
+      headers:{'apikey':getSbKey(),'Authorization':'Bearer '+getSbKey()}
+    });
+    if(title || body){
+      const res=await fetch(getSbUrl()+'/rest/v1/common_code',{
+        method:'POST',
+        headers:{
+          'Content-Type':'application/json',
+          'apikey':getSbKey(),
+          'Authorization':'Bearer '+getSbKey(),
+          'Prefer':'return=minimal'
+        },
+        body:JSON.stringify({code_group:'mat_notice',code_value:title,description:body,sort_order:0})
+      });
+      if(!res.ok){
+        const err=await res.text().catch(()=>'');
+        throw new Error('HTTP '+res.status+' '+err.slice(0,150));
+      }
+    }
+    // 저장하면 "오늘 안보기" 캐시 초기화 (새 공지는 다시 보여야 함)
+    localStorage.removeItem(NOTICE_HIDE_LS);
+    st.textContent='✅ 저장 완료 ('+new Date().toLocaleTimeString()+')';
+    st.style.color='#2e7d32';
+    showToast('💾 공지 저장 완료');
+  }catch(e){
+    st.textContent='❌ '+e.message;
+    st.style.color='#c62828';
+    alert('공지 저장 실패: '+e.message);
+  }
+}
+
+async function clearNotice(){
+  if(!confirm('공지를 완전히 삭제하시겠습니까?\n(접속 시 팝업이 더 이상 표시되지 않습니다)'))return;
+  document.getElementById('noticeTitle').value='';
+  document.getElementById('noticeBody').value='';
+  await saveNotice();
+}
+
+function previewNotice(){
+  const title=(document.getElementById('noticeTitle').value||'').trim();
+  const body=(document.getElementById('noticeBody').value||'').trim();
+  if(!title && !body){alert('제목 또는 내용을 입력하세요');return}
+  showNoticeModal(title,body);
+}
+
+// ESC로 닫기 + 배경 클릭 시 닫기
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'){
+    const m=document.getElementById('noticeModal');
+    if(m && m.style.display==='flex')closeNoticeModal();
+  }
+});
+document.addEventListener('click',e=>{
+  const m=document.getElementById('noticeModal');
+  if(m && e.target===m)closeNoticeModal();
+});
 
 let _certBatch=[];
 let _certCurrentIdx=0;
