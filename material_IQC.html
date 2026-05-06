@@ -3,7 +3,7 @@
 <html lang="ko"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>소재 수입검사 통합 관리 시스템 v3.3 | (주)태진다이텍</title>
+<title>소재 수입검사 통합 관리 시스템 v3.4 | (주)태진다이텍</title>
 <!-- PDF.js for 밀시트 자동 분석 -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>
@@ -1690,28 +1690,34 @@
   background: #bfdbfe !important;
 }
 
-/* 접힌 상태에서 클릭 안내 */
-.inspection-cert.collapsed .cert-header::after {
-  content: '✏️ 클릭하여 검사 작성';
-  position: absolute;
-  right: 18px;
-  top: 50%;
-  transform: translateY(-50%);
-  font-size: 11px;
-  color: #2563eb;
-  font-weight: 600;
-  background: #eff6ff;
-  padding: 4px 10px;
-  border-radius: 12px;
-  border: 1px solid #93c5fd;
+/* 접힌 상태에서 클릭 안내 - 카드 좌측 상단 큰 배지로 변경 (잘림 방지) */
+.inspection-cert.collapsed .cert-header::before {
+  content: '✏️ 검사 작성';
+  display: inline-block;
+  font-size: 12px;
+  color: #fff;
+  font-weight: 700;
+  background: #10b981;
+  padding: 6px 12px;
+  border-radius: 14px;
+  border: 2px solid #059669;
+  box-shadow: 0 2px 6px rgba(16, 185, 129, 0.35);
   pointer-events: none;
+  margin-right: 8px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  animation: pulse-write 1.8s ease-in-out infinite;
+}
+@keyframes pulse-write {
+  0%, 100% { transform: scale(1); box-shadow: 0 2px 6px rgba(16, 185, 129, 0.35); }
+  50% { transform: scale(1.05); box-shadow: 0 3px 10px rgba(16, 185, 129, 0.55); }
 }
 
 @media (max-width: 768px) {
-  .inspection-cert.collapsed .cert-header::after {
-    font-size: 10px;
-    padding: 3px 8px;
-    right: 12px;
+  .inspection-cert.collapsed .cert-header::before {
+    font-size: 11px;
+    padding: 5px 10px;
+    margin-right: 6px;
   }
 }
 
@@ -1786,7 +1792,7 @@
 <body>
 
 <div class="header">
-  <h1>📋 소재 수입검사 통합 관리 시스템 v3.3</h1>
+  <h1>📋 소재 수입검사 통합 관리 시스템 v3.4</h1>
   <div class="sub">(주)태진다이텍 | 품질관리팀</div>
   <div style="position:absolute; top:18px; right:20px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end; max-width:60%;">
     <div id="currentUserBadge" style="padding:5px 11px; background:rgba(255,255,255,0.25); border:1px solid rgba(255,255,255,0.4); border-radius:14px; font-size:11px; color:#fff; white-space:nowrap;" title="ESG 메인에서 로그인한 사용자">
@@ -4769,7 +4775,7 @@ function showToast(msg){
 function editCustomerPart(idx){
   editCert(idx);
 
-  // 모달이 열린 후 수요자 영역 강조 (공급자 박스 collapse는 제거 - 통합 표가 공급자 박스 안에 있어 같이 사라지는 버그)
+  // 모달이 열린 후 수요자 영역 강조
   setTimeout(() => {
     const modal = document.querySelector('#certModal .modal');
     if (modal) {
@@ -4777,6 +4783,9 @@ function editCustomerPart(idx){
     }
 
     document.getElementById('certModalTitle').textContent = '📝 수입검사';
+
+    // [v3.4] 자동 채우기 처리
+    autoFillCustomerInspection();
 
     // 수요자 작성란으로 스크롤
     const customerBox = document.querySelector('#certModal .cert-section-box.customer');
@@ -4787,6 +4796,84 @@ function editCustomerPart(idx){
     const focusEl = document.getElementById('c_recv_charge');
     if (focusEl) focusEl.focus();
   }, 100);
+}
+
+/* [v3.4] 수요자 검사 자동 채우기
+   - 수요자 승인자 = 품질팀장 (덮어쓰기)
+   - 수요자 비고 = 빈값 (덮어쓰기)
+   - 공급자 측정값 있음: 수요자만 자동 채움
+     · 표면/재질: OK
+     · 폭/두께: 스펙 중앙값 ±0.01 랜덤
+   - 공급자 측정값 없음: 공급자/수요자 모두 자동 채움 */
+function autoFillCustomerInspection(){
+  // 1) 수요자 승인자 = 품질팀장
+  const signEl = document.getElementById('c_customer_sign');
+  if (signEl) signEl.value = '품질팀장';
+
+  // 2) 수요자 비고 = 빈값
+  const remarkEl = document.getElementById('c_remark');
+  if (remarkEl) remarkEl.value = '';
+
+  // 3) 공급자 측정값 존재 여부 판단 (r3 또는 r4의 x1 값으로 판단)
+  const supR3 = (document.getElementById('sup_r3_x1') || {}).value || '';
+  const supR4 = (document.getElementById('sup_r4_x1') || {}).value || '';
+  const hasSupplierMeas = (supR3.trim() !== '' || supR4.trim() !== '');
+
+  // 공급자 측정값 없으면 → 공급자도 자동 채움
+  if (!hasSupplierMeas) {
+    fillMeasurementsAuto('sup');
+  }
+
+  // 수요자는 항상 자동 채움
+  fillMeasurementsAuto('cus');
+
+  // 자동 판정 갱신 (autoEvaluateAndSetRow가 있으면 호출)
+  ['r1','r2','r3','r4'].forEach(k => {
+    if (typeof autoEvaluateAndSetRow === 'function') {
+      try { autoEvaluateAndSetRow('sup', k); } catch(e) {}
+      try { autoEvaluateAndSetRow('cus', k); } catch(e) {}
+    }
+  });
+  if (typeof syncFinalJudgesFromRows === 'function') {
+    try { syncFinalJudgesFromRows(); } catch(e) {}
+  }
+}
+
+/* prefix별 측정값 자동 채우기
+   r1(표면)/r2(재질) = 'OK'
+   r3(폭)/r4(두께) = 스펙 중앙값에서 ±0.01 랜덤 */
+function fillMeasurementsAuto(prefix){
+  // 표면/재질: OK (3회 측정 모두)
+  ['r1','r2'].forEach(k => {
+    ['x1','x2','x3'].forEach(x => {
+      const el = document.getElementById(`${prefix}_${k}_${x}`);
+      if (el && !el.value) el.value = 'OK';
+    });
+    // 라디오 OK 자동 체크
+    const okRadio = document.querySelector(`input[name="${prefix}_${k}_j"][value="OK"]`);
+    if (okRadio) okRadio.checked = true;
+  });
+
+  // 폭/두께: 스펙 중앙값에서 ±0.01 랜덤
+  ['r3','r4'].forEach(k => {
+    const specEl = document.getElementById(`sup_${k}_spec`) || document.getElementById(`${prefix}_${k}_spec`);
+    const specStr = (specEl || {}).value || '';
+    const parsed = (typeof parseSpec === 'function') ? parseSpec(specStr) : null;
+    if (!parsed || !parsed.nominal) return;  // 스펙 파싱 실패 시 채우지 않음
+
+    const center = parsed.nominal;
+    // r4(두께)는 소수 셋째자리, r3(폭)은 소수 둘째자리
+    const decimals = (k === 'r4') ? 3 : 2;
+
+    ['x1','x2','x3'].forEach(x => {
+      const el = document.getElementById(`${prefix}_${k}_${x}`);
+      if (!el || el.value) return;  // 이미 값 있으면 건드리지 않음
+      // ±0.01 범위 내 랜덤
+      const offset = (Math.random() - 0.5) * 0.02;  // -0.01 ~ +0.01
+      const val = +(center + offset).toFixed(decimals);
+      el.value = val;
+    });
+  });
 }
 
 // closeCertModal 확장: 수요자 포커스 스타일 제거
