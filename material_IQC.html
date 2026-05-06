@@ -3,7 +3,7 @@
 <html lang="ko"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>소재 수입검사 통합 관리 시스템 v3.1 | (주)태진다이텍</title>
+<title>소재 수입검사 통합 관리 시스템 v3.2 | (주)태진다이텍</title>
 <!-- PDF.js for 밀시트 자동 분석 -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>
@@ -1786,7 +1786,7 @@
 <body>
 
 <div class="header">
-  <h1>📋 소재 수입검사 통합 관리 시스템 v3.1</h1>
+  <h1>📋 소재 수입검사 통합 관리 시스템 v3.2</h1>
   <div class="sub">(주)태진다이텍 | 품질관리팀</div>
   <div style="position:absolute; top:18px; right:20px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end; max-width:60%;">
     <div id="currentUserBadge" style="padding:5px 11px; background:rgba(255,255,255,0.25); border:1px solid rgba(255,255,255,0.4); border-radius:14px; font-size:11px; color:#fff; white-space:nowrap;" title="ESG 메인에서 로그인한 사용자">
@@ -3327,8 +3327,82 @@ function exportLog(){
     alert('내보낼 데이터가 없습니다. 검색 조건을 확인하세요.');
     return;
   }
-  const headers = ['입고일','재질','외관','두께SPEC','폭SPEC','실측두께','실측폭','입고량(KG)','검사수','불량(KG)','HEAT-NO','부적합내용','입고라벨','공급자판정','수요자판정','담당','부서장'];
-  const rows = data.map(d=>[d.date,d.material,d.appear,d.thick_spec,d.width_spec,d.thick,d.width,d.in_kg,d.count,d.bad_kg,d.heat,d.nc,d.label,d.supplier_judge||'',d.judge,d.charge,d.boss]);
+
+  // [v3.2] 기존 데이터 호환: 측정값 필드가 없는 log는 linked_cert_id로 cert를 찾아서 채움
+  const enriched = data.map(d => {
+    // 이미 측정값이 있으면 그대로
+    if (d.sup_r3_x1 !== undefined && d.cus_r3_x1 !== undefined) return d;
+    // 연결된 cert 찾기 (id 우선, 없으면 heat+date)
+    let cert = null;
+    if (d.linked_cert_id && Array.isArray(certData)) {
+      cert = certData.find(c => c.id === d.linked_cert_id);
+    }
+    if (!cert && Array.isArray(certData)) {
+      cert = certData.find(c => c.heat === d.heat && (c.recv_date === d.date || c.date === d.date));
+    }
+    if (!cert) return d;  // cert 없으면 빈 측정값으로
+    return {
+      ...d,
+      sup_r1_x1: cert.r1?.x1 || '', sup_r1_x2: cert.r1?.x2 || '', sup_r1_x3: cert.r1?.x3 || '', sup_r1_j: cert.r1?.j || '',
+      sup_r2_x1: cert.r2?.x1 || '', sup_r2_x2: cert.r2?.x2 || '', sup_r2_x3: cert.r2?.x3 || '', sup_r2_j: cert.r2?.j || '',
+      sup_r3_x1: cert.r3?.x1 || '', sup_r3_x2: cert.r3?.x2 || '', sup_r3_x3: cert.r3?.x3 || '', sup_r3_j: cert.r3?.j || '',
+      sup_r4_x1: cert.r4?.x1 || '', sup_r4_x2: cert.r4?.x2 || '', sup_r4_x3: cert.r4?.x3 || '', sup_r4_j: cert.r4?.j || '',
+      cus_r1_x1: cert.c_r1?.x1 || '', cus_r1_x2: cert.c_r1?.x2 || '', cus_r1_x3: cert.c_r1?.x3 || '', cus_r1_j: cert.c_r1?.j || '',
+      cus_r2_x1: cert.c_r2?.x1 || '', cus_r2_x2: cert.c_r2?.x2 || '', cus_r2_x3: cert.c_r2?.x3 || '', cus_r2_j: cert.c_r2?.j || '',
+      cus_r3_x1: cert.c_r3?.x1 || '', cus_r3_x2: cert.c_r3?.x2 || '', cus_r3_x3: cert.c_r3?.x3 || '', cus_r3_j: cert.c_r3?.j || '',
+      cus_r4_x1: cert.c_r4?.x1 || '', cus_r4_x2: cert.c_r4?.x2 || '', cus_r4_x3: cert.c_r4?.x3 || '', cus_r4_j: cert.c_r4?.j || '',
+      r1_spec: d.r1_spec || cert.r1_spec || cert.r1?.spec || '',
+      r2_spec: d.r2_spec || cert.r2_spec || cert.r2?.spec || '',
+      r3_spec: d.r3_spec || cert.r3_spec || cert.r3?.spec || '',
+      r4_spec: d.r4_spec || cert.r4_spec || cert.r4?.spec || '',
+      cert_no: d.cert_no || cert.cert_no || '',
+      lot: d.lot || cert.lot || '',
+      spec_size: d.spec_size || cert.spec_size || '',
+      cut: d.cut || cert.cut || '',
+      weight: d.weight || cert.weight || '',
+      recv_date: d.recv_date || cert.recv_date || '',
+      recv_charge: d.recv_charge || cert.recv_charge || '',
+      customer_sign: d.customer_sign || cert.customer_sign || '',
+      supplier_sign: d.supplier_sign || cert.supplier_sign || '',
+      supplier_charge: d.supplier_charge || cert.supplier_charge || ''
+    };
+  });
+
+  // [v3.2] 성적서 재구성 가능 수준의 컬럼 - 측정값 모두 포함
+  const headers = [
+    '입고일','재질','외관','두께SPEC','폭SPEC','실측두께','실측폭','입고량(KG)','검사수','불량(KG)','HEAT-NO','부적합내용','입고라벨','공급자판정','수요자판정','담당','부서장',
+    // 규격
+    '표면규격','재질규격','폭규격','두께규격',
+    // 공급자 측정값
+    '공급_표면1','공급_표면2','공급_표면3','공급_표면판정',
+    '공급_재질1','공급_재질2','공급_재질3','공급_재질판정',
+    '공급_폭1','공급_폭2','공급_폭3','공급_폭판정',
+    '공급_두께1','공급_두께2','공급_두께3','공급_두께판정',
+    // 수요자 측정값
+    '수요_표면1','수요_표면2','수요_표면3','수요_표면판정',
+    '수요_재질1','수요_재질2','수요_재질3','수요_재질판정',
+    '수요_폭1','수요_폭2','수요_폭3','수요_폭판정',
+    '수요_두께1','수요_두께2','수요_두께3','수요_두께판정',
+    // 성적서 추가 정보
+    '성적서번호','LOT','규격(SIZE)','재단','중량(원본)','입고일자','입고담당','수요자서명','공급자서명','공급자담당'
+  ];
+  const rows = enriched.map(d=>[
+    d.date,d.material,d.appear,d.thick_spec,d.width_spec,d.thick,d.width,d.in_kg,d.count,d.bad_kg,d.heat,d.nc,d.label,d.supplier_judge||'',d.judge,d.charge,d.boss,
+    // 규격
+    d.r1_spec||'',d.r2_spec||'',d.r3_spec||'',d.r4_spec||'',
+    // 공급자 측정값
+    d.sup_r1_x1||'',d.sup_r1_x2||'',d.sup_r1_x3||'',d.sup_r1_j||'',
+    d.sup_r2_x1||'',d.sup_r2_x2||'',d.sup_r2_x3||'',d.sup_r2_j||'',
+    d.sup_r3_x1||'',d.sup_r3_x2||'',d.sup_r3_x3||'',d.sup_r3_j||'',
+    d.sup_r4_x1||'',d.sup_r4_x2||'',d.sup_r4_x3||'',d.sup_r4_j||'',
+    // 수요자 측정값
+    d.cus_r1_x1||'',d.cus_r1_x2||'',d.cus_r1_x3||'',d.cus_r1_j||'',
+    d.cus_r2_x1||'',d.cus_r2_x2||'',d.cus_r2_x3||'',d.cus_r2_j||'',
+    d.cus_r3_x1||'',d.cus_r3_x2||'',d.cus_r3_x3||'',d.cus_r3_j||'',
+    d.cus_r4_x1||'',d.cus_r4_x2||'',d.cus_r4_x3||'',d.cus_r4_j||'',
+    // 성적서 추가 정보
+    d.cert_no||'',d.lot||'',d.spec_size||'',d.cut||'',d.weight||'',d.recv_date||'',d.recv_charge||'',d.customer_sign||'',d.supplier_sign||'',d.supplier_charge||''
+  ]);
   const today = (typeof getTodayKST === 'function') ? getTodayKST() : new Date().toISOString().split('T')[0];
   downloadCSV([headers,...rows], `검사이력_${today}.csv`);
 }
@@ -4588,11 +4662,39 @@ function syncCertToLog(cert){
     heat: cert.heat,
     nc: cert.remark || '',
     label: cert.label || '부착',
-    supplier_judge: cert.supplier_judge || 'OK',  // [v3.0] 공급자 판정
-    judge: cert.judge || 'OK',                     // 수요자(태진) 판정
+    supplier_judge: cert.supplier_judge || 'OK',
+    judge: cert.judge || 'OK',
     charge: cert.recv_charge || '',
     boss: cert.customer_sign || '',
-    linked_cert_id: cert.id || null  // 연결된 성적서 ID
+    linked_cert_id: cert.id || null,
+
+    // [v3.2] 성적서 생성 위해 측정값 모두 보존 (엑셀 백업만으로 성적서 재구성 가능)
+    // 공급자 측정값 (r1~r4의 x1/x2/x3 + 판정)
+    sup_r1_x1: cert.r1?.x1 || '', sup_r1_x2: cert.r1?.x2 || '', sup_r1_x3: cert.r1?.x3 || '', sup_r1_j: cert.r1?.j || '',
+    sup_r2_x1: cert.r2?.x1 || '', sup_r2_x2: cert.r2?.x2 || '', sup_r2_x3: cert.r2?.x3 || '', sup_r2_j: cert.r2?.j || '',
+    sup_r3_x1: cert.r3?.x1 || '', sup_r3_x2: cert.r3?.x2 || '', sup_r3_x3: cert.r3?.x3 || '', sup_r3_j: cert.r3?.j || '',
+    sup_r4_x1: cert.r4?.x1 || '', sup_r4_x2: cert.r4?.x2 || '', sup_r4_x3: cert.r4?.x3 || '', sup_r4_j: cert.r4?.j || '',
+    // 수요자 측정값 (c_r1~r4의 x1/x2/x3 + 판정)
+    cus_r1_x1: cert.c_r1?.x1 || '', cus_r1_x2: cert.c_r1?.x2 || '', cus_r1_x3: cert.c_r1?.x3 || '', cus_r1_j: cert.c_r1?.j || '',
+    cus_r2_x1: cert.c_r2?.x1 || '', cus_r2_x2: cert.c_r2?.x2 || '', cus_r2_x3: cert.c_r2?.x3 || '', cus_r2_j: cert.c_r2?.j || '',
+    cus_r3_x1: cert.c_r3?.x1 || '', cus_r3_x2: cert.c_r3?.x2 || '', cus_r3_x3: cert.c_r3?.x3 || '', cus_r3_j: cert.c_r3?.j || '',
+    cus_r4_x1: cert.c_r4?.x1 || '', cus_r4_x2: cert.c_r4?.x2 || '', cus_r4_x3: cert.c_r4?.x3 || '', cus_r4_j: cert.c_r4?.j || '',
+    // 규격(spec) - 공급자/수요자 동일하게 사용 (sync 됨)
+    r1_spec: cert.r1_spec || cert.r1?.spec || '',
+    r2_spec: cert.r2_spec || cert.r2?.spec || '',
+    r3_spec: cert.r3_spec || cert.r3?.spec || '',
+    r4_spec: cert.r4_spec || cert.r4?.spec || '',
+    // 그 외 성적서 필드
+    cert_no: cert.cert_no || '',
+    lot: cert.lot || '',
+    spec_size: cert.spec_size || '',
+    cut: cert.cut || '',
+    weight: cert.weight || '',
+    recv_date: cert.recv_date || '',
+    recv_charge: cert.recv_charge || '',
+    customer_sign: cert.customer_sign || '',
+    supplier_sign: cert.supplier_sign || '',
+    supplier_charge: cert.supplier_charge || ''
   };
 
   if (existingIdx >= 0) {
