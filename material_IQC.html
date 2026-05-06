@@ -3,7 +3,7 @@
 <html lang="ko"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>소재 수입검사 통합 관리 시스템 v2.8 | (주)태진다이텍</title>
+<title>소재 수입검사 통합 관리 시스템 v2.9 | (주)태진다이텍</title>
 <!-- PDF.js for 밀시트 자동 분석 -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>
@@ -1786,7 +1786,7 @@
 <body>
 
 <div class="header">
-  <h1>📋 소재 수입검사 통합 관리 시스템 v2.8</h1>
+  <h1>📋 소재 수입검사 통합 관리 시스템 v2.9</h1>
   <div class="sub">(주)태진다이텍 | 품질관리팀</div>
   <div style="position:absolute; top:18px; right:20px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end; max-width:60%;">
     <div id="currentUserBadge" style="padding:5px 11px; background:rgba(255,255,255,0.25); border:1px solid rgba(255,255,255,0.4); border-radius:14px; font-size:11px; color:#fff; white-space:nowrap;" title="ESG 메인에서 로그인한 사용자">
@@ -3116,11 +3116,37 @@ function renderLog(){
 
   const tbody = document.getElementById('logBody');
   if (data.length === 0){
-    tbody.innerHTML = `<tr><td colspan="17" style="padding:50px 30px; text-align:center; color:#64748b;">
-      <div style="font-size:48px; margin-bottom:15px; opacity:0.4;">📒</div>
-      <div style="font-size:14px; margin-bottom:10px;">관리대장 데이터가 없습니다.</div>
-      <div style="font-size:11px; color:#94a3b8; margin-bottom:15px;">데이터는 Supabase의 material_log 테이블에서 자동 조회됩니다</div>
-      <button onclick="loadLogFromSupabase().then(()=>alert('✅ 다시 조회했습니다'))" style="padding:6px 14px; background:#3b82f6; color:white; border:none; border-radius:5px; font-size:12px; cursor:pointer;">🔄 Supabase 다시 조회</button>
+    // [v2.9] 진단 정보 - 왜 비어있는지 사용자에게 알려주기
+    const totalLogs = (logData||[]).length;
+    const completedCerts = (certData||[]).filter(c=>{
+      const j=String(c.judge||'').trim();
+      return (j==='OK'||j==='NG') && c.recv_date;
+    }).length;
+    const filterActive = !!(fMat||fJudge||fText||fDateFrom||fDateTo);
+    const orphanCerts = (certData||[]).filter(c=>{
+      const j=String(c.judge||'').trim();
+      if(!(j==='OK'||j==='NG'))return false;
+      if(!c.recv_date)return false;
+      // 같은 heat+recv_date인 logData 항목이 있는지
+      return !logData.some(l=>l.heat===c.heat && l.date===c.recv_date);
+    }).length;
+    
+    tbody.innerHTML = `<tr><td colspan="17" style="padding:30px 20px; text-align:center; color:#64748b;">
+      <div style="font-size:48px; margin-bottom:10px; opacity:0.4;">📒</div>
+      <div style="font-size:14px; margin-bottom:8px;">${filterActive?'필터 조건에 맞는 데이터가 없습니다':'관리대장 데이터가 없습니다'}</div>
+      <div style="display:inline-block; margin:12px auto; padding:12px 20px; background:#f8fafc; border:1px dashed #cbd5e1; border-radius:8px; font-size:11px; color:#64748b; text-align:left; line-height:1.7;">
+        🔍 <b>진단 정보</b><br>
+        • 전체 관리대장: <b>${totalLogs}건</b>${filterActive?' (필터 적용 후 0건)':''}<br>
+        • 검사완료 성적서: <b>${completedCerts}건</b><br>
+        ${orphanCerts>0?`• <span style="color:#dc2626; font-weight:700;">⚠ 관리대장 미반영 성적서: ${orphanCerts}건</span><br>`:''}
+        ${filterActive?'• 현재 필터: '+(fDateFrom?'시작일='+fDateFrom+' ':'')+(fDateTo?'종료일='+fDateTo+' ':'')+(fMat?'재질='+fMat+' ':'')+(fJudge?'판정='+fJudge+' ':'')+(fText?'검색="'+fText+'"':'')+'<br>':''}
+        • Supabase 자동 조회: 페이지 로드 + 5분마다
+      </div>
+      <div style="margin-top:14px; display:flex; gap:8px; justify-content:center; flex-wrap:wrap;">
+        ${filterActive?`<button onclick="document.getElementById('filterDateFrom').value='';document.getElementById('filterDateTo').value='';document.getElementById('filterMat').value='';document.getElementById('filterJudge').value='';document.getElementById('filterText').value='';renderLog();" style="padding:8px 16px; background:#64748b; color:white; border:none; border-radius:5px; font-size:12px; cursor:pointer; font-weight:600;">🔄 필터 초기화</button>`:''}
+        <button onclick="loadLogFromSupabase().then(()=>{alert('✅ Supabase에서 다시 조회했습니다');renderLog();})" style="padding:8px 16px; background:#3b82f6; color:white; border:none; border-radius:5px; font-size:12px; cursor:pointer; font-weight:600;">🔄 Supabase 다시 조회</button>
+        ${orphanCerts>0?`<button onclick="recoverOrphanCertsToLog()" style="padding:8px 16px; background:#dc2626; color:white; border:none; border-radius:5px; font-size:12px; cursor:pointer; font-weight:700;">🚑 미반영 ${orphanCerts}건 강제 동기화</button>`:''}
+      </div>
     </td></tr>`;
     return;
   }
@@ -6304,17 +6330,88 @@ async function loadLogFromSupabase(){
       console.error('[LOG] material_log 조회 실패:',r.status);return;
     }
     const remoteLogs=await r.json();
+    // [v2.9] dirty 보호: 로컬에서 방금 검사완료한 항목이 서버 pull로 사라지지 않도록
+    const serverIds = new Set((remoteLogs||[]).map(r=>r.id).filter(Boolean));
+    const preservedLocal = (logData||[]).filter(d=>{
+      if(!d.id)return true;  // id 없는 신규 항목 보존
+      if(typeof isLogDirty==='function' && isLogDirty(d.id))return true;  // dirty 보호
+      if(!serverIds.has(d.id))return true;  // 서버에 아직 없으면 보존
+      return false;
+    });
     if(!remoteLogs||!remoteLogs.length){
-      logData=[];
+      // 서버 0건 + 로컬에 보존할 것 있으면 보존
+      if(preservedLocal.length){
+        logData = preservedLocal;
+        if(typeof saveLogToLS==='function')saveLogToLS();
+        console.log('[LOG v2.9] 서버 0건 / 로컬 dirty 보존:',preservedLocal.length+'건');
+      }else{
+        logData=[];
+      }
       if(typeof renderLog==='function')renderLog();
+      // 자동 복구 시도
+      setTimeout(autoRecoverOrphanCerts, 800);
       return;
     }
-    // 기존 logData 대체 (DB가 진실의 원천)
-    logData=remoteLogs;
+    // 서버 + 로컬 dirty 머지
+    const merged = [...remoteLogs];
+    preservedLocal.forEach(local=>{
+      const idx = merged.findIndex(m=>m.id===local.id);
+      if(idx>=0)merged[idx]=local;  // dirty 우선
+      else merged.push(local);
+    });
+    logData = merged;
     if(typeof saveLogToLS==='function')saveLogToLS();
     if(typeof renderLog==='function')renderLog();
+    // [v2.9] 검사완료된 성적서 중 logData에 없는 항목 자동 복구
+    setTimeout(autoRecoverOrphanCerts, 800);
   }catch(e){
   }
+}
+
+// [v2.9] 검사완료된 성적서 중 관리대장에 미반영된 항목을 자동으로 추가
+async function autoRecoverOrphanCerts(){
+  if(!certData||!certData.length)return;
+  const orphans=certData.filter(c=>{
+    const j=String(c.judge||'').trim();
+    if(!(j==='OK'||j==='NG'))return false;
+    if(!c.recv_date)return false;
+    return !logData.some(l=>l.heat===c.heat && l.date===c.recv_date);
+  });
+  if(!orphans.length)return;
+  console.log('[LOG v2.9] 자동 복구 대상:',orphans.length+'건');
+  for(const c of orphans){
+    try{
+      if(typeof syncCertToLog==='function')syncCertToLog(c);
+    }catch(e){console.warn('자동 복구 실패:',c.heat,e);}
+  }
+  if(typeof renderLog==='function')renderLog();
+}
+
+// [v2.9] 사용자가 명시적으로 누른 강제 동기화
+async function recoverOrphanCertsToLog(){
+  if(!certData||!certData.length){alert('성적서 데이터가 없습니다');return;}
+  const orphans=certData.filter(c=>{
+    const j=String(c.judge||'').trim();
+    if(!(j==='OK'||j==='NG'))return false;
+    if(!c.recv_date)return false;
+    return !logData.some(l=>l.heat===c.heat && l.date===c.recv_date);
+  });
+  if(!orphans.length){alert('미반영 성적서가 없습니다');return;}
+  if(!confirm(`${orphans.length}건을 관리대장에 강제 추가합니다.\n\n이 작업은 검사완료된 성적서를 관리대장 테이블(material_log)에 등록합니다.\n진행하시겠습니까?`))return;
+  let ok=0, fail=0;
+  for(const c of orphans){
+    try{
+      syncCertToLog(c);
+      ok++;
+    }catch(e){
+      fail++;
+      console.error('복구 실패:',c.heat,e);
+    }
+  }
+  // 서버 재조회로 검증
+  await new Promise(r=>setTimeout(r,1500));
+  await loadLogFromSupabase();
+  alert(`✅ 복구 완료\n• 성공: ${ok}건\n• 실패: ${fail}건\n\n잠시 후 화면이 자동 갱신됩니다.`);
 }
 
 // 페이지 진입 시 + 5분마다 재조회
