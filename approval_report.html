@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>📋 보고서 결재 v3.0</title>
+<title>📋 보고서 결재 v3.1</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;900&display=swap">
 <style>
   :root {
@@ -187,7 +187,7 @@
 <div class="hdr">
   <h1>📋 보고서 결재</h1>
   <p>점검표 통합 월별 결재 시스템 · 4단계 (작성·검토·확인·승인)</p>
-  <div class="v">v3.0 · multi-template approval</div>
+  <div class="v">v3.1 · multi-template approval (data fallback)</div>
   <div id="hdrUserBadge" class="user-badge" style="display:none">👤 -</div>
 </div>
 
@@ -888,22 +888,60 @@ async function openReport(id){
     // 점검표 메타데이터
     currentTemplate = templateCache.find(t=>t.code===currentReport.template_code) || {};
 
-    // 점검 원본 데이터 (RPC로 동적 조회)
-    try{
-      currentChecks = await sbRpc('get_monthly_check_data',{
-        p_template_code: currentReport.template_code,
-        p_year: currentReport.target_year,
-        p_month: currentReport.target_month
-      }) || [];
-    }catch(e){
-      currentChecks = [];
-    }
-    if(!Array.isArray(currentChecks)) currentChecks = [];
+    // 점검 원본 데이터 로딩 - 1차: RPC, 2차: 폴백 직접 SELECT
+    currentChecks = await loadCheckData(currentReport, currentTemplate);
+    console.log(`[openReport] 점검데이터 ${currentChecks.length}건 로드`, currentChecks.slice(0,3));
 
     renderPaperReport();
     document.getElementById('tabReport').style.display='';
     swTab(2);
   }catch(e){ alert('열기 실패: '+e.message); }
+}
+
+// 점검 원본 데이터 로딩 (RPC 우선, 실패 시 직접 테이블 조회)
+async function loadCheckData(report, tpl){
+  const y = report.target_year, m = report.target_month;
+  const d1 = `${y}-${String(m).padStart(2,'0')}-01`;
+  const nm = m==12 ? 1 : m+1, ny = m==12 ? y+1 : y;
+  const d2 = `${ny}-${String(nm).padStart(2,'0')}-01`;
+
+  // 1차: RPC 시도
+  try{
+    const rows = await sbRpc('get_monthly_check_data',{
+      p_template_code: report.template_code,
+      p_year: y, p_month: m
+    });
+    if(Array.isArray(rows) && rows.length>0){
+      console.log('[loadCheckData] RPC 성공:', rows.length+'건');
+      return rows;
+    }
+    console.warn('[loadCheckData] RPC 빈 결과 → 직접 SELECT 폴백');
+  }catch(e){
+    console.warn('[loadCheckData] RPC 실패 → 폴백:', e.message);
+  }
+
+  // 2차: 폴백 - 원본 테이블 직접 조회
+  const srcTable = tpl.source_table || 'p_machine_check';
+  const dateCol  = tpl.date_col || 'check_date';
+  try{
+    const rows = await sbSelect(srcTable,
+      `select=*&${dateCol}=gte.${d1}&${dateCol}=lt.${d2}&order=${dateCol}.asc&limit=5000`);
+    if(!Array.isArray(rows)){ console.warn('[loadCheckData] 폴백 응답 비배열'); return []; }
+    console.log('[loadCheckData] 폴백 성공:', rows.length+'건');
+    // RPC 결과와 동일한 형태로 변환
+    return rows.map(r=>({
+      check_date: r[dateCol],
+      machine:    r[tpl.machine_col || 'machine'] || '-',
+      inspector:  r[tpl.inspector_col || 'inspector'] || '-',
+      result:     r[tpl.result_col || 'result'] || '',
+      ng_count:   r[tpl.ng_count_col || 'ng_count'] || 0,
+      memo:       r[tpl.memo_col || 'memo'] || '',
+      raw_row:    r
+    }));
+  }catch(e){
+    console.error('[loadCheckData] 폴백도 실패:', e.message);
+    return [];
+  }
 }
 
 function closeReport(){
@@ -946,7 +984,16 @@ function renderPaperReport(){
 
   let mtxBody = '';
   if(machines.length===0){
-    mtxBody = `<tr><td colspan="${daysInMonth+3}" style="padding:18px;color:#94a3b8;text-align:center">해당 월 점검 데이터가 없습니다</td></tr>`;
+    // 진단 메시지: 데이터가 0건인지 / 데이터는 있는데 machine 컬럼이 비었는지 구분
+    const totalRows = currentChecks.length;
+    const noMachine = currentChecks.filter(c=>!c.machine || c.machine==='-').length;
+    let diag = '해당 월 점검 데이터가 없습니다';
+    if(totalRows>0){
+      diag = `점검 데이터는 ${totalRows}건 있지만 호기(설비) 정보가 없어 매트릭스에 표시할 수 없습니다.<br>
+        <span style="font-size:10px">(machine 컬럼 누락: ${noMachine}/${totalRows})<br>
+        ⚙ 설정 탭에서 점검표의 'machine_col' 설정을 확인하거나 원본 테이블에 호기 데이터가 있는지 확인하세요.</span>`;
+    }
+    mtxBody = `<tr><td colspan="${daysInMonth+3}" style="padding:18px;color:#94a3b8;text-align:center;line-height:1.6">${diag}</td></tr>`;
   }else{
     machines.forEach(m=>{
       let row = `<tr><td class="mc">${m}</td>`;
