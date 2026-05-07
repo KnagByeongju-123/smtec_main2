@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>📋 보고서 결재 v3.1</title>
+<title>📋 보고서 결재 v3.3</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;900&display=swap">
 <style>
   :root {
@@ -185,9 +185,9 @@
 <body>
 
 <div class="hdr">
-  <h1>📋 보고서 결재 v3.1</h1>
+  <h1>📋 보고서 결재 v3.3</h1>
   <p>점검표 통합 월별 결재 시스템 · 4단계 (작성·검토·확인·승인)</p>
-  <div class="v">v3.1 · multi-template approval (data fallback)</div>
+  <div class="v">v3.3 · 호기/결과 컬럼 자동 탐지 (출하공정 등 다양한 점검표 호환)</div>
   <div id="hdrUserBadge" class="user-badge" style="display:none">👤 -</div>
 </div>
 
@@ -379,13 +379,14 @@
 
   <!-- 결재선 마스터 -->
   <div class="card">
-    <div class="card-title">📋 점검표별 결재선 등록</div>
+    <div class="card-title">📋 점검표별 결재선 + HTML 경로 등록</div>
     <div style="font-size:11px;color:var(--text2);margin-bottom:12px;line-height:1.6">
-      점검표마다 4단계(작성·검토·확인·승인) 담당자를 등록하세요.<br>
-      보고서 작성 시 자동으로 이 결재선이 적용됩니다.
+      점검표마다 다음 항목을 등록하세요:<br>
+      &nbsp;&nbsp;• <b style="color:var(--info)">📄 HTML 파일 경로</b> — 점검표 페이지 URL (보고서에서 바로가기 링크로 사용)<br>
+      &nbsp;&nbsp;• <b style="color:var(--accent)">4단계 결재자</b> — 작성·검토·확인·승인 PIN/이름 (보고서 작성 시 자동 적용)
     </div>
     <div id="routeList"></div>
-    <button class="btn btn-pri btn-block" style="margin-top:8px" onclick="saveAllRoutes()">💾 모든 결재선 저장</button>
+    <button class="btn btn-pri btn-block" style="margin-top:8px" onclick="saveAllRoutes()">💾 모든 설정 저장 (URL + 결재선)</button>
   </div>
 
   <details style="margin-bottom:12px">
@@ -714,6 +715,15 @@ function renderRouteList(){
         <div class="route-card-name">${ico} ${t.name}</div>
         <div style="font-size:10px;color:var(--text3)">${t.code}</div>
       </div>
+      <!-- HTML URL 입력 -->
+      <div style="margin-bottom:10px;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px">
+        <div style="font-size:10px;color:var(--text3);font-weight:700;margin-bottom:4px">📄 점검표 HTML 파일 (URL 또는 파일명)</div>
+        <input type="text" data-code="${t.code}" data-tpl-field="source_url"
+               placeholder="예: P_machine_check.html  또는  https://.../P_machine_check.html"
+               value="${t.source_url||''}"
+               style="font-size:11px;padding:6px 8px">
+        ${t.source_url ? `<div style="margin-top:4px"><a href="${t.source_url}" target="_blank" style="font-size:10px;color:var(--info)">🔗 미리보기 →</a></div>` : ''}
+      </div>
       <div class="route-card-grid">
         ${[1,2,3,4].map(s=>`
           <div class="route-step">
@@ -732,28 +742,40 @@ function renderRouteList(){
 
 async function saveAllRoutes(){
   if(!isCfg()){ alert('Supabase 미설정'); return; }
-  // 모든 input 값 수집
-  const data = {};
-  document.querySelectorAll('#routeList input').forEach(inp=>{
+  // 결재선(route) 데이터 수집
+  const routeData = {};
+  document.querySelectorAll('#routeList input[data-step]').forEach(inp=>{
     const code = inp.dataset.code, step = inp.dataset.step, field = inp.dataset.field;
-    if(!data[code]) data[code] = {};
-    data[code][`step${step}_${field}`] = inp.value.trim() || null;
+    if(!routeData[code]) routeData[code] = {};
+    routeData[code][`step${step}_${field}`] = inp.value.trim() || null;
+  });
+  // 점검표(template) URL 등 수집
+  const tplData = {};
+  document.querySelectorAll('#routeList input[data-tpl-field]').forEach(inp=>{
+    const code = inp.dataset.code, field = inp.dataset.tplField;
+    if(!tplData[code]) tplData[code] = {};
+    tplData[code][field] = inp.value.trim() || null;
   });
 
   try{
     let saved = 0;
-    for(const code in data){
-      // upsert (template_code 유니크)
+    // 결재선 upsert
+    for(const code in routeData){
       const exists = routeCache.find(r=>r.template_code===code);
       if(exists){
         await sbUpdate('p_check_approval_route', `template_code=eq.${encodeURIComponent(code)}`, 
-          {...data[code], updated_at: new Date().toISOString()});
+          {...routeData[code], updated_at: new Date().toISOString()});
       }else{
-        await sbInsert('p_check_approval_route', {template_code: code, ...data[code]});
+        await sbInsert('p_check_approval_route', {template_code: code, ...routeData[code]});
       }
       saved++;
     }
-    alert(`✅ 결재선 ${saved}개 점검표 저장 완료`);
+    // 점검표 source_url 업데이트
+    for(const code in tplData){
+      await sbUpdate('p_check_template', `code=eq.${encodeURIComponent(code)}`, tplData[code]);
+    }
+    alert(`✅ 결재선 ${saved}개 + 점검표 URL 저장 완료`);
+    await loadTemplates();
     await loadRoutes();
   }catch(e){ alert('저장 실패: '+e.message); }
 }
@@ -912,8 +934,11 @@ async function loadCheckData(report, tpl){
       p_year: y, p_month: m
     });
     if(Array.isArray(rows) && rows.length>0){
-      console.log('[loadCheckData] RPC 성공:', rows.length+'건');
-      return rows;
+      // 호기 정보가 비어있으면 raw_row에서 자동 탐지
+      const fixed = rows.map(r => ({...r, machine: pickMachine(r.machine, r.raw_row)}));
+      const okMachineCount = fixed.filter(r => r.machine && r.machine !== '-').length;
+      console.log(`[loadCheckData] RPC 성공: ${rows.length}건 (호기 식별: ${okMachineCount}건)`);
+      return fixed;
     }
     console.warn('[loadCheckData] RPC 빈 결과 → 직접 SELECT 폴백');
   }catch(e){
@@ -928,20 +953,52 @@ async function loadCheckData(report, tpl){
       `select=*&${dateCol}=gte.${d1}&${dateCol}=lt.${d2}&order=${dateCol}.asc&limit=5000`);
     if(!Array.isArray(rows)){ console.warn('[loadCheckData] 폴백 응답 비배열'); return []; }
     console.log('[loadCheckData] 폴백 성공:', rows.length+'건');
-    // RPC 결과와 동일한 형태로 변환
+    // RPC 결과와 동일 형태로 변환 + 호기/결과 자동 탐지
     return rows.map(r=>({
       check_date: r[dateCol],
-      machine:    r[tpl.machine_col || 'machine'] || '-',
-      inspector:  r[tpl.inspector_col || 'inspector'] || '-',
-      result:     r[tpl.result_col || 'result'] || '',
+      machine:    pickMachine(r[tpl.machine_col || 'machine'], r),
+      inspector:  r[tpl.inspector_col || 'inspector'] || r.checker || r.worker || '-',
+      result:     pickResult(r[tpl.result_col || 'result'], r),
       ng_count:   r[tpl.ng_count_col || 'ng_count'] || 0,
-      memo:       r[tpl.memo_col || 'memo'] || '',
+      memo:       r[tpl.memo_col || 'memo'] || r.note || '',
       raw_row:    r
     }));
   }catch(e){
     console.error('[loadCheckData] 폴백도 실패:', e.message);
     return [];
   }
+}
+
+// 호기/설비/라인 식별: 우선순위대로 raw_row에서 첫 비어있지 않은 값 사용
+//  ① 마스터에서 받은 값  ② machine  ③ machine_name  ④ equipment_name
+//  ⑤ line  ⑥ machine_code  ⑦ equip_no  ⑧ resource_code
+function pickMachine(primary, raw){
+  if(primary && String(primary).trim() && primary !== '-') return String(primary).trim();
+  if(!raw || typeof raw !== 'object') return '-';
+  const candidates = ['machine','machine_name','equipment_name','equipment',
+                      'line','line_name','machine_code','equip_no','resource_code',
+                      'press_no','machine_no','line_no'];
+  for(const k of candidates){
+    if(raw[k] != null && String(raw[k]).trim() !== ''){
+      return String(raw[k]).trim();
+    }
+  }
+  return '-';
+}
+
+// 결과 판정: result 컬럼 없으면 raw_row의 chk_* 컬럼들 중 하나라도 NG면 NG
+function pickResult(primary, raw){
+  if(primary && (primary==='OK' || primary==='NG')) return primary;
+  if(!raw || typeof raw !== 'object') return '';
+  // ng_count, bad_count 등이 있으면
+  const ngCnt = raw.ng_count ?? raw.bad_count ?? raw.fail_count ?? 0;
+  if(typeof ngCnt === 'number' && ngCnt > 0) return 'NG';
+  // chk_* 항목들 중 NG 있으면
+  for(const k of Object.keys(raw)){
+    if(k.startsWith('chk_') && raw[k] === 'NG') return 'NG';
+  }
+  // 그래도 없으면 OK로 (점검은 했으니까)
+  return primary || 'OK';
 }
 
 function closeReport(){
@@ -1063,10 +1120,20 @@ function renderPaperReport(){
 
   const okRate = r.total_performed>0 ? ((r.ok_count*100/r.total_performed).toFixed(1)) : '0.0';
   const ico = TPL_ICONS[r.template_code]||'📋';
+  const sourceUrl = (tpl && tpl.source_url) ? tpl.source_url : '';
+
+  // 점검표 바로가기 버튼 (보고서 작성/검토 시 원본 점검표 페이지 새 탭 열기)
+  const sourceBtn = sourceUrl
+    ? `<a href="${sourceUrl}" target="_blank" rel="noopener"
+         class="no-print"
+         style="display:inline-block;padding:5px 12px;background:#1e40af;color:#fff;text-decoration:none;border-radius:4px;font-size:11px;font-weight:700;margin-left:8px">
+         🔗 점검표 바로가기
+       </a>`
+    : '';
 
   const html = `
     <div class="paper-wrap" id="paperContent">
-      <div class="paper-title">${ico} ${r.template_name || r.template_code} 월간 결과 보고서</div>
+      <div class="paper-title">${ico} ${r.template_name || r.template_code} 월간 결과 보고서${sourceBtn}</div>
       <div class="paper-sub">${r.target_year}년 ${r.target_month}월</div>
       ${rejectedHtml}
 
@@ -1188,7 +1255,13 @@ async function recalcStats(){
       p_month: currentReport.target_month
     });
     await openReport(currentReport.id);
-    alert('통계 재계산 완료');
+    // 진단 정보 포함 알림
+    const total = currentChecks.length;
+    const withMachine = currentChecks.filter(c=>c.machine && c.machine!=='-').length;
+    const ngs = currentChecks.filter(c=>c.result==='NG').length;
+    alert(`✅ 통계 재계산 완료\n\n점검 데이터: ${total}건\n호기 식별: ${withMachine}건\nNG: ${ngs}건\n\n` +
+          (total===0 ? '⚠ 원본 테이블에 데이터가 없거나 컬럼 매핑이 다를 수 있습니다. F12 콘솔을 확인하세요.' : '') +
+          (total>0 && withMachine===0 ? '\n⚠ 호기 정보를 못 찾았습니다. ⚙ 설정에서 machine_col 확인 필요' : ''));
   }catch(e){ alert('재계산 실패: '+e.message); }
 }
 
