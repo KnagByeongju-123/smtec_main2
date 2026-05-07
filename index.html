@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>ESG Smart Factory v3.1</title>
+<title>ESG Smart Factory v3.2</title>
 <meta name="theme-color" content="#0f172a">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -195,7 +195,7 @@ body.locked{overflow:hidden}
 </div>
 
 <div class="cat-list" id="catList"></div>
-<div class="footer">ESG Smart Factory v3.1</div>
+<div class="footer">ESG Smart Factory v3.2</div>
 
 <canvas id="analysisCv" style="display:none"></canvas>
 <div class="toast" id="toast"></div>
@@ -869,6 +869,23 @@ function todayKstStr(){
   return p.year+'-'+p.month+'-'+p.day;
 }
 
+/* 호기번호만 추출 (제조사/톤수 무시)
+ * 입력 예시:
+ *   "4호기 심팩150톤"  → "4"
+ *   "04_150"           → "4"
+ *   "4_150"            → "4"
+ *   "04호기"           → "4"
+ *   "1호기 쌍용200톤"  → "1"
+ * 같은 호기번호면 동일 설비로 판단 (메이커/톤수 다른 표기 무관)
+ */
+function extractHoNum(raw){
+  if(!raw)return '';
+  const s=String(raw).trim();
+  /* 앞에서부터 0 패딩 무시한 첫 숫자 추출 */
+  const m=s.match(/^0*(\d+)/);
+  return m?m[1]:'';
+}
+
 async function checkPendingMachineChecks(silent){
   try{
     /* 0) 로그인한 본인 이름 확인 - 없으면 알림 안 함 */
@@ -884,18 +901,24 @@ async function checkPendingMachineChecks(silent){
     );
     if(!machines||!machines.length){ updateCheckBadge(0); return; }
 
-    /* 2) 오늘 점검 이력 조회 — 본인이 점검한 것만 */
+    /* 2) 오늘 점검 이력 조회 - 호기번호만 추출해 비교
+          (제조사/톤수 표기가 달라도 같은 호기는 매칭) */
     const today=todayKstStr();
     const checks=await checkSbReq(
       "p_machine_check?select=machine&check_date=eq."+today
     );
-    const checkedSet=new Set((checks||[]).map(c=>String(c.machine||'').trim()));
+    /* 점검된 호기번호 집합 - "4호기 심팩150톤" → "4" */
+    const checkedHoSet=new Set();
+    (checks||[]).forEach(c=>{
+      const ho=extractHoNum(c.machine);
+      if(ho)checkedHoSet.add(ho);
+    });
 
-    /* 3) 본인 담당 가동중 설비 중 오늘 점검 안된 것 */
+    /* 3) 본인 담당 가동중 설비 중 호기번호 기준으로 오늘 점검 안된 것 */
     const pending=machines.filter(m=>{
-      const name=String(m.machine_name||'').trim();
-      if(!name)return false;
-      return !checkedSet.has(name);
+      const ho=extractHoNum(m.machine_name);
+      if(!ho)return false;
+      return !checkedHoSet.has(ho);
     });
 
     updateCheckBadge(pending.length);
