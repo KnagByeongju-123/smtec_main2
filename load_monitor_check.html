@@ -6,7 +6,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<title>로드모니터 하중 일일점검 v8.7</title>
+<title>로드모니터 하중 일일점검 v8.8</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
@@ -145,7 +145,7 @@ table.hist tr:hover{background:#f0f7ff}
 <div class="hdr">
   <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
     <div>
-      <h1>📊 로드모니터 하중 일일점검 <span class="rev-badge">Rev. 8.7</span> <span class="rev-badge" style="background:rgba(255,193,7,.3);cursor:pointer" onclick="window._npDebug=!window._npDebug;alert('진단 모드: '+(window._npDebug?'ON':'OFF'))" title="진단 모드 토글">🔍</span></h1>
+      <h1>📊 로드모니터 하중 일일점검 <span class="rev-badge">Rev. 8.8</span> <span class="rev-badge" style="background:rgba(255,193,7,.3);cursor:pointer" onclick="window._npDebug=!window._npDebug;alert('진단 모드: '+(window._npDebug?'ON':'OFF'))" title="진단 모드 토글">🔍</span></h1>
       <p>프레스 Smart Load Monitor · 하루 3회 측정 (08:30 / 13:30 / 16:30)</p>
     </div>
     <div id="hdrInspector" style="background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.35);color:#fff;padding:8px 12px;border-radius:10px;font-size:12px;font-weight:600;white-space:nowrap;display:flex;align-items:center;gap:6px;backdrop-filter:blur(4px);min-width:fit-content;flex-shrink:0">
@@ -424,8 +424,25 @@ CREATE TABLE IF NOT EXISTS public.load_monitor_check (
   UNIQUE(check_date, machine_code)
 );
 
--- 기존 테이블 마이그레이션 (customer 컬럼 누락 시 자동 추가)
+-- 기존 테이블 마이그레이션 (컬럼 누락 시 자동 추가) [v8.8]
 ALTER TABLE public.load_monitor_check ADD COLUMN IF NOT EXISTS customer TEXT;
+ALTER TABLE public.load_monitor_check ADD COLUMN IF NOT EXISTS machine_name TEXT;
+ALTER TABLE public.load_monitor_check ADD COLUMN IF NOT EXISTS item_code TEXT;
+ALTER TABLE public.load_monitor_check ADD COLUMN IF NOT EXISTS inspector TEXT;
+ALTER TABLE public.load_monitor_check ADD COLUMN IF NOT EXISTS daily_shot INTEGER;
+ALTER TABLE public.load_monitor_check ADD COLUMN IF NOT EXISTS memo TEXT;
+ALTER TABLE public.load_monitor_check ADD COLUMN IF NOT EXISTS enter_by TEXT;
+ALTER TABLE public.load_monitor_check ADD COLUMN IF NOT EXISTS enter_date TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE public.load_monitor_check ADD COLUMN IF NOT EXISTS modify_date TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE public.load_monitor_check ADD COLUMN IF NOT EXISTS t0830_total NUMERIC(8,2);
+ALTER TABLE public.load_monitor_check ADD COLUMN IF NOT EXISTS t0830_ch1 NUMERIC(8,2);
+ALTER TABLE public.load_monitor_check ADD COLUMN IF NOT EXISTS t0830_ch2 NUMERIC(8,2);
+ALTER TABLE public.load_monitor_check ADD COLUMN IF NOT EXISTS t1330_total NUMERIC(8,2);
+ALTER TABLE public.load_monitor_check ADD COLUMN IF NOT EXISTS t1330_ch1 NUMERIC(8,2);
+ALTER TABLE public.load_monitor_check ADD COLUMN IF NOT EXISTS t1330_ch2 NUMERIC(8,2);
+ALTER TABLE public.load_monitor_check ADD COLUMN IF NOT EXISTS t1630_total NUMERIC(8,2);
+ALTER TABLE public.load_monitor_check ADD COLUMN IF NOT EXISTS t1630_ch1 NUMERIC(8,2);
+ALTER TABLE public.load_monitor_check ADD COLUMN IF NOT EXISTS t1630_ch2 NUMERIC(8,2);
 
 CREATE INDEX IF NOT EXISTS idx_lmc_date ON public.load_monitor_check(check_date DESC);
 CREATE INDEX IF NOT EXISTS idx_lmc_machine ON public.load_monitor_check(machine_code);
@@ -1068,13 +1085,31 @@ function initDates(){
 }
 
 function kstToday(){
-  const now=new Date();
-  const kst=new Date(now.getTime()+9*3600000-now.getTimezoneOffset()*60000);
-  return kst.toISOString().slice(0,10);
+  // [v8.8] KST 정확 계산: ko-KR + Asia/Seoul (브라우저 timezone 무관)
+  // 이전 식 `now+9h - timezoneOffset`은 한국 폰에서 18시간 더해져 다음날로 넘어가는 버그
+  try{
+    const fmt=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit'});
+    return fmt.format(new Date());  // "2026-05-07"
+  }catch(e){
+    // Intl 지원 안되는 구형 폰 fallback
+    const now=new Date();
+    const utc=now.getTime()+now.getTimezoneOffset()*60000;
+    const kst=new Date(utc+9*3600000);
+    const y=kst.getFullYear(), m=String(kst.getMonth()+1).padStart(2,'0'), d=String(kst.getDate()).padStart(2,'0');
+    return `${y}-${m}-${d}`;
+  }
 }
 function fmtDate(d){
-  const kst=new Date(d.getTime()+9*3600000-d.getTimezoneOffset()*60000);
-  return kst.toISOString().slice(0,10);
+  // [v8.8] 임의 Date 객체를 KST 기준 YYYY-MM-DD로
+  try{
+    const fmt=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit'});
+    return fmt.format(d);
+  }catch(e){
+    const utc=d.getTime()+d.getTimezoneOffset()*60000;
+    const kst=new Date(utc+9*3600000);
+    const y=kst.getFullYear(), m=String(kst.getMonth()+1).padStart(2,'0'), dd=String(kst.getDate()).padStart(2,'0');
+    return `${y}-${m}-${dd}`;
+  }
 }
 
 /* ============ 탭 ============ */
@@ -1516,24 +1551,46 @@ async function saveCheck(){
     });
   });
 
-  // upsert 실행: customer 컬럼이 없으면 자동으로 빼고 재시도
+  // upsert 실행: 컬럼이 없으면 자동으로 빼고 재시도 (최대 5회, 어떤 컬럼이든 처리)
   async function tryUpsert(rowData){
     return await supa.from('load_monitor_check').upsert(rowData,{onConflict:'check_date,machine_code'});
   }
+  
+  // [v8.8] PGRST204 에러 메시지에서 누락 컬럼명 추출
+  function extractMissingColumn(err){
+    if(!err)return null;
+    const msg=String(err.message||'')+' '+String(err.details||'')+' '+String(err.hint||'');
+    // "Could not find the 'XXX' column" / "column XXX of relation" / "column \"XXX\""
+    let m=msg.match(/['"]([a-z_][a-z0-9_]*)['"][^'"]*column/i);
+    if(m)return m[1];
+    m=msg.match(/column[^a-z]+['"]?([a-z_][a-z0-9_]*)['"]?/i);
+    if(m)return m[1];
+    return null;
+  }
 
   try{
-    let {error}=await tryUpsert(row);
-    // customer 컬럼 누락 (PGRST204) → customer 빼고 재시도
-    if(error && (error.code==='PGRST204' || /column.*customer/i.test(error.message||''))){
-      console.warn('[저장] customer 컬럼 없음 → 빼고 재시도');
-      delete row.customer;
-      const r2=await tryUpsert(row);
-      error=r2.error;
-      if(!error){
-        toast('⚠ DB customer 컬럼 누락 - 관리자 문의','err');
+    let r=await tryUpsert(row);
+    let droppedCols=[];
+    let attempts=0;
+    while(r.error && attempts<5){
+      const isMissingCol = r.error.code==='PGRST204' || /column/i.test(r.error.message||'');
+      if(!isMissingCol)break;
+      const col=extractMissingColumn(r.error);
+      if(!col || !(col in row)){
+        // 컬럼명 추출 실패 → 더 시도 못함
+        console.warn('[저장] 누락 컬럼명 추출 실패:',r.error);
+        break;
       }
+      console.warn('[저장] '+col+' 컬럼 없음 → 빼고 재시도');
+      delete row[col];
+      droppedCols.push(col);
+      r=await tryUpsert(row);
+      attempts++;
     }
-    if(error)throw error;
+    if(r.error)throw r.error;
+    if(droppedCols.length>0){
+      toast('⚠ DB 컬럼 누락: '+droppedCols.join(', ')+' (저장됨 - 관리자 문의)','err');
+    }
     // 저장 성공 시 호기/고객사/기종을 localStorage에 확정 저장
     localStorage.setItem(LS_LAST_MACHINE,machineFull);
     localStorage.setItem(LS_LAST_MACHINE_LABEL,machineFull);
