@@ -3,7 +3,7 @@
 <html lang="ko"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>소재 수입검사 통합 관리 시스템 v3.22 | (주)태진다이텍</title>
+<title>소재 수입검사 통합 관리 시스템 v3.23 | (주)태진다이텍</title>
 <!-- PDF.js for 밀시트 자동 분석 -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>
@@ -1842,7 +1842,7 @@
 <body>
 
 <div class="header">
-  <h1>📋 소재 수입검사 통합 관리 시스템 v3.22</h1>
+  <h1>📋 소재 수입검사 통합 관리 시스템 v3.23</h1>
   <div class="sub">(주)태진다이텍 | 품질관리팀</div>
   <div style="position:absolute; top:18px; right:20px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end; max-width:60%;">
     <div id="currentUserBadge" style="padding:5px 11px; background:rgba(255,255,255,0.25); border:1px solid rgba(255,255,255,0.4); border-radius:14px; font-size:11px; color:#fff; white-space:nowrap;" title="ESG 메인에서 로그인한 사용자">
@@ -2394,6 +2394,23 @@ CREATE TRIGGER trg_cert_updated BEFORE UPDATE ON material_cert FOR EACH ROW EXEC
       <div class="card-header">📊 연결 상태</div>
       <div class="card-body">
         <div id="connectionStatus" style="font-size:13px; line-height:2;"><div>🟢 Supabase: 설정됨</div></div>
+      </div>
+    </div>
+
+    <!-- [v3.23] ⚠️ 데이터 관리 (위험 작업) -->
+    <div class="card">
+      <div class="card-header" style="background:#fef2f2; color:#7f1d1d;">⚠️ 데이터 관리 (위험 작업)</div>
+      <div class="card-body">
+        <div style="background:#fef2f2; padding:10px 14px; border-radius:5px; font-size:12px; color:#7f1d1d; margin-bottom:15px; border-left:3px solid #dc2626;">
+          이 작업은 <b>되돌릴 수 없습니다</b>. 실행 전 반드시 백업을 권장합니다.
+        </div>
+        <button class="btn" style="width:100%; padding:12px; font-size:14px; font-weight:700; background:#fef2f2; color:#7f1d1d; border:1.5px solid #dc2626; border-radius:6px;" onclick="bulkClearCommodity()">
+          🧹 모든 검사성적서의 [품명] 일괄 삭제
+        </button>
+        <div style="font-size:11px; color:#64748b; margin-top:6px; line-height:1.5;">
+          • Supabase의 inspection_certs 테이블 모든 행에서 commodity 컬럼을 빈값으로 변경<br>
+          • 로컬 캐시(certData)도 동시 적용
+        </div>
       </div>
     </div>
 
@@ -5908,6 +5925,65 @@ async function fetchLogsFromSupabase(){
 }
 
 // === 검사성적서 Supabase CRUD (측정치는 JSONB로 묶어서) ===
+// [v3.23] 모든 검사성적서의 commodity(품명) 일괄 삭제 (위험 작업)
+async function bulkClearCommodity(){
+  // 1차 확인
+  const total = (certData||[]).length;
+  if (!confirm(`⚠️ 모든 검사성적서의 [품명]을 일괄 삭제합니다.\n\n• 서버: Supabase inspection_certs 테이블 전체 행 (commodity → '')\n• 로컬: certData ${total}건의 commodity 모두 빈값으로\n\n이 작업은 되돌릴 수 없습니다. 계속하시겠습니까?`)) return;
+  // 2차 확인 (오타 방지용 텍스트 입력)
+  const confirmText = prompt('정말 진행하려면 "삭제"를 입력하세요:');
+  if (confirmText !== '삭제') {
+    alert('취소되었습니다.');
+    return;
+  }
+  
+  if (!appSettings.supabaseUrl || !appSettings.supabaseKey) {
+    alert('⚠️ Supabase 설정이 비어 있습니다. 로컬 데이터만 처리합니다.');
+    (certData||[]).forEach(c => { if (c) c.commodity = ''; });
+    if (typeof saveCertToLS === 'function') saveCertToLS();
+    if (typeof renderCert === 'function') renderCert();
+    alert(`✅ 로컬 ${total}건의 품명을 비웠습니다.`);
+    return;
+  }
+  
+  try {
+    // 서버: 모든 행에 commodity='' PATCH (PostgREST는 WHERE 없는 UPDATE를 차단하므로 not.is.null 조건 사용)
+    // commodity가 NULL이든 빈값이든 모든 행에 적용되도록 id=neq.0 같은 항상 참 조건 사용
+    const url = appSettings.supabaseUrl.replace(/\/$/, '') + '/rest/v1/inspection_certs?id=not.is.null';
+    const res = await fetch(url, {
+      method: 'PATCH',
+      headers: {
+        'apikey': appSettings.supabaseKey,
+        'Authorization': 'Bearer ' + appSettings.supabaseKey,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=minimal'
+      },
+      body: JSON.stringify({ commodity: '' })
+    });
+    
+    if (!res.ok) {
+      const errText = await res.text().catch(()=>'');
+      throw new Error('HTTP ' + res.status + ' ' + errText.slice(0, 200));
+    }
+    
+    // 로컬도 동시 적용
+    (certData||[]).forEach(c => { if (c) c.commodity = ''; });
+    if (typeof saveCertToLS === 'function') saveCertToLS();
+    if (typeof renderCert === 'function') renderCert();
+    
+    alert(`✅ 일괄 삭제 완료\n\n• 서버: inspection_certs.commodity 전체 행 처리\n• 로컬: ${total}건의 commodity 비움\n\n페이지를 새로고침하면 서버에서 다시 불러옵니다.`);
+  } catch(e) {
+    console.error('[bulkClearCommodity] 실패:', e);
+    alert('❌ 서버 처리 실패\n\n' + (e.message || e) + '\n\n로컬만이라도 적용하시겠습니까? (확인 시 로컬만 적용)');
+    if (confirm('로컬만 적용하시겠습니까?')) {
+      (certData||[]).forEach(c => { if (c) c.commodity = ''; });
+      if (typeof saveCertToLS === 'function') saveCertToLS();
+      if (typeof renderCert === 'function') renderCert();
+      alert(`✅ 로컬 ${total}건의 품명을 비웠습니다. (서버는 미적용)`);
+    }
+  }
+}
+
 async function pushCertToSupabase(cert){
   if (!cert.id) cert.id = 'cert_' + Date.now() + '_' + Math.random().toString(36).slice(2,7);
 
