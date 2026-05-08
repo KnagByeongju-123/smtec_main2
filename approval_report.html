@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>📋 보고서 결재 v3.6</title>
+<title>📋 보고서 결재 v3.9</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;900&display=swap">
 <style>
   :root {
@@ -185,9 +185,9 @@
 <body>
 
 <div class="hdr">
-  <h1>📋 보고서 결재 v3.6</h1>
+  <h1>📋 보고서 결재 v3.9</h1>
   <p>점검표 통합 월별 결재 시스템 · 4단계 (작성·검토·확인·승인)</p>
-  <div class="v">v3.6 · 설정 탭에 SQL 스키마 복사 + 진단 도구 내장</div>
+  <div class="v">v3.9 · 회사 공용 Supabase 자동 연결 + 자동 연결 테스트</div>
   <div id="hdrUserBadge" class="user-badge" style="display:none">👤 -</div>
 </div>
 
@@ -371,10 +371,24 @@
 
   <div class="card">
     <div class="card-title">🔧 Supabase 연결</div>
-    <div class="fg"><label class="lbl">URL</label><input type="text" id="cfgSbUrl" placeholder="https://xxxxx.supabase.co"></div>
-    <div class="fg"><label class="lbl">Anon Key</label><input type="text" id="cfgSbKey" placeholder="sb_publishable_..."></div>
-    <button class="btn btn-info btn-block" onclick="saveSettings()">💾 저장 + 연결 테스트</button>
-    <div style="font-size:11px;color:var(--text2);margin-top:10px;line-height:1.6" id="connStatus">미연결</div>
+    <div style="font-size:11px;color:var(--text2);margin-bottom:10px;line-height:1.6">
+      회사 공용 Supabase가 기본값으로 설정되어 자동 연결됩니다.<br>
+      <span style="color:var(--text3)">필요 시 다른 환경 URL/Key로 변경 가능 · Anon Key는 RLS 보호 publishable 키</span>
+    </div>
+    <div class="fg">
+      <label class="lbl">URL</label>
+      <input type="text" id="cfgSbUrl" placeholder="https://xxxxx.supabase.co" autocomplete="off">
+    </div>
+    <div class="fg">
+      <label class="lbl">Anon Key (publishable)</label>
+      <input type="text" id="cfgSbKey" placeholder="sb_publishable_..." autocomplete="off"
+             style="font-family:'Consolas','Monaco',monospace;letter-spacing:.3px;font-size:12px">
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      <button class="btn btn-info" style="flex:1;min-width:120px" onclick="saveSettings()">💾 저장 + 연결 테스트</button>
+      <button class="btn btn-ghost" onclick="resetSbToDefault()" title="회사 공용 기본값으로 되돌리기">↻ 기본값</button>
+    </div>
+    <div style="font-size:11px;margin-top:10px;line-height:1.6" id="connStatus">⚪ 미연결</div>
   </div>
 
   <!-- 결재선 마스터 -->
@@ -948,13 +962,22 @@ const TPL_ICONS = {
   LOAD_MON:'📊', LINE:'🔄', SAFETY:'⚠', PM:'🗓'
 };
 
+// =========================================================
+// 회사 공용 Supabase 기본값 (zero-config 자동 연결)
+// publishable anon key는 RLS 정책으로 보호됨
+// =========================================================
+const DEFAULT_SB_URL = 'https://omngtyewdaqpphnzeate.supabase.co';
+const DEFAULT_SB_KEY = 'sb_publishable_q-EocPWE_6_eYRJ5ZW3-HQ_R02wEMrU';
+
 function getCfg(){ return JSON.parse(localStorage.getItem(LS_KEY)||'{}'); }
 function saveCfg(o){ localStorage.setItem(LS_KEY, JSON.stringify(o)); }
-function getSbUrl(){ return getCfg().sb_url || ''; }
-function getSbKey(){ return getCfg().sb_key || ''; }
+// 사용자가 명시적으로 저장한 값 우선 → 없으면 회사 공용 기본값
+function getSbUrl(){ return (getCfg().sb_url || DEFAULT_SB_URL || '').trim(); }
+function getSbKey(){ return (getCfg().sb_key || DEFAULT_SB_KEY || '').trim(); }
 function getMyPin(){ return getCfg().my_pin || ''; }
 function getMyName(){ return getCfg().my_name || ''; }
 function isCfg(){ return !!(getSbUrl()&&getSbKey()); }
+function isUsingDefault(){ const c = getCfg(); return !c.sb_url && !c.sb_key; }
 
 // =========================================================
 // Supabase REST
@@ -1001,7 +1024,7 @@ function swTab(i){
   if(i===0 && isCfg() && getMyPin()) loadInbox();
   if(i===1 && isCfg()){ loadTemplateGrid(); loadDraftList(); }
   if(i===3 && isCfg()) searchReports();
-  if(i===4 && isCfg()){ loadRoutes(); populateDiagSelect(); }
+  if(i===4 && isCfg()){ loadRoutes(); populateDiagSelect(); autoTestConnection(); }
 }
 
 // =========================================================
@@ -1018,15 +1041,17 @@ let selectedTplCode = '';       // 작성 탭에서 선택한 점검표
 // =========================================================
 // 초기화
 // =========================================================
-window.addEventListener('DOMContentLoaded', ()=>{
+window.addEventListener('DOMContentLoaded', async ()=>{
   initYearSelects();
   loadAllSettings();
   refreshUserBadge();
   if(isCfg()){
-    loadTemplates().then(()=>{
+    // 자동 연결 테스트 (성공하면 점검표/결재선 마스터까지 캐시)
+    const ok = await autoTestConnection();
+    if(ok){
       loadInbox();
       loadTemplateGrid();
-    });
+    }
   }
 });
 
@@ -1044,8 +1069,9 @@ function initYearSelects(){
 
 function loadAllSettings(){
   const c = getCfg();
-  document.getElementById('cfgSbUrl').value = c.sb_url||'';
-  document.getElementById('cfgSbKey').value = c.sb_key||'';
+  // 사용자가 명시적으로 저장한 값이 있으면 그대로, 없으면 회사 공용 기본값을 보여줌
+  document.getElementById('cfgSbUrl').value = c.sb_url || DEFAULT_SB_URL;
+  document.getElementById('cfgSbKey').value = c.sb_key || DEFAULT_SB_KEY;
   document.getElementById('cfgMyPin').value = c.my_pin||'';
   document.getElementById('cfgMyName').value = c.my_name||'';
 
@@ -1062,6 +1088,18 @@ function loadAllSettings(){
     }catch(e){}
   }
   updateConnStatus();
+}
+
+// 회사 공용 기본값으로 되돌리기 (사용자별 설정 제거)
+function resetSbToDefault(){
+  if(!confirm('Supabase 연결을 회사 공용 기본값으로 되돌리시겠습니까?\n(로그인 정보 PIN/이름은 유지됩니다)')) return;
+  const c = getCfg();
+  delete c.sb_url;
+  delete c.sb_key;
+  saveCfg(c);
+  document.getElementById('cfgSbUrl').value = DEFAULT_SB_URL;
+  document.getElementById('cfgSbKey').value = DEFAULT_SB_KEY;
+  autoTestConnection();
 }
 
 function refreshUserBadge(){
@@ -1091,23 +1129,51 @@ async function saveLogin(){
 
 async function saveSettings(){
   const c = getCfg();
-  c.sb_url = document.getElementById('cfgSbUrl').value.trim();
-  c.sb_key = document.getElementById('cfgSbKey').value.trim();
+  const url = document.getElementById('cfgSbUrl').value.trim();
+  const key = document.getElementById('cfgSbKey').value.trim();
+  // 빈 값이면 사용자별 설정 삭제 → 기본값으로 복귀
+  // 기본값과 동일한 값을 입력해도 명시 저장은 굳이 안 함 (간결성)
+  if(url && url !== DEFAULT_SB_URL) c.sb_url = url; else delete c.sb_url;
+  if(key && key !== DEFAULT_SB_KEY) c.sb_key = key; else delete c.sb_key;
   saveCfg(c);
-  updateConnStatus();
+  await autoTestConnection();
+}
+
+// 자동 연결 테스트 (페이지 로드 / 탭 진입 시 호출)
+async function autoTestConnection(){
+  const el = document.getElementById('connStatus');
+  if(!el) return;
+  el.innerHTML = '🟡 연결 확인 중…';
+  el.style.color = 'var(--accent)';
   try{
     await sbSelect('p_monthly_report','select=id&limit=1');
-    document.getElementById('connStatus').innerHTML = '🟢 연결 정상';
-    await loadTemplates();
-    await loadRoutes();
+    if(isUsingDefault()){
+      el.innerHTML = '🟢 회사 공용 Supabase 자동 연결됨 <span style="color:var(--text3)">(' + DEFAULT_SB_URL.replace('https://','') + ')</span>';
+    }else{
+      el.innerHTML = '🟢 사용자 정의 Supabase 연결 정상';
+    }
+    el.style.color = 'var(--ok)';
+    // 연결 성공하면 결재선/점검표 마스터도 갱신
+    try{ await loadTemplates(); }catch(e){}
+    try{ await loadRoutes(); }catch(e){}
     populateSearchTpl();
+    return true;
   }catch(e){
-    document.getElementById('connStatus').innerHTML = '🔴 연결 실패: '+e.message;
+    el.innerHTML = '🔴 연결 실패: '+e.message;
+    el.style.color = 'var(--ng)';
+    return false;
   }
 }
 function updateConnStatus(){
   const el = document.getElementById('connStatus');
-  el.textContent = isCfg() ? '🟡 설정됨 (저장 클릭 시 테스트)' : '⚪ 미설정';
+  if(!el) return;
+  if(!isCfg()){
+    el.innerHTML = '⚪ 미설정';
+    el.style.color = 'var(--text2)';
+  }else{
+    el.innerHTML = '🟡 연결 확인 대기…';
+    el.style.color = 'var(--accent)';
+  }
 }
 
 // =========================================================
