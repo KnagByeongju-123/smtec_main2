@@ -3,7 +3,7 @@
 <html lang="ko"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>소재 수입검사 통합 관리 시스템 v3.19 | (주)태진다이텍</title>
+<title>소재 수입검사 통합 관리 시스템 v3.21 | (주)태진다이텍</title>
 <!-- PDF.js for 밀시트 자동 분석 -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>
@@ -205,6 +205,12 @@
   table#logTable td button.btn { padding:3px 7px !important; font-size:10.5px !important; }
   /* [v3.13] 담당/부서장/HEAT-NO 등 텍스트 셀 한 줄 표시 - 한글이 세로로 끊기지 않게 */
   table#logTable td.col-text { white-space: nowrap; }
+  /* [v3.21] 검사대기 표 전용 컴팩트 + 행 hover */
+  table#certPendingTable { font-size: 11.5px; }
+  table#certPendingTable th { padding: 7px 5px; font-size: 11px; line-height:1.25; }
+  table#certPendingTable td { padding: 5px 6px; font-size: 11.5px; line-height:1.35; }
+  table#certPendingTable tr.cert-row:hover td { background: #eff6ff !important; }
+  table#certPendingTable tr.cert-row { transition: background 0.15s; }
   table.std-table th, table.std-table td {
     padding: 10px;
     border: 1px solid #cbd5e0;
@@ -1836,7 +1842,7 @@
 <body>
 
 <div class="header">
-  <h1>📋 소재 수입검사 통합 관리 시스템 v3.19</h1>
+  <h1>📋 소재 수입검사 통합 관리 시스템 v3.21</h1>
   <div class="sub">(주)태진다이텍 | 품질관리팀</div>
   <div style="position:absolute; top:18px; right:20px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end; max-width:60%;">
     <div id="currentUserBadge" style="padding:5px 11px; background:rgba(255,255,255,0.25); border:1px solid rgba(255,255,255,0.4); border-radius:14px; font-size:11px; color:#fff; white-space:nowrap;" title="ESG 메인에서 로그인한 사용자">
@@ -2226,11 +2232,32 @@
 
         <!-- ===== 선택된 공급자 상세 뷰 ===== -->
         <div id="supplierDetailView" style="display: block;">
-          <div class="filter-bar">
+          <div class="filter-bar" style="margin-bottom:12px;">
             <label>공급자:</label>
             <select id="certFilterSupplier" onchange="renderCert()"><option value="">전체</option></select>
+            <input type="text" id="certFilterText" oninput="renderCert()" placeholder="LOT/HEAT/SIZE 검색" style="margin-left:8px; padding:6px 10px; border:1px solid #cbd5e0; border-radius:5px; font-size:13px;">
           </div>
-          <div id="certList"></div>
+          <!-- [v3.21] 표 형식 검사대기 목록 -->
+          <div style="overflow-x:auto;">
+            <table class="data-table" id="certPendingTable" style="font-size:12px;">
+              <thead>
+                <tr>
+                  <th style="width:64px;">검사<br>작성</th>
+                  <th>🏭 공급자</th>
+                  <th>품명</th>
+                  <th>SIZE</th>
+                  <th>LOT</th>
+                  <th>HEAT</th>
+                  <th style="width:60px;">코일</th>
+                  <th style="width:90px;">📅 날짜</th>
+                  <th style="width:60px;">📎</th>
+                  <th style="width:80px;">최종</th>
+                  <th style="width:160px;">관리</th>
+                </tr>
+              </thead>
+              <tbody id="certList"></tbody>
+            </table>
+          </div>
         </div>
 
       </div>
@@ -3073,6 +3100,19 @@ function renderLog(){
       return !logData.some(l=>l.heat===c.heat && l.date===c.recv_date);
     }).length;
     
+    // [v3.20] 외부망 연결 진단 정보
+    const fetchInfo = window._lastLogFetch || {};
+    let netStatus = '';
+    let netDetail = '';
+    if (!fetchInfo.at) {
+      netStatus = '<span style="color:#94a3b8;">⏳ 아직 조회 시도 전</span>';
+    } else if (fetchInfo.ok) {
+      netStatus = `<span style="color:#16a34a; font-weight:700;">✅ 연결 정상</span> (서버 ${fetchInfo.count}건, ${fetchInfo.durationMs}ms)`;
+    } else {
+      netStatus = `<span style="color:#dc2626; font-weight:700;">❌ 연결 실패</span>`;
+      netDetail = `<br>&nbsp;&nbsp;└─ ${fetchInfo.error||'알 수 없는 에러'} (시도 ${fetchInfo.attempts||1}회)`;
+    }
+    
     tbody.innerHTML = `<tr><td colspan="17" style="padding:30px 20px; text-align:center; color:#64748b;">
       <div style="font-size:48px; margin-bottom:10px; opacity:0.4;">📒</div>
       <div style="font-size:14px; margin-bottom:8px;">${filterActive?'필터 조건에 맞는 데이터가 없습니다':'관리대장 데이터가 없습니다'}</div>
@@ -3082,6 +3122,7 @@ function renderLog(){
         • 검사완료 성적서: <b>${completedCerts}건</b><br>
         ${orphanCerts>0?`• <span style="color:#dc2626; font-weight:700;">⚠ 관리대장 미반영 성적서: ${orphanCerts}건</span><br>`:''}
         ${filterActive?'• 현재 필터: '+(fDateFrom?'시작일='+fDateFrom+' ':'')+(fDateTo?'종료일='+fDateTo+' ':'')+(fMat?'재질='+fMat+' ':'')+(fJudge?'판정='+fJudge+' ':'')+(fText?'검색="'+fText+'"':'')+'<br>':''}
+        • 네트워크: ${netStatus}${netDetail}<br>
         • Supabase 자동 조회: 페이지 로드 + 5분마다
       </div>
       <div style="margin-top:14px; display:flex; gap:8px; justify-content:center; flex-wrap:wrap;">
@@ -4187,19 +4228,19 @@ function renderCert(){
       <button onclick="loadCertsFromSupabase().then(()=>alert('✅ Supabase에서 다시 조회했습니다.\\n콘솔(F12)에서 결과 확인 가능'))" style="margin-top:8px; padding:6px 14px; background:#3b82f6; color:white; border:none; border-radius:5px; font-size:12px; cursor:pointer;">🔄 Supabase 다시 조회</button>
     </div>`;
     const msg = supplierName
-      ? `<div style="padding:50px 30px; text-align:center; color:#64748b;">
+      ? `<tr><td colspan="11" style="padding:50px 30px; text-align:center; color:#64748b; background:#fff;">
            <div style="font-size:48px; margin-bottom:15px;">✅</div>
            <div style="font-size:16px; font-weight:600; color:#475569; margin-bottom:8px;">${supplierName}</div>
            <div style="font-size:13px; margin-bottom:20px;">대기 중인 수입검사가 없습니다.</div>
            <div style="font-size:11px; color:#94a3b8;">소재업체에서 신규 등록 시 자동으로 표시됩니다.</div>
            ${diagInfo}
-         </div>`
-      : `<div style="padding:30px; text-align:center; color:#64748b;">
+         </td></tr>`
+      : `<tr><td colspan="11" style="padding:30px; text-align:center; color:#64748b; background:#fff;">
            <div style="font-size:48px; margin-bottom:15px;">✅</div>
            <div style="font-size:14px; margin-bottom:10px; font-weight:600; color:#475569;">대기 중인 수입검사가 없습니다.</div>
            <div style="font-size:11px; color:#94a3b8;">검사 완료된 항목은 관리대장 탭에서 확인 가능합니다.</div>
            ${diagInfo}
-         </div>`;
+         </td></tr>`;
     list.innerHTML = msg;
     return;
   }
@@ -4227,118 +4268,43 @@ function renderCert(){
   };
 
   list.innerHTML = data.map(c=>{
-    // [v3.7] 머지된 head는 원본과 다른 객체이므로 ID로 idx 찾기
+    // [v3.21] 표 형식 검사대기 목록 - 한 줄 행으로 표시
     let idx = -1;
     if (c.id) idx = certData.findIndex(x => x.id === c.id);
     if (idx === -1) idx = certData.indexOf(c);
-    // 머지된 그룹 정보를 idx 버튼에 보존 (편집 시 일괄 처리용)
-    const mergedIdsAttr = (c._mergedIds && c._mergedIds.length > 1)
-      ? `data-merged-ids='${JSON.stringify(c._mergedIds)}'` : '';
     const mergedCount = (c._mergedIds && c._mergedIds.length > 1) ? c._mergedIds.length : 0;
-    // 미검사 상태 판별 (upload에서 자동 생성된 빈 성적서 또는 judge가 '대기'/빈값)
     const judgeRaw = String(c.judge||'').trim();
     const isUninspected = c._uninspected===true || judgeRaw==='대기' || judgeRaw==='미검사' || judgeRaw==='';
     const finalJudge = isUninspected ? '대기' : judgeRaw;
-    const badgeClass = finalJudge==='OK'?'ok':(finalJudge==='NG'?'ng':'warn');
-    const supplierJudge = c.supplier_judge||c.judge||'OK';
-
-    // 스캔 썸네일 HTML (IndexedDB에서 비동기 로드 → 일단 placeholder)
-    const scanHtml = '';
-    // 최종 판정 뱃지 색상 (OK=녹색, NG=빨강, 대기=주황)
     const finalBg = finalJudge === 'OK' ? '#16a34a' : (finalJudge === 'NG' ? '#dc2626' : '#f59e0b');
-
-    // 머지 코일수 배지 (cut 표시 외에 추가)
-    const mergedBadge = mergedCount > 1
-      ? `<span style="display:inline-block; background:#3b82f6; color:#fff; font-size:11px; padding:2px 8px; border-radius:10px; margin-left:6px; font-weight:700; vertical-align:middle;">${mergedCount}코일 일괄</span>`
-      : '';
-
+    const coilN = c.coil_count && c.coil_count > 1 ? c.coil_count : (mergedCount > 1 ? mergedCount : 1);
+    const millIcon = c.millsheet_pdf_path ? '📎' : '-';
+    const lotDisplay = c.lot || '-';
+    const lotsHint = c.lots_detail && String(c.lots_detail).split(',').filter(Boolean).length>1
+      ? ' title="개별 LOT: '+String(c.lots_detail).replace(/"/g,'&quot;')+'"' : '';
     return `
-    <div class="inspection-cert collapsed" ${mergedIdsAttr}>
-      <div class="cert-header">
-        <div class="ch-supplier">${c.supplier?'<span class="ch-badge ch-badge-supplier" title="'+c.supplier+'">🏭 '+c.supplier+'</span>':'<span class="ch-empty"></span>'}</div>
-        <div class="ch-product" title="${(c.commodity||'')+(c.size?' / '+c.size:'')}">${(c.commodity||'')+(c.size?' / '+c.size:'')}${mergedBadge}</div>
-        <div class="ch-meta">
-          ${c.coil_count&&c.coil_count>1?'<span class="ch-badge ch-badge-coil">'+c.coil_count+'코일</span>':'<span class="ch-empty"></span>'}
-          ${c.lot?'<span class="ch-badge ch-badge-lot" title="LOT '+c.lot+'">LOT '+c.lot+'</span>':'<span class="ch-empty"></span>'}
-          ${c.date?'<span class="ch-badge ch-badge-date" title="공급자 검사일자">📅 '+c.date+'</span>':'<span class="ch-empty"></span>'}
-          ${c.millsheet_pdf_path?'<span class="ch-badge ch-badge-mill">📎 밀시트</span>':'<span class="ch-empty"></span>'}
-        </div>
-        <div class="ch-actions">
-          <button class="btn btn-primary" style="padding:4px 10px; font-size:11px;" onclick="editCert(${idx})">수정</button>
-          <button class="btn btn-danger" style="padding:4px 10px; font-size:11px;" onclick="delCert(${idx})">삭제</button>
-          <button class="btn" style="padding:4px 10px; font-size:11px; background:#16a34a; color:white;" onclick="markCertOK(${idx})" title="이 성적서를 OK 판정으로 처리합니다">OK</button>
-          <span class="badge badge-${badgeClass}" style="padding:5px 12px; font-size:12px; font-weight:700; background:${finalBg}; color:white; border-radius:14px; white-space:nowrap;">최종: ${finalJudge}</span>
-        </div>
-      </div>
-
-      <div class="cert-info-grid">
-        <div><strong>품명:</strong> ${c.commodity||''}</div>
-        <div><strong>규격:</strong> ${c.spec||''}</div>
-        <div><strong>표면:</strong> ${c.surface||''}</div>
-        <div><strong>SIZE:</strong> ${c.size||''}</div>
-      </div>
-
-      <!-- 공급자 작성란 -->
-      <div class="cert-part-supplier">
-        <div class="cert-part-title">
-          <span class="cert-badge supplier-badge">공급자 작성</span>
-          🏭 ${c.supplier||'태경스틸'} 기재 사항
-        </div>
-        <div class="cert-info-grid">
-          <div><strong>정기검사일자:</strong> ${c.date||''}</div>
-          <div><strong>Weight:</strong> ${c.weight?Number(c.weight).toLocaleString()+' KG':''}</div>
-          <div><strong>Cut:</strong> ${c.cut||''}</div>
-          <div><strong>Lot NO:</strong> ${c.lot||''}${c.lots_detail&&String(c.lots_detail).split(',').filter(Boolean).length>1?'<div style="font-size:10px; color:#1565c0; margin-top:2px;">개별 LOT: '+String(c.lots_detail).split(',').map(s=>s.trim()).filter(Boolean).join(', ')+'</div>':''}</div>
-          <div><strong>Heat NO:</strong> ${c.heat||''}</div>
-          <div><strong>공급자 판정:</strong> <span class="badge badge-${supplierJudge==='OK'?'ok':'ng'}">${supplierJudge}</span></div>
-          <div><strong>공급자 서명:</strong> ${c.supplier_sign||''}</div>
-        </div>
-        <table class="std-table" style="margin-top:8px;">
-          <thead>
-            <tr><th style="width:90px;">검사항목</th><th>규격</th><th>X1</th><th>X2</th><th>X3</th><th style="width:60px;">판정</th></tr>
-          </thead>
-          <tbody>
-            ${buildMeasRows(c, 'r')}
-          </tbody>
-        </table>
-      </div>
-
-      <!-- 수요자 작성란 -->
-      <div class="cert-part-customer">
-        <div class="cert-part-title" style="display:flex; justify-content:space-between; align-items:center;">
-          <div>
-            <span class="cert-badge customer-badge">수요자 작성</span>
-            🏢 ${c.customer||'(주)태진다이텍'} 수입검사 기재 사항
-          </div>
-          <div style="display:flex; gap:6px;">
-            <button class="btn btn-customer-edit" onclick="editCustomerPart(${idx})" title="수요자 작성란만 빠르게 편집">
-              ✏️ ${hasCustomerMeas(c) && c.recv_date ? '수요자 작성 수정' : '수요자 작성하기'}
-            </button>
-          </div>
-        </div>
-        <div class="cert-info-grid">
-          <div><strong>수입검사 일자:</strong> ${c.recv_date||'<span style="color:#dc2626;">미작성</span>'}</div>
-          <div><strong>수입검사 담당자:</strong> ${c.recv_charge||'<span style="color:#dc2626;">미작성</span>'}</div>
-          <div><strong>수요자 최종판정:</strong> <span class="badge badge-${badgeClass}" style="font-weight:700;">${finalJudge}</span></div>
-          <div><strong>수요자 승인자:</strong> ${c.customer_sign||'<span style="color:#dc2626;">미승인</span>'}</div>
-          <div><strong>입고라벨:</strong> ${c.label||'-'}</div>
-        </div>
-        ${hasCustomerMeas(c) ? `
-        <table class="std-table" style="margin-top:8px;">
-          <thead>
-            <tr><th style="width:90px;">검사항목</th><th>규격</th><th>X1</th><th>X2</th><th>X3</th><th style="width:60px;">판정</th></tr>
-          </thead>
-          <tbody>
-            ${buildMeasRows(c, 'c_r')}
-          </tbody>
-        </table>` : '<div style="margin-top:8px; padding:8px; background:#fef3c7; border-radius:4px; font-size:12px; color:#92400e;">⚠️ 수요자 측정값이 아직 기재되지 않았습니다.</div>'}
-        ${c.remark ? `<div style="margin-top:8px; padding:8px; background:white; border-radius:4px; font-size:12px;"><strong>비고:</strong> ${c.remark}</div>` : ''}
-      </div>
-    </div>`;
+    <tr class="cert-row" data-idx="${idx}" style="cursor:pointer;" ondblclick="editCert(${idx})">
+      <td style="text-align:center; padding:4px;">
+        <button class="btn" style="padding:5px 10px; font-size:11px; background:#10b981; color:#fff; border:2px solid #059669; box-shadow:0 1px 4px rgba(16,185,129,0.3); white-space:nowrap;" onclick="event.stopPropagation();editCert(${idx})" title="수요자 검사 작성">✏️ 작성</button>
+      </td>
+      <td style="white-space:nowrap; max-width:140px; overflow:hidden; text-overflow:ellipsis;" title="${(c.supplier||'').replace(/"/g,'&quot;')}">${c.supplier||'-'}</td>
+      <td style="white-space:nowrap; max-width:160px; overflow:hidden; text-overflow:ellipsis;" title="${(c.commodity||'').replace(/"/g,'&quot;')}">${c.commodity||'-'}</td>
+      <td style="white-space:nowrap;" title="${(c.size||'').replace(/"/g,'&quot;')}">${c.size||'-'}</td>
+      <td style="white-space:nowrap; font-weight:600;"${lotsHint}>${lotDisplay}${c.lots_detail&&String(c.lots_detail).split(',').filter(Boolean).length>1?'<span style="color:#1565c0; margin-left:4px; font-size:10px;">(+'+(String(c.lots_detail).split(',').filter(Boolean).length-1)+')</span>':''}</td>
+      <td style="white-space:nowrap;">${c.heat||'-'}</td>
+      <td style="text-align:center;">${coilN>1?'<span style="background:#3b82f6; color:#fff; padding:2px 8px; border-radius:10px; font-weight:700;">'+coilN+'</span>':coilN}</td>
+      <td style="white-space:nowrap; text-align:center;">${c.date||'-'}</td>
+      <td style="text-align:center; font-size:14px;">${millIcon}</td>
+      <td style="text-align:center;"><span class="badge" style="background:${finalBg}; color:#fff; padding:3px 10px; border-radius:10px; font-weight:700; font-size:11px;">${finalJudge}</span></td>
+      <td style="text-align:center; white-space:nowrap; padding:4px;">
+        <button class="btn btn-primary" style="padding:3px 8px; font-size:11px;" onclick="event.stopPropagation();editCert(${idx})">수정</button>
+        <button class="btn btn-danger" style="padding:3px 8px; font-size:11px;" onclick="event.stopPropagation();delCert(${idx})">삭제</button>
+        <button class="btn" style="padding:3px 8px; font-size:11px; background:#16a34a; color:#fff;" onclick="event.stopPropagation();markCertOK(${idx})" title="OK 일괄 처리">OK</button>
+      </td>
+    </tr>`;
   }).join('');
 
-  // 즉시 모든 카드를 접힘 상태로 (setInterval 기다리지 않고)
-  if (typeof setupCertCardToggle === 'function') setupCertCardToggle();
+  // 표 형식이므로 toggle 불필요
 }
 
 function openCertModal(){
@@ -6867,27 +6833,62 @@ setTimeout(autoSyncMaterialMasterSilent, 2200);
 setInterval(autoSyncMaterialMasterSilent, 60*1000);
 // log 데이터(material_log) 자동 조회
 // 정적 데이터 제거됨에 따라 Supabase에서 직접 불러옴
+// [v3.20] 외부망 진단용 - 마지막 조회 결과 보존
+window._lastLogFetch = { at: null, ok: false, status: 0, error: '', count: 0, durationMs: 0, attempts: 0 };
+
 async function loadLogFromSupabase(){
+  const diag = window._lastLogFetch;
+  diag.at = new Date().toISOString();
+  diag.attempts = (diag.attempts||0) + 1;
+  const t0 = Date.now();
   try{
     if(typeof appSettings==='undefined'||!appSettings.supabaseUrl||!appSettings.supabaseKey){
-      console.log('[LOG] Supabase 미설정 - material_log 조회 스킵');return;
+      diag.ok = false; diag.error = 'Supabase 미설정 (URL/Key 없음)';
+      console.log('[LOG] '+diag.error);
+      return;
     }
     const url=appSettings.supabaseUrl+'/rest/v1/material_log?select=*&order=date.desc&limit=1000';
-    const r=await fetch(url,{headers:{'apikey':appSettings.supabaseKey,'Authorization':'Bearer '+appSettings.supabaseKey}});
+    // [v3.20] 외부망 timeout 10초 명시 (모바일 데이터 등에서 무한 대기 방지)
+    const ctrl = new AbortController();
+    const tmo = setTimeout(()=>ctrl.abort('timeout'), 10000);
+    let r;
+    try {
+      r = await fetch(url,{
+        headers:{'apikey':appSettings.supabaseKey,'Authorization':'Bearer '+appSettings.supabaseKey},
+        signal: ctrl.signal,
+        cache: 'no-cache'
+      });
+    } finally {
+      clearTimeout(tmo);
+    }
+    diag.status = r.status;
+    diag.durationMs = Date.now() - t0;
     if(!r.ok){
-      console.error('[LOG] material_log 조회 실패:',r.status);return;
+      diag.ok = false; diag.error = 'HTTP '+r.status+' '+(r.statusText||'');
+      console.error('[LOG] material_log 조회 실패:',diag.error);
+      // [v3.20] 외부망에서 첫 시도 실패 시 자동 재시도 스케줄
+      if(diag.attempts < 4){
+        const delay = 1000 * diag.attempts; // 1s, 2s, 3s
+        console.log('[LOG v3.20] '+delay+'ms 후 재시도 ('+diag.attempts+'/3)');
+        setTimeout(loadLogFromSupabase, delay);
+      }
+      return;
     }
     const remoteLogs=await r.json();
+    diag.ok = true;
+    diag.error = '';
+    diag.count = (remoteLogs||[]).length;
+    diag.attempts = 0;  // 성공 시 재시도 카운터 리셋
+    
     // [v2.9] dirty 보호: 로컬에서 방금 검사완료한 항목이 서버 pull로 사라지지 않도록
     const serverIds = new Set((remoteLogs||[]).map(r=>r.id).filter(Boolean));
     const preservedLocal = (logData||[]).filter(d=>{
-      if(!d.id)return true;  // id 없는 신규 항목 보존
-      if(typeof isLogDirty==='function' && isLogDirty(d.id))return true;  // dirty 보호
-      if(!serverIds.has(d.id))return true;  // 서버에 아직 없으면 보존
+      if(!d.id)return true;
+      if(typeof isLogDirty==='function' && isLogDirty(d.id))return true;
+      if(!serverIds.has(d.id))return true;
       return false;
     });
     if(!remoteLogs||!remoteLogs.length){
-      // 서버 0건 + 로컬에 보존할 것 있으면 보존
       if(preservedLocal.length){
         logData = preservedLocal;
         if(typeof saveLogToLS==='function')saveLogToLS();
@@ -6896,23 +6897,31 @@ async function loadLogFromSupabase(){
         logData=[];
       }
       if(typeof renderLog==='function')renderLog();
-      // 자동 복구 시도
       setTimeout(autoRecoverOrphanCerts, 800);
       return;
     }
-    // 서버 + 로컬 dirty 머지
     const merged = [...remoteLogs];
     preservedLocal.forEach(local=>{
       const idx = merged.findIndex(m=>m.id===local.id);
-      if(idx>=0)merged[idx]=local;  // dirty 우선
+      if(idx>=0)merged[idx]=local;
       else merged.push(local);
     });
     logData = merged;
     if(typeof saveLogToLS==='function')saveLogToLS();
     if(typeof renderLog==='function')renderLog();
-    // [v2.9] 검사완료된 성적서 중 logData에 없는 항목 자동 복구
     setTimeout(autoRecoverOrphanCerts, 800);
   }catch(e){
+    diag.ok = false;
+    diag.durationMs = Date.now() - t0;
+    diag.error = (e && e.message) ? e.message : String(e);
+    if (e && e.name === 'AbortError') diag.error = '⏱ 타임아웃 (10초 초과) - 외부망 연결 느림';
+    console.error('[LOG v3.20] fetch 실패:', diag.error);
+    // [v3.20] 네트워크 에러 시 자동 재시도
+    if(diag.attempts < 4){
+      const delay = 1500 * diag.attempts;
+      console.log('[LOG v3.20] '+delay+'ms 후 재시도 ('+diag.attempts+'/3)');
+      setTimeout(loadLogFromSupabase, delay);
+    }
   }
 }
 
