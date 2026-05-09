@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>소재 수입검사 v1.5 | (주)태진다이텍</title>
+<title>소재 수입검사 v1.6 | (주)태진다이텍</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Malgun Gothic','맑은 고딕','Segoe UI',sans-serif;background:#f4f6f9;color:#222;font-size:14px;line-height:1.5}
@@ -130,7 +130,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 
 <div class="hdr">
   <div>
-    <h1>📋 소재 수입검사 시스템 v1.5</h1>
+    <h1>📋 소재 수입검사 시스템 v1.6</h1>
     <div class="sub">(주)태진다이텍 · 품질관리팀 · LOT 그룹 자동 통합 (재질+두께+폭+LOT베이스)</div>
   </div>
   <div class="user-info" id="userInfoBar">검사자: <b id="loginUser">로그인 필요</b></div>
@@ -407,13 +407,13 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 
 <script>
 /* ============================================================
-   소재 수입검사 시스템 v1.5
+   소재 수입검사 시스템 v1.6
    - LOT 그룹 = 재질 + 두께 + 폭 + LOT '-' 이전 베이스 (공급자별)
    - 검사자 = 로그인 정보 자동
    - Supabase 연결 정보 고정
    ============================================================ */
 
-const APP_VERSION = '1.5';
+const APP_VERSION = '1.6';
 
 // 🔒 고정 연결 정보 (수정 불가)
 const SB_URL = 'https://omngtyewdaqpphnzeate.supabase.co';
@@ -966,9 +966,9 @@ function evalRow(key){
 }
 
 /* 전체 OK 자동입력 (측정값 표 헤더 [✓ 전체 OK] 버튼)
-   - 표면/재질: X1~X3 (공급자+수요자 모두) 'OK' 텍스트
-   - 두께: 입고 두께값 자동 (소수점 3자리)
-   - 폭: 입고 폭값 자동 (소수점 2자리)
+   - 표면/재질: X1~X3 (공급자+수요자 모두) 'OK' 텍스트 + 규격 자동
+   - 두께: 입고 두께값 자동 (소수점 3자리) + 규격 "두께 ± 0.05"
+   - 폭: 입고 폭값 자동 (소수점 2자리) + 규격 "폭 ± 0.10"
    - 공급자 판정 / 수요자 최종판정도 OK 자동선택
 */
 function quickOKAll(){
@@ -979,6 +979,22 @@ function quickOKAll(){
     return;
   }
 
+  const matName = document.getElementById('i_material').value || '';
+
+  // ─── 규격 자동 채우기 (비어있는 경우만) ───
+  const surfaceSpec = document.getElementById('m_surface_spec');
+  if(!surfaceSpec.value.trim()) surfaceSpec.value = '결함없을것';
+
+  const matSpec = document.getElementById('m_mat_spec');
+  if(!matSpec.value.trim()) matSpec.value = matName;
+
+  // 두께 규격: 항상 입고값 ± 0.05로 강제 갱신 (판정 보장)
+  document.getElementById('m_thick_spec').value = `${t.toFixed(3)} ± 0.05`;
+
+  // 폭 규격: 항상 입고값 ± 0.10으로 강제 갱신
+  document.getElementById('m_width_spec').value = `${w.toFixed(2)} ± 0.10`;
+
+  // ─── 측정값 자동 채우기 ───
   // 표면 / 재질: OK 텍스트
   ['surface','mat'].forEach(key => {
     ['sup1','sup2','sup3','cus1','cus2','cus3'].forEach(s => {
@@ -999,7 +1015,7 @@ function quickOKAll(){
   });
   evalRow('width');
 
-  // 공급자 판정 / 최종판정도 OK
+  // ─── 공급자 판정 / 최종판정 ───
   document.getElementById('i_supJudge').value = 'OK';
   document.getElementById('i_finalJudge').value = 'OK';
 
@@ -1007,7 +1023,17 @@ function quickOKAll(){
   const dEl = document.getElementById('i_inspDate');
   if(!dEl.value) dEl.value = todayKST();
 
-  showToast('✅ 전체 OK 자동입력 완료');
+  // 4개 행 판정 결과 확인
+  const judges = ['surface','mat','thick','width'].map(k => {
+    const el = document.getElementById('m_'+k+'_j');
+    return el ? el.textContent : '?';
+  });
+  const allOK = judges.every(j => j === 'OK');
+  if(allOK){
+    showToast('✅ 전체 OK 자동입력 완료 (4/4)');
+  } else {
+    showToast(`⚠ 자동입력 완료 - 판정: ${judges.join(' / ')}`);
+  }
 }
 
 function openInsp(groupKey){
@@ -1083,11 +1109,11 @@ function openInsp(groupKey){
     // 기본 규격: 표면/재질은 기본값, 두께/폭은 입고 데이터 기반
     document.getElementById('m_surface_spec').value = '결함없을것';
     document.getElementById('m_mat_spec').value = g.material || '';
-    if(g.thickness){
-      document.getElementById('m_thick_spec').value = `${g.thickness} ± 0.05`;
+    if(g.thickness != null){
+      document.getElementById('m_thick_spec').value = `${parseFloat(g.thickness).toFixed(3)} ± 0.05`;
     }
-    if(g.width){
-      document.getElementById('m_width_spec').value = `${g.width} ± 0.10`;
+    if(g.width != null){
+      document.getElementById('m_width_spec').value = `${parseFloat(g.width).toFixed(2)} ± 0.10`;
     }
     // 공급자 cert_data가 있으면 측정값 자동 채움
     const firstRaw = raw.find(r => groupKeyOf(r) === groupKey);
