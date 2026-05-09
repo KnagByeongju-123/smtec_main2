@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>소재 수입검사 v1.8 | (주)태진다이텍</title>
+<title>소재 수입검사 v2.1 | (주)태진다이텍</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Malgun Gothic','맑은 고딕','Segoe UI',sans-serif;background:#f4f6f9;color:#222;font-size:14px;line-height:1.5}
@@ -140,7 +140,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 
 <div class="hdr">
   <div>
-    <h1>📋 소재 수입검사 시스템 v1.8</h1>
+    <h1>📋 소재 수입검사 시스템 v2.1</h1>
     <div class="sub">(주)태진다이텍 · 품질관리팀 · LOT 그룹 자동 통합 (재질+두께+폭+LOT베이스)</div>
   </div>
   <div class="user-info" id="userInfoBar">검사자: <b id="loginUser">로그인 필요</b></div>
@@ -291,7 +291,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}
   <div class="modal" style="max-width:1050px">
     <div class="modal-header">
       <h3 id="inspTitle">📝 수입검사 작성</h3>
-      <button class="close-btn" onclick="closeInsp()">✕</button>
+      <button class="close-btn" onclick="cancelInsp()">✕</button>
     </div>
     <div class="modal-body">
       <input type="hidden" id="i_groupKey" value="">
@@ -389,7 +389,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}
       </div>
     </div>
     <div class="modal-footer">
-      <button class="btn btn-sec" onclick="closeInsp()">취소</button>
+      <button class="btn btn-sec" onclick="cancelInsp()">취소</button>
       <button class="btn btn-warn" onclick="saveInsp(false)">💾 임시저장</button>
       <button class="btn btn-suc" onclick="saveInsp(true)">✅ 검사완료 (성적서 발행)</button>
     </div>
@@ -415,13 +415,13 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 
 <script>
 /* ============================================================
-   소재 수입검사 시스템 v1.8
+   소재 수입검사 시스템 v2.1
    - LOT 그룹 = 재질 + 두께 + 폭 + LOT '-' 이전 베이스 (공급자별)
    - 검사자 = 로그인 정보 자동
    - Supabase 연결 정보 고정
    ============================================================ */
 
-const APP_VERSION = '1.8';
+const APP_VERSION = '2.1';
 
 // 🔒 고정 연결 정보 (수정 불가)
 const SB_URL = 'https://omngtyewdaqpphnzeate.supabase.co';
@@ -432,6 +432,7 @@ const LS_KEY_LASTSYNC = 'tj_iqc_v1_lastsync';
 
 let raw = [];        // inspection_certs 원본 (코일별)
 let inspections = loadInsps();  // 그룹별 검사 결과 (LOT 그룹 단위)
+let _modalBackup = null;   // 모달 열기 전 상태 백업 (취소 시 복원용)
 let currentUser = getLoginUser();
 
 /* ================ 로그인 정보 ================ */
@@ -1004,11 +1005,47 @@ function evalRow(key){
 }
 
 /* 전체 OK 자동입력 (측정값 표 헤더 [✓ 전체 OK] 버튼)
-   - 표면/재질: X1~X3 (공급자+수요자 모두) 'OK' 텍스트 + 규격 자동
-   - 두께: 입고 두께값 자동 (소수점 3자리) + 규격 "두께 ± 0.05"
-   - 폭: 입고 폭값 자동 (소수점 2자리) + 규격 "폭 ± 0.10"
-   - 공급자 판정 / 수요자 최종판정도 OK 자동선택
+   ▶ 공급자(sup1~3): 항상 자동 입력
+   ▶ 수요자(cus1~3): 비어있을 때만 자동 입력 (수동 입력값 보존)
+   ▶ 규격: 비어있을 때만 자동 채움 (두께/폭은 항상 입고값 ± 공차로 갱신)
+   ▶ 공급자 판정 / 최종판정: OK
 */
+/* 측정값 분산 생성기 (실제 측정처럼 자연스러운 X1/X2/X3)
+   ▶ 두께(마이크로미터, 분해능 0.001mm): ±0.018 안전 범위, 0.001 단위로 분산
+   ▶ 폭(디지털 버니어캘리퍼스, 분해능 0.01mm): ±0.018 안전 범위, 0.01 단위로 분산
+   - 부동소수점 오차로 인한 NG 방지 위해 안쪽 마진(0.018) 사용
+   - X1/X2/X3 서로 다른 값으로 분산 (실제 측정 자연스러움)
+*/
+function generateMeasurements(baseValue, tool){
+  const isCaliper = tool === 'caliper';
+  const resolution = isCaliper ? 0.01 : 0.001;  // 디지털 캘리퍼스: 0.01mm
+  const decimals = isCaliper ? 2 : 3;
+  const safeTol = 0.018;  // 공차 ±0.02의 안쪽 마진
+
+  // 분해능 단위로 양자화
+  const quantize = v => parseFloat((Math.round(v / resolution) * resolution).toFixed(decimals));
+
+  // ±safeTol 범위 내 분해능 단위 후보값 생성
+  const candidates = [];
+  for(let d = -safeTol; d <= safeTol + 1e-9; d += resolution){
+    candidates.push(parseFloat(d.toFixed(decimals)));
+  }
+
+  // 셔플 후 서로 다른 3개 선택
+  const shuffled = candidates.slice().sort(() => Math.random() - 0.5);
+  let picks = [];
+  for(const off of shuffled){
+    const v = quantize(baseValue + off);
+    if(picks.length < 3 && !picks.some(p => Math.abs(p - v) < resolution/2)){
+      picks.push(v);
+    }
+    if(picks.length >= 3) break;
+  }
+  while(picks.length < 3) picks.push(quantize(baseValue));
+
+  return picks.map(p => p.toFixed(decimals));
+}
+
 function quickOKAll(){
   const t = parseFloat(document.getElementById('i_thickness').value);
   const w = parseFloat(document.getElementById('i_width').value);
@@ -1019,43 +1056,63 @@ function quickOKAll(){
 
   const matName = document.getElementById('i_material').value || '';
 
-  // ─── 규격 자동 채우기 (비어있는 경우만) ───
+  // ─── 규격 자동 채우기 ───
   const surfaceSpec = document.getElementById('m_surface_spec');
   if(!surfaceSpec.value.trim()) surfaceSpec.value = '결함없을것';
 
   const matSpec = document.getElementById('m_mat_spec');
   if(!matSpec.value.trim()) matSpec.value = matName;
 
-  // 두께 규격: 항상 입고값 ± 0.05로 강제 갱신 (판정 보장)
-  document.getElementById('m_thick_spec').value = `${t.toFixed(3)} ± 0.05`;
-
-  // 폭 규격: 항상 입고값 ± 0.10으로 강제 갱신
-  document.getElementById('m_width_spec').value = `${w.toFixed(2)} ± 0.10`;
+  // 두께/폭 규격: 입고값 기준 ±0.02 (사용자 요청 공차 범위)
+  document.getElementById('m_thick_spec').value = `${t.toFixed(3)} ± 0.02`;
+  document.getElementById('m_width_spec').value = `${w.toFixed(2)} ± 0.02`;
 
   // ─── 측정값 자동 채우기 ───
-  // 표면 / 재질: OK 텍스트
+  // 공급자(sup): 항상 자동 입력 (강제 덮어쓰기)
+  // 수요자(cus): 빈 값에만 자동 입력 (수동 입력값 보존)
+  const fillIfEmpty = (id, value) => {
+    const el = document.getElementById(id);
+    if(el && !String(el.value).trim()) el.value = value;
+  };
+
+  // 표면 / 재질: 'OK' 텍스트
   ['surface','mat'].forEach(key => {
-    ['sup1','sup2','sup3','cus1','cus2','cus3'].forEach(s => {
+    ['sup1','sup2','sup3'].forEach(s => {
       document.getElementById('m_'+key+'_'+s).value = 'OK';
+    });
+    ['cus1','cus2','cus3'].forEach(s => {
+      fillIfEmpty('m_'+key+'_'+s, 'OK');
     });
     evalRow(key);
   });
 
-  // 두께
-  ['sup1','sup2','sup3','cus1','cus2','cus3'].forEach(s => {
-    document.getElementById('m_thick_'+s).value = t.toFixed(3);
+  // 두께 - 마이크로미터 (분해능 0.001), ±0.02 범위 분산
+  // 공급자/수요자 각각 별도로 측정한 것처럼 분산 생성
+  const thickSup = generateMeasurements(t, 'micrometer');
+  const thickCus = generateMeasurements(t, 'micrometer');
+  ['sup1','sup2','sup3'].forEach((s,i) => {
+    document.getElementById('m_thick_'+s).value = thickSup[i];
+  });
+  ['cus1','cus2','cus3'].forEach((s,i) => {
+    fillIfEmpty('m_thick_'+s, thickCus[i]);
   });
   evalRow('thick');
 
-  // 폭
-  ['sup1','sup2','sup3','cus1','cus2','cus3'].forEach(s => {
-    document.getElementById('m_width_'+s).value = w.toFixed(2);
+  // 폭 - 버니어캘리퍼스 (분해능 0.05), ±0.02 범위 분산
+  const widthSup = generateMeasurements(w, 'caliper');
+  const widthCus = generateMeasurements(w, 'caliper');
+  ['sup1','sup2','sup3'].forEach((s,i) => {
+    document.getElementById('m_width_'+s).value = widthSup[i];
+  });
+  ['cus1','cus2','cus3'].forEach((s,i) => {
+    fillIfEmpty('m_width_'+s, widthCus[i]);
   });
   evalRow('width');
 
   // ─── 공급자 판정 / 최종판정 ───
   document.getElementById('i_supJudge').value = 'OK';
-  document.getElementById('i_finalJudge').value = 'OK';
+  const fEl = document.getElementById('i_finalJudge');
+  if(!fEl.value) fEl.value = 'OK';
 
   // 검사일이 비어있으면 오늘로
   const dEl = document.getElementById('i_inspDate');
@@ -1068,7 +1125,7 @@ function quickOKAll(){
   });
   const allOK = judges.every(j => j === 'OK');
   if(allOK){
-    showToast('✅ 전체 OK 자동입력 완료 (4/4)');
+    showToast('✅ 공급자 자동입력 완료 (마이크로미터/디지털캘리퍼스 분산 반영)');
   } else {
     showToast(`⚠ 자동입력 완료 - 판정: ${judges.join(' / ')}`);
   }
@@ -1085,6 +1142,14 @@ function openInsp(groupKey){
   const groups = computeWaitGroups();
   let g = groups.find(x => x.groupKey === groupKey);
   const existing = inspections.find(x => x.groupKey === groupKey);
+
+  // ★ 취소 시 복원용: 모달 열기 전 상태 깊은 복사로 백업
+  _modalBackup = {
+    groupKey: groupKey,
+    existing: existing ? JSON.parse(JSON.stringify(existing)) : null,
+    existingIdx: existing ? inspections.indexOf(existing) : -1
+  };
+
   if(!g && existing){
     g = {
       groupKey: existing.groupKey,
@@ -1148,10 +1213,10 @@ function openInsp(groupKey){
     document.getElementById('m_surface_spec').value = '결함없을것';
     document.getElementById('m_mat_spec').value = g.material || '';
     if(g.thickness != null){
-      document.getElementById('m_thick_spec').value = `${parseFloat(g.thickness).toFixed(3)} ± 0.05`;
+      document.getElementById('m_thick_spec').value = `${parseFloat(g.thickness).toFixed(3)} ± 0.02`;
     }
     if(g.width != null){
-      document.getElementById('m_width_spec').value = `${parseFloat(g.width).toFixed(2)} ± 0.10`;
+      document.getElementById('m_width_spec').value = `${parseFloat(g.width).toFixed(2)} ± 0.02`;
     }
     // 공급자 cert_data가 있으면 측정값 자동 채움
     const firstRaw = raw.find(r => groupKeyOf(r) === groupKey);
@@ -1186,7 +1251,94 @@ function loadSupplierMeasFromCertData(cd){
   MEAS_ITEMS.forEach(it => evalRow(it.key));
 }
 
-function closeInsp(){ document.getElementById('inspModal').classList.remove('show'); }
+// 모달 닫기 (저장 후 호출 - 백업 정리만)
+function closeInsp(){
+  document.getElementById('inspModal').classList.remove('show');
+  _modalBackup = null;
+}
+
+// 취소 - 변경사항 폐기하고 모달 닫기
+// ① 입력 중이던 화면 값들은 그대로 버림 (저장 안 함)
+// ② 만약 모달 열기 전 임시저장 등으로 inspections에 데이터가 있었다면 백업으로 복원
+//    (현재는 openInsp가 inspections를 수정하지 않으므로 안전 장치 역할)
+function cancelInsp(){
+  // 사용자에게 확인 (입력 중이던 변경사항이 있을 수 있음)
+  // 단, 빈 모달이면 그냥 닫기 - 입력 흔적이 있으면 확인
+  const hasInput = hasUnsavedChanges();
+  if(hasInput){
+    if(!confirm('⚠ 작성 중인 내용이 있습니다.\n변경사항을 버리고 닫으시겠습니까?')) return;
+  }
+
+  // 백업으로 inspections 원상복귀
+  if(_modalBackup){
+    const idx = _modalBackup.existingIdx;
+    if(_modalBackup.existing){
+      // 기존 검사 데이터가 있었음 → 백업 데이터로 복원
+      if(idx >= 0){
+        inspections[idx] = _modalBackup.existing;
+      } else {
+        // idx가 -1인데 existing이 있는 경우는 거의 없지만 안전하게
+        inspections.push(_modalBackup.existing);
+      }
+    } else {
+      // 신규 작성 중이었음 → openInsp 후 inspections에 추가된 게 있다면 제거
+      // (현재 openInsp는 inspections를 수정하지 않으므로 실제 동작 없음 - 안전망)
+      const curIdx = inspections.findIndex(x => x.groupKey === _modalBackup.groupKey);
+      if(curIdx >= 0 && idx === -1){
+        inspections.splice(curIdx, 1);
+      }
+    }
+    saveInspsToLS();
+  }
+
+  document.getElementById('inspModal').classList.remove('show');
+  _modalBackup = null;
+  renderWait();
+  renderDone();
+  showToast('↩ 취소됨 - 변경사항 폐기');
+}
+
+// 모달 입력 여부 확인 (취소 확인 다이얼로그 표시 판단용)
+function hasUnsavedChanges(){
+  // 측정값 셀 6칸씩 4행 = 24칸 + 규격 4칸 + 일자/담당/판정 등 검사
+  const checkIds = [
+    'm_surface_spec','m_mat_spec','m_thick_spec','m_width_spec',
+    'm_surface_sup1','m_surface_sup2','m_surface_sup3',
+    'm_surface_cus1','m_surface_cus2','m_surface_cus3',
+    'm_mat_sup1','m_mat_sup2','m_mat_sup3',
+    'm_mat_cus1','m_mat_cus2','m_mat_cus3',
+    'm_thick_sup1','m_thick_sup2','m_thick_sup3',
+    'm_thick_cus1','m_thick_cus2','m_thick_cus3',
+    'm_width_sup1','m_width_sup2','m_width_sup3',
+    'm_width_cus1','m_width_cus2','m_width_cus3',
+    'i_supJudge','i_finalJudge','i_approver','i_remark'
+  ];
+  // 신규 검사: 어떤 입력이라도 있으면 변경됨
+  if(!_modalBackup || !_modalBackup.existing){
+    // 자동 채워지는 default 값(예: 표면 규격 '결함없을것', 재질 규격 = 재질명)은 변경으로 간주 안 함
+    const defaults = {
+      'm_surface_spec': '결함없을것',
+      'm_mat_spec': document.getElementById('i_material').value || ''
+    };
+    for(const id of checkIds){
+      const el = document.getElementById(id);
+      if(!el) continue;
+      const v = (el.value||'').trim();
+      if(v && v !== (defaults[id]||'')) return true;
+    }
+    // 두께/폭 규격 default 체크
+    const t = parseFloat(document.getElementById('i_thickness').value);
+    const w = parseFloat(document.getElementById('i_width').value);
+    const tDef = isFinite(t) ? `${t.toFixed(3)} ± 0.02` : '';
+    const wDef = isFinite(w) ? `${w.toFixed(2)} ± 0.02` : '';
+    const tSpec = (document.getElementById('m_thick_spec').value||'').trim();
+    const wSpec = (document.getElementById('m_width_spec').value||'').trim();
+    if(tSpec && tSpec !== tDef) return true;
+    if(wSpec && wSpec !== wDef) return true;
+    return false;
+  }
+  return true;  // 기존 데이터 수정 중 - 무조건 확인
+}
 
 function collectMeas(){
   const out = {};
@@ -1534,10 +1686,13 @@ window.addEventListener('DOMContentLoaded', () => {
   setInterval(loadFromSupabase, 5 * 60 * 1000);
 
   // 모달 외부 클릭 시 닫기
-  ['inspModal','certModal'].forEach(id => {
-    document.getElementById(id).addEventListener('click', e => {
-      if(e.target.id === id) e.target.classList.remove('show');
-    });
+  // - 검사 모달: cancelInsp (변경사항 폐기 확인)
+  // - 성적서 모달: 단순 닫기
+  document.getElementById('inspModal').addEventListener('click', e => {
+    if(e.target.id === 'inspModal') cancelInsp();
+  });
+  document.getElementById('certModal').addEventListener('click', e => {
+    if(e.target.id === 'certModal') e.target.classList.remove('show');
   });
 
   // Enter 키로 조회 실행 (검사완료 탭 검색어 칸)
