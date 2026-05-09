@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>측정기 일상점검 v2.1</title>
+<title>측정기 일상점검 v2.2</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;900&display=swap">
 <style>
   :root{--bg:#0f172a;--surface:#1e293b;--surface2:#334155;--border:#475569;--accent:#38bdf8;--accent2:#0ea5e9;--ok:#22c55e;--ok-bg:rgba(34,197,94,.12);--ng:#ef4444;--ng-bg:rgba(239,68,68,.12);--text:#e2e8f0;--text2:#94a3b8;--text3:#64748b;--radius:12px}
@@ -33,6 +33,12 @@
   .check-item{display:flex;align-items:center;justify-content:space-between;padding:11px 12px;margin-bottom:8px;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;transition:all .2s}
   .check-item.checked-ok{border-color:rgba(34,197,94,.5);background:var(--ok-bg)}
   .check-item.checked-ng{border-color:rgba(239,68,68,.5);background:var(--ng-bg)}
+  .check-item.due{border-color:var(--accent);box-shadow:0 0 0 2px rgba(56,189,248,.15)}
+  .check-item.not-due{opacity:.4;background:var(--bg);border-style:dashed}
+  .check-item.not-due .check-label{color:var(--text3)}
+  .check-item.not-due .okng-btn{opacity:.6}
+  .due-tag{display:inline-block;font-size:9px;font-weight:700;padding:2px 6px;border-radius:3px;margin-left:4px;vertical-align:middle;background:var(--accent);color:#0f172a}
+  .skip-tag{display:inline-block;font-size:9px;font-weight:600;padding:2px 6px;border-radius:3px;margin-left:4px;vertical-align:middle;background:var(--surface2);color:var(--text3)}
   .check-label{font-size:13px;font-weight:600;color:var(--text);flex:1;line-height:1.4;padding-right:10px}
   .badge-period{display:inline-block;font-size:9px;font-weight:700;padding:2px 5px;border-radius:3px;margin-left:5px;vertical-align:middle}
   .badge-1{background:rgba(34,197,94,.15);color:#86efac}
@@ -275,8 +281,8 @@ const DEFAULT_CHECKLIST_DB = {
   '로봇암': [
     {label:'본체 외관 청소상태',period:1},{label:'엔드이펙터(그리퍼) 손상유무',period:1},{label:'에어공급 압력 정상',period:1},{label:'비상정지 스위치 동작 확인',period:1},{label:'안전펜스/센서 정상',period:1},{label:'각 관절 이송 원활동작',period:1},{label:'티칭 펜던트 정상동작',period:1},{label:'원점복귀 정상',period:1},{label:'관절부 윤활 점검',period:7},{label:'케이블 외관 손상점검',period:7},{label:'백업데이터 저장',period:30},{label:'정밀도(반복정밀도) 검증',period:30},
   ],
-  '조도측정기': [
-    {label:'본체 외관 청소상태',period:1},{label:'수광부 청결상태',period:1},{label:'디스플레이 정상표시',period:1},{label:'배터리 잔량 확인',period:1},{label:'0점 보정 정상',period:1},{label:'기준 광원 검증',period:7},{label:'교정 유효기간 확인',period:30},
+  '거칠기측정기': [
+    {label:'본체 외관 청소상태',period:1},{label:'검출기(스타일러스) 손상유무',period:1},{label:'스타일러스 첨단 청결상태',period:1},{label:'시료대 이물질 제거',period:1},{label:'디스플레이 정상표시',period:1},{label:'전원/배터리 잔량 확인',period:1},{label:'측정 진행방향 정상',period:1},{label:'기준편(표준편) 마스터샘플 검증',period:7},{label:'스타일러스 직진성 점검',period:7},{label:'구동부 윤활',period:30},{label:'스타일러스 교환주기 확인',period:30},{label:'교정 유효기간 확인',period:30},
   ],
   '측정실온습도': [
     {label:'온도 측정(20±2℃)',period:1},{label:'습도 측정(45~60%)',period:1},{label:'온도기록계 정상동작',period:1},{label:'항온항습기 정상가동',period:1},{label:'필터 청결상태',period:7},{label:'온습도계 교정 유효기간',period:30},
@@ -400,6 +406,65 @@ async function saveItemsToServer(){
   return true;
 }
 
+/* ════════ 주기 도래 판정 ════════
+   _itemDueMap[key] = true/false (오늘 기준 점검 도래 여부)
+   - 일상(1): 마지막 점검이 오늘 미실시면 도래
+   - 주간(7): 마지막 점검이 7일 전 이전이면 도래
+   - 월간(30): 마지막 점검이 30일 전 이전이면 도래
+   - 한 번도 점검 안 됨 → 항상 도래 */
+let _itemDueMap = {};
+let _itemLastDate = {};   // {label: 'YYYY-MM-DD'}
+
+function daysBetween(d1, d2){
+  const ms = new Date(d2) - new Date(d1);
+  return Math.floor(ms / (1000*60*60*24));
+}
+
+async function calcDueMap(){
+  _itemDueMap = {};
+  _itemLastDate = {};
+  const today = new Date().toISOString().slice(0,10);
+
+  // 측정기 별 최근 60건 조회 (3개월 분량 충분)
+  let rows = [];
+  try{
+    rows = await sbSelect('qc_measure_log',
+      'select=check_date,items_json&equipment=eq.'+encodeURIComponent(CURRENT_EQ)+
+      '&order=check_date.desc&limit=60');
+  }catch(e){
+    console.warn('이력 조회 실패 - 모든 항목 도래로 처리', e);
+    _items.forEach(it=>{ _itemDueMap[it.key] = true; });
+    return;
+  }
+
+  // 각 항목 라벨별 최근 점검일 찾기
+  for(const it of _items){
+    let last = null;
+    for(const row of rows){
+      const ij = row.items_json || {};
+      // OK 또는 NG로 입력되었던 항목만 인정 (빈 값/null은 미점검)
+      const v = ij[it.label];
+      if(v === 'OK' || v === 'NG'){
+        last = row.check_date;
+        break;   // desc 정렬이므로 첫 발견이 최근
+      }
+    }
+    _itemLastDate[it.label] = last;
+
+    // 도래 판정
+    let due;
+    if(!last){
+      due = true;
+    } else {
+      const diff = daysBetween(last, today);
+      if(it.period === 1)      due = diff >= 1;
+      else if(it.period === 7) due = diff >= 7;
+      else                     due = diff >= 30;
+    }
+    _itemDueMap[it.key] = due;
+  }
+}
+
 function renderChecklist(){
   const container = document.getElementById('checklistContainer');
   if(!_items.length){
@@ -410,9 +475,28 @@ function renderChecklist(){
   }
   container.innerHTML = _items.map(it=>{
     const periodLbl = it.period===1?'일상':(it.period===7?'주간':'월간');
-    return '<div class="check-item" id="item_'+it.key+'">' +
+    const isDue = _itemDueMap[it.key] !== false;   // 미정의면 도래로 간주(보수적)
+    const lastDt = _itemLastDate[it.label];
+    let stateTag;
+    if(isDue){
+      stateTag = '<span class="due-tag">🔴 점검필요</span>';
+    } else {
+      // 며칠전인지 표시
+      if(lastDt){
+        const today = new Date().toISOString().slice(0,10);
+        const d = daysBetween(lastDt, today);
+        const lbl = d===0 ? '오늘완료' : (d+'일전');
+        stateTag = '<span class="skip-tag">✓ '+lbl+'</span>';
+      } else {
+        stateTag = '<span class="skip-tag">생략</span>';
+      }
+    }
+    const cls = 'check-item' + (isDue ? ' due' : ' not-due');
+    return '<div class="'+cls+'" id="item_'+it.key+'" data-due="'+(isDue?'1':'0')+'">' +
       '<div class="check-label">' + escapeHtml(it.label) +
-        '<span class="badge-period badge-'+it.period+'">'+periodLbl+'</span></div>' +
+        '<span class="badge-period badge-'+it.period+'">'+periodLbl+'</span>'+
+        stateTag +
+      '</div>' +
       '<div class="okng-group">' +
         '<input type="radio" id="'+it.key+'_ok" name="'+it.key+'" value="OK">' +
         '<label class="okng-btn" for="'+it.key+'_ok" onclick="setCheck(\''+it.key+'\',\'OK\')">OK</label>' +
@@ -440,13 +524,18 @@ function setCheck(key, val){
 window.setCheck = setCheck;
 
 function updateProgress(){
-  const total = _items.length;
+  // 도래 항목만 진행률 계산 대상 (미도래는 제외)
+  const dueItems = _items.filter(it => _itemDueMap[it.key] !== false);
+  const total = dueItems.length;
   let done = 0, ng = 0;
-  _items.forEach(it=>{
+  dueItems.forEach(it=>{
     const r = document.querySelector('input[name="'+it.key+'"]:checked');
     if(r){ done++; if(r.value==='NG') ng++; }
   });
-  document.getElementById('progressLabel').textContent = '진행 '+done+' / '+total;
+  const skipped = _items.length - total;
+  let label = '진행 '+done+' / '+total;
+  if(skipped>0) label += ' (생략 '+skipped+')';
+  document.getElementById('progressLabel').textContent = label;
   document.getElementById('progressFill').style.width = total?(done/total*100)+'%':'0%';
   document.getElementById('ngLabel').textContent = ng>0?('⚠️ NG '+ng+'건'):'';
 }
@@ -521,6 +610,8 @@ async function saveAllSettings(){
   try{
     await saveItemsToServer();
     renderItemEditor();
+    // 항목이 바뀌면 도래 매핑도 무효 → 재계산
+    await calcDueMap();
     renderChecklist();
     toast('💾 저장 완료 · '+_items.length+'개 항목 서버 동기화됨','success');
   }catch(e){
@@ -537,12 +628,29 @@ document.getElementById('inspectionForm').addEventListener('submit', async funct
 
   const results = {};
   const ngList = [];
+  let dueChecked = 0;
   for(const it of _items){
+    const isDue = _itemDueMap[it.key] !== false;
     const r = document.querySelector('input[name="'+it.key+'"]:checked');
-    if(!r){ alert('"'+it.label+'" 항목을 점검해주세요'); return; }
-    results[it.label] = r.value;
-    if(r.value==='NG') ngList.push(it.label);
+    if(isDue){
+      // 도래 항목은 필수
+      if(!r){ alert('"'+it.label+'" 항목을 점검해주세요 (점검필요 표시)'); return; }
+      results[it.label] = r.value;
+      if(r.value==='NG') ngList.push(it.label);
+      dueChecked++;
+    } else {
+      // 미도래 항목: 입력했으면 저장, 안 했으면 생략 (items_json에서 제외)
+      if(r){
+        results[it.label] = r.value;
+        if(r.value==='NG') ngList.push(it.label);
+      }
+    }
   }
+
+  if(dueChecked === 0 && Object.keys(results).length === 0){
+    if(!confirm('점검 도래 항목이 없습니다. 그래도 빈 점검 기록을 제출하시겠습니까?')) return;
+  }
+
   const row = {
     check_date: document.getElementById('checkDate').value,
     check_time: document.getElementById('checkTime').value,
@@ -563,8 +671,11 @@ document.getElementById('inspectionForm').addEventListener('submit', async funct
     document.querySelectorAll('.check-item').forEach(function(it){ it.classList.remove('checked-ok','checked-ng'); });
     document.querySelectorAll('.okng-btn').forEach(function(b){ b.classList.remove('ok-selected','ng-selected'); });
     document.getElementById('memo').value = '';
-    updateProgress();
+    document.getElementById('memo').value = '';
     initDateTime();
+    // 점검 직후 도래 상태 재계산 + 화면 갱신 (방금 점검한 항목은 미도래로 변경됨)
+    await calcDueMap();
+    renderChecklist();
   }catch(err){
     toast('❌ 저장 실패: '+err.message,'error');
   }finally{
@@ -671,9 +782,14 @@ function downloadXlsx(){
 }
 window.downloadXlsx = downloadXlsx;
 
-function switchTab(name){
+async function switchTab(name){
   document.querySelectorAll('.tab').forEach(function(t){ t.classList.toggle('active', t.dataset.pane===name); });
   document.querySelectorAll('.pane').forEach(function(p){ p.classList.toggle('active', p.id==='pane-'+name); });
+  if(name==='check'){
+    // 점검 탭 진입 시 도래 정보 갱신 (다른 사람이 점검했을 수 있음)
+    await calcDueMap();
+    renderChecklist();
+  }
   if(name==='history') loadHistory();
   if(name==='setting') renderItemEditor();
 }
@@ -708,6 +824,8 @@ window.addEventListener('DOMContentLoaded', async function(){
 
   const loaded = await loadItemsFromServer();
   if(!loaded){ loadDefaultItems(); }
+  // 점검 항목 목록 로드 후 도래 여부 계산
+  await calcDueMap();
   renderChecklist();
 });
 </script>
