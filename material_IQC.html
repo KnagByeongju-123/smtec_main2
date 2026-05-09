@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>소재 수입검사 v1.7 | (주)태진다이텍</title>
+<title>소재 수입검사 v1.8 | (주)태진다이텍</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Malgun Gothic','맑은 고딕','Segoe UI',sans-serif;background:#f4f6f9;color:#222;font-size:14px;line-height:1.5}
@@ -32,6 +32,10 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 .wait-tbl tbody tr:hover td{background:#dbeafe !important}
 .wait-tbl tbody tr:active td{background:#bfdbfe !important}
 .wait-tbl td.supplier-cell{max-width:130px;text-align:left;padding-left:10px;font-weight:600;font-size:12px}
+.done-tbl{font-size:13px;min-width:1100px}
+.done-tbl th,.done-tbl td{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.done-tbl td.cert-no-cell{font-weight:700;color:#2c5282;font-size:12px;max-width:140px}
+.done-tbl td.supplier-cell{max-width:120px;text-align:left;padding-left:10px;font-weight:600;font-size:12px}
 .btn{padding:7px 14px;border:none;border-radius:5px;cursor:pointer;font-weight:600;font-size:13px;font-family:inherit}
 .btn:active{transform:scale(.97)}
 .btn-pri{background:#2c5282;color:#fff}.btn-pri:hover{background:#1e3a5f}
@@ -136,7 +140,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 
 <div class="hdr">
   <div>
-    <h1>📋 소재 수입검사 시스템 v1.7</h1>
+    <h1>📋 소재 수입검사 시스템 v1.8</h1>
     <div class="sub">(주)태진다이텍 · 품질관리팀 · LOT 그룹 자동 통합 (재질+두께+폭+LOT베이스)</div>
   </div>
   <div class="user-info" id="userInfoBar">검사자: <b id="loginUser">로그인 필요</b></div>
@@ -205,7 +209,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}
         <div class="form-item"><label style="font-size:11px;color:#475569;font-weight:600">검색어</label><input type="text" id="dText" placeholder="LOT/HEAT/재질" style="padding:6px 9px;border:1.3px solid #cbd5e0;border-radius:5px;font-size:13px"></div>
       </div>
       <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
-        <button class="btn btn-pri" onclick="renderDone()" style="padding:8px 18px">🔍 조회하기</button>
+        <button class="btn btn-pri" onclick="searchDone()" style="padding:8px 18px">🔍 조회하기</button>
         <button class="btn btn-sec btn-sm" onclick="resetDoneFilter()">↻ 초기화</button>
         <button class="btn btn-sec btn-sm" onclick="setDateRangeQuick(7)">최근 1주</button>
         <button class="btn btn-sec btn-sm" onclick="setDateRangeQuick(30)">최근 1개월</button>
@@ -215,7 +219,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}
       </div>
     </div>
     <div class="card-body" style="padding:0;overflow-x:auto">
-      <table class="dt">
+      <table class="dt done-tbl">
         <thead>
           <tr>
             <th>성적서 번호</th>
@@ -411,13 +415,13 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 
 <script>
 /* ============================================================
-   소재 수입검사 시스템 v1.7
+   소재 수입검사 시스템 v1.8
    - LOT 그룹 = 재질 + 두께 + 폭 + LOT '-' 이전 베이스 (공급자별)
    - 검사자 = 로그인 정보 자동
    - Supabase 연결 정보 고정
    ============================================================ */
 
-const APP_VERSION = '1.7';
+const APP_VERSION = '1.8';
 
 // 🔒 고정 연결 정보 (수정 불가)
 const SB_URL = 'https://omngtyewdaqpphnzeate.supabase.co';
@@ -731,17 +735,35 @@ function renderWait(){
   }).join('');
 }
 
-/* ================ 검사 완료(성적서 발행) 렌더 ================ */
-function renderDone(){
-  const data = inspections.slice();
+/* ================ 검사 완료(성적서 발행) 렌더 ================
+   - 첫 진입(_doneSearched=false)에는 안내만 표시
+   - "조회하기" 버튼 클릭 시 실제 결과 렌더
+*/
+let _doneSearched = false;
 
-  const suppliers = [...new Set(data.map(d=>d.supplier).filter(Boolean))].sort();
+function renderDone(){
+  // 공급자 옵션은 항상 갱신 (필터 사용을 위해)
+  const allSuppliers = [...new Set(inspections.map(d=>d.supplier).filter(Boolean))].sort();
   const dSupp = document.getElementById('dSupp');
   const cur = dSupp.value;
-  dSupp.innerHTML = '<option value="">전체</option>' + suppliers.map(s=>`<option value="${s}">${s}</option>`).join('');
+  dSupp.innerHTML = '<option value="">전체</option>' + allSuppliers.map(s=>`<option value="${s}">${s}</option>`).join('');
   dSupp.value = cur;
 
-  let view = data;
+  const list = document.getElementById('doneList');
+  const cntEl = document.getElementById('doneCount');
+
+  // 아직 조회하기 누르기 전이면 안내만 표시
+  if(!_doneSearched){
+    if(cntEl) cntEl.textContent = '(조회하기를 누르세요)';
+    list.innerHTML = `<tr><td colspan="12"><div class="empty">
+      <div class="ico">🔍</div>
+      <div style="font-size:14px;font-weight:600">조회 조건을 설정한 후 [🔍 조회하기]를 눌러주세요</div>
+      <div style="font-size:11px;margin-top:8px;color:#94a3b8">검사일 범위, 공급자, 판정, 검색어로 필터링 가능</div>
+    </div></td></tr>`;
+    return;
+  }
+
+  let view = inspections.slice();
   const fSupp = dSupp.value;
   const fJud = document.getElementById('dJudge').value;
   const fText = (document.getElementById('dText').value||'').toLowerCase();
@@ -761,11 +783,8 @@ function renderDone(){
 
   view.sort((a,b)=>(b.inspDate||'').localeCompare(a.inspDate||''));
 
-  // 카운트 표시
-  const cntEl = document.getElementById('doneCount');
   if(cntEl) cntEl.textContent = `(${view.length}건)`;
 
-  const list = document.getElementById('doneList');
   if(!view.length){
     list.innerHTML = `<tr><td colspan="12"><div class="empty"><div class="ico">📋</div><div style="font-size:14px">조회 결과가 없습니다</div><div style="font-size:11px;margin-top:8px;color:#94a3b8">필터를 조정하거나 [↻ 초기화]를 누르세요</div></div></td></tr>`;
     return;
@@ -774,9 +793,11 @@ function renderDone(){
   list.innerHTML = view.map((d) => {
     const idx = inspections.indexOf(d);
     const judClass = d.finalJudge==='OK' ? 'badge-ok' : (d.finalJudge==='NG' ? 'badge-ng' : 'badge-hold');
+    const safeCert = (d.certNo||'').replace(/"/g,'&quot;');
+    const safeSup = (d.supplier||'').replace(/"/g,'&quot;');
     return `<tr>
-      <td style="font-weight:700;color:#2c5282">${d.certNo||'-'}</td>
-      <td style="text-align:left;padding-left:10px">${d.supplier||'-'}</td>
+      <td class="cert-no-cell" title="${safeCert}">${d.certNo||'-'}</td>
+      <td class="supplier-cell" title="${safeSup}">${d.supplier||'-'}</td>
       <td style="font-weight:600">${d.material||'-'}</td>
       <td>${d.thickness ?? '-'}</td>
       <td>${d.width ?? '-'}</td>
@@ -796,16 +817,25 @@ function renderDone(){
 }
 
 /* ================ 검사완료 탭 - 일자 범위 / 빠른선택 / CSV ================ */
+// 조회하기 버튼 - _doneSearched=true 후 렌더
+function searchDone(){
+  _doneSearched = true;
+  renderDone();
+}
+
+// 초기화 - 필터 비우고 안내 화면으로 복귀
 function resetDoneFilter(){
   document.getElementById('dDateFrom').value = '';
   document.getElementById('dDateTo').value = '';
   document.getElementById('dSupp').value = '';
   document.getElementById('dJudge').value = '';
   document.getElementById('dText').value = '';
+  _doneSearched = false;  // 안내 화면으로
   renderDone();
   showToast('↻ 필터 초기화');
 }
 
+// 빠른선택 - 일자만 채움 (자동 조회 X, 조회하기 클릭 유도)
 function setDateRangeQuick(days){
   const today = todayKST();
   const dt = new Date(today);
@@ -813,7 +843,8 @@ function setDateRangeQuick(days){
   const from = dt.toISOString().split('T')[0];
   document.getElementById('dDateFrom').value = from;
   document.getElementById('dDateTo').value = today;
-  renderDone();
+  // 자동 조회까지 진행 (사용자 의도가 명확)
+  searchDone();
 }
 
 function exportDoneCSV(){
@@ -1486,7 +1517,7 @@ function clearLocalCache(){
 
 /* ================ 초기화 ================ */
 window.addEventListener('DOMContentLoaded', () => {
-  // 검사완료 탭 기본 일자 범위 = 최근 1개월
+  // 검사완료 탭 기본 일자 범위 = 최근 1개월 (편의용으로만 채움, 자동 조회 X)
   const today = todayKST();
   const dt = new Date(today);
   dt.setDate(dt.getDate() - 29);
@@ -1496,7 +1527,7 @@ window.addEventListener('DOMContentLoaded', () => {
   refreshLoginUserUI();
   renderCfg();
   renderWait();
-  renderDone();
+  renderDone();  // 첫 진입은 안내 화면 표시
   // 자동 동기화 (Key 고정이므로 즉시 시도)
   loadFromSupabase();
   // 5분마다 자동 동기화
@@ -1511,7 +1542,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
   // Enter 키로 조회 실행 (검사완료 탭 검색어 칸)
   document.getElementById('dText').addEventListener('keydown', e => {
-    if(e.key === 'Enter') renderDone();
+    if(e.key === 'Enter') searchDone();
   });
 
   // 다른 탭/포커스 시 로그인 정보 재확인
