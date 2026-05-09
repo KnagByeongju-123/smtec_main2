@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>일상점검 종합현황 v2.5</title>
+<title>일상점검 종합현황 v2.6</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 body{font-family:'Noto Sans KR','맑은 고딕',sans-serif;background:#f5f5f5;color:#222;font-size:13px;padding-bottom:30px}
@@ -47,6 +47,7 @@ tbody tr.cat-prod td.cat{background:#e3f2fd;color:#1565c0;border-left:3px solid 
 tbody tr.cat-qc td.cat{background:#fce4ec;color:#c2185b;border-left:3px solid #c2185b}
 tbody tr.cat-wash td.cat{background:#e8f5e9;color:#2e7d32;border-left:3px solid #2e7d32}
 tbody tr.cat-ship td.cat{background:#fff3e0;color:#e65100;border-left:3px solid #e65100}
+tbody tr.cat-measure td.cat{background:#ede7f6;color:#5e35b1;border-left:3px solid #5e35b1}
 /* 로드모니터 부속 행: 생산설비 행 아래 따라붙는 보라색 얇은 행 */
 tbody tr.cat-load td{background:#faf4fb;font-size:10px;padding:3px 4px}
 tbody tr.cat-load td.cat{background:#f3e5f5;color:#7b1fa2;border-left:3px solid #7b1fa2;font-size:9px;padding:3px 4px}
@@ -116,7 +117,7 @@ tbody td.eq{padding-left:6px}
 
 <div class="hdr">
   <h1>📋 일상점검 종합현황</h1>
-  <p>생산설비 · 측정기 · 검사기 · 세척기 · 출하공정 · 로드모니터(300톤+) 통합 점검이력 v2.5</p>
+  <p>생산설비 · 측정기 · 검사기 · 세척기 · 출하공정 · 로드모니터(300톤+) 통합 점검이력 v2.6</p>
 </div>
 
 <!-- ===== 탭 ===== -->
@@ -138,6 +139,7 @@ tbody td.eq{padding-left:6px}
         <option value="qc">검사기</option>
         <option value="wash">세척기</option>
         <option value="ship">출하공정</option>
+        <option value="measure">측정기</option>
       </select>
     </div>
     <button class="btn btn-blue" onclick="loadData()">🔄 조회</button>
@@ -228,14 +230,15 @@ const CFG={
   prod:{table:'p_machine_check',  label:'생산설비', color:'#1565c0', icon:'🏭'},
   qc:  {table:'qc_machine_check', label:'검사기',  color:'#c2185b', icon:'🔬'},
   wash:{table:'wash_machine_check',label:'세척기',  color:'#2e7d32', icon:'🧼'},
-  ship:{table:'shipping_check',   label:'출하공정', color:'#e65100', icon:'📦'}
+  ship:{table:'shipping_check',   label:'출하공정', color:'#e65100', icon:'📦'},
+  measure:{table:'qc_measure_log', label:'측정기', color:'#5e35b1', icon:'📐'}
 };
 
 /* 로드모니터는 별도 카테고리가 아닌 생산설비 부속 (300톤 이상에만 설치)
    → 데이터는 별도 조회하여 호기별로 인덱싱 */
 const LOAD_CFG={table:'load_monitor_check', label:'로드', color:'#7b1fa2', icon:'📊', minTon:300};
 
-let CACHE={records:{prod:[],qc:[],wash:[],ship:[]}, loadRecords:[], equipments:{prod:[],qc:[],wash:[],ship:[]}, days:[], byKey:{}, loadByKey:{}};
+let CACHE={records:{prod:[],qc:[],wash:[],ship:[],measure:[]}, loadRecords:[], equipments:{prod:[],qc:[],wash:[],ship:[],measure:[]}, days:[], byKey:{}, loadByKey:{}};
 
 /* ========== 공통 함수 ========== */
 function $(id){return document.getElementById(id)}
@@ -304,10 +307,10 @@ function getDisplayName(key){ return _displayNames[key]||key; }
 /* ========== 설비목록 수집 (생산설비는 정규화 통합) ========== */
 async function loadEquipments(){
   /* 1) 점검이력에서 등장하는 설비명 수집 */
-  const eqSet={prod:new Set(),qc:new Set(),wash:new Set(),ship:new Set()};
-  for(const k of ['prod','qc','wash','ship']){
+  const eqSet={prod:new Set(),qc:new Set(),wash:new Set(),ship:new Set(),measure:new Set()};
+  for(const k of ['prod','qc','wash','ship','measure']){
     (CACHE.records[k]||[]).forEach(r=>{
-      const m=r.machine||r.machine_name||r.equipment_name||r.line;
+      const m=r.machine||r.machine_name||r.equipment_name||r.equipment||r.line;
       if(!m)return;
       const raw=String(m).trim();
       if(k==='prod'){
@@ -364,6 +367,15 @@ async function loadEquipments(){
     SHIP_DEFAULT_LINES.forEach(v=>eqSet.ship.add(v));
   }
 
+  /* 6) 측정기: 점검이력 + 기본 12종 추가 (이력이 없는 측정기도 행에 표시) */
+  const MEASURE_DEFAULT=[
+    '3차원측정기(자동)','3차원측정기(수동)','비접촉3차원측정기',
+    '형상측정기(1호)','형상측정기(2호)',
+    '비커스경도측정기','로크웰경도측정기','로봇암',
+    '거칠기측정기','측정실온습도','디지털버니어캘리퍼스','마이크로메타'
+  ];
+  MEASURE_DEFAULT.forEach(v=>eqSet.measure.add(v));
+
   /* 정렬: 숫자 우선 */
   function srt(a,b){
     const na=parseInt(a),nb=parseInt(b);
@@ -376,11 +388,21 @@ async function loadEquipments(){
     }
     return a.localeCompare(b,'ko');
   }
+  /* 측정기 정렬: 기본 순서 그대로 유지 (가나다순보다 의미 분류가 우선) */
+  function srtMeasure(a,b){
+    const order = MEASURE_DEFAULT;
+    const ia=order.indexOf(a), ib=order.indexOf(b);
+    if(ia>=0 && ib>=0) return ia-ib;
+    if(ia>=0) return -1;
+    if(ib>=0) return 1;
+    return a.localeCompare(b,'ko');
+  }
   CACHE.equipments={
     prod:[...eqSet.prod].sort(srt),
     qc:[...eqSet.qc].sort(srt),
     wash:[...eqSet.wash].sort(srt),
-    ship:[...eqSet.ship].sort(srt)
+    ship:[...eqSet.ship].sort(srt),
+    measure:[...eqSet.measure].sort(srtMeasure)
   };
 }
 
@@ -392,7 +414,7 @@ async function loadData(){
 
   $('tblWrap').innerHTML='<div class="loading">데이터 조회 중</div>';
 
-  CACHE.records={prod:[],qc:[],wash:[],ship:[]};
+  CACHE.records={prod:[],qc:[],wash:[],ship:[],measure:[]};
   CACHE.loadRecords=[];
   CACHE.byKey={};
   CACHE.loadByKey={};
@@ -425,10 +447,11 @@ async function loadData(){
     await loadEquipments();
 
     /* (cat, equipment, date) → records[] 인덱싱
-       생산설비는 정규화 키로 통합 */
-    for(const k of ['prod','qc','wash','ship']){
+       생산설비는 정규화 키로 통합
+       측정기는 equipment 컬럼 사용 */
+    for(const k of ['prod','qc','wash','ship','measure']){
       CACHE.records[k].forEach(r=>{
-        const raw=String(r.machine||r.machine_name||r.equipment_name||r.line||'').trim();
+        const raw=String(r.machine||r.machine_name||r.equipment_name||r.equipment||r.line||'').trim();
         const dt=r.check_date;
         if(!raw||!dt)return;
         const eq = (k==='prod') ? normProdName(raw) : raw;
@@ -504,7 +527,7 @@ function renderTable(){
   const days=CACHE.days;
   const today=todayKst();
 
-  let cats=['prod','qc','wash','ship'];
+  let cats=['prod','qc','wash','ship','measure'];
   if(cf)cats=[cf];
 
   /* 데이터가 전혀 없는지 체크 */
@@ -619,10 +642,13 @@ function showDetail(cat,eq,date){
     fields.forEach(([k,v])=>{
       h+=`<div class="detail-row"><span class="dt-label">${k}</span><span class="dt-val">${v}</span></div>`;
     });
-    /* 점검항목별 OK/NG 표시 - chk_, item_ 컬럼 또는 results JSONB */
+    /* 점검항목별 OK/NG 표시 - chk_, item_ 컬럼 또는 results JSONB 또는 items_json (측정기) */
     let items=Object.keys(r).filter(k=>/^(chk_|item_|i_|c_)/.test(k)&&r[k]!=null).map(k=>[k,r[k]]);
     if(!items.length && r.results && typeof r.results==='object'){
       items=Object.entries(r.results).filter(([k,v])=>v!=null);
+    }
+    if(!items.length && r.items_json && typeof r.items_json==='object'){
+      items=Object.entries(r.items_json).filter(([k,v])=>v!=null);
     }
     if(items.length){
       h+=`<div style="margin-top:8px;padding-top:8px;border-top:1px dashed #ddd"><div style="font-size:11px;color:#666;font-weight:700;margin-bottom:4px">점검항목</div>`;
