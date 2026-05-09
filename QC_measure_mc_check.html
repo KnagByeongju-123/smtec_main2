@@ -8,7 +8,7 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="theme-color" content="#0f1117">
   <meta name="format-detection" content="telephone=no">
-  <title>측정 설비 일상점검 v7.1</title>
+  <title>측정 설비 일상점검</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
   <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
@@ -1345,8 +1345,8 @@
 
 <!-- 헤더 -->
 <div class="hdr">
-  <div class="hdr-title">측정 설비 일상점검 <span style="font-size:11px;color:#94a3b8;font-weight:400">v7.1</span></div>
-  <div class="hdr-sub">📋 일상·주간·월간 점검 통합 관리 · 🔗 ESG 메인 로그인 자동 연동</div>
+  <div class="hdr-title">측정 설비 일상점검</div>
+  <div class="hdr-sub">📋 일상·주간·월간 점검 통합 관리</div>
 </div>
 
 <!-- 탭 -->
@@ -1581,7 +1581,7 @@
   <!-- ⓪ 로그인 정보 (맨 위) -->
   <div class="stg-card">
     <div class="stg-card-title">👤 로그인 정보</div>
-    <div class="stg-help">💡 ESG 메인 시스템에 로그인되어 있으면 <b style="color:#38bdf8">자동 연동</b>됩니다. 단독 실행 시에만 직접 입력하세요.</div>
+    <div class="stg-help">💡 결재함 식별 + 사인란 표시에 사용됩니다. PIN과 이름을 등록하세요.</div>
     <div class="add-row" style="flex-direction:column;gap:8px">
       <input type="text" id="loginPin" placeholder="PIN (예: 4003)" maxlength="10" style="width:100%">
       <input type="text" id="loginName" placeholder="이름 (예: 김상기)" style="width:100%">
@@ -2719,4 +2719,1605 @@ async function editChecklistItem(eq, item, currentPeriod){
       const target = fullMapping[eq].find(it => it.item === item);
       if (target) target.period = newPeriod;
     }
-    st.textContent = '✅ 주기 변경됨: ' + ite
+    st.textContent = '✅ 주기 변경됨: ' + item;
+    st.className = 'stg-status ok';
+    renderItemMgrList();
+    filterEquipmentOptions();
+  } catch(e) {
+    st.textContent = '❌ 실패: ' + e.message;
+    st.className = 'stg-status err';
+  } finally {
+    overlay.classList.remove('show');
+  }
+}
+window.editChecklistItem = editChecklistItem;
+
+/* ══════════════════════════════════════════════════════════════
+   [신규] 기준사진 관리 (설정 탭에서 일괄 관리)
+══════════════════════════════════════════════════════════════ */
+function buildRefPhotoEqOptions(){
+  const sel = document.getElementById('refPhotoEqSelect');
+  if (!sel) return;
+  const prev = sel.value;
+  sel.innerHTML = '<option value="" disabled>설비를 선택하세요</option>';
+  // 마스터 순서 우선
+  const masterNames = equipmentList.map(eq => eq.name);
+  const inMapping = Object.keys(fullMapping);
+  const ordered = [];
+  masterNames.forEach(name => {
+    if (inMapping.includes(name)) ordered.push(name);
+  });
+  inMapping
+    .filter(n => !masterNames.includes(n))
+    .sort((a,b) => a.localeCompare(b,'ko'))
+    .forEach(name => ordered.push(name));
+  ordered.forEach(eq=>{
+    const opt = document.createElement('option');
+    opt.value = eq; opt.textContent = eq;
+    sel.appendChild(opt);
+  });
+  if (prev) sel.value = prev;
+  renderRefPhotoList();
+}
+window.buildRefPhotoEqOptions = buildRefPhotoEqOptions;
+
+function renderRefPhotoList(){
+  const eq = document.getElementById('refPhotoEqSelect').value;
+  const c  = document.getElementById('refPhotoList');
+  if (!c) return;
+  if (!eq) { c.innerHTML = ''; return; }
+  // 측정실 온습도/경도/조도는 기준사진 의미 없으므로 안내
+  if (['측정실 온/습도','경도 마스터샘플체크','조도'].includes(eq)) {
+    c.innerHTML = '<div class="rule-empty">' + eq + ' 항목은 측정값 입력 방식이라 기준사진을 사용하지 않습니다</div>';
+    return;
+  }
+  const items = fullMapping[eq] || [];
+  if (!items.length) {
+    c.innerHTML = '<div class="rule-empty">등록된 점검 항목이 없습니다</div>';
+    return;
+  }
+  c.innerHTML = items.map((it,i) => {
+    const photoKey = eq + '|||' + it.item;
+    const url = photoMap[photoKey];
+    const eqEsc = eq.replace(/'/g,'&#39;');
+    const itemEsc = it.item.replace(/'/g,'&#39;');
+    return `
+      <div class="ref-photo-card">
+        <div class="rpc-label">${i+1}. ${it.item}</div>
+        ${url
+          ? `<img class="rpc-img" src="${url}" onclick="showPhotoPreview('${photoKey}','${itemEsc}')" alt="기준사진">`
+          : `<div class="rpc-empty">기준사진 미등록</div>`
+        }
+        <div class="rpc-actions">
+          <button class="rpc-btn cam" onclick="uploadRefPhoto('${eqEsc}','${itemEsc}','camera')">📷 촬영</button>
+          <button class="rpc-btn file" onclick="uploadRefPhoto('${eqEsc}','${itemEsc}','file')">🖼 파일</button>
+          ${url ? `<button class="rpc-btn del" onclick="deleteRefPhotoFromMgr('${eqEsc}','${itemEsc}')">✕</button>` : ''}
+        </div>
+      </div>`;
+  }).join('');
+}
+window.renderRefPhotoList = renderRefPhotoList;
+
+let _refUploadTarget = null;
+
+function uploadRefPhoto(eq, item, mode){
+  _refUploadTarget = { eq, item };
+  const inputId = (mode === 'camera') ? 'ref-camera-input' : 'ref-file-input';
+  document.getElementById(inputId).click();
+}
+window.uploadRefPhoto = uploadRefPhoto;
+
+async function _handleRefUpload(file){
+  if (!file || !_refUploadTarget) return;
+  const { eq, item } = _refUploadTarget;
+  const st = document.getElementById('refPhotoStatus');
+  const reader = new FileReader();
+  reader.onload = async (ev) => {
+    const img = new Image();
+    img.onload = async () => {
+      const maxW = 1000;
+      const ratio = Math.min(1, maxW / img.width);
+      const w = Math.round(img.width * ratio);
+      const h = Math.round(img.height * ratio);
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      const b64 = canvas.toDataURL('image/jpeg', 0.7);
+      try {
+        overlay.classList.add('show');
+        await savePhotoToServer(eq, item, b64);
+        const photoKey = eq + '|||' + item;
+        photoMap[photoKey] = b64;
+        st.textContent = '✅ 등록됨: ' + item;
+        st.className = 'stg-status ok';
+        renderRefPhotoList();
+        updateConnInfo();
+        // 점검 탭에 같은 설비가 표시 중이면 즉시 갱신
+        if (eqSelect.value === eq) updateChecklist();
+      } catch(err) {
+        st.textContent = '❌ 실패: ' + err.message;
+        st.className = 'stg-status err';
+        alert('사진 저장 실패: ' + err.message + '\n\nSupabase에 inspection_photos 테이블이 필요합니다.');
+      } finally {
+        overlay.classList.remove('show');
+        _refUploadTarget = null;
+      }
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+document.getElementById('ref-camera-input').addEventListener('change', async (e) => {
+  await _handleRefUpload(e.target.files[0]);
+  e.target.value = '';
+});
+document.getElementById('ref-file-input').addEventListener('change', async (e) => {
+  await _handleRefUpload(e.target.files[0]);
+  e.target.value = '';
+});
+
+async function deleteRefPhotoFromMgr(eq, item){
+  if (!confirm(`"${item}"의 기준사진을 삭제하시겠습니까?`)) return;
+  const photoKey = eq + '|||' + item;
+  const st = document.getElementById('refPhotoStatus');
+  overlay.classList.add('show');
+  try {
+    await deletePhotoFromServer(eq, item);
+    delete photoMap[photoKey];
+    st.textContent = '✅ 삭제됨: ' + item;
+    st.className = 'stg-status ok';
+    renderRefPhotoList();
+    updateConnInfo();
+    if (eqSelect.value === eq) updateChecklist();
+  } finally {
+    overlay.classList.remove('show');
+  }
+}
+window.deleteRefPhotoFromMgr = deleteRefPhotoFromMgr;
+
+/* ══════════════════════════════════════════════════════════════
+   연결 상태
+══════════════════════════════════════════════════════════════ */
+function updateConnInfo(){
+  const photoCnt = Object.keys(photoMap).length;
+  const eqCnt = equipmentList.length;
+  const itemCnt = Object.values(fullMapping).reduce((sum, arr) => sum + arr.length, 0);
+  const el = document.getElementById('stgConnInfo');
+  if (!el) return;
+  el.innerHTML =
+    '🟢 Supabase: 연결됨<br>' +
+    '🛠 등록 설비: '+eqCnt+'대<br>' +
+    '📋 점검 항목: '+itemCnt+'개<br>' +
+    '📸 기준사진: '+photoCnt+'개 등록';
+}
+window.updateConnInfo = updateConnInfo;
+
+/* ══════════════════════════════════════════════════════════════
+   [신규] 보고서 시스템 - 분석/결재함/작성/보고서/완료
+══════════════════════════════════════════════════════════════ */
+
+/* ─── 상수 ─── */
+const STEP_NAMES = {1:'작성',2:'검토',3:'승인'};
+const STATUS_NAMES = {DRAFT:'작성중',REVIEWING:'검토중',APPROVING:'승인중',COMPLETED:'완료',REJECTED:'반려'};
+const STATUS_BADGES = {DRAFT:'draft',REVIEWING:'reviewing',APPROVING:'approving',COMPLETED:'completed',REJECTED:'rejected'};
+const TOTAL_STEPS = 3;
+const LS_LOGIN = 'INSP_LOGIN';
+const LS_REPORT = 'INSP_REPORT_';
+const LS_REPORT_LIST = 'INSP_REPORT_LIST';
+
+/* ─── 보고서 시스템 전역 ─── */
+let _allInspData = [];
+let _machineChart = null, _trendChart = null, _itemChart = null;
+let _selectedMachine = '';
+let _currentReportId = '';
+let _currentSignStep = 0;
+let _sigEmpty = true;
+
+/* ═══════ 로그인 정보 ═══════ */
+function getLogin(){ try{return JSON.parse(localStorage.getItem(LS_LOGIN)||'{}');}catch(e){return{};} }
+function getMyPin(){ return getLogin().pin || ''; }
+function getMyName(){ return getLogin().name || ''; }
+function loadLoginInfo(){
+  const d = getLogin();
+  document.getElementById('loginPin').value = d.pin || '';
+  document.getElementById('loginName').value = d.name || '';
+  document.getElementById('loginPinDisplay').textContent = d.pin || '-';
+}
+function saveLoginInfo(){
+  const pin = document.getElementById('loginPin').value.trim();
+  const name = document.getElementById('loginName').value.trim();
+  const st = document.getElementById('loginStatus');
+  if (!pin || !name) { st.textContent='⚠ PIN과 이름을 모두 입력하세요'; st.className='stg-status err'; return; }
+  localStorage.setItem(LS_LOGIN, JSON.stringify({pin, name}));
+  st.textContent = '✅ 저장됨: '+name+' ('+pin+')';
+  st.className = 'stg-status ok';
+  document.getElementById('loginPinDisplay').textContent = pin;
+  refreshInbox();
+}
+window.saveLoginInfo = saveLoginInfo;
+
+/* ═══════ 통합 결재선 (모든 설비에 공통 적용) ═══════ */
+const LS_ROUTE_GLOBAL = 'INSP_ROUTE_GLOBAL';
+
+function getRoute(eq){
+  // eq 인자는 호환성 유지용 (실제로는 항상 통합 결재선 반환)
+  try { return JSON.parse(localStorage.getItem(LS_ROUTE_GLOBAL)||'{}'); } catch(e) { return {}; }
+}
+function renderRoutesUI(){
+  const c = document.getElementById('globalRouteContainer');
+  if (!c) return;
+  const r = getRoute();
+  const steps = [
+    {n:1, label:'1차 · 작성', cls:'s1'},
+    {n:2, label:'2차 · 검토', cls:'s2'},
+    {n:3, label:'3차 · 승인', cls:'s4'},  // 골드 컬러 유지 (마지막 단계)
+  ];
+  let html = '<div class="gr-grid gr-grid-3">';
+  steps.forEach(s => {
+    html += '<div class="gr-step '+s.cls+'">';
+    html += '<div class="gr-step-head"><div class="gr-step-num">'+s.n+'</div><div class="gr-step-label">'+s.label+'</div></div>';
+    html += '<input type="text" placeholder="이름" data-route-field="step'+s.n+'_name" value="'+(r['step'+s.n+'_name']||'')+'">';
+    html += '<input type="text" placeholder="PIN" data-route-field="step'+s.n+'_pin" value="'+(r['step'+s.n+'_pin']||'')+'">';
+    html += '</div>';
+  });
+  html += '</div>';
+  c.innerHTML = html;
+}
+window.renderRoutesUI = renderRoutesUI;
+
+function saveGlobalRoute(){
+  const st = document.getElementById('saveRouteStatus');
+  const collected = {};
+  document.querySelectorAll('input[data-route-field]').forEach(inp => {
+    collected[inp.dataset.routeField] = inp.value.trim();
+  });
+  // 1차(작성) 필수
+  if (!collected.step1_name || !collected.step1_pin) {
+    st.textContent = '⚠ 1차(작성) 결재자의 이름과 PIN은 필수입니다';
+    st.className = 'stg-status err';
+    return;
+  }
+  localStorage.setItem(LS_ROUTE_GLOBAL, JSON.stringify(collected));
+  st.textContent = '✅ 결재선 저장됨';
+  st.className = 'stg-status ok';
+}
+window.saveGlobalRoute = saveGlobalRoute;
+
+/* 호환용: 기존 saveAllRoutes 호출이 남아있어도 동작하도록 */
+window.saveAllRoutes = saveGlobalRoute;
+
+/* ═══════ Supabase 연결 (URL/Key 변경 + 테스트) ═══════ */
+const LS_SB = 'INSP_SB_CONFIG';
+
+function loadSbConfig(){
+  let cfg = {};
+  try { cfg = JSON.parse(localStorage.getItem(LS_SB)||'{}'); } catch(e) {}
+  document.getElementById('sbUrl').value = cfg.url || _DEFAULT_SUPABASE_URL;
+  document.getElementById('sbKey').value = cfg.key || _DEFAULT_SUPABASE_ANON_KEY;
+  // 현재 적용 중인 값과 저장된 값 비교
+  if ((cfg.url && cfg.url === SUPABASE_URL) && (cfg.key && cfg.key === SUPABASE_ANON_KEY)) {
+    updateSbStatus('ok','현재 사용자 설정 적용 중 (저장됨)');
+  } else if (!cfg.url && !cfg.key) {
+    updateSbStatus('ok','기본값 자동 연결 중');
+  } else {
+    updateSbStatus('idle','연결 테스트 필요');
+  }
+}
+
+function updateSbStatus(state, msg){
+  const dot = document.getElementById('sbConnDot');
+  const text = document.getElementById('sbConnText');
+  if (!dot || !text) return;
+  text.textContent = msg;
+  if (state === 'ok') { dot.style.background = '#22c55e'; dot.style.boxShadow = '0 0 8px rgba(34,197,94,.6)'; text.style.color = '#22c55e'; }
+  else if (state === 'err') { dot.style.background = '#ef4444'; dot.style.boxShadow = '0 0 8px rgba(239,68,68,.6)'; text.style.color = '#ef4444'; }
+  else if (state === 'testing') { dot.style.background = '#fbbf24'; dot.style.boxShadow = '0 0 8px rgba(251,191,36,.6)'; text.style.color = '#fbbf24'; }
+  else { dot.style.background = '#5a5e72'; dot.style.boxShadow = 'none'; text.style.color = '#8b8fa3'; }
+}
+
+function resetSupabase(){
+  document.getElementById('sbUrl').value = _DEFAULT_SUPABASE_URL;
+  document.getElementById('sbKey').value = _DEFAULT_SUPABASE_ANON_KEY;
+  localStorage.removeItem(LS_SB);
+  updateSbStatus('idle','기본값으로 복원됨 · 페이지 새로고침 후 적용됩니다');
+}
+window.resetSupabase = resetSupabase;
+
+async function saveAndTestSupabase(){
+  const url = document.getElementById('sbUrl').value.trim().replace(/\/$/,'');
+  const key = document.getElementById('sbKey').value.trim();
+  if (!url || !key) { updateSbStatus('err','❌ URL과 Key를 모두 입력하세요'); return; }
+  if (!url.startsWith('https://')) { updateSbStatus('err','❌ URL은 https://로 시작해야 합니다'); return; }
+  updateSbStatus('testing','⏳ 연결 테스트 중...');
+  try {
+    const res = await fetch(url + '/rest/v1/inspection_log?select=id&limit=1', {
+      headers: { 'apikey': key, 'Authorization': 'Bearer ' + key }
+    });
+    if (!res.ok) {
+      const txt = await res.text();
+      throw new Error(res.status + ': ' + txt.substring(0,200));
+    }
+    // 저장
+    localStorage.setItem(LS_SB, JSON.stringify({url, key}));
+    updateSbStatus('ok','✅ 연결 성공 · 저장됨 (페이지 새로고침 후 적용)');
+  } catch(e) {
+    updateSbStatus('err','❌ 연결 실패: ' + e.message);
+  }
+}
+window.saveAndTestSupabase = saveAndTestSupabase;
+
+/* ═══════ SQL 스키마 (qc_machine 시스템 참고용) ═══════ */
+const SQL_SCHEMA = `-- ============================================================
+-- QC Machine History 시스템 SQL 스키마 (참고용)
+-- Run on Supabase SQL Editor
+-- 재실행 안전 (IF NOT EXISTS / ON CONFLICT)
+-- ============================================================
+
+-- 1) 점검표 마스터
+CREATE TABLE IF NOT EXISTS qc_check_template (
+  code text PRIMARY KEY,
+  name text NOT NULL,
+  icon text,
+  description text,
+  source_table text NOT NULL,
+  items_json jsonb NOT NULL DEFAULT '[]'::jsonb,
+  active boolean DEFAULT true,
+  sort_order int DEFAULT 0,
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
+);
+
+-- 2) 점검표별 결재선
+CREATE TABLE IF NOT EXISTS qc_check_approval_route (
+  template_code text PRIMARY KEY REFERENCES qc_check_template(code) ON DELETE CASCADE,
+  html_url text,
+  step1_pin text, step1_name text,
+  step2_pin text, step2_name text,
+  step3_pin text, step3_name text,
+  step4_pin text, step4_name text,
+  updated_at timestamptz DEFAULT now()
+);
+
+-- 3) 월별 보고서 본체
+CREATE TABLE IF NOT EXISTS qc_monthly_report (
+  id text PRIMARY KEY,                          -- e.g. 'qc_machine_202410'
+  template_code text NOT NULL REFERENCES qc_check_template(code),
+  template_name text,
+  target_year int NOT NULL,
+  target_month int NOT NULL,
+  status text NOT NULL DEFAULT 'DRAFT',         -- DRAFT/REVIEWING/APPROVING/COMPLETED/REJECTED
+  current_step int NOT NULL DEFAULT 1,
+  step1_name text, step1_pin text, step1_signature text, step1_date timestamptz, step1_comment text,
+  step2_name text, step2_pin text, step2_signature text, step2_date timestamptz, step2_comment text,
+  step3_name text, step3_pin text, step3_signature text, step3_date timestamptz, step3_comment text,
+  step4_name text, step4_pin text, step4_signature text, step4_date timestamptz, step4_comment text,
+  next_approver_pin text, next_approver_name text,
+  total_performed int DEFAULT 0,
+  ok_count int DEFAULT 0,
+  ng_count int DEFAULT 0,
+  ng_rate numeric(5,2) DEFAULT 0,
+  total_machines int DEFAULT 0,
+  total_workdays int DEFAULT 0,
+  summary_comment text,
+  improvement_action text,
+  raw_data jsonb,
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_qc_report_template_year_month ON qc_monthly_report(template_code, target_year, target_month);
+CREATE INDEX IF NOT EXISTS idx_qc_report_next_approver ON qc_monthly_report(next_approver_pin) WHERE status NOT IN ('COMPLETED','REJECTED');
+
+-- 4) 결재 이력
+CREATE TABLE IF NOT EXISTS qc_monthly_approval_log (
+  id bigserial PRIMARY KEY,
+  report_id text NOT NULL REFERENCES qc_monthly_report(id) ON DELETE CASCADE,
+  step int NOT NULL,
+  action text NOT NULL,                         -- SIGN / REJECT
+  actor_pin text, actor_name text,
+  comment text,
+  signed_at timestamptz DEFAULT now()
+);
+
+-- 5) 앱 전역 설정 (Supabase URL/Key 공유)
+CREATE TABLE IF NOT EXISTS qc_app_config (
+  key text PRIMARY KEY,
+  value text,
+  updated_at timestamptz DEFAULT now()
+);
+INSERT INTO qc_app_config (key, value) VALUES
+  ('app_name', 'QC Machine History'),
+  ('version', 'v7.0')
+ON CONFLICT (key) DO NOTHING;
+
+-- 6) RLS 활성화 (모두 anon 허용 - 필요 시 정책 강화)
+ALTER TABLE qc_check_template ENABLE ROW LEVEL SECURITY;
+ALTER TABLE qc_check_approval_route ENABLE ROW LEVEL SECURITY;
+ALTER TABLE qc_monthly_report ENABLE ROW LEVEL SECURITY;
+ALTER TABLE qc_monthly_approval_log ENABLE ROW LEVEL SECURITY;
+ALTER TABLE qc_app_config ENABLE ROW LEVEL SECURITY;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='qc_check_template' AND policyname='anon_all') THEN
+    CREATE POLICY "anon_all" ON qc_check_template FOR ALL TO anon USING (true) WITH CHECK (true);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='qc_check_approval_route' AND policyname='anon_all') THEN
+    CREATE POLICY "anon_all" ON qc_check_approval_route FOR ALL TO anon USING (true) WITH CHECK (true);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='qc_monthly_report' AND policyname='anon_all') THEN
+    CREATE POLICY "anon_all" ON qc_monthly_report FOR ALL TO anon USING (true) WITH CHECK (true);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='qc_monthly_approval_log' AND policyname='anon_all') THEN
+    CREATE POLICY "anon_all" ON qc_monthly_approval_log FOR ALL TO anon USING (true) WITH CHECK (true);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='qc_app_config' AND policyname='anon_all') THEN
+    CREATE POLICY "anon_all" ON qc_app_config FOR ALL TO anon USING (true) WITH CHECK (true);
+  END IF;
+END$$;
+
+-- 7) updated_at 자동 갱신 함수 + 트리거
+CREATE OR REPLACE FUNCTION qc_set_updated_at() RETURNS trigger AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DO $$
+DECLARE t text;
+BEGIN
+  FOR t IN VALUES ('qc_check_template'),('qc_check_approval_route'),('qc_monthly_report'),('qc_app_config')
+  LOOP
+    EXECUTE format('DROP TRIGGER IF EXISTS trg_%I_updated ON %I', t, t);
+    EXECUTE format('CREATE TRIGGER trg_%I_updated BEFORE UPDATE ON %I FOR EACH ROW EXECUTE FUNCTION qc_set_updated_at()', t, t);
+  END LOOP;
+END$$;
+
+-- 8) 기본 점검표 8종 (점검 원본 테이블이 미리 존재해야 함)
+INSERT INTO qc_check_template (code, name, icon, source_table, sort_order, items_json) VALUES
+  ('qc_machine',     '검사기 점검',         '🔬', 'qc_machine_check',     1, '[]'::jsonb),
+  ('qc_oms',         'OMS 점검',           '📐', 'qc_oms_check',         2, '[]'::jsonb),
+  ('wash_machine',   '세척기 점검',         '💧', 'wash_machine_check',   3, '[]'::jsonb),
+  ('shipping',       '출하검사 점검',        '📦', 'shipping_check',       4, '[]'::jsonb),
+  ('load_monitor',   '로드모니터 점검',     '⚙', 'load_monitor_check',   5, '[]'::jsonb),
+  ('line_patrol',    '라인 패트롤',         '🚶', 'line_patrol',          6, '[]'::jsonb),
+  ('safety',         '안전 점검',           '🦺', 'safety_check',         7, '[]'::jsonb),
+  ('am_check',       '자주보전 점검',        '🛠', 'am_check_sheet',       8, '[]'::jsonb)
+ON CONFLICT (code) DO UPDATE SET
+  name = EXCLUDED.name,
+  icon = EXCLUDED.icon,
+  source_table = EXCLUDED.source_table,
+  sort_order = EXCLUDED.sort_order;
+
+-- ============================================================
+-- 완료 ✅
+-- 정상 완료되면 "Success. No rows returned" 메시지가 표시됩니다.
+-- ============================================================
+`;
+
+function copySqlSchema(){
+  const st = document.getElementById('sqlStatus');
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(SQL_SCHEMA).then(()=>{
+      st.textContent = '✅ 복사됨 · Supabase SQL Editor에서 붙여넣기 후 Run';
+      st.className = 'stg-status ok';
+    }).catch(err => {
+      _fallbackCopy(SQL_SCHEMA);
+      st.textContent = '✅ 복사됨 (fallback)';
+      st.className = 'stg-status ok';
+    });
+  } else {
+    _fallbackCopy(SQL_SCHEMA);
+    st.textContent = '✅ 복사됨 (fallback)';
+    st.className = 'stg-status ok';
+  }
+}
+window.copySqlSchema = copySqlSchema;
+
+function _fallbackCopy(text){
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand('copy'); } catch(e) {}
+  document.body.removeChild(ta);
+}
+
+function downloadSqlSchema(){
+  const blob = new Blob([SQL_SCHEMA], {type:'text/plain;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'qc_machine_schema.sql';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  const st = document.getElementById('sqlStatus');
+  st.textContent = '⬇ qc_machine_schema.sql 다운로드 시작됨';
+  st.className = 'stg-status ok';
+}
+window.downloadSqlSchema = downloadSqlSchema;
+
+function previewSqlSchema(){
+  const pre = document.getElementById('sqlPreview');
+  const st = document.getElementById('sqlStatus');
+  if (pre.style.display === 'none') {
+    pre.textContent = SQL_SCHEMA;
+    pre.style.display = 'block';
+    st.textContent = '👁 미리보기 표시됨';
+    st.className = 'stg-status ok';
+  } else {
+    pre.style.display = 'none';
+    st.textContent = '미리보기 닫힘';
+    st.className = 'stg-status';
+  }
+}
+window.previewSqlSchema = previewSqlSchema;
+
+function toggleSqlSchema(){
+  const body = document.getElementById('sqlSchemaBody');
+  const btn  = document.getElementById('sqlSchemaToggleBtn');
+  if (!body || !btn) return;
+  if (body.style.display === 'none') {
+    body.style.display = 'block';
+    btn.textContent = '▼ 접기';
+    btn.style.color = '#fbbf24';
+    btn.style.borderColor = 'rgba(251,191,36,.4)';
+    btn.style.background = 'rgba(251,191,36,.1)';
+  } else {
+    body.style.display = 'none';
+    btn.textContent = '▶ 펼치기';
+    btn.style.color = '#8b8fa3';
+    btn.style.borderColor = '#2a2e3d';
+    btn.style.background = '#0f1117';
+  }
+}
+window.toggleSqlSchema = toggleSqlSchema;
+
+/* ═══════ 보고서 저장소 (localStorage 기반) ═══════ */
+function getReportList(){ try{return JSON.parse(localStorage.getItem(LS_REPORT_LIST)||'[]');}catch(e){return[];} }
+function saveReportList(list){ localStorage.setItem(LS_REPORT_LIST, JSON.stringify(list)); }
+function getReport(id){ try{return JSON.parse(localStorage.getItem(LS_REPORT+id)||'null');}catch(e){return null;} }
+function saveReport(r){
+  localStorage.setItem(LS_REPORT+r.id, JSON.stringify(r));
+  const list = getReportList();
+  const idx = list.findIndex(x => x.id === r.id);
+  // 요약본 (raw_data 제외)
+  const summary = {
+    id:r.id, equipment:r.equipment, target_year:r.target_year, target_month:r.target_month,
+    template_name:r.template_name, is_all:r.is_all,
+    status:r.status, current_step:r.current_step,
+    step1_name:r.step1_name, step1_pin:r.step1_pin,
+    step2_name:r.step2_name, step3_name:r.step3_name,
+    next_approver_pin:r.next_approver_pin, next_approver_name:r.next_approver_name,
+    total_performed:r.total_performed, ok_count:r.ok_count, ng_count:r.ng_count,
+    total_machines:r.total_machines, total_workdays:r.total_workdays,
+    created_at:r.created_at, updated_at:r.updated_at
+  };
+  if (idx >= 0) list[idx] = summary; else list.push(summary);
+  saveReportList(list);
+}
+function deleteReport(id){
+  localStorage.removeItem(LS_REPORT+id);
+  saveReportList(getReportList().filter(x => x.id !== id));
+}
+
+/* ═══════ 작성 탭 ═══════ */
+function initReportSelectors(){
+  // 설비 선택
+  const eqSel = document.getElementById('newReportEq');
+  const prevEq = eqSel.value;
+  eqSel.innerHTML = '';
+  // 1) 안내 옵션
+  const ph = document.createElement('option');
+  ph.value = ''; ph.disabled = true; ph.selected = true; ph.textContent = '설비 선택';
+  eqSel.appendChild(ph);
+  // 2) 전체 결재 (모든 설비 통합) - 맨 위, 골드 강조
+  const allOpt = document.createElement('option');
+  allOpt.value = '__ALL__';
+  allOpt.textContent = '📊 전체 결재 (모든 설비 통합)';
+  allOpt.style.fontWeight = '700';
+  allOpt.style.color = '#fbbf24';
+  allOpt.style.background = '#1a1d27';
+  eqSel.appendChild(allOpt);
+  // 3) 구분선 (disabled)
+  const sep = document.createElement('option');
+  sep.disabled = true; sep.textContent = '──────────';
+  eqSel.appendChild(sep);
+  // 4) 설비 마스터 순서 우선
+  const masterNames = equipmentList.map(eq => eq.name);
+  const inMapping = Object.keys(fullMapping);
+  const ordered = [];
+  masterNames.forEach(name => { if (inMapping.includes(name)) ordered.push(name); });
+  inMapping
+    .filter(n => !masterNames.includes(n))
+    .sort((a,b) => a.localeCompare(b,'ko'))
+    .forEach(name => ordered.push(name));
+  ordered.forEach(eq => {
+    const opt = document.createElement('option');
+    opt.value = eq; opt.textContent = eq;
+    eqSel.appendChild(opt);
+  });
+  if (prevEq) eqSel.value = prevEq;
+
+  // 년도/월
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = now.getMonth() + 1;
+  const ny = document.getElementById('newYear');
+  const nm = document.getElementById('newMonth');
+  if (!ny.options.length) {
+    let yhtml = '';
+    for (let y = yyyy-2; y <= yyyy+1; y++) yhtml += '<option value="'+y+'"'+(y===yyyy?' selected':'')+'>'+y+'년</option>';
+    ny.innerHTML = yhtml;
+    let mhtml = '';
+    for (let m = 1; m <= 12; m++) mhtml += '<option value="'+m+'"'+(m===mm?' selected':'')+'>'+m+'월</option>';
+    nm.innerHTML = mhtml;
+  }
+}
+window.initReportSelectors = initReportSelectors;
+
+async function fetchMonthData(eq, year, month){
+  const sd = year + '-' + String(month).padStart(2,'0') + '-01';
+  const lastDay = new Date(year, month, 0).getDate();
+  const ed = year + '-' + String(month).padStart(2,'0') + '-' + String(lastDay).padStart(2,'0');
+  const url = `${SUPABASE_URL}/rest/v1/inspection_log?select=*&equipment=eq.${encodeURIComponent(eq)}&date=gte.${sd}&date=lte.${ed}&order=date.desc,time.desc&limit=10000`;
+  const res = await fetch(url, { headers: SB_HEADERS });
+  if (!res.ok) throw new Error('데이터 조회 실패: ' + res.status);
+  return res.json();
+}
+
+/* 전체 설비 통합 fetch */
+async function fetchMonthDataAll(year, month){
+  const sd = year + '-' + String(month).padStart(2,'0') + '-01';
+  const lastDay = new Date(year, month, 0).getDate();
+  const ed = year + '-' + String(month).padStart(2,'0') + '-' + String(lastDay).padStart(2,'0');
+  const url = `${SUPABASE_URL}/rest/v1/inspection_log?select=*&date=gte.${sd}&date=lte.${ed}&order=date.desc,time.desc&limit=10000`;
+  const res = await fetch(url, { headers: SB_HEADERS });
+  if (!res.ok) throw new Error('데이터 조회 실패: ' + res.status);
+  return res.json();
+}
+
+async function createOrOpenReport(){
+  const eq = document.getElementById('newReportEq').value;
+  if (!eq) { alert('설비를 선택하세요'); return; }
+  const year = parseInt(document.getElementById('newYear').value);
+  const month = parseInt(document.getElementById('newMonth').value);
+  const route = getRoute(eq);
+
+  if (!getMyPin() || !getMyName()) { alert('⚙ 설정 탭에서 로그인 정보를 먼저 등록하세요'); return; }
+  if (!route.step1_pin || !route.step1_name) { alert('⚙ 설정 탭에서 결재선을 먼저 등록하세요'); return; }
+
+  const isAll = (eq === '__ALL__');
+  const reportId = isAll
+    ? 'ALL_' + year + String(month).padStart(2,'0')
+    : eq.replace(/[\s\/]/g,'_') + '_' + year + String(month).padStart(2,'0');
+  const st = document.getElementById('newReportStatus');
+  st.style.display = 'block';
+  st.textContent = '⏳ 데이터 집계 중...';
+  st.className = 'status-line';
+
+  let existing = getReport(reportId);
+  let data;
+  try {
+    data = isAll ? await fetchMonthDataAll(year, month) : await fetchMonthData(eq, year, month);
+  } catch(e) { st.textContent = '❌ ' + e.message; st.className = 'status-line error'; return; }
+
+  // 일자+설비별로 결과 집계 (전체 결재일 때는 설비별로 row가 분리됨)
+  const groupKey = (c) => isAll ? (c.equipment + '|||' + c.date) : c.date;
+  const dayMap = {};
+  data.forEach(c => {
+    const k = groupKey(c);
+    if (!dayMap[k]) dayMap[k] = {
+      date:c.date, equipment:c.equipment,
+      ok:0, ng:0, ngItems:[], inspectors:new Set(), notes:c.notes||''
+    };
+    if (c.value === 'OK') dayMap[k].ok++;
+    else if (c.value === 'NG') { dayMap[k].ng++; dayMap[k].ngItems.push(c.item); }
+    if (c.inspector) dayMap[k].inspectors.add(c.inspector);
+    if (c.notes && !dayMap[k].notes) dayMap[k].notes = c.notes;
+  });
+  const dayResults = Object.values(dayMap).map(d => ({
+    check_date: d.date,
+    machine: d.equipment,
+    inspector: Array.from(d.inspectors).join(', '),
+    result: d.ng > 0 ? 'NG' : 'OK',
+    ng_items: d.ngItems,
+    memo: d.notes,
+    item_ok: d.ok,
+    item_ng: d.ng
+  }));
+
+  const total = dayResults.length;
+  const ngCount = dayResults.filter(r => r.result === 'NG').length;
+  const okCount = total - ngCount;
+  const workdays = [...new Set(data.map(r => r.date))];
+  const machines = [...new Set(data.map(r => r.equipment).filter(Boolean))];
+  const now = new Date().toISOString();
+  const displayName = isAll ? '전체 설비 통합' : eq;
+
+  let report;
+  if (existing) {
+    report = {...existing,
+      total_performed:total, ok_count:okCount, ng_count:ngCount,
+      total_machines:isAll ? machines.length : 1,
+      total_workdays:workdays.length,
+      raw_data:dayResults, raw_log:data, updated_at:now
+    };
+  } else {
+    report = {
+      id:reportId, equipment:eq, template_code:eq,
+      template_name:displayName,
+      is_all: isAll,
+      machines_list: machines,
+      target_year:year, target_month:month,
+      status:'DRAFT', current_step:1,
+      step1_name:route.step1_name, step1_pin:route.step1_pin,
+      step2_name:route.step2_name||'', step2_pin:route.step2_pin||'',
+      step3_name:route.step3_name||'', step3_pin:route.step3_pin||'',
+      next_approver_pin:route.step1_pin, next_approver_name:route.step1_name,
+      total_performed:total, ok_count:okCount, ng_count:ngCount,
+      total_machines:isAll ? machines.length : 1,
+      total_workdays:workdays.length,
+      summary_comment:'', improvement_action:'',
+      step1_signature:'', step2_signature:'', step3_signature:'',
+      step1_date:'', step2_date:'', step3_date:'',
+      step1_comment:'', step2_comment:'', step3_comment:'',
+      raw_data:dayResults, raw_log:data,
+      created_at:now, updated_at:now
+    };
+  }
+  saveReport(report);
+  _currentReportId = reportId;
+  st.textContent = '✅ 보고서 ' + (existing?'열림':'생성됨') + ' (' + total + '일 집계)';
+  st.className = 'status-line success';
+
+  document.getElementById('tab4').style.display = 'inline-block';
+  setTimeout(() => swTab(4), 400);
+}
+window.createOrOpenReport = createOrOpenReport;
+
+function refreshDraftList(){
+  const div = document.getElementById('draftList');
+  const all = getReportList();
+  const drafts = all.filter(r => r.status !== 'COMPLETED').slice().sort((a,b) => (b.updated_at||'').localeCompare(a.updated_at||''));
+  if (!drafts.length) {
+    div.innerHTML = '<div class="empty-state"><div class="ico">📃</div>작성중 보고서 없음</div>';
+  } else {
+    div.innerHTML = drafts.map(r => renderInboxItem(r, false)).join('');
+  }
+}
+window.refreshDraftList = refreshDraftList;
+
+/* ═══════ 결재함 ═══════ */
+function refreshInbox(){
+  const list = document.getElementById('inboxList');
+  const myUploadList = document.getElementById('myUploadList');
+  if (!list) return;
+  const pin = getMyPin();
+  document.getElementById('loginPinDisplay').textContent = pin || '-';
+  if (!pin) {
+    list.innerHTML = '<div class="empty-state"><div class="ico">🔑</div>⚙ 설정 탭에서 로그인 정보를 먼저 등록하세요</div>';
+    myUploadList.innerHTML = '<div class="empty-state" style="padding:14px"><div style="font-size:12px">로그인 후 표시됩니다</div></div>';
+    return;
+  }
+  const all = getReportList();
+  const inbox = all.filter(r => r.next_approver_pin === pin && r.status !== 'COMPLETED' && r.status !== 'REJECTED');
+  if (!inbox.length) {
+    list.innerHTML = '<div class="empty-state"><div class="ico">📭</div>결재 대기 보고서가 없습니다</div>';
+    document.getElementById('inboxBadge').style.display = 'none';
+  } else {
+    list.innerHTML = inbox.map(r => renderInboxItem(r, true)).join('');
+    document.getElementById('inboxBadge').style.display = 'inline-block';
+    document.getElementById('inboxBadge').textContent = inbox.length;
+  }
+  const mine = all.filter(r => r.step1_pin === pin).slice().sort((a,b) => (b.updated_at||'').localeCompare(a.updated_at||''));
+  if (!mine.length) {
+    myUploadList.innerHTML = '<div style="text-align:center;padding:14px;color:#5a5e72;font-size:12px">최근 작성 보고서 없음</div>';
+  } else {
+    myUploadList.innerHTML = mine.slice(0,10).map(r => renderInboxItem(r, false)).join('');
+  }
+}
+window.refreshInbox = refreshInbox;
+
+function renderInboxItem(r, isInbox){
+  const statusBadge = '<span class="badge '+STATUS_BADGES[r.status]+'">'+(STATUS_NAMES[r.status]||r.status)+'</span>';
+  const urgent = r.ng_count > 0 ? ' urgent' : '';
+  const isAll = (r.is_all === true) || (r.equipment === '__ALL__');
+  const titleIcon = isAll ? '📊' : '🏭';
+  const titleName = isAll
+    ? ('전체 결재 (' + (r.total_machines||0) + '대 통합)')
+    : (r.equipment||r.template_code);
+  return '<div class="inbox-item'+urgent+'" onclick="openReport(\''+r.id+'\')">'
+    +'<div class="inbox-hdr">'
+    +'<div class="inbox-title">'+titleIcon+' '+titleName+' · '+r.target_year+'.'+String(r.target_month).padStart(2,'0')+'</div>'
+    +'<div style="display:flex;gap:6px;align-items:center">'+statusBadge
+    +(isInbox?'':'<button class="inbox-del" onclick="event.stopPropagation();confirmDeleteReport(\''+r.id+'\')">🗑</button>')
+    +'</div>'
+    +'</div>'
+    +'<div class="inbox-meta">'
+    +'<span>현재: <b>'+(r.status==='COMPLETED'?'완료':STEP_NAMES[r.current_step]+' 단계')+'</b></span>'
+    +'<span>NG <b class="ng">'+(r.ng_count||0)+'건</b></span>'
+    +(isInbox?'<span>요청자: <b>'+(r.step1_name||'-')+'</b></span>':'')
+    +(r.next_approver_name?'<span>다음: <b>'+r.next_approver_name+'</b></span>':'')
+    +'</div></div>';
+}
+window.renderInboxItem = renderInboxItem;
+
+function confirmDeleteReport(id){
+  if (!confirm('보고서 '+id+'을(를) 삭제하시겠습니까?')) return;
+  deleteReport(id);
+  refreshInbox(); refreshDraftList();
+}
+window.confirmDeleteReport = confirmDeleteReport;
+
+function openReport(id){
+  _currentReportId = id;
+  document.getElementById('tab4').style.display = 'inline-block';
+  swTab(4);
+}
+window.openReport = openReport;
+
+/* ═══════ 완료(검색) ═══════ */
+function initSearchSelectors(){
+  const eqSel = document.getElementById('searchEq');
+  if (eqSel.options.length <= 1) {
+    // 전체 결재 옵션
+    const allOpt = document.createElement('option');
+    allOpt.value = '__ALL__';
+    allOpt.textContent = '📊 전체 결재 (모든 설비 통합)';
+    allOpt.style.color = '#fbbf24';
+    eqSel.appendChild(allOpt);
+    // 설비 마스터 순서
+    const masterNames = (typeof equipmentList !== 'undefined' && equipmentList.length)
+      ? equipmentList.map(e => e.name) : [];
+    const inMapping = Object.keys(fullMapping);
+    const ordered = [];
+    masterNames.forEach(n => { if (inMapping.includes(n)) ordered.push(n); });
+    inMapping.filter(n => !masterNames.includes(n))
+      .sort((a,b) => a.localeCompare(b,'ko'))
+      .forEach(n => ordered.push(n));
+    ordered.forEach(eq => {
+      const opt = document.createElement('option');
+      opt.value = eq; opt.textContent = eq;
+      eqSel.appendChild(opt);
+    });
+  }
+  const ny = document.getElementById('searchYear');
+  const nm = document.getElementById('searchMonth');
+  if (!ny.options.length) {
+    const yyyy = new Date().getFullYear();
+    let yhtml = '<option value="">전체</option>';
+    for (let y = yyyy-2; y <= yyyy+1; y++) yhtml += '<option value="'+y+'">'+y+'년</option>';
+    ny.innerHTML = yhtml;
+    let mhtml = '<option value="">전체</option>';
+    for (let m = 1; m <= 12; m++) mhtml += '<option value="'+m+'">'+m+'월</option>';
+    nm.innerHTML = mhtml;
+  }
+}
+window.initSearchSelectors = initSearchSelectors;
+
+function searchReports(){
+  const eq = document.getElementById('searchEq').value;
+  const year = document.getElementById('searchYear').value;
+  const month = document.getElementById('searchMonth').value;
+  const status = document.getElementById('searchStatus').value;
+  const author = document.getElementById('searchAuthor').value.trim();
+  let list = getReportList();
+  if (eq) list = list.filter(r => r.equipment === eq);
+  if (year) list = list.filter(r => String(r.target_year) === year);
+  if (month) list = list.filter(r => String(r.target_month) === month);
+  if (status) list = list.filter(r => r.status === status);
+  if (author) {
+    list = list.filter(r => [r.step1_name,r.step2_name,r.step3_name].some(n => (n||'').includes(author)));
+  }
+  list = list.sort((a,b) => (b.updated_at||'').localeCompare(a.updated_at||''));
+  document.getElementById('searchCount').textContent = '('+list.length+'건)';
+  const div = document.getElementById('searchList');
+  if (!list.length) {
+    div.innerHTML = '<div class="empty-state"><div class="ico">🔍</div>검색 결과 없음</div>';
+  } else {
+    div.innerHTML = list.map(r => renderInboxItem(r, false)).join('');
+  }
+}
+window.searchReports = searchReports;
+
+/* ═══════ 분석 탭 ═══════ */
+function setRange(days){
+  const ed = new Date();
+  const sd = new Date(); sd.setDate(sd.getDate()-(days-1));
+  document.getElementById('anaStartDate').value = sd.toISOString().slice(0,10);
+  document.getElementById('anaEndDate').value = ed.toISOString().slice(0,10);
+}
+window.setRange = setRange;
+
+function setAnaStatus(msg, type){
+  const st = document.getElementById('anaStatus');
+  st.textContent = msg; st.className = 'status-line' + (type?' '+type:'');
+}
+
+function renderAnalysis(){
+  // 분석 탭 진입 시 날짜 기본값 (이번달)
+  if (!document.getElementById('anaStartDate').value) {
+    const now = new Date();
+    const sd = new Date(now.getFullYear(), now.getMonth(), 1);
+    document.getElementById('anaStartDate').value = sd.toISOString().slice(0,10);
+    document.getElementById('anaEndDate').value = now.toISOString().slice(0,10);
+  }
+}
+window.renderAnalysis = renderAnalysis;
+
+async function loadAnalysisData(){
+  const sd = document.getElementById('anaStartDate').value;
+  const ed = document.getElementById('anaEndDate').value;
+  if (!sd || !ed) { setAnaStatus('❌ 조회 기간을 선택하세요','error'); return; }
+  if (sd > ed) { setAnaStatus('❌ 시작일이 종료일보다 늦습니다','error'); return; }
+  setAnaStatus('⏳ 조회 중...');
+  try {
+    const url = `${SUPABASE_URL}/rest/v1/inspection_log?select=*&date=gte.${sd}&date=lte.${ed}&order=date.desc,time.desc&limit=10000`;
+    const res = await fetch(url, { headers: SB_HEADERS });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    _allInspData = await res.json();
+    if (!_allInspData.length) {
+      setAnaStatus('⚠ 해당 기간에 점검내역이 없습니다','error');
+      ['kpiArea','overviewCard','detailCard'].forEach(id => document.getElementById(id).style.display = 'none');
+      return;
+    }
+    setAnaStatus('✅ ' + _allInspData.length + '건 조회 완료','success');
+    renderAnalysisAll();
+  } catch(e) {
+    setAnaStatus('❌ 조회 실패: ' + e.message, 'error');
+  }
+}
+window.loadAnalysisData = loadAnalysisData;
+
+function renderAnalysisAll(){
+  renderAnaKPI(); renderAnaMachineChart(); renderAnaMachineGrid();
+  ['kpiArea','overviewCard','detailCard'].forEach(id => document.getElementById(id).style.display = 'block');
+}
+
+function renderAnaKPI(){
+  const total = _allInspData.length;
+  const ngCount = _allInspData.filter(r => r.value === 'NG').length;
+  const okCount = _allInspData.filter(r => r.value === 'OK').length;
+  const denom = okCount + ngCount;  // OK/NG 항목만 (측정값 제외)
+  const okRate = denom ? (okCount/denom*100) : 0;
+  const machines = [...new Set(_allInspData.map(r => r.equipment))].length;
+  document.getElementById('kpiTotal').textContent = total.toLocaleString();
+  document.getElementById('kpiTotalSub').textContent = '건';
+  document.getElementById('kpiOkRate').textContent = okRate.toFixed(1) + '%';
+  document.getElementById('kpiOkSub').textContent = 'OK ' + okCount + '건';
+  document.getElementById('kpiNg').textContent = ngCount.toLocaleString();
+  document.getElementById('kpiNgSub').textContent = '건';
+  document.getElementById('kpiMachines').textContent = machines;
+}
+
+function getAnaMachineStats(data){
+  const src = data || _allInspData;
+  const stats = {};
+  src.forEach(r => {
+    const m = r.equipment || '미상';
+    if (!stats[m]) stats[m] = {machine:m, total:0, ok:0, ng:0, items:{}, records:[]};
+    stats[m].total++;
+    if (r.value === 'NG') stats[m].ng++;
+    else if (r.value === 'OK') stats[m].ok++;
+    stats[m].records.push(r);
+    if (!stats[m].items[r.item]) stats[m].items[r.item] = {ok:0, ng:0, name:r.item};
+    if (r.value === 'NG') stats[m].items[r.item].ng++;
+    else if (r.value === 'OK') stats[m].items[r.item].ok++;
+  });
+  return Object.values(stats).sort((a,b) => {
+    const na = parseInt((String(a.machine).match(/\d+/)||[0])[0]);
+    const nb = parseInt((String(b.machine).match(/\d+/)||[0])[0]);
+    if (na && nb) return na - nb;
+    if (na) return -1; if (nb) return 1;
+    return a.machine.localeCompare(b.machine);
+  });
+}
+
+function renderAnaMachineChart(){
+  const stats = getAnaMachineStats();
+  if (_machineChart) _machineChart.destroy();
+  _machineChart = new Chart(document.getElementById('machineChart').getContext('2d'), {
+    type:'bar',
+    data:{labels:stats.map(s=>s.machine), datasets:[
+      {label:'OK', data:stats.map(s=>s.ok), backgroundColor:'#22c55e', borderRadius:4},
+      {label:'NG', data:stats.map(s=>s.ng), backgroundColor:'#ef4444', borderRadius:4}
+    ]},
+    options:{responsive:true, maintainAspectRatio:false,
+      plugins:{legend:{labels:{color:'#e8eaf0', font:{size:11}}}},
+      scales:{
+        x:{stacked:true, ticks:{color:'#8b8fa3', font:{size:10}}, grid:{color:'rgba(255,255,255,0.05)'}},
+        y:{stacked:true, ticks:{color:'#8b8fa3', font:{size:10}}, grid:{color:'rgba(255,255,255,0.05)'}, beginAtZero:true}
+      }}
+  });
+}
+
+function renderAnaMachineGrid(){
+  const stats = getAnaMachineStats();
+  const grid = document.getElementById('machineGrid');
+  if (!stats.length) { grid.innerHTML = '<div class="empty">데이터가 없습니다</div>'; return; }
+  grid.innerHTML = stats.map(s => {
+    const okPct = s.total ? (s.ok/(s.ok+s.ng||1)*100) : 0;
+    const safeM = s.machine.replace(/'/g,"&#39;");
+    return '<div class="mcard'+(s.ng>0?' has-ng':'')+'" data-m="'+s.machine+'" onclick="anaSelectMachine(\''+safeM+'\')">'
+      +'<div class="mcard-name">🏭 '+s.machine+'</div>'
+      +'<div class="mcard-stats">'
+      +'<div class="mcard-stat s-total"><div class="mcard-stat-v">'+s.total+'</div><div class="mcard-stat-l">총</div></div>'
+      +'<div class="mcard-stat s-ok"><div class="mcard-stat-v">'+s.ok+'</div><div class="mcard-stat-l">OK</div></div>'
+      +'<div class="mcard-stat s-ng"><div class="mcard-stat-v">'+s.ng+'</div><div class="mcard-stat-l">NG</div></div>'
+      +'</div>'
+      +'<div class="mcard-rate"><div class="mcard-rate-fill" style="width:'+okPct.toFixed(1)+'%"></div></div>'
+      +'</div>';
+  }).join('');
+  if (stats.length) anaSelectMachine(stats[0].machine);
+}
+
+function anaSelectMachine(machine){
+  _selectedMachine = machine;
+  document.querySelectorAll('.mcard').forEach(t => t.classList.toggle('on', t.dataset.m===machine));
+  renderAnaMachineDetail(machine);
+}
+window.anaSelectMachine = anaSelectMachine;
+
+function renderAnaMachineDetail(machine){
+  const stats = getAnaMachineStats().find(s => s.machine === machine);
+  if (!stats) { document.getElementById('machineDetail').innerHTML = '<div class="empty">데이터 없음</div>'; return; }
+  const denom = stats.ok + stats.ng;
+  const okRate = denom ? (stats.ok/denom*100).toFixed(1) : '0.0';
+  const ngRate = denom ? (stats.ng/denom*100).toFixed(1) : '0.0';
+  const itemAnalysis = Object.values(stats.items);
+  const recent = stats.records.slice(0,50);
+  let html = '';
+  html += '<div class="machine-summary"><div class="ms-title"><span>🏭 '+machine+' 상세</span><span style="font-size:11px;color:#5a5e72;font-weight:500">최근 점검: '+(recent[0]?recent[0].date:'-')+'</span></div>'
+    + '<div class="ms-stats">'
+    + '<div class="ms-stat"><div class="ms-stat-v" style="color:#e8eaf0">'+stats.total+'</div><div class="ms-stat-l">총 점검</div></div>'
+    + '<div class="ms-stat"><div class="ms-stat-v" style="color:#22c55e">'+stats.ok+'</div><div class="ms-stat-l">OK ('+okRate+'%)</div></div>'
+    + '<div class="ms-stat"><div class="ms-stat-v" style="color:#ef4444">'+stats.ng+'</div><div class="ms-stat-l">NG ('+ngRate+'%)</div></div>'
+    + '</div></div>';
+  if (itemAnalysis.length) {
+    html += '<div class="chart-box"><div class="chart-box-title">🔧 점검항목별 NG 발생건수</div>'
+      + '<div class="chart-wrap"><canvas id="itemChart"></canvas></div><div class="item-grid">';
+    itemAnalysis.forEach(it => {
+      html += '<div class="item-cell'+(it.ng>0?' has-ng':'')+'"><div class="item-cell-name">'+it.name+'</div><div class="item-cell-val">'+(it.ng>0?'NG '+it.ng:'OK')+'</div></div>';
+    });
+    html += '</div></div>';
+  }
+  html += '<div class="chart-box"><div class="chart-box-title">📈 일자별 점검 추이</div><div class="chart-wrap"><canvas id="trendChart"></canvas></div></div>';
+  html += '<div class="chart-box"><div class="chart-box-title">📋 점검 이력 (최근 '+recent.length+'건'+(stats.records.length>50?' / 전체 '+stats.records.length+'건':'')+')</div><div class="history-list">';
+  if (!recent.length) html += '<div class="empty">점검 이력이 없습니다</div>';
+  else {
+    recent.forEach(r => {
+      const isNg = r.value === 'NG';
+      html += '<div class="hist-item'+(isNg?' is-ng':'')+'"><div class="hist-date">'+(r.date||'')+'<br>'+((r.time||'').slice(0,5))+'</div>'
+        + '<div class="hist-info"><div class="hist-inspector">'+(r.inspector||'-')+' · '+(r.item||'-')+'</div>'
+        + '<div class="hist-detail">'+(isNg?'❌ NG':'✅ '+r.value)+(r.notes?' · '+r.notes:'')+'</div></div>'
+        + '<div class="hist-result '+(isNg?'ng':'ok')+'">'+(r.value||'-')+'</div></div>';
+    });
+  }
+  html += '</div></div>';
+  document.getElementById('machineDetail').innerHTML = html;
+  setTimeout(() => { drawItemChart(itemAnalysis); drawTrendChart(stats.records); }, 50);
+}
+
+function drawItemChart(items){
+  if (_itemChart) _itemChart.destroy();
+  const cv = document.getElementById('itemChart');
+  if (!cv) return;
+  _itemChart = new Chart(cv.getContext('2d'), {
+    type:'bar',
+    data:{labels:items.map(i=>i.name), datasets:[
+      {label:'OK', data:items.map(i=>i.ok), backgroundColor:'#22c55e', borderRadius:3},
+      {label:'NG', data:items.map(i=>i.ng), backgroundColor:'#ef4444', borderRadius:3}
+    ]},
+    options:{responsive:true, maintainAspectRatio:false, indexAxis:'y',
+      plugins:{legend:{labels:{color:'#e8eaf0', font:{size:11}}}},
+      scales:{
+        x:{stacked:true, ticks:{color:'#8b8fa3', font:{size:10}}, grid:{color:'rgba(255,255,255,0.05)'}, beginAtZero:true},
+        y:{stacked:true, ticks:{color:'#8b8fa3', font:{size:10}}, grid:{color:'rgba(255,255,255,0.05)'}}
+      }}
+  });
+}
+
+function drawTrendChart(records){
+  if (_trendChart) _trendChart.destroy();
+  const cv = document.getElementById('trendChart');
+  if (!cv) return;
+  // 일자별 OK/NG 집계
+  const dayMap = {};
+  records.forEach(r => {
+    const d = r.date;
+    if (!dayMap[d]) dayMap[d] = {ok:0, ng:0};
+    if (r.value === 'NG') dayMap[d].ng++;
+    else if (r.value === 'OK') dayMap[d].ok++;
+  });
+  const labels = Object.keys(dayMap).sort();
+  _trendChart = new Chart(cv.getContext('2d'), {
+    type:'line',
+    data:{labels, datasets:[
+      {label:'OK', data:labels.map(d=>dayMap[d].ok), borderColor:'#22c55e', backgroundColor:'rgba(34,197,94,.15)', fill:true, tension:.3},
+      {label:'NG', data:labels.map(d=>dayMap[d].ng), borderColor:'#ef4444', backgroundColor:'rgba(239,68,68,.15)', fill:true, tension:.3}
+    ]},
+    options:{responsive:true, maintainAspectRatio:false,
+      plugins:{legend:{labels:{color:'#e8eaf0', font:{size:11}}}},
+      scales:{
+        x:{ticks:{color:'#8b8fa3', font:{size:9}}, grid:{color:'rgba(255,255,255,0.05)'}},
+        y:{ticks:{color:'#8b8fa3', font:{size:10}}, grid:{color:'rgba(255,255,255,0.05)'}, beginAtZero:true}
+      }}
+  });
+}
+
+/* ═══════ 보고서 페이퍼 렌더 ═══════ */
+function renderPaperReport(){
+  const area = document.getElementById('paperArea');
+  if (!_currentReportId) {
+    area.innerHTML = '<div class="empty-state"><div class="ico">📄</div>보고서를 선택하거나 생성하세요</div>';
+    return;
+  }
+  const r = getReport(_currentReportId);
+  if (!r) {
+    area.innerHTML = '<div class="empty-state"><div class="ico">❌</div>보고서를 찾을 수 없습니다</div>';
+    return;
+  }
+  const eq = r.equipment;
+  const isAll = (r.is_all === true) || (eq === '__ALL__');
+  const data = r.raw_data || [];     // 일자별 집계
+  const year = r.target_year, month = r.target_month;
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const displayName = isAll ? '전체 설비 통합' : eq;
+
+  // 매트릭스 (전체 결재 → 설비별 다중 행 / 단일 → 1행)
+  let mtxHead = '<tr><th>설비</th>';
+  for (let d = 1; d <= daysInMonth; d++) mtxHead += '<th>'+d+'</th>';
+  mtxHead += '<th style="background:#15803d">OK</th><th style="background:#b91c1c">NG</th></tr>';
+
+  let mtxBody = '';
+  if (isAll) {
+    // 설비별 행 - 마스터 순서 사용 (없으면 가나다)
+    const machinesInData = [...new Set(data.map(d => d.machine).filter(Boolean))];
+    const masterNames = (typeof equipmentList !== 'undefined' && equipmentList.length)
+      ? equipmentList.map(e => e.name) : [];
+    const machines = [];
+    masterNames.forEach(n => { if (machinesInData.includes(n)) machines.push(n); });
+    machinesInData.filter(n => !masterNames.includes(n))
+      .sort((a,b) => a.localeCompare(b,'ko'))
+      .forEach(n => machines.push(n));
+
+    if (!machines.length) {
+      mtxBody = '<tr><td colspan="'+(daysInMonth+3)+'" style="padding:18px;color:#94a3b8;text-align:center">해당 월 점검 데이터가 없습니다</td></tr>';
+    } else {
+      machines.forEach(m => {
+        // 해당 설비의 일자별 결과
+        const map = {};
+        data.filter(d => d.machine === m).forEach(d => {
+          const dn = parseInt((d.check_date||'').substring(8,10));
+          if (dn) {
+            // NG가 있으면 NG로 덮어쓰기
+            if (d.result === 'NG' || !map[dn]) map[dn] = d.result;
+          }
+        });
+        let row = '<tr><td class="mc">'+m+'</td>';
+        let okC = 0, ngC = 0;
+        for (let d = 1; d <= daysInMonth; d++) {
+          const v = map[d];
+          if (v === 'OK') { row += '<td class="ok">●</td>'; okC++; }
+          else if (v === 'NG') { row += '<td class="ng">✕</td>'; ngC++; }
+          else row += '<td class="na">-</td>';
+        }
+        row += '<td class="sum">'+okC+'</td><td class="sum" style="color:#b91c1c">'+ngC+'</td></tr>';
+        mtxBody += row;
+      });
+    }
+  } else {
+    // 단일 설비 (기존 방식)
+    const dayResMap = {};
+    data.forEach(d => {
+      const dn = parseInt((d.check_date||'').substring(8,10));
+      if (dn) dayResMap[dn] = d.result;
+    });
+    let row = '<tr><td class="mc">'+eq+'</td>';
+    let ok = 0, ng = 0;
+    for (let d = 1; d <= daysInMonth; d++) {
+      const v = dayResMap[d];
+      if (v === 'OK') { row += '<td class="ok">●</td>'; ok++; }
+      else if (v === 'NG') { row += '<td class="ng">✕</td>'; ng++; }
+      else row += '<td class="na">-</td>';
+    }
+    row += '<td class="sum">'+ok+'</td><td class="sum" style="color:#b91c1c">'+ng+'</td></tr>';
+    mtxBody = row;
+  }
+
+  // NG 상세
+  const ngList = data.filter(c => c.result === 'NG');
+  let ngHtml;
+  if (!ngList.length) {
+    ngHtml = '<div style="text-align:center;padding:14px;color:#15803d;font-weight:700;background:#dcfce7;border:1.5px solid #15803d;border-radius:4px">✓ 이번달 NG 발생 없음</div>';
+  } else {
+    let body = '';
+    ngList.forEach(c => {
+      const ngItems = (c.ng_items||[]).join(', ') || '-';
+      const machineCol = isAll ? '<td style="text-align:center">'+(c.machine||'-')+'</td>' : '';
+      body += '<tr><td style="text-align:center;white-space:nowrap">'+(c.check_date||'')+'</td>'
+        + machineCol
+        + '<td style="text-align:center">'+(c.inspector||'-')+'</td>'
+        + '<td class="ng-it">'+ngItems+'</td>'
+        + '<td style="font-size:10px">'+((c.memo||'').substring(0,80))+'</td></tr>';
+    });
+    const machineHead = isAll ? '<th style="width:90px">설비</th>' : '';
+    ngHtml = '<table class="ng-tbl"><thead><tr><th style="width:90px">일자</th>'+machineHead+'<th style="width:100px">점검자</th><th>NG 항목</th><th style="width:160px">비고</th></tr></thead><tbody>'+body+'</tbody></table>';
+  }
+
+  if (!r.summary_comment) {
+    if (r.ng_count === 0) {
+      r.summary_comment = '■ '+year+'년 '+month+'월 '+displayName+' 점검 결과 NG 없이 양호하게 관리됨.\n■ 점검수행 '+r.total_performed+'일'+(isAll?' / 대상 설비 '+r.total_machines+'대':'')+' / 점검가동일 '+r.total_workdays+'일\n■ 현 점검 주기 및 절차 유지.';
+    } else {
+      r.summary_comment = '■ '+year+'년 '+month+'월 '+displayName+' 점검 '+r.total_performed+'일 중 NG '+r.ng_count+'일 발생\n■ 차월 모니터링 강화 필요';
+    }
+  }
+  if (!r.improvement_action) {
+    r.improvement_action = r.ng_count === 0
+      ? '■ 특이사항 없음. 현행 점검표 및 점검 주기 유지.'
+      : '■ NG 발생 항목 시정조치 등록\n■ 점검자 교육 강화\n■ 차월 점검 시 동일 항목 우선 확인';
+  }
+
+  const editable = (r.status === 'DRAFT' || r.status === 'REJECTED');
+  const commentHtml = editable
+    ? '<textarea id="paperSummary" class="paper-comment editable" style="width:100%" rows="3">'+(r.summary_comment||'').replace(/</g,'&lt;')+'</textarea>'
+    : '<div class="paper-comment">'+((r.summary_comment||'(작성 없음)').replace(/\n/g,'<br>'))+'</div>';
+  const improveHtml = editable
+    ? '<textarea id="paperImprove" class="paper-comment editable" style="width:100%" rows="3">'+(r.improvement_action||'').replace(/</g,'&lt;')+'</textarea>'
+    : '<div class="paper-comment">'+((r.improvement_action||'(작성 없음)').replace(/\n/g,'<br>'))+'</div>';
+
+  let apprHtml = '';
+  for (let s = 1; s <= TOTAL_STEPS; s++) {
+    const sig = r['step'+s+'_signature'];
+    const sigDate = r['step'+s+'_date'] ? r['step'+s+'_date'].substring(0,10) : '-';
+    const isCurrent = (r.current_step === s && r.status !== 'COMPLETED' && r.status !== 'REJECTED');
+    const myPin = getMyPin();
+    const canSign = isCurrent && r['step'+s+'_pin'] === myPin;
+    let sigContent, sigCls;
+    if (sig) { sigContent = '<img src="'+sig+'" alt="서명">'; sigCls = 'signed'; }
+    else if (canSign) { sigContent = '<span style="font-size:12px;color:#d97706;font-weight:800">✍ 사인 (탭)</span>'; sigCls = 'current'; }
+    else if (isCurrent) { sigContent = '<span style="color:#d97706;font-weight:800">⏳ 대기</span>'; sigCls = 'current'; }
+    else if (r.current_step > s) { sigContent = '<span>(서명없음)</span>'; sigCls = ''; }
+    else { sigContent = '-'; sigCls = 'locked'; }
+    apprHtml += '<div class="appr-cell">'
+      + '<div class="appr-role">'+STEP_NAMES[s]+'</div>'
+      + '<div class="appr-sig '+sigCls+'" '+(canSign?'onclick="tryStartSign('+s+')"':'')+'>'+sigContent+'</div>'
+      + '<div class="appr-name">'+(r['step'+s+'_name']||'-')+'</div>'
+      + '<div class="appr-date">'+sigDate+'</div>'
+      + '</div>';
+  }
+
+  const denom = r.ok_count + r.ng_count;
+  const okRate = denom ? (r.ok_count/denom*100).toFixed(1) : '0.0';
+  const ngRate = denom ? (r.ng_count/denom*100).toFixed(1) : '0.0';
+  const reportNumber = 'INSP-' + r.id;
+
+  area.innerHTML = `
+    <div class="paper-wrap">
+      <div class="paper-title">📋 ${displayName} 월간 점검 결과 보고서</div>
+      <div class="paper-sub">${year}년 ${month}월</div>
+      <div class="paper-info">
+        <div class="l">보고서 번호</div><div class="v">${reportNumber}</div>
+        <div class="l">대상 설비</div><div class="v">${isAll ? ('전체 통합 ('+(r.total_machines||0)+'대)') : eq}</div>
+        <div class="l">대상기간</div><div class="v">${year}.${String(month).padStart(2,'0')}.01 ~ ${String(daysInMonth).padStart(2,'0')}</div>
+        <div class="l">작성일자</div><div class="v">${(r.created_at||'').substring(0,10)}</div>
+        <div class="l">작성자</div><div class="v">${r.step1_name||'-'}</div>
+        <div class="l">진행상태</div><div class="v">${STATUS_NAMES[r.status]||r.status}</div>
+        <div class="l">현재단계</div><div class="v">${r.status==='COMPLETED'?'완료':STEP_NAMES[r.current_step]+' 단계'}</div>
+        <div class="l">다음 결재자</div><div class="v">${r.next_approver_name||'-'}</div>
+      </div>
+      <div class="paper-section-title">1. 월간 점검 통계</div>
+      <div class="paper-kpi">
+        <div class="l">${isAll?'대상 설비':'점검일수'}</div><div class="l">${isAll?'점검일수':'정상'}</div><div class="l">${isAll?'정상':'NG'}</div><div class="l">${isAll?'양호율':'양호율'}</div>
+        ${isAll
+          ? `<div class="v">${r.total_machines||0}대</div><div class="v">${r.total_workdays||0}일</div><div class="v ok">${r.ok_count||0}건</div><div class="v ok">${okRate}%</div><div class="l">NG 건수</div><div class="l">NG율</div><div class="l">총 점검</div><div class="l"></div><div class="v ng">${r.ng_count||0}건</div><div class="v ng">${ngRate}%</div><div class="v">${r.total_performed||0}건</div><div class="v"></div>`
+          : `<div class="v">${r.total_workdays||0}일</div><div class="v ok">${r.ok_count||0}일</div><div class="v ng">${r.ng_count||0}일</div><div class="v ok">${okRate}%</div>`}
+      </div>
+      <div class="paper-section-title">2. ${isAll?'설비별 일자별':'일자별'} 점검 매트릭스</div>
+      <div style="font-size:10px;color:#475569;margin-bottom:4px">
+        <span style="background:#dcfce7;color:#15803d;padding:1px 5px;border-radius:2px">●</span> 정상
+        &nbsp;&nbsp;<span style="background:#fee2e2;color:#b91c1c;padding:1px 5px;border-radius:2px">✕</span> NG
+        &nbsp;&nbsp;<span style="color:#94a3b8">-</span> 미점검
+      </div>
+      <div class="mtx-wrap"><table class="mtx"><thead>${mtxHead}</thead><tbody>${mtxBody}</tbody></table></div>
+      <div class="paper-section-title">3. NG 발생 상세 (${ngList.length}건)</div>
+      ${ngHtml}
+      <div class="paper-section-title">4. 월간 종합 의견</div>
+      ${commentHtml}
+      <div class="paper-section-title">5. 개선조치 사항</div>
+      ${improveHtml}
+      <div class="paper-section-title">6. 결&nbsp;재&nbsp;선</div>
+      <div class="approval-row">${apprHtml}</div>
+    </div>
+  `;
+}
+window.renderPaperReport = renderPaperReport;
+
+/* ═══════ 서명 모달 ═══════ */
+function initSigPad(){
+  const wrap = document.querySelector('.sig-pad-wrap');
+  const oldCv = document.getElementById('sigCanvas');
+  const newCv = document.createElement('canvas');
+  newCv.id = 'sigCanvas'; newCv.className = 'sig-pad';
+  oldCv.parentNode.replaceChild(newCv, oldCv);
+  const dpr = window.devicePixelRatio || 1;
+  const width = wrap.clientWidth;
+  newCv.width = width*dpr; newCv.height = 200*dpr;
+  newCv.style.width = width+'px'; newCv.style.height = '200px';
+  const ctx = newCv.getContext('2d');
+  ctx.scale(dpr, dpr);
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.strokeStyle = '#1e293b'; ctx.lineWidth = 2.5;
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, width, 200);
+  _sigEmpty = true;
+  document.getElementById('sigHint').classList.remove('hide');
+  let drawing = false, lastX = 0, lastY = 0;
+  function getXY(e){
+    const r = newCv.getBoundingClientRect();
+    if (e.touches && e.touches[0]) return [e.touches[0].clientX-r.left, e.touches[0].clientY-r.top];
+    return [e.clientX-r.left, e.clientY-r.top];
+  }
+  newCv.addEventListener('mousedown', e=>{e.preventDefault();drawing=true;[lastX,lastY]=getXY(e);_sigEmpty=false;document.getElementById('sigHint').classList.add('hide');});
+  newCv.addEventListener('mousemove', e=>{if(!drawing)return;e.preventDefault();const [x,y]=getXY(e);ctx.beginPath();ctx.moveTo(lastX,lastY);ctx.lineTo(x,y);ctx.stroke();[lastX,lastY]=[x,y];});
+  newCv.addEventListener('mouseup', ()=>drawing=false);
+  newCv.addEventListener('mouseleave', ()=>drawing=false);
+  newCv.addEventListener('touchstart', e=>{e.preventDefault();drawing=true;[lastX,lastY]=getXY(e);_sigEmpty=false;document.getElementById('sigHint').classList.add('hide');},{passive:false});
+  newCv.addEventListener('touchmove', e=>{if(!drawing)return;e.preventDefault();const [x,y]=getXY(e);ctx.beginPath();ctx.moveTo(lastX,lastY);ctx.lineTo(x,y);ctx.stroke();[lastX,lastY]=[x,y];},{passive:false});
+  newCv.addEventListener('touchend', e=>{e.preventDefault();drawing=false;},{passive:false});
+}
+function clearSigPad(){
+  const cv = document.getElementById('sigCanvas');
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
+  _sigEmpty = true;
+  document.getElementById('sigHint').classList.remove('hide');
+}
+window.clearSigPad = clearSigPad;
+
+function tryStartSign(step){
+  const r = getReport(_currentReportId);
+  if (!r) { alert('보고서가 없습니다'); return; }
+  if (r.status === 'COMPLETED') { alert('이미 완료된 보고서입니다'); return; }
+  if (r.status === 'REJECTED') { alert('반려된 보고서입니다'); return; }
+  if (step !== r.current_step) { alert('현재 결재 단계는 ' + STEP_NAMES[r.current_step] + '입니다'); return; }
+  const expectedPin = r['step'+step+'_pin'];
+  if (!expectedPin) { alert('해당 단계 결재자가 등록되지 않았습니다'); return; }
+  _currentSignStep = step;
+  document.getElementById('signModalTitle').textContent = STEP_NAMES[step] + ' 사인';
+  document.getElementById('signStepLabel').textContent = step + '단계 - ' + STEP_NAMES[step];
+  document.getElementById('signStepName').textContent = r['step'+step+'_name'] || '';
+  const nextStep = step + 1;
+  const nextName = nextStep <= TOTAL_STEPS ? (r['step'+nextStep+'_name']||'-') : '완료';
+  document.getElementById('nextApproverName').textContent = nextName;
+  document.getElementById('signPin').value = '';
+  document.getElementById('signComment').value = r['step'+step+'_comment'] || '';
+  document.getElementById('signStatus').style.display = 'none';
+  document.getElementById('signModal').classList.add('on');
+  setTimeout(initSigPad, 50);
+}
+window.tryStartSign = tryStartSign;
+
+function closeSignModal(){
+  document.getElementById('signModal').classList.remove('on');
+  _currentSignStep = 0;
+}
+window.closeSignModal = closeSignModal;
+
+function confirmSign(){
+  const r = getReport(_currentReportId);
+  const step = _currentSignStep;
+  const pin = document.getElementById('signPin').value.trim();
+  const comment = document.getElementById('signComment').value;
+  const st = document.getElementById('signStatus');
+  st.style.display = 'block';
+  if (!pin) { st.textContent = '❌ PIN 입력'; st.className = 'status-line error'; return; }
+  if (pin !== r['step'+step+'_pin']) { st.textContent = '❌ PIN 불일치'; st.className = 'status-line error'; return; }
+  if (_sigEmpty) { st.textContent = '❌ 서명을 그려주세요'; st.className = 'status-line error'; return; }
+  if (step === 1) {
+    const sumEl = document.getElementById('paperSummary');
+    const impEl = document.getElementById('paperImprove');
+    if (sumEl) r.summary_comment = sumEl.value;
+    if (impEl) r.improvement_action = impEl.value;
+  }
+  const cv = document.getElementById('sigCanvas');
+  r['step'+step+'_signature'] = cv.toDataURL('image/png');
+  r['step'+step+'_date'] = new Date().toISOString();
+  r['step'+step+'_comment'] = comment;
+  if (step < TOTAL_STEPS) {
+    r.current_step = step + 1;
+    r.next_approver_pin = r['step'+(step+1)+'_pin'];
+    r.next_approver_name = r['step'+(step+1)+'_name'];
+    const statusMap = {1:'REVIEWING', 2:'APPROVING'};
+    r.status = statusMap[step];
+  } else {
+    r.current_step = TOTAL_STEPS;
+    r.status = 'COMPLETED';
+    r.next_approver_pin = ''; r.next_approver_name = '';
+  }
+  r.updated_at = new Date().toISOString();
+  saveReport(r);
+  st.textContent = '✅ 사인 완료' + (step < TOTAL_STEPS ? ' · 다음 결재자에게 전달됨' : ' · 최종 승인 완료');
+  st.className = 'status-line success';
+  setTimeout(() => { closeSignModal(); renderPaperReport(); }, 800);
+}
+window.confirmSign = confirmSign;
+
+/* ═══════ 엑셀 다운로드 ═══════ */
+async function exportExcel(){
+  if (!_allInspData.length) { alert('먼저 [조회]를 눌러 데이터를 가져오세요'); return; }
+  try {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('점검내역');
+    ws.columns = [
+      {header:'날짜', key:'date', width:12},
+      {header:'시간', key:'time', width:10},
+      {header:'설비', key:'equipment', width:18},
+      {header:'점검항목', key:'item', width:24},
+      {header:'결과', key:'value', width:8},
+      {header:'점검자', key:'inspector', width:10},
+      {header:'비고', key:'notes', width:30}
+    ];
+    ws.getRow(1).font = {bold:true, color:{argb:'FFFFFFFF'}};
+    ws.getRow(1).fill = {type:'pattern', pattern:'solid', fgColor:{argb:'FF0C4A6E'}};
+    _allInspData.forEach(r => {
+      const row = ws.addRow({
+        date:r.date, time:r.time, equipment:r.equipment,
+        item:r.item, value:r.value, inspector:r.inspector,
+        notes:r.notes||''
+      });
+      if (r.value === 'NG') {
+        row.eachCell(c => {
+          c.fill = {type:'pattern', pattern:'solid', fgColor:{argb:'FFFEE2E2'}};
+        });
+      }
+    });
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], {type:'application/octet-stream'});
+    const sd = document.getElementById('anaStartDate').value;
+    const ed = document.getElementById('anaEndDate').value;
+    saveAs(blob, '점검내역_'+sd+'_'+ed+'.xlsx');
+  } catch(e) {
+    alert('엑셀 다운로드 실패: ' + e.message);
+  }
+}
+window.exportExcel = exportExcel;
+
+/* ─── 상태 메시지 ─── */
+function showStatus(msg, type) {
+  statusMsg.textContent = msg; statusMsg.className = type;
+  setTimeout(() => { statusMsg.className = ''; }, 4000);
+}
+
+/* ─── DOMContentLoaded ─── */
+window.addEventListener('DOMContentLoaded', async () => {
+  const now = new Date();
+  dateInput.value = now.toISOString().slice(0, 10);
+  timeInput.value = now.toTimeString().slice(0, 5);
+
+  overlay.classList.add('show');
+  try {
+    const [mapping, photos] = await Promise.all([
+      getFullMapping(),
+      fetchAllPhotos(),
+    ]);
+    fullMapping = mapping;
+    photoMap = photos;
+    // 설비 마스터 로드 (fullMapping이 채워진 후에 폴백 가능하도록 순차 실행)
+    await loadEquipmentList();
+  } catch (e) {
+    alert('⚠️ 데이터 로드 실패:\n' + e.message);
+  } finally {
+    overlay.classList.remove('show');
+  }
+
+  buildEquipmentOptions();
+  updateConnInfo();
+
+  /* 보고서 시스템 초기화 */
+  loadLoginInfo();
+  refreshInbox();
+  // 진행중 보고서가 있으면 보고서 탭 표시
+  const hasReports = getReportList().length > 0;
+  if (hasReports) document.getElementById('tab4').style.display = 'inline-block';
+
+  flatpickr('#checkDate', {
+    inline: true, dateFormat: 'Y-m-d', defaultDate: now,
+    onDayCreate(_, __, ___, dayElem) {
+      const d = dayElem.dateObj;
+      const hasDue = Object.values(fullMapping).some(a =>
+        a.some(({ lastDate, period }) => {
+          if (!lastDate) return true;
+          const ld   = new Date(lastDate + 'T00:00:00');
+          const diff = Math.floor((d - ld) / (1000 * 60 * 60 * 24));
+          if (period === 1) return diff >= 1;
+          if (period === 7) return diff >= 7;
+          return diff >= 30;
+        })
+      );
+      if (hasDue) dayElem.classList.add('has-marker');
+    },
+    onChange() { filterEquipmentOptions(); updateChecklist(); }
+  });
+
+  filterEquipmentOptions();
+  updateChecklist();
+
+  eqSelect.addEventListener('change', () => {
+    filterEquipmentOptions(); updateChecklist();
+  });
+
+  /* ─── 폼 제출 ─── */
+  const btn = form.querySelector('button[type="submit"]');
+  let busy = false;
+  const numericEquipments = ['측정실 온/습도', '경도 마스터샘플체크', '조도'];
+
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    if (busy) return;
+
+    const eq        = eqSelect.value;
+    const date      = dateInput.value;
+    const time      = timeInput.value;
+    const inspector = form.inspector.value;
+    const notes     = form.notes.value;
+
+    if (!eq) { showStatus('⚠️ 설비를 선택해 주세요.', 'error'); return; }
+    if (!inspector) { showStatus('⚠️ 점검자를 선택해 주세요.', 'error'); return; }
+
+    let rows;
+    if (numericEquipments.includes(eq)) {
+      const inputs = container.querySelectorAll('select[name="values"], input[name="values"]');
+      rows = Array.from(inputs).map(el => ({
+        date, time, equipment: eq, item: el.dataset.item, value: el.value, inspector, notes
+      }));
+    } else {
+      const checked = container.querySelectorAll('input[type="radio"]:checked');
+      rows = Array.from(checked).map(r => ({
+        date, time, equipment: eq, item: r.dataset.item, value: r.value, inspector, notes
+      }));
+      const totalRows = container.querySelectorAll('.check-row').length;
+      if (rows.length < totalRows) {
+        showStatus(`⚠️ 미입력 항목이 있습니다. (${rows.length}/${totalRows})`, 'error');
+        return;
+      }
+    }
+
+    if (!rows.length) { showStatus('⚠️ 점검 항목이 없습니다.', 'error'); return; }
+
+    busy = true; btn.disabled = true; btn.textContent = '저장 중…';
+    overlay.classList.add('show');
+
+    try {
+      await insertRows(rows);
+
+      fullMapping = await getFullMapping();
+
+      const prevIns = form.inspector.value;
+      const prevDate = dateInput.value;
+      const prevTime = timeInput.value;
+      form.reset();
+      form.inspector.value = prevIns;
+      dateInput.value = prevDate;
+      timeInput.value = prevTime;
+
+      filterEquipmentOptions();
+      container.innerHTML = emptyMsg('저장 완료 ✨', '다른 설비를 선택해 점검을 이어가세요');
+      document.getElementById('progress-card').hidden = true;
+      updateChecklist();
+
+      showStatus('✅ 저장 완료! ('+rows.length+'건)', 'success');
+    } catch (err) {
+      showStatus('❌ 오류: ' + err.message, 'error');
+    } finally {
+      busy = false; btn.disabled = false; btn.textContent = '💾 저장하기';
+      overlay.classList.remove('show');
+    }
+  });
+});
+</script>
+</body>
+</html>
