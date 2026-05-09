@@ -3917,6 +3917,70 @@ async function markCertOK(idx){
   if (!c.supplier_judge) c.supplier_judge = 'OK';
   if (!c.supplier_sign) c.supplier_sign = c.supplier || '';
 
+  // [v3.27] 머지 그룹 자동 일괄 적용
+  //  - mergeCertsForDisplay에서 1줄로 보이는 그룹의 다른 코일들도 동일 OK 결과로 자동 처리
+  //  - 키: 공급자|상품명|규격|SIZE|LOT베이스 (renderCert 머지 키와 동일)
+  let _bulkCount = 0;
+  let _bulkFailed = 0;
+  try {
+    const _n = v => String(v||'').trim().toUpperCase().replace(/\s+/g,'');
+    const _baseLot = lot => {
+      if (!lot) return '';
+      let s = String(lot).trim();
+      s = s.replace(/\s*[\(\[]\s*[A-Za-z]?\d{1,4}\s*[\)\]]\s*$/, '');
+      s = s.replace(/[\s\-_\/\.\#]+(?:[A-Za-z]{1,2}\d{1,3}|\d{1,4})$/, '');
+      s = s.replace(/[\s\-_\/\.\#]+\d{1,4}[A-Za-z]{1,2}$/, '');
+      return _n(s);
+    };
+    const myKey = _n(c.supplier) + '|' + _n(c.commodity) + '|' + _n(c.spec) + '|' + _n(c.size) + '|' + _baseLot(c.lot);
+    // 같은 그룹의 다른 대기 cert (자기 자신 제외, 아직 OK/NG 안 받은 것)
+    const groupMembers = certData.filter(x => {
+      if (x === c) return false;
+      const xJ = String(x.judge||'').trim();
+      if (xJ === 'OK' || xJ === 'NG') return false;
+      const xKey = _n(x.supplier) + '|' + _n(x.commodity) + '|' + _n(x.spec) + '|' + _n(x.size) + '|' + _baseLot(x.lot);
+      return xKey === myKey;
+    });
+    if (groupMembers.length > 0) {
+      // 검사 결과 필드들만 복사 (식별 필드 lot/heat/id 등은 보존)
+      const inspectFields = [
+        'recv_date','recv_charge','customer_sign','remark','label','judge',
+        'r1','r2','r3','r4','c_r1','c_r2','c_r3','c_r4',
+        'supplier_judge','supplier_sign'
+      ];
+      for (const member of groupMembers) {
+        for (const f of inspectFields) {
+          if (typeof c[f] === 'object' && c[f] !== null) {
+            member[f] = JSON.parse(JSON.stringify(c[f]));
+          } else if (c[f] !== undefined) {
+            member[f] = c[f];
+          }
+        }
+      }
+      _bulkCount = groupMembers.length;
+      // 서버 push (있을 때만)
+      if (typeof appSettings !== 'undefined' && appSettings.supabaseUrl && appSettings.supabaseKey) {
+        for (const member of groupMembers) {
+          try {
+            await pushCertToSupabase(member);
+            if (typeof markCertAsDirty === 'function') markCertAsDirty(member.id);
+            if (typeof isCustomerWorkCompleted === 'function' &&
+                typeof syncCertToLog === 'function' &&
+                isCustomerWorkCompleted(member)) {
+              syncCertToLog(member);
+            }
+          } catch(e) {
+            console.warn('[v3.27] 그룹 push 실패 (id='+member.id+'):', e.message);
+            _bulkFailed++;
+            if (typeof addPendingOp === 'function') {
+              addPendingOp({ type: 'cert', action: 'upsert', data: member });
+            }
+          }
+        }
+      }
+    }
+  } catch(e) { console.warn('[v3.27] 머지 그룹 일괄 OK 처리 실패:', e); }
+
   saveCertToLS();
   renderCert();
 
@@ -3929,7 +3993,13 @@ async function markCertOK(idx){
       syncMsg = '\n⚠️ Supabase 동기화 실패 (로컬만 반영됨)';
     }
   }
-  alert('✅ OK 판정 + 수요자 측정값 자동 등록 완료' + syncMsg);
+  // 본인 + 그룹 일괄 처리 결과 메시지
+  let bulkMsg = '';
+  if (_bulkCount > 0) {
+    bulkMsg = '\n📋 같은 LOT 그룹 ' + _bulkCount + '건 동일 결과 자동 적용';
+    if (_bulkFailed > 0) bulkMsg += ' (서버 전송 ' + _bulkFailed + '건 보류)';
+  }
+  alert('✅ OK 판정 + 수요자 측정값 자동 등록 완료' + syncMsg + bulkMsg);
 }
 
 async function autoFillSingleCert(idx){
@@ -4738,6 +4808,8 @@ GRANT ALL ON public.material_cert TO anon, authenticated;`;
         let s = String(lot).trim();
         s = s.replace(/\s*[\(\[]\s*[A-Za-z]?\d{1,4}\s*[\)\]]\s*$/, '');
         s = s.replace(/[\s\-_\/\.\#]+(?:[A-Za-z]{1,2}\d{1,3}|\d{1,4})$/, '');
+        // [v3.27] -014A, -018B 등 (숫자+영문1~2자)
+        s = s.replace(/[\s\-_\/\.\#]+\d{1,4}[A-Za-z]{1,2}$/, '');
         return _n(s);
       };
       const myKey = _n(c.supplier) + '|' + _n(c.commodity) + '|' + _n(c.spec) + '|' + _n(c.size) + '|' + _baseLot(c.lot);
