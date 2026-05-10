@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>소재 장착 관리 v1.7</title>
+<title>소재 장착 관리 v1.8</title>
 <meta name="theme-color" content="#0f172a">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&display=swap');
@@ -322,7 +322,7 @@ body {
   <!-- 두 번째: 타이틀 -->
   <div class="hdr-titlerow">
     <div class="hdr-title">📦 소재 장착 관리</div>
-    <div class="hdr-sub">v1.7 · IQC 통과 코일 · HEAT 추적</div>
+    <div class="hdr-sub">v1.8 · IQC 통과 코일 · HEAT 추적</div>
   </div>
 
   <!-- 세 번째: 호기 + 시계 -->
@@ -450,10 +450,9 @@ body {
 const SB_URL = 'https://omngtyewdaqpphnzeate.supabase.co';
 const SB_KEY = 'sb_publishable_9j2YkkL-7ul1TrhH-NjVdQ_vWDG2-1D';
 
-const TBL_INSP_CERTS = 'inspection_certs';
-const TBL_IQC_INSP   = 'iqc_inspections';
-const TBL_ATTACH     = 'material_attachment';
-const TBL_EXCLUDED   = 'excluded_heats';
+const TBL_INSP_CERTS = 'inspection_certs';   // IQC 입고+검사 통합 테이블
+const TBL_ATTACH     = 'material_attachment'; // 장착 이력
+const TBL_EXCLUDED   = 'excluded_heats';      // 블랙리스트
 
 /* ============================================================
    부서 매핑 (admin_pin 동일)
@@ -556,62 +555,36 @@ let availableMaterials = [];
 let currentDetachTarget = null;
 
 /* ============================================================
-   그룹키 (material_IQC.html과 동일 로직)
+   IQC 통과 코일 추출 (inspection_certs.final_judge = 'OK')
    ============================================================ */
-function getLotBase(lot) {
-  if (!lot) return '';
-  return String(lot).split('-')[0];
-}
-
-function groupKeyOf(cert) {
-  return [
-    cert.supplier || '',
-    cert.material_type || '',
-    cert.thickness || '',
-    cert.width_mm || cert.width || '',
-    getLotBase(cert.lot_no || cert.lot || '')
-  ].join('|');
-}
-
-function makeIqcMap(iqcList) {
-  const map = new Map();
-  iqcList.forEach(iqc => {
-    const k = [
-      iqc.supplier || '',
-      iqc.material_type || '',
-      iqc.thickness || '',
-      iqc.width_mm || '',
-      iqc.lot_base || ''
-    ].join('|');
-    map.set(k, iqc);
-  });
-  return map;
-}
-
-function buildAvailableMaterials(certsList, iqcList, excludedHeats) {
-  const iqcMap = makeIqcMap(iqcList);
+function buildAvailableMaterials(certsList, excludedHeats) {
   const result = [];
   const excludedSet = new Set(excludedHeats || []);
 
   certsList.forEach(c => {
     if (excludedSet.has(c.heat_no)) return;
+    if (!c.heat_no) return; // HEAT 없는 row 제외
 
-    const key = groupKeyOf(c);
-    const iqc = iqcMap.get(key);
-    if (!iqc || iqc.final_judge !== 'OK') return;
+    // final_judge가 'OK'인 것만
+    const judge = (c.final_judge || '').toString().trim().toUpperCase();
+    if (judge !== 'OK') return;
 
     result.push({
       cert_id: c.id,
       heat_no: c.heat_no,
-      lot_no: c.lot_no || c.lot || '',
+      lot_no: c.lot_no || c.lots_detail || '',
       supplier: c.supplier || '',
-      material_type: c.material_type || c.spec || '',
+      vendor_site_id: c.vendor_site_id || '',
+      material_type: c.material_type || '',
       thickness: parseFloat(c.thickness) || 0,
-      width: parseFloat(c.width_mm || c.width) || 0,
+      width: parseFloat(c.width_mm) || 0,
       receipt_kg: parseFloat(c.weight) || 0,
+      coil_count: parseInt(c.coil_count) || 1,
       used_kg: 0,
-      receipt_date: c.receipt_date || '',
-      cert_no: iqc.cert_no || '-'
+      receipt_date: c.receipt_date || c.recv_date || '',
+      has_millsheet: c.has_millsheet || false,
+      // cert_no 필드가 없으므로 lot_no 또는 id를 표시용으로 사용
+      cert_no: c.lot_no ? c.lot_no.substring(0, 16) : ('CERT-' + c.id)
     });
   });
 
@@ -799,6 +772,7 @@ function setupOnline() {
 
 /* ============================================================
    IQC 통과 코일 데이터 로드 (Supabase)
+   inspection_certs 단일 테이블에서 final_judge='OK' 조회
    ============================================================ */
 async function loadInspectionData() {
   const list = document.getElementById('availableList');
@@ -814,24 +788,24 @@ async function loadInspectionData() {
     const startDate = getPeriodStartDate(periodDays);
     const periodLabel = getPeriodLabel(periodDays);
 
-    let certsPath = `${TBL_INSP_CERTS}?select=id,supplier,material_type,thickness,width_mm,width,lot_no,lot,heat_no,coil_count,weight,receipt_date,created_at&order=receipt_date.desc&limit=2000`;
+    // inspection_certs 조회: final_judge='OK' + 기간 필터
+    let certsPath = `${TBL_INSP_CERTS}?select=id,supplier,vendor_site_id,material_type,thickness,width_mm,lot_no,lots_detail,heat_no,coil_count,weight,receipt_date,recv_date,final_judge,has_millsheet,created_at&final_judge=eq.OK&order=receipt_date.desc&limit=2000`;
     if (startDate) {
       certsPath += `&receipt_date=gte.${startDate}`;
     }
 
-    const iqcPath = `${TBL_IQC_INSP}?select=group_key,supplier,material_type,thickness,width_mm,lot_base,final_judge,cert_no,updated_at&final_judge=eq.OK&limit=5000`;
+    // 블랙리스트
     const excludedPath = `${TBL_EXCLUDED}?select=heat_no&is_active=eq.true&limit=5000`;
 
-    const [certs, iqcs, excludedRows] = await Promise.all([
+    const [certs, excludedRows] = await Promise.all([
       sbReq('GET', certsPath),
-      sbReq('GET', iqcPath),
       sbReq('GET', excludedPath).catch(() => [])
     ]);
 
     const excludedHeats = (excludedRows || []).map(r => r.heat_no);
-    availableMaterials = buildAvailableMaterials(certs || [], iqcs || [], excludedHeats);
+    availableMaterials = buildAvailableMaterials(certs || [], excludedHeats);
 
-    helpText.innerHTML = `💡 IQC 통과 코일 · ${periodLabel} 입고 기준 · 입고일 순(FIFO) 정렬`;
+    helpText.innerHTML = `💡 IQC 통과 코일 (final_judge=OK) · ${periodLabel} 입고 기준 · 입고일 순(FIFO)`;
 
     render();
     showToast(`✅ ${availableMaterials.length}건 IQC 통과 코일 (${periodLabel})`, 'success');
