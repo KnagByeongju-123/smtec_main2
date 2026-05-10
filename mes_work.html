@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>MES 가동설비 모니터링 v4.1</title>
+<title>MES 가동설비 모니터링 v4.2</title>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -312,7 +312,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 </style>
 </head>
 <body>
-<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v4.1</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">30초 갱신</span></div></div></div>
+<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v4.2</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">30초 갱신</span></div></div></div>
 <div class="tabs"><div class="tab active" data-tab="monitor" onclick="switchTab('monitor')">📊 모니터링</div><div class="tab" data-tab="settings" onclick="switchTab('settings')">📋 이력/설정</div></div>
 <div class="panel active" id="panel-monitor">
   <div class="stats"><div class="st"><div class="st-label">전체</div><div class="st-val" id="sTotal">-</div></div><div class="st run"><div class="st-label">가동</div><div class="st-val" id="sRun">-</div></div><div class="st stop"><div class="st-label">비가동</div><div class="st-val" id="sStop">-</div></div><div class="st warn"><div class="st-label">⏰30분이내</div><div class="st-val" id="sSoon">-</div></div><div class="st ng"><div class="st-label">NG</div><div class="st-val" id="sNg">-</div></div></div>
@@ -577,6 +577,23 @@ function saveMesApiBase(v){
 
 var SB_URL='https://omngtyewdaqpphnzeate.supabase.co',SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tbmd0eWV3ZGFxcHBobnplYXRlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4ODk4ODksImV4cCI6MjA5MDQ2NTg4OX0.Zxur3t02JHtOcXforCMSwO3i2mMaf5sViE0tXXUC0-s',SETTINGS_TABLE='mes_settings';
 var timer=30,curFilter='ALL',cachedData=null;
+
+// ★ 카운터 setInterval을 가장 먼저 등록 (다른 코드에 에러나도 카운터는 작동)
+//   1초마다 timer 감소 → 0초 시 loadMonitor() 호출
+setInterval(function(){
+  try{
+    timer--;
+    if(timer<=0){
+      timer=30;  // 무한 호출 방지: 0이 되면 즉시 30으로 리셋
+      if(typeof loadMonitor==='function'){
+        loadMonitor().catch(function(e){console.log('[interval] loadMonitor 에러:',e)});
+      }
+    }
+    var el=document.getElementById('countdown');
+    if(el)el.textContent='갱신:'+Math.floor(timer/60)+':'+String(timer%60).padStart(2,'0');
+  }catch(e){console.log('[interval] 에러:',e)}
+},1000);
+console.log('[setup] 카운터 setInterval 등록됨');
 var settings={ntfy:[],telegram:{token:'',rules:[]},discord:[],lastAlerted:{},lyMapping:[]};
 var _DEFAULT_ZONES=[{id:'C',name:'C동',type:'map',equip:[{no:'39',mk:'국일',t:250,x:138,y:1327,w:87,h:68},{no:'02',mk:'심팩',t:200,x:139,y:1172,w:84,h:68},{no:'01',mk:'쌍용',t:200,x:140,y:999,w:84,h:67},{no:'29',mk:'국일',t:200,x:154,y:820,w:69,h:61},{no:'28',mk:'국일',t:250,x:377,y:545,w:74,h:68},{no:'34',mk:'심팩',t:250,x:146,y:435,w:76,h:54},{no:'38',mk:'국일',t:250,x:507,y:376,w:80,h:66},{no:'35',mk:'심팩',t:250,x:147,y:237,w:75,h:57},{no:'36',mk:'심팩',t:300,x:0,y:8,w:77,h:108},{no:'43',mk:'HIM',t:800,x:398,y:0,w:159,h:129}]},{id:'B',name:'B동',type:'map',equip:[{no:'45',mk:'심팩',t:300,x:205,y:1664,w:74,h:57},{no:'31',mk:'심팩',t:150,x:399,y:1656,w:77,h:56},{no:'41',mk:'국일',t:200,x:566,y:1653,w:79,h:59},{no:'47',mk:'심팩',t:300,x:200,y:1377,w:74,h:58},{no:'04',mk:'심팩',t:150,x:360,y:1228,w:79,h:53},{no:'37',mk:'국일',t:200,x:503,y:1227,w:75,h:52},{no:'03',mk:'심팩',t:150,x:543,y:1004,w:83,h:65},{no:'40',mk:'심팩',t:110,x:417,y:1004,w:72,h:65},{no:'46',mk:'심팩',t:300,x:232,y:1012,w:84,h:56},{no:'48',mk:'심팩',t:300,x:235,y:740,w:74,h:58},{no:'05',mk:'심팩',t:110,x:461,y:561,w:75,h:60},{no:'06',mk:'심팩',t:110,x:349,y:560,w:80,h:59},{no:'30',mk:'국일',t:160,x:581,y:560,w:73,h:59},{no:'32',mk:'심팩',t:200,x:397,y:346,w:77,h:49},{no:'42',mk:'AIDA',t:200,x:540,y:352,w:78,h:49},{no:'49',mk:'심팩',t:300,x:237,y:254,w:68,h:104},{no:'17',mk:'심팩',t:80,x:0,y:158,w:55,h:39},{no:'11',mk:'심팩',t:80,x:476,y:135,w:55,h:38},{no:'10',mk:'심팩',t:80,x:579,y:135,w:57,h:41},{no:'13',mk:'심팩',t:80,x:476,y:77,w:54,h:38},{no:'09',mk:'심팩',t:80,x:579,y:79,w:56,h:38},{no:'07',mk:'심팩',t:80,x:475,y:18,w:54,h:38},{no:'08',mk:'심팩',t:80,x:579,y:20,w:55,h:39},{no:'12',mk:'심팩',t:80,x:354,y:0,w:50,h:45}]}];
 var ZONES=(function(){var s=localStorage.getItem('ZONES');var z=null;if(s){try{z=JSON.parse(s)}catch(e){z=null}}if(!z||!z.length)z=_DEFAULT_ZONES;z=z.filter(function(x){return x&&x.id!=='F'&&x.id!=='W'});z.forEach(function(x){if(!x.scale)x.scale=20});localStorage.setItem('ZONES',JSON.stringify(z));return z})();
@@ -1414,18 +1431,4 @@ function renderTimeline(list){
 function dsumSwitch(tab){
   dsumState.tab=tab;
   document.getElementById('tabTop5').classList.toggle('active',tab==='top5');
-  document.getElementById('tabTL').classList.toggle('active',tab==='tl');
-  if(!dsumState.data){loadDowntimeSummary();return}
-  if(tab==='top5')renderEvents(dsumState.data);
-  else renderTimeline(dsumState.data.timeline||[]);
-}
-
-// ★★★ 오늘의 생산실적 (업무일 08시~현재) ★★★
-async function loadProductionToday(){
-  var m=chkState.machine;if(!m)return;
-  var body=document.getElementById('prodBody');
-  body.innerHTML='<div class="dsum-loading">⏳ MES 조회중...</div>';
-  prodState.loading=true;
-  try{
-    var r=await fetch(MES_API_BASE+'/production_today?machine_code='+encodeURIComponent(m.machine_code));
-    
+  docume
