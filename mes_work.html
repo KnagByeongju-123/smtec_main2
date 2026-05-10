@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>MES 가동설비 모니터링 v4.0</title>
+<title>MES 가동설비 모니터링 v4.1</title>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -312,7 +312,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 </style>
 </head>
 <body>
-<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v4.0</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">30초 갱신</span></div></div></div>
+<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v4.1</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">30초 갱신</span></div></div></div>
 <div class="tabs"><div class="tab active" data-tab="monitor" onclick="switchTab('monitor')">📊 모니터링</div><div class="tab" data-tab="settings" onclick="switchTab('settings')">📋 이력/설정</div></div>
 <div class="panel active" id="panel-monitor">
   <div class="stats"><div class="st"><div class="st-label">전체</div><div class="st-val" id="sTotal">-</div></div><div class="st run"><div class="st-label">가동</div><div class="st-val" id="sRun">-</div></div><div class="st stop"><div class="st-label">비가동</div><div class="st-val" id="sStop">-</div></div><div class="st warn"><div class="st-label">⏰30분이내</div><div class="st-val" id="sSoon">-</div></div><div class="st ng"><div class="st-label">NG</div><div class="st-val" id="sNg">-</div></div></div>
@@ -602,7 +602,7 @@ var dsumState={tab:'top5',data:null,loading:false};
 var prodState={data:null,loading:false};
 
 var sbH={'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Content-Type':'application/json'};
-async function sbGet(t,q){var r=await fetch(SB_URL+'/rest/v1/'+t+'?'+(q||''),{headers:sbH});return r.ok?r.json():null}
+async function sbGet(t,q){try{var r=await fetch(SB_URL+'/rest/v1/'+t+'?'+(q||''),{headers:sbH});return r.ok?r.json():null}catch(e){console.log('[sbGet] '+t+' 에러:',e.message);return null}}
 async function sbPost(t,d){return fetch(SB_URL+'/rest/v1/'+t,{method:'POST',headers:Object.assign({},sbH,{'Prefer':'return=minimal'}),body:JSON.stringify(d)})}
 async function sbDelete(t,q){return fetch(SB_URL+'/rest/v1/'+t+'?'+q,{method:'DELETE',headers:Object.assign({},sbH,{'Prefer':'return=minimal'})})}
 
@@ -618,28 +618,34 @@ function maskStr(s){if(!s||s.length<10)return'****';return s.slice(0,8)+'••�
 function switchTab(name){document.querySelectorAll('.tab').forEach(function(t){t.classList.toggle('active',t.dataset.tab===name)});document.querySelectorAll('.panel').forEach(function(p){p.classList.toggle('active',p.id==='panel-'+name)});if(name==='settings'){renderNtfyRules();renderTgRules();renderDcRules();renderNgMap();renderCiTabs();renderCiList();hiInit()}}
 
 async function loadMonitor(){
+  console.log('[loadMonitor] 시작');
   var data=await sbGet('machine_status','select=*&order=machine_code.asc');
   if(!Array.isArray(data)) data=[];  // null/undefined 방어 (가상설비라도 표시 위해)
+  console.log('[loadMonitor] machine_status:',data.length,'건');
   // ★ 가상설비(MES 수집 없는 설비) 합성: machine_master_tj에는 있지만 machine_status에 없는 호기
   try{
     var virtualRows=await buildVirtualMachineRows(data);
     if(virtualRows&&virtualRows.length){
       data=data.concat(virtualRows);
       data.sort(function(a,b){return String(a.machine_code).localeCompare(String(b.machine_code),'ko',{numeric:true})});
+      console.log('[loadMonitor] 가상설비 합성:',virtualRows.length,'건');
+    }else{
+      console.log('[loadMonitor] 가상설비 합성: 0건 (마스터 미등록 또는 모두 실제)');
     }
-  }catch(e){console.log('가상설비 합성 실패:',e)}
-  // Python 미실행 진단
+  }catch(e){console.error('[loadMonitor] 가상설비 합성 실패:',e)}
+  // 진단 로그
   if(data.length===0){
-    console.log('⚠ machine_status 빈 배열 + 가상설비 0건 - Python(mes_monitor.py) 미실행 또는 마스터 미등록');
+    console.warn('⚠ 표시할 설비 0건. 확인: ① Python(mes_monitor.py) 실행 여부 ② machine_master_tj 마스터 등록');
   }else{
     var realCount=data.filter(function(d){return !d._virtual}).length;
     var virtualCount=data.filter(function(d){return d._virtual}).length;
     console.log('📊 데이터:',realCount,'대 (실제) +',virtualCount,'대 (가상)');
   }
   cachedData=data;
-  renderMonitor(data);
-  checkAlerts(data);
+  try{renderMonitor(data)}catch(e){console.error('[renderMonitor] 에러:',e)}
+  try{checkAlerts(data)}catch(e){console.error('[checkAlerts] 에러:',e)}
   timer=30;
+  console.log('[loadMonitor] 완료');
 }
 
 // ============================================================
@@ -1422,21 +1428,4 @@ async function loadProductionToday(){
   prodState.loading=true;
   try{
     var r=await fetch(MES_API_BASE+'/production_today?machine_code='+encodeURIComponent(m.machine_code));
-    if(!r.ok)throw new Error('API 응답오류 '+r.status);
-    var data=await r.json();
-    if(data.error)throw new Error(data.error);
-    prodState.data=data;
-    renderProductionToday(data);
-  }catch(e){
-    console.log('생산실적 조회실패:',e);
-    // API 실패시 machine_status 데이터로 간이 표시
-    renderProductionFallback(m);
-  }finally{
-    prodState.loading=false;
-  }
-}
-
-function renderProductionToday(data){
-  var b=document.getElementById('prodBody');
-  var items=data.items||[];
-  
+    
