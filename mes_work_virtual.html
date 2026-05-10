@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>전체 설비 모니터링 v2.0</title>
+<title>가상설비 모니터링 v1.0</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&display=swap');
 *{box-sizing:border-box;margin:0;padding:0}
@@ -21,8 +21,8 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 .st-label{font-size:10px;color:var(--sub)}
 .st-val{font-size:20px;font-weight:800;margin-top:2px;color:var(--accent2)}
 .st.run{border-left-color:var(--green)}.st.run .st-val{color:var(--green)}
-.st.vrun{border-left-color:var(--accent)}.st.vrun .st-val{color:var(--accent2)}
 .st.idle{border-left-color:var(--sub)}.st.idle .st-val{color:var(--sub)}
+.st.cust{border-left-color:#fbbf24}.st.cust .st-val{color:#fbbf24}
 .filter-wrap{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:12px}
 .fbtn{padding:5px 11px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--sub);cursor:pointer;font-size:11px;font-weight:600;font-family:inherit}
 .fbtn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
@@ -44,7 +44,6 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 .eq-cust{font-size:10px;color:#fbbf24;font-weight:700;margin-bottom:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .eq-st{font-size:11px;font-weight:700;display:flex;align-items:center;gap:4px}
 .eq-st.run{color:var(--green)}
-.eq-st.vrun{color:var(--accent2)}
 .eq-st.idle{color:var(--sub)}
 .empty{text-align:center;padding:40px 20px;color:var(--sub);font-size:13px;line-height:1.6}
 .empty a{color:var(--accent);text-decoration:none;font-weight:700}
@@ -72,21 +71,21 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 <body>
 <div class="hdr">
   <div>
-    <h1>🟣 전체 설비 모니터링 v2.0</h1>
+    <h1>🟣 가상설비 모니터링 v1.0</h1>
     <div class="sub"><span class="dot" id="dot"></span><span id="lastUpdate">-</span> │ <span id="countdown">30초 갱신</span></div>
   </div>
   <a href="index.html" class="back">← 메뉴</a>
 </div>
 <div class="body">
   <div class="intro">
-    💡 <b>설비 마스터(<code style="background:rgba(255,255,255,.05);padding:1px 4px;border-radius:3px;font-size:10px">machine_master_tj</code>) 기준</b>으로 전체 설비를 표시합니다.<br>
-    🟢 <b>MES가동</b>: MES에 실시간 접속 · 🟣 <b>가상가동</b>: 가상 작업지시/소재장착 진행중 · ⚪ <b>대기</b>: 작업 없음
+    💡 <b>가상설비란?</b> MES에 등록되지 않은 호기를 마스터(<code style="background:rgba(255,255,255,.05);padding:1px 4px;border-radius:3px;font-size:10px">machine_master_tj</code>)에서 가져와 표시합니다.<br>
+    실제 가동 데이터는 <b>MES 모니터링</b>에서, 가상은 여기서 관리됩니다.
   </div>
   <div class="stats">
     <div class="st"><div class="st-label">전체</div><div class="st-val" id="sTotal">-</div></div>
-    <div class="st run"><div class="st-label">MES가동</div><div class="st-val" id="sMesRun">-</div></div>
-    <div class="st vrun"><div class="st-label">가상가동</div><div class="st-val" id="sVRun">-</div></div>
+    <div class="st run"><div class="st-label">가동중</div><div class="st-val" id="sRun">-</div></div>
     <div class="st idle"><div class="st-label">대기</div><div class="st-val" id="sIdle">-</div></div>
+    <div class="st cust"><div class="st-label">고객사</div><div class="st-val" id="sCust">-</div></div>
   </div>
   <div class="filter-wrap" id="filterBar"></div>
   <div id="groupArea"><div class="empty">데이터 로딩 중...</div></div>
@@ -131,20 +130,27 @@ function showToast(m,ms){
 
 function _esc(s){if(s==null)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
 
-// 가상설비 모니터링 = machine_master_tj에 등록된 active=true 모든 호기 표시
-// machine_status는 "현재 가동상태" 정보만 활용 (제외 기준 아님)
+// 가상설비 = machine_master_tj 에 active=true 인 호기 중, machine_status에 없는 호기
 async function loadVirtual(){
-  // 1. 마스터 조회 (active 만) - 표시 대상
+  // 1. 마스터 조회 (active 만)
   var masters=await sbGet('machine_master_tj','select=*&order=sort_order.asc,ho_code.asc');
   if(!masters){showToast('⚠ 마스터 조회 실패');return}
-  // 2. machine_status 조회 (가동상태 정보용)
-  var statuses=await sbGet('machine_status','select=*')||[];
+  // 2. 실제 가동중인 machine_status 조회 (호기번호 매칭용)
+  var actuals=await sbGet('machine_status','select=machine_code,machine_name')||[];
   // 3. 작업진행 (work_order_cache) 조회
   var workOrders=await sbGet('work_order_cache','select=*&work_order_status=eq.1&order=created_at.desc&limit=200')||[];
   // 4. 첨부소재 (material_attachment) 조회
   var attachments=await sbGet('material_attachment','select=*&status=eq.attached&order=attach_time.desc&limit=200')||[];
   
-  // 호기별 매칭 함수
+  // 실제설비 호기번호 set
+  var existHo={};
+  actuals.forEach(function(d){
+    var name=(d.machine_name||'').trim();
+    var mt=name.match(/^(\d{1,3})/);
+    if(mt)existHo[String(parseInt(mt[1],10))]=true;
+  });
+  
+  // 호기별 작업지시/첨부 매핑
   function findByHo(arr,hoNum){
     return arr.filter(function(r){
       var src=String(r.machine_code||r.machine_name||'').trim();
@@ -154,25 +160,20 @@ async function loadVirtual(){
     });
   }
   
-  // 마스터 기준 전체 호기 표시 (machine_status에 있건 없건)
-  var allMachines=[];
+  // 가상설비 추출 (마스터에 있고 실제에 없는 것)
+  var virtuals=[];
   (masters||[]).forEach(function(m){
     if(m.active===false)return;
     var ho=String(m.ho_code||m.ho||'').trim();
     if(!ho)return;
     var hoNum=String(parseInt(ho,10));
+    if(existHo[hoNum])return; // 이미 실제설비에 있음 → 제외
     // 작업지시/첨부 매칭
     var wos=findByHo(workOrders,hoNum);
     var atts=findByHo(attachments,hoNum);
-    var sts=findByHo(statuses,hoNum);
     var wo=wos.length?wos[0]:null;
     var att=atts.length?atts[0]:null;
-    var st=sts.length?sts[0]:null;
-    // 실제 MES 가동중 여부 (machine_status.machine_status === 'N')
-    var isMesRunning=st&&st.machine_status==='N';
-    // 가상 작업/첨부 여부
-    var isVirtualActive=!!(att||wo);
-    allMachines.push({
+    virtuals.push({
       ho:ho,
       hoNum:hoNum,
       maker:m.maker||'',
@@ -180,48 +181,38 @@ async function loadVirtual(){
       customer:m.customer||'미지정',
       machine_code:m.machine_code||'',
       sortOrder:m.sort_order||0,
-      // 가동 상태 (3가지)
-      isMesRunning:isMesRunning,           // MES 실제 가동중
-      isVirtualActive:isVirtualActive,     // 가상 작업중 (소재장착 또는 작업지시 진행)
-      isRunning:isMesRunning||isVirtualActive,
-      // MES 정보 (있으면)
-      mesItemCode:st?st.current_item_code:'',
-      mesItemName:st?st.item_name:'',
-      mesMold:st?st.current_mold:'',
-      mesActualQty:st?(st.actual_qty||0):0,
-      mesTargetQty:st?(st.target_qty||0):0,
-      // 가상 작업 정보 (있으면)
-      mold:wo?wo.mold_code:(att?att.mold_code:(st?st.current_mold:'')),
-      itemCode:wo?wo.item_code:(st?st.current_item_code:''),
-      itemName:wo?wo.item_name:(st?st.item_name:''),
+      // 작업/첨부 정보
+      isRunning:!!(att||wo),
+      mold:wo?wo.mold_code:(att?att.mold_code:''),
+      itemCode:wo?wo.item_code:'',
+      itemName:wo?wo.item_name:'',
       lotNo:att?(att.lot_no||att.heat_no):'',
       coilWeight:att?att.weight:0,
-      planQty:wo?wo.plan_qty:(st?st.target_qty:0),
-      actualQty:wo?wo.actual_qty:(st?st.actual_qty:0),
+      planQty:wo?wo.plan_qty:0,
+      actualQty:wo?wo.actual_qty:0,
       workOrderNo:wo?wo.work_order_no:'',
       attachTime:att?att.attach_time:''
     });
   });
   
-  cachedData=allMachines;
-  renderVirtual(allMachines);
+  cachedData=virtuals;
+  renderVirtual(virtuals);
   document.getElementById('lastUpdate').textContent=new Date().toLocaleString('ko-KR');
   timer=30;
 }
 
 function renderVirtual(data){
   var total=data.length;
-  var mesRun=data.filter(function(d){return d.isMesRunning}).length;
-  var vRun=data.filter(function(d){return !d.isMesRunning&&d.isVirtualActive}).length;
-  var idle=total-mesRun-vRun;
+  var running=data.filter(function(d){return d.isRunning}).length;
+  var idle=total-running;
   // 고객사 집계
   var custs={};
   data.forEach(function(d){var c=d.customer||'미지정';custs[c]=(custs[c]||0)+1});
   var custList=Object.keys(custs).sort();
   document.getElementById('sTotal').textContent=total;
-  document.getElementById('sMesRun').textContent=mesRun;
-  document.getElementById('sVRun').textContent=vRun;
+  document.getElementById('sRun').textContent=running;
   document.getElementById('sIdle').textContent=idle;
+  document.getElementById('sCust').textContent=custList.length;
   
   // 필터 버튼
   var fb=document.getElementById('filterBar');fb.innerHTML='';
@@ -241,7 +232,7 @@ function renderVirtual(data){
   // 그룹 표시
   var ga=document.getElementById('groupArea');
   if(!total){
-    ga.innerHTML='<div class="empty">📭 등록된 설비 없음<br><span style="font-size:11px">마스터 등록이 필요합니다<br><a href="master_manage.html">→ 마스터 관리</a></span></div>';
+    ga.innerHTML='<div class="empty">📭 가상설비 없음<br><span style="font-size:11px">모든 마스터 설비가 MES에 가동중이거나, 마스터 등록이 필요합니다<br><a href="master_manage.html">→ 마스터 관리</a></span></div>';
     return;
   }
   
@@ -256,9 +247,7 @@ function renderVirtual(data){
   ga.innerHTML='';
   show.forEach(function(cust){
     var rows=groups[cust];if(!rows)return;
-    var gMesRun=rows.filter(function(r){return r.isMesRunning}).length;
-    var gVRun=rows.filter(function(r){return !r.isMesRunning&&r.isVirtualActive}).length;
-    var gIdle=rows.length-gMesRun-gVRun;
+    var gRun=rows.filter(function(r){return r.isRunning}).length;
     rows.sort(function(a,b){
       if(a.sortOrder!==b.sortOrder)return a.sortOrder-b.sortOrder;
       return (parseInt(a.ho)||0)-(parseInt(b.ho)||0);
@@ -266,26 +255,20 @@ function renderVirtual(data){
     var cg=document.createElement('div');cg.className='cg';
     var hdr='<div class="cg-hdr"><h2>🏢 '+_esc(cust)+'</h2>'+
       '<div class="cg-stats"><span>'+rows.length+'대</span>'+
-      (gMesRun?'<span class="gr">MES'+gMesRun+'</span>':'')+
-      (gVRun?'<span class="gd">가상'+gVRun+'</span>':'')+
-      (gIdle?'<span style="color:#94a3b8">대기'+gIdle+'</span>':'')+'</div></div>';
+      '<span class="gr">가동'+gRun+'</span>'+
+      '<span class="gd">대기'+(rows.length-gRun)+'</span></div></div>';
     var grid='<div class="eq-grid" id="grid_'+cust.replace(/[^\w]/g,'_')+'"></div>';
     cg.innerHTML=hdr+grid;
     ga.appendChild(cg);
     var gridEl=cg.querySelector('.eq-grid');
     rows.forEach(function(d){
       var card=document.createElement('div');
-      // 상태 결정: MES가동(N) > 가상가동 > 대기
-      var stClass='idle',stTxt='○ 대기',stColor='idle',badge='';
-      if(d.isMesRunning){stClass='run';stTxt='● MES가동';stColor='run';badge='<span class="eq-vbadge" style="background:rgba(34,197,94,.2);color:#86efac;border-color:rgba(34,197,94,.4)">M</span>'}
-      else if(d.isVirtualActive){stClass='run';stTxt='● 가상가동';stColor='vrun';badge='<span class="eq-vbadge">V</span>'}
-      else{badge='<span class="eq-vbadge" style="background:rgba(148,163,184,.15);color:#94a3b8;border-color:rgba(148,163,184,.3)">-</span>'}
-      card.className='eq '+stClass;
-      var subTxt=(d.itemCode?_esc(d.itemCode):'')||(d.mold?'금형 '+_esc(d.mold):'');
-      card.innerHTML='<div class="eq-top"><span class="eq-ho">'+_esc(d.ho)+'호기</span>'+badge+'</div>'+
+      card.className='eq '+(d.isRunning?'run':'idle');
+      var stTxt=d.isRunning?'● 가동중':'○ 대기';
+      card.innerHTML='<div class="eq-top"><span class="eq-ho">'+_esc(d.ho)+'호기</span><span class="eq-vbadge">V</span></div>'+
         '<div class="eq-spec">'+_esc(d.maker||'-')+(d.ton?' · '+d.ton+'톤':'')+'</div>'+
         '<div class="eq-cust">'+_esc(d.customer)+'</div>'+
-        '<div class="eq-st '+stColor+'">'+stTxt+(subTxt?' · '+subTxt:'')+'</div>';
+        '<div class="eq-st '+(d.isRunning?'run':'idle')+'">'+stTxt+(d.itemCode?' · '+_esc(d.itemCode):'')+'</div>';
       (function(rec){card.onclick=function(){openModal(rec)}})(d);
       gridEl.appendChild(card);
     });
@@ -294,40 +277,27 @@ function renderVirtual(data){
 
 function openModal(d){
   curMachine=d;
-  document.getElementById('mTitle').textContent=d.ho+'호기 상세';
-  // 상태 결정
-  var stMain='○ 대기';
-  if(d.isMesRunning)stMain='● MES가동중';
-  else if(d.isVirtualActive)stMain='● 가상가동중';
+  document.getElementById('mTitle').innerHTML=d.ho+'호기 <span class="eq-vbadge">V</span>';
   var rows=[
     ['🏭 메이커',d.maker||'-'],
     ['🔧 톤수',d.ton?d.ton+'톤':'-'],
     ['🏢 고객사',d.customer||'-'],
-    ['📊 상태',stMain]
+    ['📊 상태',d.isRunning?'● 가동중':'○ 대기']
   ];
-  // MES 정보 (있으면)
-  if(d.isMesRunning){
-    if(d.mesItemCode)rows.push(['📦 MES품번',d.mesItemCode]);
-    if(d.mesItemName)rows.push(['MES품명',d.mesItemName]);
-    if(d.mesMold)rows.push(['🎭 MES금형',d.mesMold]);
-    if(d.mesActualQty||d.mesTargetQty)rows.push(['MES실적',(+d.mesActualQty).toLocaleString()+' / '+(+d.mesTargetQty).toLocaleString()]);
-  }
-  // 가상 작업 정보 (있으면)
-  if(d.isVirtualActive){
-    if(d.workOrderNo)rows.push(['📋 가상WO',d.workOrderNo]);
-    if(d.itemCode&&d.itemCode!==d.mesItemCode)rows.push(['📦 가상품번',d.itemCode]);
-    if(d.mold&&d.mold!==d.mesMold)rows.push(['🎭 가상금형',d.mold]);
-    if(d.lotNo)rows.push(['📎 로트',d.lotNo]);
-    if(d.coilWeight)rows.push(['📦 코일중량',(+d.coilWeight).toFixed(0)+'kg']);
-  }
+  if(d.itemCode){rows.push(['📦 품번',d.itemCode]);if(d.itemName)rows.push(['품명',d.itemName])}
+  if(d.mold)rows.push(['🎭 금형',d.mold]);
+  if(d.workOrderNo)rows.push(['📋 작업지시',d.workOrderNo]);
+  if(d.planQty)rows.push(['목표',(+d.planQty).toLocaleString()+'개']);
+  if(d.actualQty)rows.push(['실적',(+d.actualQty).toLocaleString()+'개']);
+  if(d.lotNo)rows.push(['📎 로트',d.lotNo]);
+  if(d.coilWeight)rows.push(['📦 코일중량',(+d.coilWeight).toFixed(0)+'kg']);
   if(d.machine_code)rows.push(['설비코드',d.machine_code]);
   var html=rows.map(function(r){return'<div class="mrow"><span class="ml">'+r[0]+'</span><span class="mv">'+_esc(r[1])+'</span></div>'}).join('');
   document.getElementById('mBody').innerHTML=html;
   // 작업지시 버튼 활성화/문구 변경
   var goBtn=document.getElementById('goBtn');
-  if(d.isVirtualActive){goBtn.textContent='📊 가상작업 보기';goBtn.style.background='linear-gradient(135deg,#22c55e,#16a34a)'}
-  else if(d.isMesRunning){goBtn.textContent='📊 MES모니터 보기';goBtn.style.background='linear-gradient(135deg,#0ea5e9,#0284c7)'}
-  else{goBtn.textContent='🚀 가상작업지시 등록';goBtn.style.background='linear-gradient(135deg,#a855f7,#7e22ce)'}
+  if(d.isRunning){goBtn.textContent='📊 작업현황 보기';goBtn.style.background='linear-gradient(135deg,#22c55e,#16a34a)'}
+  else{goBtn.textContent='🚀 작업지시 등록';goBtn.style.background='linear-gradient(135deg,#a855f7,#7e22ce)'}
   document.getElementById('modal').classList.add('show');
 }
 
@@ -335,19 +305,16 @@ function closeModal(){document.getElementById('modal').classList.remove('show');
 
 function goToWorkOrder(){
   if(!curMachine)return;
-  var url='?machine_code='+encodeURIComponent(curMachine.machine_code||('V'+curMachine.hoNum.padStart(3,'0')));
+  var url='mes_virtual_work_order.html?machine_code='+encodeURIComponent(curMachine.machine_code||('V'+curMachine.hoNum.padStart(3,'0')));
   url+='&machine_name='+encodeURIComponent(curMachine.ho+'호기 '+(curMachine.maker||'')+(curMachine.ton?' '+curMachine.ton+'톤':''));
   url+='&customer='+encodeURIComponent(curMachine.customer||'');
   url+='&ho='+encodeURIComponent(curMachine.ho);
-  if(curMachine.isVirtualActive){
-    // 가상가동중 → 가상 작업현황 페이지
-    window.location.href='mes_virtual_work.html'+url;
-  }else if(curMachine.isMesRunning){
-    // MES가동중 → MES 모니터링 페이지
-    window.location.href='mes_work.html';
+  if(curMachine.isRunning){
+    // 가동중 → 가상 작업현황 페이지
+    window.location.href='mes_virtual_work.html?'+url.split('?')[1];
   }else{
-    // 대기 → 가상 작업지시 등록
-    window.location.href='mes_virtual_work_order.html'+url;
+    // 대기 → 작업지시 등록
+    window.location.href=url;
   }
 }
 
