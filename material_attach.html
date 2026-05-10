@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>소재 장착 관리 v2.1</title>
+<title>소재 장착 관리 v2.2</title>
 <meta name="theme-color" content="#0f172a">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&display=swap');
@@ -135,6 +135,12 @@ body {
   font-size: 9px; padding: 2px 6px; border-radius: 4px;
   background: rgba(34,197,94,.2); color: #22c55e;
   font-weight: 700; letter-spacing: .5px;
+}
+
+.cert-id-badge {
+  font-size: 9px; padding: 2px 6px; border-radius: 4px;
+  background: rgba(148,163,184,.2); color: #94a3b8;
+  font-weight: 700; margin-left: 2px;
 }
 
 .heat-card .right {
@@ -322,7 +328,7 @@ body {
   <!-- 두 번째: 타이틀 -->
   <div class="hdr-titlerow">
     <div class="hdr-title">📦 소재 장착 관리</div>
-    <div class="hdr-sub">v2.1 · IQC 통과 코일 · HEAT 추적</div>
+    <div class="hdr-sub">v2.2 · IQC 통과 코일 · HEAT 추적</div>
   </div>
 
   <!-- 세 번째: 호기 + 시계 -->
@@ -1007,15 +1013,16 @@ function renderAttached() {
 function renderAvailable() {
   const list = document.getElementById('availableList');
 
-  const attachedHeats = new Set(state.attachments.map(a => a.heat_no));
-  const consumedHeats = new Set(state.detached.filter(d => d.detach_type === 'consumed').map(d => d.heat_no));
-  const localExcluded = new Set(state.detached.filter(d => d.detach_type === 'wrong_receipt' || d.detach_type === 'defect').map(d => d.heat_no));
+  // cert_id 기준 필터링 (같은 HEAT 여러 건 정확히 구분)
+  const attachedCertIds = new Set(state.attachments.map(a => a.cert_id).filter(Boolean));
+  const consumedCertIds = new Set(state.detached.filter(d => d.detach_type === 'consumed').map(d => d.cert_id).filter(Boolean));
+  const localExcludedCertIds = new Set(state.detached.filter(d => d.detach_type === 'wrong_receipt' || d.detach_type === 'defect').map(d => d.cert_id).filter(Boolean));
 
   let filtered = availableMaterials.filter(m =>
     getStockKg(m) > 0 &&
-    !attachedHeats.has(m.heat_no) &&
-    !consumedHeats.has(m.heat_no) &&
-    !localExcluded.has(m.heat_no)
+    !attachedCertIds.has(m.cert_id) &&
+    !consumedCertIds.has(m.cert_id) &&
+    !localExcludedCertIds.has(m.cert_id)
   );
 
   if (state.filter.type !== 'ALL') filtered = filtered.filter(m => m.material_type === state.filter.type);
@@ -1029,8 +1036,8 @@ function renderAvailable() {
     // 디버그 정보: 왜 0건인지 분석
     const totalLoaded = availableMaterials.length;
     const noStock = availableMaterials.filter(m => getStockKg(m) <= 0).length;
-    const alreadyAttached = availableMaterials.filter(m => attachedHeats.has(m.heat_no)).length;
-    const consumed = availableMaterials.filter(m => consumedHeats.has(m.heat_no)).length;
+    const alreadyAttached = availableMaterials.filter(m => attachedCertIds.has(m.cert_id)).length;
+    const consumed = availableMaterials.filter(m => consumedCertIds.has(m.cert_id)).length;
     const filterTypeCount = state.filter.type !== 'ALL' 
       ? availableMaterials.filter(m => m.material_type === state.filter.type).length 
       : totalLoaded;
@@ -1069,11 +1076,12 @@ function renderAvailable() {
     const used = m.used_kg || 0;
     const usedBadge = used > 0 ? `<span style="font-size:10px; color:#f59e0b; margin-left:4px;">사용 ${used}kg</span>` : '';
     return `
-      <div class="heat-card" onclick="onAvailableClick('${m.heat_no}')">
+      <div class="heat-card" onclick="onAvailableClick(${m.cert_id})">
         <div class="info">
           <div class="heat-no">
             ${m.heat_no}
             <span class="cert-badge">${m.cert_no || 'IQC OK'}</span>
+            <span class="cert-id-badge">#${m.cert_id}</span>
           </div>
           <div class="heat-spec">${m.material_type} ${m.thickness}t × ${m.width}W · LOT ${m.lot_no || '-'}</div>
           <div class="heat-meta">${m.supplier} · 입고 ${m.receipt_date}</div>
@@ -1097,12 +1105,14 @@ function formatTime(iso) {
 /* ============================================================
    장착 (한 번 탭)
    ============================================================ */
-async function onAvailableClick(heatNo) {
-  const mat = availableMaterials.find(m => m.heat_no === heatNo);
+async function onAvailableClick(certId) {
+  // cert_id로 정확한 row 식별 (같은 HEAT 여러 건 구분)
+  const mat = availableMaterials.find(m => m.cert_id === certId);
   if (!mat) return;
 
-  if (state.attachments.find(a => a.machine_code === state.machineCode && a.heat_no === heatNo)) {
-    showToast('이미 장착된 HEAT입니다', 'error');
+  // 중복 체크: 같은 호기에 같은 cert_id가 이미 장착됐는지
+  if (state.attachments.find(a => a.machine_code === state.machineCode && a.cert_id === certId)) {
+    showToast('이미 장착된 코일입니다 (cert #' + certId + ')', 'error');
     return;
   }
 
@@ -1131,7 +1141,7 @@ async function onAvailableClick(heatNo) {
   state.attachments.push(attachment);
   saveToLocal();
   render();
-  showToast(`✅ ${mat.heat_no} → ${state.machineCode}`, 'success');
+  showToast(`✅ ${mat.heat_no} (#${mat.cert_id}) → ${state.machineCode}`, 'success');
 
   // 서버 동기화
   const serverId = await syncToServer(attachment, 'INSERT');
