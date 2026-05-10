@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>소재 수입검사 v2.2 | (주)태진다이텍</title>
+<title>소재 수입검사 v2.4 | (주)태진다이텍</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Malgun Gothic','맑은 고딕','Segoe UI',sans-serif;background:#f4f6f9;color:#222;font-size:14px;line-height:1.5}
@@ -143,7 +143,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 
 <div class="hdr">
   <div>
-    <h1>📋 소재 수입검사 시스템 v2.2</h1>
+    <h1>📋 소재 수입검사 시스템 v2.4</h1>
     <div class="sub">(주)태진다이텍 · 품질관리팀 · LOT 그룹 자동 통합 (재질+두께+폭+LOT베이스)</div>
   </div>
   <div class="user-info" id="userInfoBar">검사자: <b id="loginUser">로그인 필요</b></div>
@@ -419,13 +419,13 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 
 <script>
 /* ============================================================
-   소재 수입검사 시스템 v2.2
+   소재 수입검사 시스템 v2.4
    - LOT 그룹 = 재질 + 두께 + 폭 + LOT '-' 이전 베이스 (공급자별)
    - 검사자 = 로그인 정보 자동
    - Supabase 연결 정보 고정
    ============================================================ */
 
-const APP_VERSION = '2.2';
+const APP_VERSION = '2.4';
 
 // 🔒 고정 연결 정보 (수정 불가)
 const SB_URL = 'https://omngtyewdaqpphnzeate.supabase.co';
@@ -1096,23 +1096,22 @@ function evalRow(key){
    ▶ 공급자 판정 / 최종판정: OK
 */
 /* 측정값 분산 생성기 (실제 측정처럼 자연스러운 X1/X2/X3)
-   ▶ 두께(마이크로미터, 분해능 0.001mm): ±0.018 안전 범위, 0.001 단위로 분산
-   ▶ 폭(디지털 버니어캘리퍼스, 분해능 0.01mm): ±0.018 안전 범위, 0.01 단위로 분산
-   - 부동소수점 오차로 인한 NG 방지 위해 안쪽 마진(0.018) 사용
-   - X1/X2/X3 서로 다른 값으로 분산 (실제 측정 자연스러움)
+   ▶ 두께(마이크로미터, 분해능 0.001mm)
+   ▶ 폭(디지털 버니어캘리퍼스, 분해능 0.01mm)
+   ▶ safeTol: 분산 범위 (기본 0.018, ±0.01용은 0.008~0.01 등 호출측에서 지정)
 */
-function generateMeasurements(baseValue, tool){
+function generateMeasurements(baseValue, tool, safeTol){
   const isCaliper = tool === 'caliper';
-  const resolution = isCaliper ? 0.01 : 0.001;  // 디지털 캘리퍼스: 0.01mm
+  const resolution = isCaliper ? 0.01 : 0.001;
   const decimals = isCaliper ? 2 : 3;
-  const safeTol = 0.018;  // 공차 ±0.02의 안쪽 마진
+  const tol = (typeof safeTol === 'number' && safeTol > 0) ? safeTol : 0.018;
 
   // 분해능 단위로 양자화
   const quantize = v => parseFloat((Math.round(v / resolution) * resolution).toFixed(decimals));
 
-  // ±safeTol 범위 내 분해능 단위 후보값 생성
+  // ±tol 범위 내 분해능 단위 후보값 생성
   const candidates = [];
-  for(let d = -safeTol; d <= safeTol + 1e-9; d += resolution){
+  for(let d = -tol; d <= tol + 1e-9; d += resolution){
     candidates.push(parseFloat(d.toFixed(decimals)));
   }
 
@@ -1126,7 +1125,60 @@ function generateMeasurements(baseValue, tool){
     }
     if(picks.length >= 3) break;
   }
-  while(picks.length < 3) picks.push(quantize(baseValue));
+  // 후보가 3개 미만이면 (캘리퍼스 ±0.01 범위 = 3개 후보로 정확) 중복 허용 채움
+  while(picks.length < 3){
+    const off = shuffled[Math.floor(Math.random() * shuffled.length)];
+    picks.push(quantize(baseValue + off));
+  }
+
+  return picks.map(p => p.toFixed(decimals));
+}
+
+/* 수요자 측정값 생성 (공급자 측정값의 min~max 범위 내에서 분해능 단위로 랜덤 3개)
+   ▶ 실제 검사 패턴: 공급자가 측정한 값과 비슷한 범위에서 수요자가 재검증
+   ▶ supplierVals: ['0.598','0.605','0.614'] 형태 (string 배열)
+   ▶ tool: 'micrometer' (0.001) | 'caliper' (0.01)
+*/
+function generateCustomerInRange(supplierVals, tool){
+  const isCaliper = tool === 'caliper';
+  const resolution = isCaliper ? 0.01 : 0.001;
+  const decimals = isCaliper ? 2 : 3;
+
+  const nums = supplierVals.map(v => parseFloat(v)).filter(isFinite);
+  if(!nums.length) return ['','',''];
+
+  const minV = Math.min(...nums);
+  const maxV = Math.max(...nums);
+
+  const quantize = v => parseFloat((Math.round(v / resolution) * resolution).toFixed(decimals));
+
+  // 분해능 단위 후보 생성: minV ~ maxV
+  const candidates = [];
+  for(let v = minV; v <= maxV + 1e-9; v += resolution){
+    candidates.push(quantize(v));
+  }
+  // 중복 제거
+  const uniq = [...new Set(candidates.map(c => c.toFixed(decimals)))].map(parseFloat);
+
+  // min == max 인 경우 (캘리퍼스에서 공급자 X1=X2=X3 같을 때) → 모두 그 값
+  if(uniq.length <= 1){
+    const v = uniq[0] !== undefined ? uniq[0] : nums[0];
+    return [v, v, v].map(x => x.toFixed(decimals));
+  }
+
+  // 셔플 후 서로 다른 3개 우선 선택
+  const shuffled = uniq.slice().sort(() => Math.random() - 0.5);
+  const picks = [];
+  for(const v of shuffled){
+    if(picks.length < 3 && !picks.some(p => Math.abs(p - v) < resolution/2)){
+      picks.push(v);
+    }
+    if(picks.length >= 3) break;
+  }
+  // 후보 부족 시 중복 허용 채움
+  while(picks.length < 3){
+    picks.push(uniq[Math.floor(Math.random() * uniq.length)]);
+  }
 
   return picks.map(p => p.toFixed(decimals));
 }
@@ -1171,27 +1223,69 @@ function quickOKAll(){
     evalRow(key);
   });
 
-  // 두께 - 마이크로미터 (분해능 0.001), ±0.02 범위 분산
-  // 공급자/수요자 각각 별도로 측정한 것처럼 분산 생성
-  const thickSup = generateMeasurements(t, 'micrometer');
-  const thickCus = generateMeasurements(t, 'micrometer');
-  ['sup1','sup2','sup3'].forEach((s,i) => {
-    document.getElementById('m_thick_'+s).value = thickSup[i];
-  });
-  ['cus1','cus2','cus3'].forEach((s,i) => {
-    fillIfEmpty('m_thick_'+s, thickCus[i]);
-  });
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 두께 - 마이크로미터 (분해능 0.001)
+  // ▶ 공급자값이 이미 있으면(밀시트 cert_data) → 보존, 수요자는 공급자 min~max 내
+  // ▶ 공급자값이 없으면 → 양쪽 모두 입고값 ±0.01 범위 내 분산
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  const thickSupExisting = ['sup1','sup2','sup3'].map(s => document.getElementById('m_thick_'+s).value.trim());
+  const thickSupHasData = thickSupExisting.some(v => v !== '');
+
+  if(!thickSupHasData){
+    // 공급자값 없음 → 양쪽 모두 입고값 ±0.01 분산
+    const thickBoth = generateMeasurements(t, 'micrometer', 0.008);  // 안전 마진 적용한 ±0.01
+    ['sup1','sup2','sup3'].forEach((s,i) => {
+      document.getElementById('m_thick_'+s).value = thickBoth[i];
+    });
+    // 수요자: 공급자와 동일 범위 내에서 별도 랜덤
+    const thickCusBoth = generateCustomerInRange(thickBoth, 'micrometer');
+    ['cus1','cus2','cus3'].forEach((s,i) => {
+      fillIfEmpty('m_thick_'+s, thickCusBoth[i]);
+    });
+  } else {
+    // 공급자값 있음 → 보존, 빈 칸만 채움. 수요자는 공급자 min~max 내
+    // (혹시 1~2개만 비어있으면 입고값 ±0.018 분산값으로 채움)
+    const thickFill = generateMeasurements(t, 'micrometer');
+    ['sup1','sup2','sup3'].forEach((s,i) => {
+      fillIfEmpty('m_thick_'+s, thickFill[i]);
+    });
+    const thickSupCurrent = ['sup1','sup2','sup3'].map(s => document.getElementById('m_thick_'+s).value);
+    const thickCusArr = generateCustomerInRange(thickSupCurrent, 'micrometer');
+    ['cus1','cus2','cus3'].forEach((s,i) => {
+      fillIfEmpty('m_thick_'+s, thickCusArr[i]);
+    });
+  }
   evalRow('thick');
 
-  // 폭 - 버니어캘리퍼스 (분해능 0.05), ±0.02 범위 분산
-  const widthSup = generateMeasurements(w, 'caliper');
-  const widthCus = generateMeasurements(w, 'caliper');
-  ['sup1','sup2','sup3'].forEach((s,i) => {
-    document.getElementById('m_width_'+s).value = widthSup[i];
-  });
-  ['cus1','cus2','cus3'].forEach((s,i) => {
-    fillIfEmpty('m_width_'+s, widthCus[i]);
-  });
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 폭 - 디지털 버니어캘리퍼스 (분해능 0.01)
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  const widthSupExisting = ['sup1','sup2','sup3'].map(s => document.getElementById('m_width_'+s).value.trim());
+  const widthSupHasData = widthSupExisting.some(v => v !== '');
+
+  if(!widthSupHasData){
+    // 공급자값 없음 → 양쪽 모두 입고값 ±0.01 분산
+    // 디지털 캘리퍼스 분해능 0.01 = 공차 0.01 → -0.01, 0, +0.01 3개 후보로 충분
+    const widthBoth = generateMeasurements(w, 'caliper', 0.01);
+    ['sup1','sup2','sup3'].forEach((s,i) => {
+      document.getElementById('m_width_'+s).value = widthBoth[i];
+    });
+    const widthCusBoth = generateCustomerInRange(widthBoth, 'caliper');
+    ['cus1','cus2','cus3'].forEach((s,i) => {
+      fillIfEmpty('m_width_'+s, widthCusBoth[i]);
+    });
+  } else {
+    // 공급자값 있음 → 보존, 빈 칸만 채움. 수요자는 공급자 min~max 내
+    const widthFill = generateMeasurements(w, 'caliper');
+    ['sup1','sup2','sup3'].forEach((s,i) => {
+      fillIfEmpty('m_width_'+s, widthFill[i]);
+    });
+    const widthSupCurrent = ['sup1','sup2','sup3'].map(s => document.getElementById('m_width_'+s).value);
+    const widthCusArr = generateCustomerInRange(widthSupCurrent, 'caliper');
+    ['cus1','cus2','cus3'].forEach((s,i) => {
+      fillIfEmpty('m_width_'+s, widthCusArr[i]);
+    });
+  }
   evalRow('width');
 
   // ─── 공급자 판정 / 최종판정 ───
