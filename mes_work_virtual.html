@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>전체 설비 모니터링 v3.0</title>
+<title>전체 설비 모니터링 v3.1</title>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -311,7 +311,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 </style>
 </head>
 <body>
-<div class="hdr"><div><h1>🟣 전체 설비 모니터링 v3.0</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">30초 갱신</span></div></div></div>
+<div class="hdr"><div><h1>🟣 전체 설비 모니터링 v3.1</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">30초 갱신</span></div></div></div>
 <div class="tabs"><div class="tab active" data-tab="monitor" onclick="switchTab('monitor')">📊 모니터링</div><div class="tab" data-tab="settings" onclick="switchTab('settings')">📋 이력/설정</div></div>
 <div class="panel active" id="panel-monitor">
   <div class="stats"><div class="st"><div class="st-label">전체</div><div class="st-val" id="sTotal">-</div></div><div class="st run"><div class="st-label">가동</div><div class="st-val" id="sRun">-</div></div><div class="st stop"><div class="st-label">비가동</div><div class="st-val" id="sStop">-</div></div><div class="st warn"><div class="st-label">⏰30분이내</div><div class="st-val" id="sSoon">-</div></div><div class="st ng"><div class="st-label">NG</div><div class="st-val" id="sNg">-</div></div></div>
@@ -619,9 +619,17 @@ function switchTab(name){document.querySelectorAll('.tab').forEach(function(t){t
 async function loadMonitor(){
   var data=await sbGet('machine_status','select=*&order=machine_code.asc');
   if(!data)return;
-  // ★★★ 가상설비 합성 (machine_virtual 테이블 활용) ★★★
+  // ★★★ 가상설비 합성 (병렬 처리 v3.1) ★★★
   try{
-    var virtuals=await sbGet('machine_virtual','select=*&active=eq.true&order=sort_order.asc');
+    // 3개 API 병렬 호출 (Promise.all)
+    var results=await Promise.all([
+      sbGet('machine_virtual','select=*&active=eq.true&order=sort_order.asc'),
+      sbGet('work_order_cache','select=machine_code,machine_name,item_code,item_name,mold_code,plan_qty,actual_qty&work_order_status=eq.1&order=created_at.desc&limit=100').catch(function(){return[]}),
+      sbGet('material_attachment','select=machine_code,machine_name,heat_no,lot_no,weight,mold_code&status=eq.attached&order=attach_time.desc&limit=100').catch(function(){return[]})
+    ]);
+    var virtuals=results[0];
+    var workOrders=results[1]||[];
+    var attachments=results[2]||[];
     if(virtuals&&virtuals.length){
       // 실제설비에 이미 있는 호기 set
       var existHo={};
@@ -630,42 +638,34 @@ async function loadMonitor(){
         var mt=name.match(/^(\d{1,3})/);
         if(mt)existHo[String(parseInt(mt[1],10))]=true;
       });
-      // 가상설비 데이터 페치 (work_order_cache + material_attachment)
-      var workOrders=[];
-      var attachments=[];
-      try{
-        workOrders=await sbGet('work_order_cache','select=*&work_order_status=eq.1&order=created_at.desc&limit=200')||[];
-        attachments=await sbGet('material_attachment','select=*&status=eq.attached&order=attach_time.desc&limit=200')||[];
-      }catch(e){console.log('[loadMonitor] 가상 작업/소재 조회 실패(무시):',e)}
-      // 호기별 매칭 함수
-      function findByHo(arr,hoNum){
-        return arr.filter(function(r){
-          var src=String(r.machine_code||r.machine_name||'').trim();
-          var mt=src.match(/^(\d{1,3})/);
-          if(!mt)return false;
-          return String(parseInt(mt[1],10))===hoNum;
-        });
-      }
-      // machine_virtual 중 실제설비에 없는 것만 추가 (중복 방지)
+      // 호기별 작업/첨부 인덱스 (Map - O(1) 조회)
+      var woByHo={},attByHo={};
+      workOrders.forEach(function(w){
+        var src=String(w.machine_code||w.machine_name||'').trim();
+        var mt=src.match(/^(\d{1,3})/);
+        if(mt){var k=String(parseInt(mt[1],10));if(!woByHo[k])woByHo[k]=w}
+      });
+      attachments.forEach(function(a){
+        var src=String(a.machine_code||a.machine_name||'').trim();
+        var mt=src.match(/^(\d{1,3})/);
+        if(mt){var k=String(parseInt(mt[1],10));if(!attByHo[k])attByHo[k]=a}
+      });
+      // machine_virtual 중 실제설비에 없는 것만 추가
       var addedCount=0;
       virtuals.forEach(function(v){
         var name=String(v.machine_name||'').trim();
         var mt=name.match(/^(\d{1,3})/);
         if(!mt)return;
         var hoNum=String(parseInt(mt[1],10));
-        if(existHo[hoNum])return; // 실제설비에 있으면 제외
-        // 작업/첨부 매칭
-        var wos=findByHo(workOrders,hoNum);
-        var atts=findByHo(attachments,hoNum);
-        var wo=wos.length?wos[0]:null;
-        var att=atts.length?atts[0]:null;
+        if(existHo[hoNum])return;
+        var wo=woByHo[hoNum];
+        var att=attByHo[hoNum];
         var isVActive=!!(wo||att);
-        // 가상설비 row 합성 (machine_status 형식)
         data.push({
           id:'virtual_'+v.id,
           machine_code:v.machine_code||('V'+hoNum.padStart(4,'0')),
           machine_name:v.machine_name,
-          machine_status:isVActive?'M':'V', // M=가상가동, V=가상대기
+          machine_status:isVActive?'M':'V',
           customer:v.customer||'미지정',
           current_mold:wo?wo.mold_code:(att?att.mold_code:''),
           current_item_code:wo?wo.item_code:'',
@@ -687,7 +687,7 @@ async function loadMonitor(){
         });
         addedCount++;
       });
-      if(addedCount)console.log('[loadMonitor] 가상설비 '+addedCount+'대 합성');
+      if(addedCount)console.log('[loadMonitor] 가상설비 '+addedCount+'대 합성 (병렬)');
     }
   }catch(e){console.log('[loadMonitor] 가상설비 합성 실패(무시):',e)}
   cachedData=data;
@@ -1415,10 +1415,4 @@ function onAdjChange(inp){
   if(d){
     d.classList.remove('p','n');
     if(!hasValue||diff===0){d.textContent=''}
-    else if(diff>0){d.textContent='+'+diff;d.classList.add('p')}
-    else{d.textContent=diff;d.classList.add('n')}
-  }
-  updateProdAdjState();
-}
-
-function
+    else if(diff>0){d.textContent='+'+diff;
