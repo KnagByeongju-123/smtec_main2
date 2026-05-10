@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>정지시간 카운터 v2.2</title>
+<title>정지시간 카운터 v2.3</title>
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body {
@@ -468,7 +468,7 @@
 </head>
 <body>
 
-<h1>🕒 정지시간 카운터 v2.2</h1>
+<h1>🕒 정지시간 카운터 v2.3</h1>
 
 <div class="header-info">
   <div>현재 작동 중: <span id="activeName">없음</span></div>
@@ -489,8 +489,7 @@
 
 <div class="production-section">
   <div class="production-title">
-    <span>🏭 생산 가동시간</span>
-    <span class="production-time" id="prodTime">00:00:00</span>
+    <span>📅 작업 시간</span>
   </div>
 
   <div class="time-row start">
@@ -511,8 +510,6 @@
     <span>계획 가동시간</span>
     <span class="planned" id="plannedDuration">11:00:00</span>
   </div>
-
-  <button class="btn-production" id="prodBtn" onclick="toggleProduction()">▶ 생산 시작</button>
 </div>
 
 <div class="footer">
@@ -874,27 +871,14 @@ function updateUI() {
   });
 
   let activeName;
-  if (activeNames.length === 0) activeName = production.startedAt ? '🏭 생산 중' : '없음';
-  else if (activeNames.length === 1) activeName = activeNames[0] + (production.startedAt ? ' + 🏭생산' : '');
-  else activeName = activeNames.length + '개 작동중' + (production.startedAt ? ' + 🏭생산' : '');
+  if (activeNames.length === 0) activeName = '없음';
+  else if (activeNames.length === 1) activeName = activeNames[0];
+  else activeName = activeNames.length + '개 작동중';
 
   document.getElementById('activeName').textContent = activeName;
   document.getElementById('grandTotal').textContent = fmtTime(grandMs);
 
-  // 생산 카운터 표시
-  const prodMs = getProductionMs();
-  const prodTimeEl = document.getElementById('prodTime');
-  const prodBtnEl = document.getElementById('prodBtn');
-  if (prodTimeEl) prodTimeEl.textContent = fmtTime(prodMs);
-  if (prodBtnEl) {
-    if (production.startedAt) {
-      prodBtnEl.textContent = '⏸ 생산 정지';
-      prodBtnEl.classList.add('running');
-    } else {
-      prodBtnEl.textContent = '▶ 생산 시작';
-      prodBtnEl.classList.remove('running');
-    }
-  }
+  // (생산 카운터는 v2.3에서 제거됨 - 시작/종료 시간으로 계획 가동시간 자동 계산)
 }
 
 function showSummary() {
@@ -947,21 +931,22 @@ function showSummary() {
   trPlan.innerHTML = `<td colspan="2">▶ 계획 정지 (가동률 제외)</td><td>${fmtTime(plannedMs)}</td>`;
   tbody.appendChild(trPlan);
 
-  // 생산 가동시간 + 가동률
-  const prodMs = getProductionMs();
+  // 계획 가동시간 기준 가동률
+  // 실제 가동시간 = 계획 가동시간 - 가동률 적용 정지 (계획정지 제외)
+  const plannedMsTotal = getPlannedMs();
+  const actualWorkMs = Math.max(0, plannedMsTotal - workableMs);
   const trProd = document.createElement('tr');
   trProd.style.background = '#e8f5e9';
   trProd.style.fontWeight = 'bold';
-  trProd.innerHTML = `<td colspan="2" style="color:#2e7d32">🏭 생산 가동시간</td><td style="color:#2e7d32">${fmtTime(prodMs)}</td>`;
+  trProd.innerHTML = `<td colspan="2" style="color:#2e7d32">🏭 실제 가동시간 (계획 − 비계획·고장정지)</td><td style="color:#2e7d32">${fmtTime(actualWorkMs)}</td>`;
   tbody.appendChild(trProd);
 
-  // 가동률 = 생산시간 / (생산시간 + 가동률적용 정지)
-  const denom = prodMs + workableMs;
-  const opRate = denom > 0 ? (prodMs / denom * 100) : 0;
+  // 가동률 = 실제 가동시간 / 계획 가동시간
+  const opRate = plannedMsTotal > 0 ? (actualWorkMs / plannedMsTotal * 100) : 0;
   const trRate = document.createElement('tr');
   trRate.style.background = '#fff3e0';
   trRate.style.fontWeight = 'bold';
-  trRate.innerHTML = `<td colspan="2" style="color:#e65100">📈 가동률 (생산 ÷ (생산+비계획·고장))</td><td style="color:#e65100">${opRate.toFixed(1)}%</td>`;
+  trRate.innerHTML = `<td colspan="2" style="color:#e65100">📈 가동률 (실제 ÷ 계획)</td><td style="color:#e65100">${opRate.toFixed(1)}%</td>`;
   tbody.appendChild(trRate);
 
   document.getElementById('summaryModal').classList.add('show');
@@ -1023,7 +1008,7 @@ function saveEdit() {
 }
 
 function resetAll() {
-  if (!confirm('모든 카운터를 초기화하시겠습니까?\n(정지시간 + 생산 가동시간 모두 초기화)\n이 작업은 취소할 수 없습니다.')) return;
+  if (!confirm('모든 정지 카운터를 초기화하시겠습니까?\n이 작업은 취소할 수 없습니다.')) return;
   STOP_CODES.forEach(s => {
     state[s.code] = { totalMs: 0, startedAt: null };
   });
@@ -1035,14 +1020,10 @@ function resetAll() {
 
 function closeApp() {
   saveState();
-  // 작동 중인 카운터(정지/생산)가 있으면 경고
+  // 작동 중인 정지 카운터가 있으면 경고
   const running = Object.keys(state).find(k => state[k].startedAt);
-  const prodRunning = !!production.startedAt;
-  if (running || prodRunning) {
-    let msg = '카운터가 작동 중입니다.\n';
-    if (running) msg += '(정지: ' + running + ')\n';
-    if (prodRunning) msg += '(🏭 생산 가동중)\n';
-    msg += '그래도 닫으시겠습니까?\n※ 시간은 계속 누적됩니다.';
+  if (running) {
+    const msg = '카운터가 작동 중입니다.\n(정지: ' + running + ')\n그래도 닫으시겠습니까?\n※ 시간은 계속 누적됩니다.';
     if (!confirm(msg)) return;
   }
   // 1) 부모창(생산일보)에서 window.open으로 열린 경우 → 이 창만 닫기
