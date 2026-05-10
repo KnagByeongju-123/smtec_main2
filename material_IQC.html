@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>소재 수입검사 v2.1 | (주)태진다이텍</title>
+<title>소재 수입검사 v2.2 | (주)태진다이텍</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Malgun Gothic','맑은 고딕','Segoe UI',sans-serif;background:#f4f6f9;color:#222;font-size:14px;line-height:1.5}
@@ -32,6 +32,9 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 .wait-tbl tbody tr:hover td{background:#dbeafe !important}
 .wait-tbl tbody tr:active td{background:#bfdbfe !important}
 .wait-tbl td.supplier-cell{max-width:130px;text-align:left;padding-left:10px;font-weight:600;font-size:12px}
+.btn-del-wait{padding:5px 8px;background:#fee2e2;color:#dc2626;border:1px solid #fecaca;border-radius:5px;font-size:14px;cursor:pointer;font-family:inherit;line-height:1;transition:all .12s}
+.btn-del-wait:hover{background:#dc2626;color:#fff;border-color:#dc2626}
+.btn-del-wait:active{transform:scale(.92)}
 .done-tbl{font-size:13px;min-width:1100px}
 .done-tbl th,.done-tbl td{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .done-tbl td.cert-no-cell{font-weight:700;color:#2c5282;font-size:12px;max-width:140px}
@@ -140,7 +143,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 
 <div class="hdr">
   <div>
-    <h1>📋 소재 수입검사 시스템 v2.1</h1>
+    <h1>📋 소재 수입검사 시스템 v2.2</h1>
     <div class="sub">(주)태진다이텍 · 품질관리팀 · LOT 그룹 자동 통합 (재질+두께+폭+LOT베이스)</div>
   </div>
   <div class="user-info" id="userInfoBar">검사자: <b id="loginUser">로그인 필요</b></div>
@@ -186,6 +189,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}
             <th>중량(KG)</th>
             <th>입고일</th>
             <th>판정</th>
+            <th style="width:64px">삭제</th>
           </tr>
         </thead>
         <tbody id="waitList"></tbody>
@@ -415,13 +419,13 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 
 <script>
 /* ============================================================
-   소재 수입검사 시스템 v2.1
+   소재 수입검사 시스템 v2.2
    - LOT 그룹 = 재질 + 두께 + 폭 + LOT '-' 이전 베이스 (공급자별)
    - 검사자 = 로그인 정보 자동
    - Supabase 연결 정보 고정
    ============================================================ */
 
-const APP_VERSION = '2.1';
+const APP_VERSION = '2.2';
 
 // 🔒 고정 연결 정보 (수정 불가)
 const SB_URL = 'https://omngtyewdaqpphnzeate.supabase.co';
@@ -706,7 +710,7 @@ function renderWait(){
 
   const list = document.getElementById('waitList');
   if(!data.length){
-    list.innerHTML = `<tr><td colspan="10"><div class="empty"><div class="ico">✅</div><div style="font-size:14px;font-weight:600">대기 중인 수입검사가 없습니다</div><div style="font-size:11px;margin-top:8px;color:#94a3b8">소재입고 등록 시 자동 표시됩니다</div></div></td></tr>`;
+    list.innerHTML = `<tr><td colspan="11"><div class="empty"><div class="ico">✅</div><div style="font-size:14px;font-weight:600">대기 중인 수입검사가 없습니다</div><div style="font-size:11px;margin-top:8px;color:#94a3b8">소재입고 등록 시 자동 표시됩니다</div></div></td></tr>`;
     return;
   }
 
@@ -732,8 +736,89 @@ function renderWait(){
       <td style="text-align:right;padding-right:10px">${(g.weight||0).toLocaleString()}</td>
       <td>${g.recvDate||'-'}</td>
       <td><span class="badge badge-wait">대기</span></td>
+      <td onclick="event.stopPropagation()" style="padding:4px">
+        <button class="btn-del-wait" onclick="event.stopPropagation();deleteWaitGroup('${safeKey}')" title="이 입고 그룹 삭제">🗑</button>
+      </td>
     </tr>`;
   }).join('');
+}
+
+/* ================ 검사 대기 그룹 삭제 ================
+   - 그룹에 속한 모든 코일(inspection_certs row)을 서버/로컬에서 삭제
+   - 관리자 권한이 필요한 작업이므로 강력한 확인 다이얼로그
+*/
+async function deleteWaitGroup(groupKey){
+  const groups = computeWaitGroups();
+  const g = groups.find(x => x.groupKey === groupKey);
+  if(!g){ showToast('❌ 그룹을 찾을 수 없습니다'); return; }
+
+  refreshLoginUserUI();
+  if(!currentUser.name){
+    alert('⚠ 로그인 정보를 확인할 수 없습니다.');
+    return;
+  }
+
+  const lotsStr = g.lotsDetail.length > 3
+    ? `${g.lotsDetail.slice(0,3).join(', ')} 외 ${g.lotsDetail.length-3}`
+    : g.lotsDetail.join(', ');
+
+  const msg =
+    `🚨 검사 대기 항목을 정말 삭제하시겠습니까?\n\n` +
+    `· 공급자: ${g.supplier||'-'}\n` +
+    `· 재질: ${g.material||'-'} ${g.thickness}T × ${g.width}W\n` +
+    `· LOT: ${lotsStr}\n` +
+    `· 코일 수: ${g.coilCount}개\n` +
+    `· 중량: ${(g.weight||0).toLocaleString()} KG\n\n` +
+    `⚠ 입고 데이터(inspection_certs) ${(g.certIds||[]).length}건이 영구 삭제됩니다.\n` +
+    `소재입고 화면에서도 사라집니다.\n\n` +
+    `삭제하려면 [확인]을 누르세요.`;
+
+  if(!confirm(msg)) return;
+
+  // 한번 더 확인 (안전장치)
+  const code = `DEL${String(g.coilCount).padStart(2,'0')}`;
+  const userInput = prompt(`최종 확인: 아래 코드를 입력하세요\n\n   ${code}\n\n(코일 수 ${g.coilCount}개를 의미합니다)`);
+  if(userInput !== code){
+    showToast('❌ 코드 불일치 - 삭제 취소됨');
+    return;
+  }
+
+  showToast(`⏳ ${(g.certIds||[]).length}건 삭제 중...`);
+
+  // 서버에서 inspection_certs 삭제
+  let deleted = 0;
+  let failed = 0;
+  for(const id of (g.certIds||[])){
+    try{
+      const url = SB_URL + '/rest/v1/inspection_certs?id=eq.' + encodeURIComponent(id);
+      const res = await fetch(url, {
+        method: 'DELETE',
+        headers: {
+          'apikey': SB_KEY,
+          'Authorization': 'Bearer ' + SB_KEY,
+          'Prefer': 'return=minimal'
+        }
+      });
+      if(res.ok) deleted++;
+      else failed++;
+    }catch(e){
+      console.warn('[deleteWaitGroup]', id, e);
+      failed++;
+    }
+  }
+
+  // 로컬 raw 캐시에서도 제거
+  const idSet = new Set(g.certIds || []);
+  raw = raw.filter(r => !idSet.has(r.id));
+
+  renderWait();
+  renderCfg();
+
+  if(failed === 0){
+    showToast(`🗑 삭제 완료 (${deleted}건)`);
+  } else {
+    showToast(`⚠ 삭제: ${deleted}건 성공 / ${failed}건 실패`);
+  }
 }
 
 /* ================ 검사 완료(성적서 발행) 렌더 ================
