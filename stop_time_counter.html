@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>정지시간 카운터 v3.2</title>
+<title>정지시간 카운터 v3.3</title>
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body {
@@ -630,6 +630,14 @@
     font-family: inherit;
   }
   .goto-attach-btn:active { transform: scale(0.95); }
+  /* 단중 입력 버튼 - 주황색 강조 */
+  #editUnitWtBtn {
+    background: rgba(234,88,12,.15);
+    color: #ea580c;
+    border-color: rgba(234,88,12,.4);
+    margin-left: 4px;
+  }
+  #editUnitWtBtn:hover { background: rgba(234,88,12,.25); }
   .spm-row {
     display: flex;
     align-items: center;
@@ -741,7 +749,7 @@
 </head>
 <body>
 
-<h1>🕒 정지시간 카운터 v3.2</h1>
+<h1>🕒 정지시간 카운터 v3.3</h1>
 
 <!-- ★ Supabase 연동: 호기/작업자 + 작업시작/종료 -->
 <div class="work-header">
@@ -793,6 +801,7 @@
     <span class="lbl">단중</span>
     <span class="val unset" id="prodUnitWtLabel">— g/EA</span>
     <span class="src" id="prodUnitWtSrc" style="display:none">마스터</span>
+    <button class="goto-attach-btn" id="editUnitWtBtn" onclick="editUnitWeight()" style="display:none" title="단중을 마스터에 등록">✏️ 입력</button>
   </div>
 
   <div class="spm-row">
@@ -2021,6 +2030,72 @@ function onSpmChange() {
 
 // 호기 변경 시 → 장착 소재 + 단중 갱신
 // ============================================================
+// 단중 즉석 입력 → 마스터 UPDATE
+// ============================================================
+async function editUnitWeight() {
+  const m = prodInfo.matchedMaster;
+  if (!m || !m.id) {
+    alert('마스터 매칭이 안 되어 있어 등록할 수 없습니다.\n마스터관리 페이지에서 먼저 등록하세요.');
+    return;
+  }
+
+  // 추정값 계산 (참고용 placeholder)
+  let hint = '';
+  const a = prodInfo.attachment;
+  if (a && a.thickness && a.width) {
+    const sg = parseFloat(m.specific_gravity) || 7.85;
+    const t = parseFloat(a.thickness);
+    const w = parseFloat(a.width);
+    const pitch = parseFloat(m.pitch) || 0;
+    if (pitch > 0) {
+      // 1피치당 무게(g) = 두께 × 폭 × 피치 × 비중 ÷ 1000
+      const oneShot = t * w * pitch * sg / 1000;
+      hint = `\n참고: 1피치 ${pitch}mm 기준 추정 ${oneShot.toFixed(1)}g (피치당 단중)`;
+    }
+  }
+
+  const inputStr = prompt(
+    `${m.material_type} ${a ? a.thickness : '?'}t × ${a ? a.width : '?'}W\n` +
+    `현재 단중이 비어있습니다.\n\n` +
+    `단중을 입력하세요 (g/EA):${hint}`,
+    ''
+  );
+  if (inputStr === null) return; // 취소
+  const val = parseFloat(inputStr.trim());
+  if (!val || val <= 0) {
+    alert('올바른 숫자를 입력하세요 (g/EA, 0보다 큰 값)');
+    return;
+  }
+  if (val > 10000) {
+    if (!confirm(`입력값 ${val} g/EA 가 너무 큽니다. 그래도 저장할까요?`)) return;
+  }
+
+  if (!confirm(`단중 ${val} g/EA 를 마스터(#${m.id})에 저장하시겠습니까?\n` +
+               `재질: ${m.material_type}\n` +
+               `두께/폭: ${m.thickness}t × ${m.width}W`)) return;
+
+  try {
+    setSyncStatus('syncing', '⏳ 단중 저장중');
+    await sbReq('PATCH', `${TBL_MATERIAL_MASTER}?id=eq.${m.id}`, {
+      unit_weight: val
+    });
+    // 로컬 상태도 즉시 갱신
+    prodInfo.matchedMaster.unit_weight = val;
+    prodInfo.unitWeight = val;
+    renderProdInfo();
+    renderPrediction();
+    if (typeof markPendingChange === 'function') markPendingChange();
+    setSyncStatus('ok', '✓ 단중 저장됨');
+    showAlert(`✅ 단중 ${val} g/EA 저장 완료\n마스터 #${m.id}`);
+  } catch (e) {
+    console.error('단중 저장 실패:', e);
+    setSyncStatus('error', '❌ 단중 저장 실패');
+    alert('저장 실패: ' + e.message);
+  }
+}
+
+
+// ============================================================
 // 재질 정규화 (업체 표기 → 마스터 표기 통일)
 // ============================================================
 // 마스터의 SUS304가 기준
@@ -2200,6 +2275,16 @@ function renderProdInfo() {
     wtEl.textContent = '— g/EA';
     wtEl.classList.add('unset');
     wtSrc.style.display = 'none';
+  }
+
+  // ★ 단중 입력 버튼: 마스터 매칭됐는데 단중만 비어있을 때 표시
+  const editBtn = document.getElementById('editUnitWtBtn');
+  if (editBtn) {
+    if (m && m.id && (!prodInfo.unitWeight || prodInfo.unitWeight <= 0)) {
+      editBtn.style.display = 'inline-flex';
+    } else {
+      editBtn.style.display = 'none';
+    }
   }
 
   // 오토 라벨 - 더 정확한 메시지
