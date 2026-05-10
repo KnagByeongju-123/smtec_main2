@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>MES 가동설비 모니터링 v3.9</title>
+<title>MES 가동설비 모니터링 v4.0</title>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -312,7 +312,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 </style>
 </head>
 <body>
-<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v3.9</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">30초 갱신</span></div></div></div>
+<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v4.0</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">30초 갱신</span></div></div></div>
 <div class="tabs"><div class="tab active" data-tab="monitor" onclick="switchTab('monitor')">📊 모니터링</div><div class="tab" data-tab="settings" onclick="switchTab('settings')">📋 이력/설정</div></div>
 <div class="panel active" id="panel-monitor">
   <div class="stats"><div class="st"><div class="st-label">전체</div><div class="st-val" id="sTotal">-</div></div><div class="st run"><div class="st-label">가동</div><div class="st-val" id="sRun">-</div></div><div class="st stop"><div class="st-label">비가동</div><div class="st-val" id="sStop">-</div></div><div class="st warn"><div class="st-label">⏰30분이내</div><div class="st-val" id="sSoon">-</div></div><div class="st ng"><div class="st-label">NG</div><div class="st-val" id="sNg">-</div></div></div>
@@ -619,7 +619,7 @@ function switchTab(name){document.querySelectorAll('.tab').forEach(function(t){t
 
 async function loadMonitor(){
   var data=await sbGet('machine_status','select=*&order=machine_code.asc');
-  if(!data)return;
+  if(!Array.isArray(data)) data=[];  // null/undefined 방어 (가상설비라도 표시 위해)
   // ★ 가상설비(MES 수집 없는 설비) 합성: machine_master_tj에는 있지만 machine_status에 없는 호기
   try{
     var virtualRows=await buildVirtualMachineRows(data);
@@ -628,6 +628,14 @@ async function loadMonitor(){
       data.sort(function(a,b){return String(a.machine_code).localeCompare(String(b.machine_code),'ko',{numeric:true})});
     }
   }catch(e){console.log('가상설비 합성 실패:',e)}
+  // Python 미실행 진단
+  if(data.length===0){
+    console.log('⚠ machine_status 빈 배열 + 가상설비 0건 - Python(mes_monitor.py) 미실행 또는 마스터 미등록');
+  }else{
+    var realCount=data.filter(function(d){return !d._virtual}).length;
+    var virtualCount=data.filter(function(d){return d._virtual}).length;
+    console.log('📊 데이터:',realCount,'대 (실제) +',virtualCount,'대 (가상)');
+  }
   cachedData=data;
   renderMonitor(data);
   checkAlerts(data);
@@ -804,6 +812,27 @@ function isAlertTarget(d){
   return !SKIP_ALERT_CODES[d.machine_status];
 }
 function renderMonitor(data){
+  // ★ 빈 데이터 진단 메시지
+  if(!data || data.length === 0){
+    var ga=document.getElementById('groupArea');
+    if(ga){
+      ga.innerHTML = '<div style="text-align:center;padding:40px;color:var(--sub);line-height:1.8">' +
+        '<div style="font-size:18px;margin-bottom:12px">📭 표시할 설비가 없습니다</div>' +
+        '<div style="font-size:13px">' +
+        '확인 사항:<br>' +
+        '① <b>Python(mes_monitor.py)</b> 실행 여부<br>' +
+        '② <b>machine_master_tj</b> 마스터에 호기 등록<br>' +
+        '③ Supabase 네트워크 연결<br>' +
+        '<br><span style="color:#94a3b8;font-size:11px">F12 콘솔에서 자세한 로그 확인</span>' +
+        '</div></div>';
+    }
+    document.getElementById('sTotal').textContent='0';
+    document.getElementById('sRun').textContent='0';
+    document.getElementById('sStop').textContent='0';
+    document.getElementById('sSoon').textContent='0';
+    document.getElementById('sNg').textContent='0';
+    return;
+  }
   var total=data.length,running=data.filter(function(d){return d.machine_status==='N'}).length,stopped=total-running;
   var soon=data.filter(isAlertTarget);
   var totalNg=data.reduce(function(s,d){return s+(d.ng_qty||0)},0);
@@ -1410,31 +1439,4 @@ async function loadProductionToday(){
 function renderProductionToday(data){
   var b=document.getElementById('prodBody');
   var items=data.items||[];
-  var workDate=data.work_date||'';
-  document.getElementById('prodTitle').textContent='오늘의 생산실적 ('+workDate.slice(5)+' 08시~)';
-  if(!items.length){
-    renderProductionFallback(chkState.machine);
-    return;
-  }
-  // 헤더 (금형/가동 제거 → 품번/MES/실제 3컬럼)
-  var html='<div class="prod-head"><div>품번 <span style="color:#94a3b8;font-weight:500">(금형)</span></div><div class="ph-r">MES</div><div class="ph-c">실제</div></div>';
-  items.forEach(function(it,idx){
-    var moldTxt=it.mold||'';
-    var itemTxt=it.item_code||'-';
-    var itemNmTxt=it.item_name||'';
-    var woTxt=it.work_order||'';
-    var timeTxt=it.start&&it.end?(it.start+'~'+it.end):'';
-    var runTxt=it.run_min!=null?fmtMinutes(it.run_min):'';
-    // 보조정보: 금형 / 가동시간 / 시간대
-    var subParts=[];
-    if(moldTxt)subParts.push('🎭'+moldTxt);
-    if(runTxt)subParts.push('⏱'+runTxt);
-    if(timeTxt)subParts.push(timeTxt);
-    var subTxt=subParts.join(' · ');
-    // MES 실적
-    var mesQty=(it.actual_qty!=null)?it.actual_qty:0;
-    var mesTxt=(it.actual_qty!=null)?mesQty.toLocaleString():(it.is_current===false?'<span style="color:var(--sub);font-size:10px">-</span>':'-');
-    // 실제 입력값 (저장된 값만 복원, 기본 빈칸)
-    var adjVal=(it.adj_qty!=null&&it.adj_qty!=='')?it.adj_qty:'';
-    var cls='prod-row'+(it.is_current?' cur':'');
-    html+='<div class="'+cls+'" title="WO:'+woTxt+
+  
