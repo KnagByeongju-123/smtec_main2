@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>소재 장착 관리 v1.8</title>
+<title>소재 장착 관리 v2.0</title>
 <meta name="theme-color" content="#0f172a">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&display=swap');
@@ -322,18 +322,14 @@ body {
   <!-- 두 번째: 타이틀 -->
   <div class="hdr-titlerow">
     <div class="hdr-title">📦 소재 장착 관리</div>
-    <div class="hdr-sub">v1.8 · IQC 통과 코일 · HEAT 추적</div>
+    <div class="hdr-sub">v2.0 · IQC 통과 코일 · HEAT 추적</div>
   </div>
 
   <!-- 세 번째: 호기 + 시계 -->
   <div class="machine-row">
     <label>호기</label>
     <select id="machineSelect">
-      <option value="11호기">11호기</option>
-      <option value="12호기">12호기</option>
-      <option value="13호기">13호기</option>
-      <option value="14호기">14호기</option>
-      <option value="15호기">15호기</option>
+      <option value="">로딩중...</option>
     </select>
     <span class="online-dot" id="onlineDot" title="온라인 상태"></span>
     <span class="time-info" id="currentTime">--:--</span>
@@ -453,6 +449,7 @@ const SB_KEY = 'sb_publishable_9j2YkkL-7ul1TrhH-NjVdQ_vWDG2-1D';
 const TBL_INSP_CERTS = 'inspection_certs';   // IQC 입고+검사 통합 테이블
 const TBL_ATTACH     = 'material_attachment'; // 장착 이력
 const TBL_EXCLUDED   = 'excluded_heats';      // 블랙리스트
+const TBL_MACHINE    = 'machine_master_tj';   // 호기 마스터 (P_machine_check와 공유)
 
 /* ============================================================
    부서 매핑 (admin_pin 동일)
@@ -471,6 +468,23 @@ let currentUser = {
 };
 
 function loadCurrentUser() {
+  // 1순위: esg_pin_auth (index.html과 동일 키)
+  try {
+    const auth = JSON.parse(localStorage.getItem('esg_pin_auth') || 'null');
+    if (auth && auth.name && (!auth.exp || Date.now() < auth.exp)) {
+      currentUser.user_id = auth.emp_id || auth.id || null;
+      currentUser.user_name = auth.name;
+      currentUser.user_pin = auth.pin || null;
+      // PIN 첫자리로 부서 추정 (PIN_DEPT_MAP)
+      currentUser.user_dept = auth.dept ||
+        (auth.pin ? PIN_DEPT_MAP[String(auth.pin)[0]] : null);
+      currentUser.user_position = auth.position || null;
+      renderUserChip(true);
+      return;
+    }
+  } catch (e) {}
+
+  // 2순위: user_pin_auth (admin_pin 호환)
   try {
     const auth = JSON.parse(localStorage.getItem('user_pin_auth') || 'null');
     if (auth && auth.name && (!auth.exp || Date.now() < auth.exp)) {
@@ -484,6 +498,19 @@ function loadCurrentUser() {
     }
   } catch (e) {}
 
+  // 3순위: sessionStorage ESG_USER (index.html이 부가로 저장)
+  const sessName = sessionStorage.getItem('ESG_USER');
+  if (sessName) {
+    currentUser.user_id = null;
+    currentUser.user_name = sessName;
+    currentUser.user_dept = null;
+    currentUser.user_position = null;
+    currentUser.user_pin = null;
+    renderUserChip(true);
+    return;
+  }
+
+  // 4순위: 표준 MES 키
   const lsId = localStorage.getItem('mes_user_id') || sessionStorage.getItem('mes_user_id');
   const lsName = localStorage.getItem('mes_user_name') || sessionStorage.getItem('mes_user_name');
   if (lsName) {
@@ -496,6 +523,7 @@ function loadCurrentUser() {
     return;
   }
 
+  // 5순위: URL 파라미터
   const urlParams = new URLSearchParams(location.search);
   const urlName = urlParams.get('user_name');
   if (urlName) {
@@ -511,6 +539,7 @@ function loadCurrentUser() {
     return;
   }
 
+  // 6순위: 게스트
   currentUser = {
     user_id: 'GUEST', user_name: '게스트',
     user_dept: null, user_position: null,
@@ -545,13 +574,14 @@ function goBack() {
    상태
    ============================================================ */
 let state = {
-  machineCode: '11호기',
+  machineCode: '',
   filter: { type: 'ALL', width: 'ALL', period: '30' },
   attachments: [],
   detached: []
 };
 
 let availableMaterials = [];
+let machineList = []; // 호기 마스터 캐시
 let currentDetachTarget = null;
 
 /* ============================================================
@@ -708,7 +738,7 @@ function bindFilterButtons() {
 /* ============================================================
    초기화
    ============================================================ */
-window.addEventListener('DOMContentLoaded', () => {
+window.addEventListener('DOMContentLoaded', async () => {
   loadCurrentUser();
   updateClock();
   setInterval(updateClock, 1000);
@@ -716,6 +746,11 @@ window.addEventListener('DOMContentLoaded', () => {
   setupHeader();
   setupOnline();
   setupPeriodFilter();
+
+  // 호기 마스터를 먼저 로드 (select 옵션 + state.machineCode 결정)
+  await loadMachineMaster();
+
+  // 그 다음 IQC 데이터 + 장착 정보 로드
   loadInspectionData();
   loadAttachmentsFromServer();
 });
@@ -727,8 +762,71 @@ function updateClock() {
   document.getElementById('currentTime').textContent = `${hh}:${mm}`;
 }
 
+/* ============================================================
+   호기 마스터 (machine_master_tj 테이블)
+   P_machine_check.html과 공유
+   ============================================================ */
+function composeMachineName(ho, maker, ton) {
+  const parts = [];
+  if (ho) parts.push(ho + '호기');
+  if (maker || ton) {
+    let tail = (maker || '').trim();
+    if (ton) tail += ton + '톤';
+    if (tail) parts.push(tail);
+  }
+  return parts.join(' ');
+}
+
+async function loadMachineMaster() {
+  const sel = document.getElementById('machineSelect');
+  try {
+    const rows = await sbReq('GET', `${TBL_MACHINE}?select=*&order=sort_order.asc,ho_code.asc`);
+    if (!Array.isArray(rows) || rows.length === 0) {
+      sel.innerHTML = '<option value="">호기 마스터 없음</option>';
+      showToast('⚠️ 호기 마스터 미등록 (마스터관리 페이지에서 등록 필요)', 'error');
+      machineList = [];
+      return;
+    }
+
+    machineList = rows
+      .filter(r => r.active !== false)
+      .map(r => ({
+        id: r.id,
+        ho_code: r.ho_code,
+        maker: r.maker || '',
+        tonnage: r.tonnage || '',
+        sort_order: r.sort_order || 0,
+        name: composeMachineName(r.ho_code || '', r.maker || '', r.tonnage || '')
+      }))
+      .filter(m => m.name)
+      .sort((a, b) => a.sort_order - b.sort_order);
+
+    // select 옵션 채우기
+    sel.innerHTML = '';
+    machineList.forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m.name;
+      opt.textContent = m.name;
+      sel.appendChild(opt);
+    });
+
+    // 저장된 호기 복원, 없으면 첫 번째
+    if (state.machineCode && machineList.find(m => m.name === state.machineCode)) {
+      sel.value = state.machineCode;
+    } else {
+      state.machineCode = machineList[0].name;
+      sel.value = state.machineCode;
+      saveToLocal();
+    }
+  } catch (e) {
+    console.error('호기 마스터 로드 실패:', e);
+    sel.innerHTML = '<option value="">로드 실패</option>';
+    showToast('❌ 호기 마스터 로드 실패: ' + e.message, 'error');
+    machineList = [];
+  }
+}
+
 function setupHeader() {
-  document.getElementById('machineSelect').value = state.machineCode;
   document.getElementById('machineSelect').addEventListener('change', (e) => {
     state.machineCode = e.target.value;
     saveToLocal();
