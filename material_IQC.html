@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>소재 수입검사 v3.1 | (주)태진다이텍</title>
+<title>소재 수입검사 v3.1.1 | (주)태진다이텍</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Malgun Gothic','맑은 고딕','Segoe UI',sans-serif;background:#f4f6f9;color:#222;font-size:14px;line-height:1.5}
@@ -143,7 +143,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 
 <div class="hdr">
   <div>
-    <h1>📋 소재 수입검사 시스템 v3.1</h1>
+    <h1>📋 소재 수입검사 시스템 v3.1.1</h1>
     <div class="sub">(주)태진다이텍 · 품질관리팀 · 그룹 자동 통합 (공급자+재질+두께+폭)</div>
   </div>
   <div class="user-info" id="userInfoBar">검사자: <b id="loginUser">로그인 필요</b></div>
@@ -307,7 +307,8 @@ table{width:100%;border-collapse:collapse;font-size:13px}
     <div class="card-header"><span>📊 데이터 현황</span></div>
     <div class="card-body">
       <div id="dataStatus" style="font-size:13px;line-height:1.9">로딩 중...</div>
-      <div style="margin-top:12px">
+      <div style="margin-top:12px;display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn btn-warn btn-sm" onclick="migrateGroupKeys()" title="로컬 inspections의 옛 그룹키(LOT 포함)를 새 그룹키(LOT 제외)로 변환">🔧 그룹키 마이그레이션</button>
         <button class="btn btn-dng btn-sm" onclick="clearLocalCache()">🗑 로컬 캐시 초기화</button>
       </div>
     </div>
@@ -445,13 +446,13 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 
 <script>
 /* ============================================================
-   소재 수입검사 시스템 v3.1
+   소재 수입검사 시스템 v3.1.1
    - 그룹 = 공급자 + 재질 + 두께 + 폭 (LOT 무관)
    - 검사자 = 로그인 정보 자동
    - Supabase 연결 정보 고정
    ============================================================ */
 
-const APP_VERSION = '3.1';
+const APP_VERSION = '3.1.1';
 
 // 🔒 고정 연결 정보 (수정 불가)
 const SB_URL = 'https://omngtyewdaqpphnzeate.supabase.co';
@@ -807,21 +808,40 @@ async function pushInspToSupabase(insp){
 
 /* ================ 검사 대기 그룹 산출 ================ */
 function computeWaitGroups(){
-  // 완료 그룹 식별 (3중 안전장치)
-  // ① 로컬 inspections에서 finalJudge=OK/NG/보류
-  // ② 서버 inspection_certs.final_judge가 '대기'가 아닌 row의 그룹키
-  //    → 다른 PC에서 발행한 결과가 raw에 PATCH되어 있으면 자동 반영
+  // [v3.1.1] 그룹키 변경으로 인한 부작용 방지
+  // ① 로컬 inspections에서 finalJudge=OK/NG/보류 → 완료
+  // ② inspection_certs.final_judge는 "그룹 내 모든 코일"이 완료일 때만 그룹 완료로 인정
+  //    (일부 코일만 OK이고 나머지가 '대기'면 그룹 전체는 대기)
   const completedKeys = new Set(
     inspections
       .filter(x => x.finalJudge==='OK' || x.finalJudge==='NG' || x.finalJudge==='보류')
       .map(x => x.groupKey)
   );
+
+  // 그룹별 코일 수와 완료 코일 수 카운트
+  const groupCoils = new Map();  // key → { total, done }
   raw.forEach(r => {
+    const k = groupKeyOf(r);
+    if(!groupCoils.has(k)) groupCoils.set(k, { total:0, done:0 });
+    const g = groupCoils.get(k);
+    g.total++;
     const fj = (r.final_judge || '').trim();
-    if(fj && fj !== '대기'){
-      completedKeys.add(groupKeyOf(r));
-    }
+    if(fj && fj !== '대기') g.done++;
   });
+  // 모든 코일이 완료된 그룹만 completedKeys에 추가
+  for(const [k, c] of groupCoils){
+    if(c.total > 0 && c.done === c.total) completedKeys.add(k);
+  }
+
+  // 디버그 출력 (브라우저 콘솔에서 확인 가능)
+  if(typeof window !== 'undefined'){
+    window._iqcDebug = {
+      rawCount: raw.length,
+      uniqueGroups: groupCoils.size,
+      completedCount: completedKeys.size,
+      partialCompleted: Array.from(groupCoils.entries()).filter(([k,c])=>c.done>0 && c.done<c.total).map(([k,c])=>({key:k, done:c.done, total:c.total}))
+    };
+  }
 
   const map = new Map();
   raw.forEach(r => {
@@ -2085,9 +2105,25 @@ function renderCfg(){
 
   const lastSync = localStorage.getItem(LS_KEY_LASTSYNC);
   const ds = document.getElementById('dataStatus');
+  const waitGroups = computeWaitGroups();
+  const dbg = (typeof window !== 'undefined' && window._iqcDebug) || {};
+  const judgeBreakdown = {};
+  raw.forEach(r => {
+    const fj = (r.final_judge || '').trim() || '(빈값)';
+    judgeBreakdown[fj] = (judgeBreakdown[fj]||0) + 1;
+  });
+  const judgeStr = Object.entries(judgeBreakdown).map(([k,v])=>`${k}=${v}`).join(', ') || '-';
+
+  let partialHtml = '';
+  if(dbg.partialCompleted && dbg.partialCompleted.length > 0){
+    partialHtml = `<br><span style="color:#f59e0b">⚠ 부분 완료 그룹: <b>${dbg.partialCompleted.length}개</b> (일부 코일만 완료, 그룹 전체는 대기로 표시)</span>`;
+  }
+
   ds.innerHTML = `
     • inspection_certs (소재입고): <b>${raw.length}건</b><br>
-    • 검사 대기 그룹: <b>${computeWaitGroups().length}개</b><br>
+    • &nbsp;&nbsp;└ final_judge 분포: <span style="font-size:12px;color:#64748b">${judgeStr}</span><br>
+    • 고유 그룹 수: <b>${dbg.uniqueGroups || 0}개</b> (공급자+재질+두께+폭 기준)<br>
+    • 검사 대기 그룹: <b>${waitGroups.length}개</b>${partialHtml}<br>
     • 검사 완료 (성적서 발행): <b>${inspections.filter(x=>x.completed).length}건</b><br>
     • 임시저장: <b>${inspections.filter(x=>!x.completed).length}건</b><br>
     • 등록된 승인자: <b>${approver.name || '-'}</b>${approver.role?` <span style="color:#64748b">(${approver.role})</span>`:''}<br>
@@ -2256,6 +2292,77 @@ function clearLocalCache(){
   renderDone();
   renderCfg();
   showToast('🗑 로컬 캐시 삭제됨');
+}
+
+/* 그룹키 마이그레이션 - v3.0 이하 → v3.1+
+   옛 그룹키(공급자+재질+두께+폭+LOT베이스) → 새 그룹키(공급자+재질+두께+폭)
+   - inspections의 groupKey를 새 형식으로 재계산
+   - 동일 새 그룹키 충돌 시 가장 최신(updatedAt) 항목만 유지
+*/
+async function migrateGroupKeys(){
+  if(!inspections.length){
+    alert('로컬 inspections이 비어있어 마이그레이션할 항목이 없습니다.');
+    return;
+  }
+
+  // 미리보기
+  const oldKeys = inspections.map(x => x.groupKey);
+  const newKeys = inspections.map(x => {
+    return groupKeyOf({
+      supplier: x.supplier,
+      material_type: x.material,
+      thickness: x.thickness,
+      width_mm: x.width
+    });
+  });
+  const changedCount = oldKeys.filter((k,i) => k !== newKeys[i]).length;
+  const dupCount = newKeys.length - new Set(newKeys).size;
+
+  const msg =
+    `📋 로컬 검사 데이터 그룹키 마이그레이션\n\n` +
+    `· 전체 항목: ${inspections.length}건\n` +
+    `· 그룹키 변경 필요: ${changedCount}건\n` +
+    `· 새 그룹키 중복 (병합 대상): ${dupCount}건\n\n` +
+    `[적용] 옛 그룹키(LOT 포함) → 새 그룹키(LOT 제외)로 변환\n` +
+    `[중복 처리] 동일 새 그룹키가 여러 개면 가장 최신 항목만 유지\n\n` +
+    `계속하시겠습니까?`;
+  if(!confirm(msg)) return;
+
+  // 새 그룹키로 변환하면서 충돌 해결
+  const byNewKey = new Map();
+  inspections.forEach(insp => {
+    const newKey = groupKeyOf({
+      supplier: insp.supplier,
+      material_type: insp.material,
+      thickness: insp.thickness,
+      width_mm: insp.width
+    });
+    insp.groupKey = newKey;
+
+    const existing = byNewKey.get(newKey);
+    if(!existing){
+      byNewKey.set(newKey, insp);
+    } else {
+      // 더 최신(updatedAt)인 것 유지
+      const newT = new Date(insp.updatedAt || 0).getTime();
+      const oldT = new Date(existing.updatedAt || 0).getTime();
+      if(newT > oldT) byNewKey.set(newKey, insp);
+    }
+  });
+
+  inspections = Array.from(byNewKey.values());
+  saveInspsToLS();
+
+  renderWait();
+  renderDone();
+  renderCfg();
+
+  alert(
+    `✅ 마이그레이션 완료\n\n` +
+    `· 변경: ${changedCount}건\n` +
+    `· 병합 후 최종 항목: ${inspections.length}건\n\n` +
+    `이제 검사 대기 목록과 검사 완료 목록이 새 그룹키로 표시됩니다.`
+  );
 }
 
 /* ================ 초기화 ================ */
