@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>소재 수입검사 v2.6 | (주)태진다이텍</title>
+<title>소재 수입검사 v2.8 | (주)태진다이텍</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Malgun Gothic','맑은 고딕','Segoe UI',sans-serif;background:#f4f6f9;color:#222;font-size:14px;line-height:1.5}
@@ -143,7 +143,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 
 <div class="hdr">
   <div>
-    <h1>📋 소재 수입검사 시스템 v2.6</h1>
+    <h1>📋 소재 수입검사 시스템 v2.8</h1>
     <div class="sub">(주)태진다이텍 · 품질관리팀 · LOT 그룹 자동 통합 (재질+두께+폭+LOT베이스)</div>
   </div>
   <div class="user-info" id="userInfoBar">검사자: <b id="loginUser">로그인 필요</b></div>
@@ -444,13 +444,13 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 
 <script>
 /* ============================================================
-   소재 수입검사 시스템 v2.6
+   소재 수입검사 시스템 v2.8
    - LOT 그룹 = 재질 + 두께 + 폭 + LOT '-' 이전 베이스 (공급자별)
    - 검사자 = 로그인 정보 자동
    - Supabase 연결 정보 고정
    ============================================================ */
 
-const APP_VERSION = '2.6';
+const APP_VERSION = '2.8';
 
 // 🔒 고정 연결 정보 (수정 불가)
 const SB_URL = 'https://omngtyewdaqpphnzeate.supabase.co';
@@ -1113,18 +1113,24 @@ function buildMeasTable(){
 function parseSpec(spec){
   if(!spec) return null;
   const s = String(spec).trim();
+  // 범위: 1.0 ~ 2.0
   let m = s.match(/(-?\d+(?:\.\d+)?)\s*~\s*(-?\d+(?:\.\d+)?)/);
   if(m) return { min: parseFloat(m[1]), max: parseFloat(m[2]) };
+  // ≤ x
   m = s.match(/[≤<]=?\s*(-?\d+(?:\.\d+)?)/);
   if(m) return { max: parseFloat(m[1]) };
+  // ≥ x
   m = s.match(/[≥>]=?\s*(-?\d+(?:\.\d+)?)/);
   if(m) return { min: parseFloat(m[1]) };
-  m = s.match(/(-?\d+(?:\.\d+)?)\s*[±]\s*(\d+(?:\.\d+)?)/);
+  // ± 패턴: 숫자 뒤 단위 문자(T, mm, 한글 등) 허용
+  // 예: '1.25T ±0.05', '248mm ±0.1', '0.6 ± 0.05'
+  m = s.match(/(-?\d+(?:\.\d+)?)\s*[A-Za-z가-힣]*\s*[±]\s*(\d+(?:\.\d+)?)/);
   if(m){
     const c = parseFloat(m[1]); const t = parseFloat(m[2]);
     return { min: c-t, max: c+t };
   }
-  m = s.match(/(-?\d+(?:\.\d+)?)\s*\+\s*(\d+(?:\.\d+)?)\s*\/\s*-\s*(\d+(?:\.\d+)?)/);
+  // +/- 비대칭: 1.0 +0.05/-0.02
+  m = s.match(/(-?\d+(?:\.\d+)?)\s*[A-Za-z가-힣]*\s*\+\s*(\d+(?:\.\d+)?)\s*\/\s*-\s*(\d+(?:\.\d+)?)/);
   if(m){
     const c = parseFloat(m[1]);
     return { min: c-parseFloat(m[3]), max: c+parseFloat(m[2]) };
@@ -1285,9 +1291,30 @@ function quickOKAll(){
   const matSpec = document.getElementById('m_mat_spec');
   if(!matSpec.value.trim()) matSpec.value = matName;
 
-  // 두께/폭 규격: 입고값 기준 ±0.02 (사용자 요청 공차 범위)
-  document.getElementById('m_thick_spec').value = `${t.toFixed(3)} ± 0.02`;
-  document.getElementById('m_width_spec').value = `${w.toFixed(2)} ± 0.02`;
+  // 두께/폭 규격: 기존 입력값이 있으면 보존, 없을 때만 ±0.02 자동
+  const thickSpecEl = document.getElementById('m_thick_spec');
+  if(!thickSpecEl.value.trim()){
+    thickSpecEl.value = `${t.toFixed(3)} ± 0.05`;
+  }
+  const widthSpecEl = document.getElementById('m_width_spec');
+  if(!widthSpecEl.value.trim()){
+    widthSpecEl.value = `${w.toFixed(2)} ± 0.1`;
+  }
+
+  // 규격에서 공차 추출 (분산 범위 결정에 사용)
+  // 예: '1.25T ±0.05' → 0.05 / '248mm ±0.1' → 0.1
+  // 못 찾을 시 기본값: 두께 ±0.05, 폭 ±0.1
+  const extractTol = (spec, def) => {
+    const m = String(spec||'').match(/[±]\s*(\d+(?:\.\d+)?)/);
+    return m ? parseFloat(m[1]) : def;
+  };
+  const thickTol = extractTol(thickSpecEl.value, 0.05);
+  const widthTol = extractTol(widthSpecEl.value, 0.1);
+
+  // 측정값 분산 안전 마진: 공차의 ~80% 사용 (경계값 NG 방지)
+  // 너무 작은 마진은 분해능에 못 미쳐 분산이 안 되므로 최소 분해능 단위 보장
+  const thickSafe = Math.max(thickTol * 0.8, 0.001);
+  const widthSafe = Math.max(widthTol * 0.8, 0.01);
 
   // ─── 측정값 자동 채우기 ───
   // 공급자(sup): 항상 자동 입력 (강제 덮어쓰기)
@@ -1310,27 +1337,25 @@ function quickOKAll(){
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // 두께 - 마이크로미터 (분해능 0.001)
-  // ▶ 공급자값이 이미 있으면(밀시트 cert_data) → 보존, 수요자는 공급자 min~max 내
-  // ▶ 공급자값이 없으면 → 양쪽 모두 입고값 ±0.01 범위 내 분산
+  // ▶ 분산 범위: 규격 공차의 80% (예: 규격 ±0.05 → 분산 ±0.04)
+  // ▶ 공급자값 있으면 보존, 없으면 양쪽 모두 자동 생성
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   const thickSupExisting = ['sup1','sup2','sup3'].map(s => document.getElementById('m_thick_'+s).value.trim());
   const thickSupHasData = thickSupExisting.some(v => v !== '');
 
   if(!thickSupHasData){
-    // 공급자값 없음 → 양쪽 모두 입고값 ±0.01 분산
-    const thickBoth = generateMeasurements(t, 'micrometer', 0.008);  // 안전 마진 적용한 ±0.01
+    // 공급자값 없음 → 양쪽 모두 분산
+    const thickBoth = generateMeasurements(t, 'micrometer', thickSafe);
     ['sup1','sup2','sup3'].forEach((s,i) => {
       document.getElementById('m_thick_'+s).value = thickBoth[i];
     });
-    // 수요자: 공급자와 동일 범위 내에서 별도 랜덤
     const thickCusBoth = generateCustomerInRange(thickBoth, 'micrometer');
     ['cus1','cus2','cus3'].forEach((s,i) => {
       fillIfEmpty('m_thick_'+s, thickCusBoth[i]);
     });
   } else {
     // 공급자값 있음 → 보존, 빈 칸만 채움. 수요자는 공급자 min~max 내
-    // (혹시 1~2개만 비어있으면 입고값 ±0.018 분산값으로 채움)
-    const thickFill = generateMeasurements(t, 'micrometer');
+    const thickFill = generateMeasurements(t, 'micrometer', thickSafe);
     ['sup1','sup2','sup3'].forEach((s,i) => {
       fillIfEmpty('m_thick_'+s, thickFill[i]);
     });
@@ -1344,14 +1369,13 @@ function quickOKAll(){
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // 폭 - 디지털 버니어캘리퍼스 (분해능 0.01)
+  // ▶ 분산 범위: 규격 공차의 80% (예: 규격 ±0.1 → 분산 ±0.08)
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   const widthSupExisting = ['sup1','sup2','sup3'].map(s => document.getElementById('m_width_'+s).value.trim());
   const widthSupHasData = widthSupExisting.some(v => v !== '');
 
   if(!widthSupHasData){
-    // 공급자값 없음 → 양쪽 모두 입고값 ±0.01 분산
-    // 디지털 캘리퍼스 분해능 0.01 = 공차 0.01 → -0.01, 0, +0.01 3개 후보로 충분
-    const widthBoth = generateMeasurements(w, 'caliper', 0.01);
+    const widthBoth = generateMeasurements(w, 'caliper', widthSafe);
     ['sup1','sup2','sup3'].forEach((s,i) => {
       document.getElementById('m_width_'+s).value = widthBoth[i];
     });
@@ -1360,8 +1384,7 @@ function quickOKAll(){
       fillIfEmpty('m_width_'+s, widthCusBoth[i]);
     });
   } else {
-    // 공급자값 있음 → 보존, 빈 칸만 채움. 수요자는 공급자 min~max 내
-    const widthFill = generateMeasurements(w, 'caliper');
+    const widthFill = generateMeasurements(w, 'caliper', widthSafe);
     ['sup1','sup2','sup3'].forEach((s,i) => {
       fillIfEmpty('m_width_'+s, widthFill[i]);
     });
@@ -1481,10 +1504,10 @@ function openInsp(groupKey){
     document.getElementById('m_surface_spec').value = '결함없을것';
     document.getElementById('m_mat_spec').value = g.material || '';
     if(g.thickness != null){
-      document.getElementById('m_thick_spec').value = `${parseFloat(g.thickness).toFixed(3)} ± 0.02`;
+      document.getElementById('m_thick_spec').value = `${parseFloat(g.thickness).toFixed(3)} ± 0.05`;
     }
     if(g.width != null){
-      document.getElementById('m_width_spec').value = `${parseFloat(g.width).toFixed(2)} ± 0.02`;
+      document.getElementById('m_width_spec').value = `${parseFloat(g.width).toFixed(2)} ± 0.1`;
     }
     // 공급자 cert_data가 있으면 측정값 자동 채움
     const firstRaw = raw.find(r => groupKeyOf(r) === groupKey);
@@ -1597,8 +1620,8 @@ function hasUnsavedChanges(){
     // 두께/폭 규격 default 체크
     const t = parseFloat(document.getElementById('i_thickness').value);
     const w = parseFloat(document.getElementById('i_width').value);
-    const tDef = isFinite(t) ? `${t.toFixed(3)} ± 0.02` : '';
-    const wDef = isFinite(w) ? `${w.toFixed(2)} ± 0.02` : '';
+    const tDef = isFinite(t) ? `${t.toFixed(3)} ± 0.05` : '';
+    const wDef = isFinite(w) ? `${w.toFixed(2)} ± 0.1` : '';
     const tSpec = (document.getElementById('m_thick_spec').value||'').trim();
     const wSpec = (document.getElementById('m_width_spec').value||'').trim();
     if(tSpec && tSpec !== tDef) return true;
