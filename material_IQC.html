@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>소재 수입검사 v3.1.1 | (주)태진다이텍</title>
+<title>소재 수입검사 v3.1.2 | (주)태진다이텍</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Malgun Gothic','맑은 고딕','Segoe UI',sans-serif;background:#f4f6f9;color:#222;font-size:14px;line-height:1.5}
@@ -143,7 +143,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 
 <div class="hdr">
   <div>
-    <h1>📋 소재 수입검사 시스템 v3.1.1</h1>
+    <h1>📋 소재 수입검사 시스템 v3.1.2</h1>
     <div class="sub">(주)태진다이텍 · 품질관리팀 · 그룹 자동 통합 (공급자+재질+두께+폭)</div>
   </div>
   <div class="user-info" id="userInfoBar">검사자: <b id="loginUser">로그인 필요</b></div>
@@ -309,6 +309,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}
       <div id="dataStatus" style="font-size:13px;line-height:1.9">로딩 중...</div>
       <div style="margin-top:12px;display:flex;gap:6px;flex-wrap:wrap">
         <button class="btn btn-warn btn-sm" onclick="migrateGroupKeys()" title="로컬 inspections의 옛 그룹키(LOT 포함)를 새 그룹키(LOT 제외)로 변환">🔧 그룹키 마이그레이션</button>
+        <button class="btn btn-sec btn-sm" onclick="resetFinalJudgeToWait()" title="모든 inspection_certs.final_judge를 '대기'로 일괄 되돌리기 (이전 검사완료 처리 취소)" style="background:#0ea5e9;color:#fff">↺ final_judge 초기화</button>
         <button class="btn btn-dng btn-sm" onclick="clearLocalCache()">🗑 로컬 캐시 초기화</button>
       </div>
     </div>
@@ -446,13 +447,13 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 
 <script>
 /* ============================================================
-   소재 수입검사 시스템 v3.1.1
+   소재 수입검사 시스템 v3.1.2
    - 그룹 = 공급자 + 재질 + 두께 + 폭 (LOT 무관)
    - 검사자 = 로그인 정보 자동
    - Supabase 연결 정보 고정
    ============================================================ */
 
-const APP_VERSION = '3.1.1';
+const APP_VERSION = '3.1.2';
 
 // 🔒 고정 연결 정보 (수정 불가)
 const SB_URL = 'https://omngtyewdaqpphnzeate.supabase.co';
@@ -2129,6 +2130,20 @@ function renderCfg(){
     • 등록된 승인자: <b>${approver.name || '-'}</b>${approver.role?` <span style="color:#64748b">(${approver.role})</span>`:''}<br>
     • 마지막 동기화: <b>${lastSync ? new Date(lastSync).toLocaleString('ko-KR') : '미동기화'}</b>
   `;
+
+  // 최근 raw 데이터 미리보기 (디버깅용)
+  if(raw.length > 0){
+    const recent = raw.slice(0, 10);
+    let preview = `<div style="margin-top:10px;padding:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:5px;font-size:11px"><div style="font-weight:700;color:#1e3a5f;margin-bottom:6px">📦 최근 inspection_certs raw (최대 10건)</div><table style="width:100%;border-collapse:collapse;font-size:10px"><thead><tr style="background:#e2e8f0"><th style="padding:3px 5px;border:1px solid #cbd5e0">공급자</th><th style="padding:3px 5px;border:1px solid #cbd5e0">재질</th><th style="padding:3px 5px;border:1px solid #cbd5e0">두께</th><th style="padding:3px 5px;border:1px solid #cbd5e0">폭</th><th style="padding:3px 5px;border:1px solid #cbd5e0">LOT</th><th style="padding:3px 5px;border:1px solid #cbd5e0">final_judge</th><th style="padding:3px 5px;border:1px solid #cbd5e0">생성일</th></tr></thead><tbody>`;
+    recent.forEach(r => {
+      const fj = r.final_judge || '';
+      const fjColor = fj === '대기' ? '#f59e0b' : (fj === 'OK' ? '#16a34a' : (fj === 'NG' ? '#dc2626' : '#94a3b8'));
+      preview += `<tr><td style="padding:3px 5px;border:1px solid #cbd5e0">${r.supplier||'-'}</td><td style="padding:3px 5px;border:1px solid #cbd5e0">${r.material_type||r.spec||'-'}</td><td style="padding:3px 5px;border:1px solid #cbd5e0;text-align:right">${r.thickness??'-'}</td><td style="padding:3px 5px;border:1px solid #cbd5e0;text-align:right">${r.width_mm||r.width||'-'}</td><td style="padding:3px 5px;border:1px solid #cbd5e0">${r.lot_no||r.lot||'-'}</td><td style="padding:3px 5px;border:1px solid #cbd5e0;color:${fjColor};font-weight:700">${fj||'(빈값)'}</td><td style="padding:3px 5px;border:1px solid #cbd5e0;font-size:10px">${(r.created_at||'').substring(5,16)}</td></tr>`;
+    });
+    preview += '</tbody></table></div>';
+    ds.innerHTML += preview;
+  }
+
   refreshLoginUserUI();
 }
 
@@ -2282,6 +2297,88 @@ ALTER TABLE public.iqc_inspections ADD COLUMN IF NOT EXISTS approver_role TEXT;`
 
   html += '</div>';
   statusEl.innerHTML = html;
+}
+
+/* inspection_certs.final_judge 일괄 '대기' 복원
+   - 이전 LOT 단위 검사완료 처리로 final_judge에 OK/NG가 박혀있는 경우
+   - 새 그룹 기준으로 다시 검사하기 위해 전체 초기화
+   - 안전: 2단계 확인 + 코드 입력
+*/
+async function resetFinalJudgeToWait(){
+  await loadFromSupabase();  // 최신 데이터 다시 받아서 표시
+
+  const nonWait = raw.filter(r => {
+    const fj = (r.final_judge || '').trim();
+    return fj && fj !== '대기';
+  });
+
+  if(!nonWait.length){
+    alert('현재 inspection_certs에 final_judge가 OK/NG/보류인 row가 없습니다.\n초기화 대상 없음.');
+    return;
+  }
+
+  const fjMap = {};
+  nonWait.forEach(r => {
+    const fj = (r.final_judge || '').trim();
+    fjMap[fj] = (fjMap[fj]||0) + 1;
+  });
+  const fjSummary = Object.entries(fjMap).map(([k,v])=>`${k}: ${v}건`).join(', ');
+
+  const msg =
+    `⚠ inspection_certs.final_judge 일괄 초기화\n\n` +
+    `대상: ${nonWait.length}건 (${fjSummary})\n\n` +
+    `모든 row의 final_judge를 '대기'로 되돌립니다.\n` +
+    `→ 이전 검사완료 처리가 모두 취소되고\n` +
+    `→ 모든 그룹이 검사 대기 목록에 다시 나타납니다.\n\n` +
+    `로컬 inspections는 영향 없으며, 검사완료 탭의 성적서 발행 기록은 유지됩니다.\n\n` +
+    `계속하시겠습니까?`;
+  if(!confirm(msg)) return;
+
+  // 2차 확인
+  const code = `RESET${nonWait.length}`;
+  const userInput = prompt(`최종 확인 - 아래 코드를 입력하세요:\n\n   ${code}`);
+  if(userInput !== code){
+    showToast('❌ 코드 불일치 - 취소됨');
+    return;
+  }
+
+  // 모든 row의 final_judge를 '대기'로 PATCH
+  showToast(`⏳ ${nonWait.length}건 초기화 중...`);
+  let ok = 0, fail = 0;
+  for(const r of nonWait){
+    if(!r.id) continue;
+    try{
+      const url = SB_URL + '/rest/v1/inspection_certs?id=eq.' + encodeURIComponent(r.id);
+      const res = await fetch(url, {
+        method: 'PATCH',
+        headers: {
+          'apikey': SB_KEY,
+          'Authorization': 'Bearer ' + SB_KEY,
+          'Content-Type': 'application/json',
+          'Prefer': 'return=minimal'
+        },
+        body: JSON.stringify({ final_judge: '대기' })
+      });
+      if(res.ok){
+        ok++;
+        r.final_judge = '대기';  // 로컬 raw도 즉시 갱신
+      } else {
+        fail++;
+      }
+    }catch(e){
+      fail++;
+    }
+  }
+
+  renderWait();
+  renderDone();
+  renderCfg();
+
+  if(fail === 0){
+    alert(`✅ 초기화 완료\n\n· ${ok}건의 final_judge를 '대기'로 되돌렸습니다.\n· 검사 대기 탭에서 다시 확인하세요.`);
+  } else {
+    alert(`⚠ 초기화 부분 완료\n\n· 성공: ${ok}건\n· 실패: ${fail}건`);
+  }
 }
 
 function clearLocalCache(){
