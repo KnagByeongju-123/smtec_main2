@@ -101,6 +101,13 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:#212121;pa
   <div id="defectTopWrap"></div>
 </div>
 
+<!-- 미지정 모델 디버그 -->
+<div class="card" id="unmappedCard" style="display:none">
+  <div class="card-tit"><span>⚠️ 미지정 모델 (마스터 DB 미등록 / customer 비어있음)</span><button class="btn btn-sm" onclick="copyUnmappedList()" style="background:#607d8b;color:#fff;font-size:10px;padding:4px 10px">📋 복사</button></div>
+  <div style="font-size:11px;color:var(--gray);margin-bottom:8px">아래 모델들을 <b>defect_model</b> 또는 <b>general_model_tj</b> 마스터에 등록하거나 customer 값을 채워주세요.</div>
+  <div id="unmappedWrap" style="overflow-x:auto"></div>
+</div>
+
 <!-- 일별 상세 (차트 + 테이블 동일 스크롤) -->
 <div class="card" id="dailyCard" style="display:none">
   <div class="card-tit"><span>📋 주간 고객사별 PPM 추이</span><span style="font-size:10px;color:var(--gray)" id="dailyChartRange"></span></div>
@@ -272,7 +279,27 @@ async function loadReport(){
       }
     });
 
-    reportData={wMap,sortedW,custs,mSum,tTop,rows,thisWk,fromS,toS,target,daily,weekToMonday};
+    // 미지정 모델 집계 (마스터 미등록 또는 customer 비어있음)
+    const unmapped={};
+    rows.forEach(r=>{
+      if(modelToCust(r.model_name)==='미지정'){
+        const mn=r.model_name||'(빈 모델명)';
+        if(!unmapped[mn]){
+          const inM=models.find(x=>x.name===mn);
+          const inG=generalModels.find(x=>x.name===mn);
+          let reason='마스터 미등록';
+          if(inM)reason='defect_model에 있으나 customer 비어있음';
+          else if(inG)reason='general_model_tj에 있으나 customer 비어있음';
+          unmapped[mn]={cnt:0,qty:0,inspQty:0,reason,lastDate:''};
+        }
+        unmapped[mn].cnt++;
+        unmapped[mn].inspQty+=(r.inspect_qty||0);
+        if(r.defect_type&&r.defect_type!=='양품')unmapped[mn].qty+=(r.qty||0);
+        if(r.defect_date>unmapped[mn].lastDate)unmapped[mn].lastDate=r.defect_date;
+      }
+    });
+
+    reportData={wMap,sortedW,custs,mSum,tTop,rows,thisWk,fromS,toS,target,daily,weekToMonday,unmapped};
 
     // 이번주 요약
     let twI=0,twD=0;
@@ -285,9 +312,10 @@ async function loadReport(){
 
     renderProcessSummary(mSum,thisWk,target,wMap,sortedW,custs);
     renderDefectTop(tTop);
+    renderUnmapped(unmapped);
     renderDailyTable(daily,target);
 
-    ['summaryCard','processSummaryCard','defectTopCard','dailyCard','mesCard'].forEach(id=>document.getElementById(id).style.display='block');
+    ['summaryCard','processSummaryCard','defectTopCard','unmappedCard','dailyCard','mesCard'].forEach(id=>document.getElementById(id).style.display='block');
     showToast('📊 조회 완료');
   }catch(e){showToast('오류: '+e.message)}
   hideLoading();
@@ -429,6 +457,55 @@ function renderDefectTop(tTop){
       '<div style="flex:1;background:#f5f5f5;border-radius:4px;height:20px;overflow:hidden"><div style="width:'+pct+'%;background:'+bc+';height:100%;border-radius:4px"></div></div>'+
       '<span style="font-size:13px;font-weight:800;color:'+bc+';width:40px;text-align:right">'+q+'</span></div>'
   }).join('');
+}
+
+/* ===== 미지정 모델 디버그 패널 ===== */
+function renderUnmapped(unmapped){
+  const el=document.getElementById('unmappedWrap');
+  const list=Object.entries(unmapped).sort((a,b)=>b[1].qty-a[1].qty);
+  if(!list.length){el.innerHTML='<div class="empty" style="color:#2e7d32;font-weight:600">✅ 미지정 모델 없음 - 모든 모델이 마스터에 등록되어 있습니다</div>';return}
+  const totalCnt=list.reduce((s,[,v])=>s+v.cnt,0);
+  const totalQty=list.reduce((s,[,v])=>s+v.qty,0);
+  const totalInsp=list.reduce((s,[,v])=>s+v.inspQty,0);
+  const totalPpm=totalInsp>0?Math.round(totalQty/totalInsp*1e6):0;
+  let html='<div style="background:#fff3e0;border-left:4px solid #ff9800;padding:8px 12px;margin-bottom:10px;border-radius:4px;font-size:12px">'+
+    '<b style="color:#e65100">총 '+list.length+'개 모델</b> · 데이터 '+totalCnt.toLocaleString()+'건 · 검사 '+totalInsp.toLocaleString()+' · 불량 '+totalQty.toLocaleString()+' · <b>PPM '+totalPpm.toLocaleString()+'</b></div>';
+  html+='<table class="tbl" style="font-size:11px"><thead><tr>'+
+    '<th style="text-align:left">모델명</th>'+
+    '<th>건수</th>'+
+    '<th>검사수량</th>'+
+    '<th>불량수량</th>'+
+    '<th>PPM</th>'+
+    '<th>최종일자</th>'+
+    '<th style="text-align:left">사유</th>'+
+    '</tr></thead><tbody>';
+  list.forEach(([mn,v])=>{
+    const ppm=v.inspQty>0?Math.round(v.qty/v.inspQty*1e6):0;
+    const reasonColor=v.reason.includes('미등록')?'#c62828':'#e65100';
+    html+='<tr>'+
+      '<td style="text-align:left;font-weight:600">'+mn+'</td>'+
+      '<td>'+v.cnt+'</td>'+
+      '<td>'+v.inspQty.toLocaleString()+'</td>'+
+      '<td style="color:#c62828;font-weight:700">'+v.qty.toLocaleString()+'</td>'+
+      '<td style="font-weight:700">'+ppm.toLocaleString()+'</td>'+
+      '<td style="font-size:10px;color:#666">'+v.lastDate+'</td>'+
+      '<td style="text-align:left;color:'+reasonColor+';font-size:10px">'+v.reason+'</td>'+
+      '</tr>';
+  });
+  html+='</tbody></table>';
+  el.innerHTML=html;
+}
+
+function copyUnmappedList(){
+  if(!reportData||!reportData.unmapped){showToast('데이터 없음');return}
+  const list=Object.entries(reportData.unmapped).sort((a,b)=>b[1].qty-a[1].qty);
+  if(!list.length){showToast('미지정 모델 없음');return}
+  const txt='모델명\t건수\t검사수량\t불량수량\tPPM\t최종일자\t사유\n'+
+    list.map(([mn,v])=>{
+      const ppm=v.inspQty>0?Math.round(v.qty/v.inspQty*1e6):0;
+      return mn+'\t'+v.cnt+'\t'+v.inspQty+'\t'+v.qty+'\t'+ppm+'\t'+v.lastDate+'\t'+v.reason;
+    }).join('\n');
+  navigator.clipboard.writeText(txt).then(()=>showToast('📋 '+list.length+'개 모델 복사됨 (Excel 붙여넣기 가능)')).catch(()=>showToast('복사 실패'));
 }
 
 /* ===== 일별 추이 = 주차별 고객사 PPM 차트 + 데이터 테이블 ===== */
