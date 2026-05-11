@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>생산 카운터 v3.6</title>
+<title>생산 카운터 v3.7</title>
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body {
@@ -970,7 +970,7 @@
 </head>
 <body>
 
-<h1>🕒 생산 카운터 v3.6</h1>
+<h1>🕒 생산 카운터 v3.7</h1>
 
 <!-- ★ Supabase 연동: 호기/작업자 + 작업시작/종료 -->
 <div class="work-header">
@@ -2670,14 +2670,88 @@ function normalizeMaterialType(s) {
 // 피치 단중 자동계산 + 마스터 UPDATE
 // 계산식: g/피치 = 두께(mm) × 폭(mm) × 피치(mm) × 비중(g/cm³) / 1000
 // 의미: 1타발(1피치) 당 사용되는 자재 무게
+//
+// pitch 없을 때 fallback:
+//   1) 같은 mold_number의 다른 마스터 row에서 pitch/unit_weight 차용
+//   2) mold_master 테이블에서 pitch 조회
 // ============================================================
 async function tryAutoEstimateUnitWeight(matched) {
   if (!matched || !matched.id) return;
 
   const t = parseFloat(matched.thickness);
   const w = parseFloat(matched.width);
-  const pitch = parseFloat(matched.pitch);
+  let pitch = parseFloat(matched.pitch);
   const sg = parseFloat(matched.specific_gravity) || 7.85;
+
+  // ===== Fallback 1: 같은 mold_number의 다른 마스터 row에서 pitch/unit_weight 차용 =====
+  if ((!pitch || pitch <= 0) && matched.mold_number) {
+    try {
+      const sameMold = await sbReq('GET',
+        `${TBL_MATERIAL_MASTER}?select=id,pitch,unit_weight,thickness,width,specific_gravity&mold_number=eq.${encodeURIComponent(matched.mold_number)}&limit=20`);
+      if (Array.isArray(sameMold)) {
+        // 1-A) 같은 금형의 unit_weight가 등록된 row가 있으면 그대로 사용
+        const sameW = sameMold.find(mm =>
+          mm.id !== matched.id &&
+          parseFloat(mm.unit_weight) > 0 &&
+          Math.abs(parseFloat(mm.thickness || 0) - t) < 0.001 &&
+          Math.abs(parseFloat(mm.width || 0) - w) < 0.5
+        );
+        if (sameW) {
+          const rounded = Math.round(parseFloat(sameW.unit_weight) * 100) / 100;
+          await sbReq('PATCH', `${TBL_MATERIAL_MASTER}?id=eq.${matched.id}`, { unit_weight: rounded });
+          matched.unit_weight = rounded;
+          prodInfo.unitWeight = rounded;
+          prodInfo.isEstimated = true;
+          console.log('피치 단중 차용(같은 금형 동일규격):', rounded, 'g/피치');
+          if (!_estimatedToastShown[matched.id]) {
+            _estimatedToastShown[matched.id] = true;
+            setTimeout(() => showToastMsg(`📐 단중 ${rounded}g/피치 (같은 금형에서 차용)`), 300);
+          }
+          return;
+        }
+        // 1-B) pitch만이라도 차용
+        const samePitch = sameMold.find(mm => parseFloat(mm.pitch) > 0);
+        if (samePitch) {
+          pitch = parseFloat(samePitch.pitch);
+          console.log('피치 차용(같은 금형):', pitch, 'mm');
+        }
+      }
+    } catch (e) {
+      console.log('같은 금형 마스터 조회 실패:', e);
+    }
+  }
+
+  // ===== Fallback 2: mold_master에서 pitch 조회 =====
+  if ((!pitch || pitch <= 0) && matched.mold_number) {
+    try {
+      const moldRows = await sbReq('GET',
+        `mold_master?select=pitch,unit_weight_g&mold_code=eq.${encodeURIComponent(matched.mold_number)}&limit=1`);
+      if (Array.isArray(moldRows) && moldRows[0]) {
+        const mr = moldRows[0];
+        // mold_master에 단중이 직접 등록되어 있으면 그대로 사용
+        if (parseFloat(mr.unit_weight_g) > 0) {
+          const rounded = Math.round(parseFloat(mr.unit_weight_g) * 100) / 100;
+          await sbReq('PATCH', `${TBL_MATERIAL_MASTER}?id=eq.${matched.id}`, { unit_weight: rounded });
+          matched.unit_weight = rounded;
+          prodInfo.unitWeight = rounded;
+          prodInfo.isEstimated = true;
+          console.log('피치 단중 차용(mold_master):', rounded, 'g/피치');
+          if (!_estimatedToastShown[matched.id]) {
+            _estimatedToastShown[matched.id] = true;
+            setTimeout(() => showToastMsg(`📐 단중 ${rounded}g/피치 (금형마스터에서 차용)`), 300);
+          }
+          return;
+        }
+        if (parseFloat(mr.pitch) > 0) {
+          pitch = parseFloat(mr.pitch);
+          console.log('피치 차용(mold_master):', pitch, 'mm');
+        }
+      }
+    } catch (e) {
+      // mold_master 컬럼 없을 수도 있음 - 무시
+      console.log('mold_master 조회 실패(무시):', e && e.message);
+    }
+  }
 
   if (!t || !w || !pitch || pitch <= 0) {
     // 추정 불가 (피치 없음 등) → 수동 입력 버튼으로 fallback
