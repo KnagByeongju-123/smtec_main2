@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>📋 보고서 결재 v3.13</title>
+<title>📋 보고서 결재 v3.18</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;900&display=swap">
 <style>
   :root {
@@ -185,7 +185,7 @@
 <body>
 
 <div class="hdr">
-  <h1>📋 보고서 결재 v3.13</h1>
+  <h1>📋 보고서 결재 v3.18</h1>
   <p>점검표 통합 월별 결재 시스템 · 4단계 (작성·검토·확인·승인)</p>
   <div class="v">v3.13 · LS_KEY 누락 수정(탭 작동 복구)</div>
   <div id="hdrUserBadge" class="user-badge" style="display:none">👤 -</div>
@@ -1893,4 +1893,464 @@ function pickResult(primary, raw){
   if(!raw || typeof raw !== 'object') return '';
   // ng_count, bad_count 등이 있으면
   const ngCnt = raw.ng_count ?? raw.bad_count ?? raw.fail_count ?? 0;
-  if(typeof ngCnt === 'number'
+  if(typeof ngCnt === 'number' && ngCnt > 0) return 'NG';
+  // chk_* / item_* / r_* 컬럼들 중 NG가 하나라도 있으면 NG
+  for(const k of Object.keys(raw)){
+    if(/^(chk_|item_|r_|q_|check_item|p\d+_|result_)/i.test(k)){
+      const v = String(raw[k]||'').trim().toUpperCase();
+      if(v === 'NG' || v === '불량' || v === '불합격' || v === 'FAIL') return 'NG';
+    }
+  }
+  // result 텍스트 매칭
+  const p = String(primary||'').trim();
+  if(/불량|불합격|fail|ng/i.test(p)) return 'NG';
+  if(/양호|합격|정상|pass|ok/i.test(p)) return 'OK';
+  return p || 'OK';
+}
+
+// =========================================================
+// [v3.18 복구] 누락된 보고서 렌더/액션 함수
+// 원본 파일이 잘려서 누락된 함수들을 복구합니다.
+// CSS 스타일(paper-wrap, paper-info, paper-kpi, mtx, ng-tbl, approval-row 등)에 맞춰 구현.
+// =========================================================
+
+function renderPaperReport(){
+  const area = document.getElementById('paperArea');
+  const bar = document.getElementById('actionBar');
+  if(!area) return;
+  if(!currentReport){ area.innerHTML = '<div style="padding:30px;text-align:center;color:#94a3b8">보고서가 선택되지 않았습니다.</div>'; return; }
+  
+  const r = currentReport;
+  const tpl = currentTemplate || {};
+  const checks = Array.isArray(currentChecks) ? currentChecks : [];
+  
+  // 통계 집계
+  const total = checks.length;
+  const okList = checks.filter(c => pickResult(c.result, c.raw_row) === 'OK');
+  const ngList = checks.filter(c => pickResult(c.result, c.raw_row) === 'NG');
+  const okCount = okList.length;
+  const ngCount = ngList.length;
+  const okRate = total > 0 ? ((okCount/total)*100).toFixed(1) : '0.0';
+  
+  // 호기/일자 매트릭스
+  const machines = [...new Set(checks.map(c => c.machine||'-'))].sort();
+  const dates = [...new Set(checks.map(c => c.check_date||'').filter(Boolean))].sort();
+  
+  // 매트릭스 데이터
+  const mtxMap = {};
+  checks.forEach(c => {
+    const m = c.machine||'-';
+    const d = c.check_date||'';
+    if(!mtxMap[m]) mtxMap[m] = {};
+    const res = pickResult(c.result, c.raw_row);
+    if(mtxMap[m][d] === 'NG' || res === 'NG') mtxMap[m][d] = 'NG';
+    else if(!mtxMap[m][d]) mtxMap[m][d] = res || '';
+  });
+  
+  // 매트릭스 HTML
+  let mtxHTML = '';
+  if(machines.length && dates.length){
+    const dateHdr = dates.map(d => `<th>${(d||'').slice(5)}</th>`).join('');
+    const rows = machines.map(m => {
+      const cells = dates.map(d => {
+        const v = (mtxMap[m]||{})[d] || '';
+        const cls = v === 'OK' ? 'ok' : (v === 'NG' ? 'ng' : 'na');
+        const txt = v === 'OK' ? '○' : (v === 'NG' ? '×' : '-');
+        return `<td class="${cls}">${txt}</td>`;
+      }).join('');
+      const sumOK = dates.filter(d => (mtxMap[m]||{})[d]==='OK').length;
+      const sumNG = dates.filter(d => (mtxMap[m]||{})[d]==='NG').length;
+      return `<tr><td class="mc">${m}</td>${cells}<td class="sum">${sumOK}/${sumNG}</td></tr>`;
+    }).join('');
+    mtxHTML = `<div class="mtx-wrap"><table class="mtx"><thead><tr><th class="mc">호기 \\ 일자</th>${dateHdr}<th>OK/NG</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  } else {
+    mtxHTML = '<div style="padding:20px;text-align:center;color:#94a3b8;font-size:12px;background:#fff;border:1.5px solid #1e293b">점검 데이터가 없습니다</div>';
+  }
+  
+  // NG 상세 표
+  let ngHTML = '';
+  if(ngList.length){
+    const rows = ngList.map(c => `
+      <tr>
+        <td>${c.check_date||'-'}</td>
+        <td>${c.machine||'-'}</td>
+        <td>${c.inspector||'-'}</td>
+        <td class="ng-it">${c.ng_count||1}건</td>
+        <td>${(c.memo||'').replace(/</g,'&lt;')}</td>
+      </tr>`).join('');
+    ngHTML = `<table class="ng-tbl"><thead><tr><th style="width:90px">일자</th><th style="width:120px">호기</th><th style="width:90px">점검자</th><th style="width:70px">NG건수</th><th>특이사항/조치</th></tr></thead><tbody>${rows}</tbody></table>`;
+  } else {
+    ngHTML = '<div style="padding:14px;text-align:center;color:#15803d;background:#dcfce7;border:1.5px solid #16a34a;font-weight:700">✅ NG 사항 없음</div>';
+  }
+  
+  // 4단계 결재
+  const steps = [
+    { label:'작성', name:r.step1_name||'', date:r.step1_date||'', sig:r.step1_sig||'' },
+    { label:'검토', name:r.step2_name||'', date:r.step2_date||'', sig:r.step2_sig||'' },
+    { label:'확인', name:r.step3_name||'', date:r.step3_date||'', sig:r.step3_sig||'' },
+    { label:'승인', name:r.step4_name||'', date:r.step4_date||'', sig:r.step4_sig||'' }
+  ];
+  const apprHTML = steps.map(s => `
+    <div class="appr-cell">
+      <div style="background:#1e293b;color:#fff;padding:4px;font-weight:800;font-size:11px;letter-spacing:1px">${s.label}</div>
+      <div style="flex:1;display:flex;align-items:center;justify-content:center;background:#fff;padding:8px">
+        ${s.sig ? `<img src="${s.sig}" style="max-width:90%;max-height:80px">` : '<span style="color:#cbd5e1;font-size:10px">(미서명)</span>'}
+      </div>
+      <div style="background:#f1f5f9;padding:4px;font-size:10px;border-top:1px solid #1e293b">
+        <div style="font-weight:700">${s.name||'-'}</div>
+        <div style="color:#64748b">${s.date ? s.date.slice(0,10) : ''}</div>
+      </div>
+    </div>`).join('');
+  
+  // 코멘트 (편집 가능 여부는 현재 단계 본인일 때만, 단순화: 항상 편집 가능)
+  const commentEditable = (r.status||'') !== 'COMPLETED';
+  
+  area.innerHTML = `
+    <div class="paper-wrap">
+      <div class="paper-title">${tpl.name||r.template_name||'월간 점검 보고서'}</div>
+      <div class="paper-sub">${r.year}년 ${r.month}월 · ${r.template_code||''}</div>
+      
+      <div class="paper-info">
+        <div class="l">작성년월</div><div class="v">${r.year}-${String(r.month||'').padStart(2,'0')}</div>
+        <div class="l">점검표 코드</div><div class="v">${r.template_code||'-'}</div>
+        <div class="l">작성자</div><div class="v">${r.step1_name||'-'}</div>
+        <div class="l">상태</div><div class="v">${r.status||'DRAFT'}</div>
+        <div class="l">총 점검건수</div><div class="v">${total}건</div>
+        <div class="l">OK</div><div class="v" style="color:#15803d">${okCount}건</div>
+        <div class="l">NG</div><div class="v" style="color:#b91c1c">${ngCount}건</div>
+        <div class="l">합격률</div><div class="v">${okRate}%</div>
+      </div>
+      
+      <div class="paper-section-title">📊 점검 결과 매트릭스</div>
+      ${mtxHTML}
+      
+      <div class="paper-section-title">⚠ NG 상세 / 조치사항</div>
+      ${ngHTML}
+      
+      <div class="paper-section-title">📝 종합 의견</div>
+      <div class="paper-comment ${commentEditable?'editable':''}" 
+           ${commentEditable ? 'contenteditable="true" id="reportComment"' : ''}>${(r.comment||'').replace(/</g,'&lt;')}</div>
+      
+      <div class="approval-row">${apprHTML}</div>
+    </div>
+  `;
+  
+  if(bar) bar.style.display = '';
+  
+  // 본인이 현재 단계 결재자면 사인 버튼 표시
+  const myPin = (typeof getMyPin === 'function') ? getMyPin() : '';
+  const nextPin = r.next_approver_pin || '';
+  const btnSign = document.getElementById('btnSign');
+  const btnReject = document.getElementById('btnReject');
+  if(btnSign) btnSign.style.display = (myPin && myPin === nextPin && r.status !== 'COMPLETED') ? '' : 'none';
+  if(btnReject) btnReject.style.display = (myPin && myPin === nextPin && r.status !== 'COMPLETED' && (r.status === 'IN_PROGRESS' || r.status === 'REVIEW')) ? '' : 'none';
+}
+
+// 보고서 닫기
+function closeReport(){
+  currentReport = null;
+  currentChecks = [];
+  currentTemplate = null;
+  const tabReport = document.getElementById('tabReport');
+  if(tabReport) tabReport.style.display = 'none';
+  const bar = document.getElementById('actionBar');
+  if(bar) bar.style.display = 'none';
+  const area = document.getElementById('paperArea');
+  if(area) area.innerHTML = '';
+  swTab(0);
+}
+
+// 통계 재집계 - 점검 데이터 다시 로드 후 재렌더
+async function recalcStats(){
+  if(!currentReport){ alert('열려있는 보고서가 없습니다'); return; }
+  try{
+    currentChecks = await loadCheckData(currentReport, currentTemplate||{});
+    renderPaperReport();
+    alert('✅ 통계 재집계 완료: '+currentChecks.length+'건');
+  }catch(e){ alert('재집계 실패: '+e.message); }
+}
+
+// 임시저장
+async function saveDraft(){
+  if(!currentReport){ alert('열려있는 보고서가 없습니다'); return; }
+  try{
+    const commentEl = document.getElementById('reportComment');
+    const comment = commentEl ? commentEl.innerText.trim() : (currentReport.comment||'');
+    await sbUpdate('p_monthly_report', `id=eq.${currentReport.id}`, {
+      comment: comment,
+      updated_at: new Date().toISOString()
+    });
+    currentReport.comment = comment;
+    alert('💾 임시저장 완료');
+  }catch(e){ alert('저장 실패: '+e.message); }
+}
+
+// 인쇄
+function printReport(){
+  window.print();
+}
+
+// PDF 다운로드
+async function downloadPDF(){
+  if(!currentReport){ alert('열려있는 보고서가 없습니다'); return; }
+  const ok = await loadPdfLibs();
+  if(!ok) return;
+  const area = document.querySelector('.paper-wrap');
+  if(!area){ alert('보고서 본문을 찾을 수 없습니다'); return; }
+  try{
+    const canvas = await html2canvas(area, { scale: 2, backgroundColor: '#fff', useCORS: true });
+    const img = canvas.toDataURL('image/png');
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ orientation:'portrait', unit:'mm', format:'a4' });
+    const pageW = 210, pageH = 297;
+    const imgW = pageW - 20;
+    const imgH = canvas.height * imgW / canvas.width;
+    let pos = 10;
+    let heightLeft = imgH;
+    pdf.addImage(img, 'PNG', 10, pos, imgW, imgH);
+    heightLeft -= (pageH - 20);
+    while(heightLeft > 0){
+      pdf.addPage();
+      pos = -(imgH - heightLeft - 10);
+      pdf.addImage(img, 'PNG', 10, pos, imgW, imgH);
+      heightLeft -= (pageH - 20);
+    }
+    const fname = `${currentReport.template_code||'report'}_${currentReport.year}-${String(currentReport.month||'').padStart(2,'0')}.pdf`;
+    pdf.save(fname);
+  }catch(e){ alert('PDF 생성 실패: '+e.message); }
+}
+
+// =========================================================
+// 사인/반려 모달
+// =========================================================
+let _sigPad = null;
+let _sigCtx = null;
+let _sigDrawing = false;
+let _sigEmpty = true;
+
+function openSignModal(){
+  if(!currentReport){ alert('열려있는 보고서가 없습니다'); return; }
+  let modal = document.getElementById('signModal');
+  if(!modal){
+    modal = document.createElement('div');
+    modal.id = 'signModal';
+    modal.className = 'modal-overlay';
+    modal.style.cssText = 'display:flex;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:99999;align-items:center;justify-content:center;padding:14px';
+    modal.innerHTML = `
+      <div style="background:#1e293b;border-radius:8px;padding:20px;max-width:500px;width:100%;color:#fff">
+        <h3 style="margin-bottom:12px">✍ 전자 서명</h3>
+        <div style="background:#fff;border-radius:4px;border:2px solid #f59e0b">
+          <canvas id="sigPad" width="460" height="200" style="display:block;width:100%;height:200px;cursor:crosshair"></canvas>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:12px;justify-content:flex-end">
+          <button class="btn btn-ghost" onclick="clearSig()">지우기</button>
+          <button class="btn btn-ghost" onclick="closeSignModal()">취소</button>
+          <button class="btn btn-pri" onclick="confirmSign()">확인 및 결재</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+  } else {
+    modal.style.display = 'flex';
+  }
+  // 캔버스 초기화
+  _sigPad = document.getElementById('sigPad');
+  _sigCtx = _sigPad.getContext('2d');
+  _sigCtx.fillStyle = '#fff';
+  _sigCtx.fillRect(0,0,_sigPad.width,_sigPad.height);
+  _sigCtx.strokeStyle = '#000';
+  _sigCtx.lineWidth = 2;
+  _sigCtx.lineCap = 'round';
+  _sigEmpty = true;
+  
+  const getPos = (e) => {
+    const r = _sigPad.getBoundingClientRect();
+    const t = e.touches ? e.touches[0] : e;
+    return { x: (t.clientX-r.left)*(_sigPad.width/r.width), y: (t.clientY-r.top)*(_sigPad.height/r.height) };
+  };
+  const start = (e) => { e.preventDefault(); _sigDrawing=true; _sigEmpty=false; const p=getPos(e); _sigCtx.beginPath(); _sigCtx.moveTo(p.x,p.y); };
+  const move  = (e) => { if(!_sigDrawing)return; e.preventDefault(); const p=getPos(e); _sigCtx.lineTo(p.x,p.y); _sigCtx.stroke(); };
+  const end   = ()  => { _sigDrawing=false; };
+  
+  _sigPad.onmousedown = start; _sigPad.onmousemove = move; _sigPad.onmouseup = end; _sigPad.onmouseleave = end;
+  _sigPad.ontouchstart = start; _sigPad.ontouchmove = move; _sigPad.ontouchend = end;
+}
+
+function clearSig(){
+  if(!_sigCtx) return;
+  _sigCtx.fillStyle = '#fff';
+  _sigCtx.fillRect(0,0,_sigPad.width,_sigPad.height);
+  _sigEmpty = true;
+}
+
+function closeSignModal(){
+  const m = document.getElementById('signModal');
+  if(m) m.style.display = 'none';
+}
+
+async function confirmSign(){
+  if(_sigEmpty){ alert('서명을 그려주세요'); return; }
+  if(!currentReport){ alert('보고서가 없습니다'); return; }
+  const dataUrl = _sigPad.toDataURL('image/png');
+  const myPin = getMyPin();
+  const myName = getMyName();
+  
+  // 현재 단계 판정 (next_approver_pin이 본인 PIN일 때만 진행)
+  if(currentReport.next_approver_pin !== myPin){
+    alert('현재 본인 결재 차례가 아닙니다');
+    return;
+  }
+  
+  // 1~4단계 중 본인 단계 찾기
+  const steps = [1,2,3,4];
+  let myStep = 0;
+  for(const s of steps){
+    if(currentReport['step'+s+'_pin'] === myPin && !currentReport['step'+s+'_sig']){
+      myStep = s; break;
+    }
+  }
+  if(!myStep){ alert('결재 단계를 찾을 수 없습니다'); return; }
+  
+  // 다음 단계 결정
+  const update = {
+    ['step'+myStep+'_sig']: dataUrl,
+    ['step'+myStep+'_date']: new Date().toISOString(),
+    ['step'+myStep+'_name']: myName,
+    updated_at: new Date().toISOString()
+  };
+  // 다음 결재자 설정
+  if(myStep < 4){
+    const nextPin = currentReport['step'+(myStep+1)+'_pin'];
+    const nextName = currentReport['step'+(myStep+1)+'_name'];
+    update.next_approver_pin = nextPin || '';
+    update.next_approver_name = nextName || '';
+    update.status = myStep === 1 ? 'REVIEW' : (myStep === 2 ? 'CHECK' : 'APPROVAL');
+  } else {
+    update.next_approver_pin = '';
+    update.next_approver_name = '';
+    update.status = 'COMPLETED';
+    update.completed_at = new Date().toISOString();
+  }
+  
+  try{
+    await sbUpdate('p_monthly_report', `id=eq.${currentReport.id}`, update);
+    // 로그
+    try{
+      await sbInsert('p_monthly_approval_log', {
+        report_id: currentReport.id, step: myStep, action: 'SIGN',
+        actor_pin: myPin, actor_name: myName, created_at: new Date().toISOString()
+      });
+    }catch(e){ console.warn('approval_log insert failed:', e.message); }
+    Object.assign(currentReport, update);
+    closeSignModal();
+    renderPaperReport();
+    alert(myStep === 4 ? '🎉 최종 승인 완료!' : '✅ 결재 완료 - 다음 결재자에게 전달됨');
+  }catch(e){ alert('서명 저장 실패: '+e.message); }
+}
+
+// 반려 모달
+function openRejectModal(){
+  if(!currentReport){ alert('열려있는 보고서가 없습니다'); return; }
+  let modal = document.getElementById('rejectModal');
+  if(!modal){
+    modal = document.createElement('div');
+    modal.id = 'rejectModal';
+    modal.style.cssText = 'display:flex;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:99999;align-items:center;justify-content:center;padding:14px';
+    modal.innerHTML = `
+      <div style="background:#1e293b;border-radius:8px;padding:20px;max-width:500px;width:100%;color:#fff">
+        <h3 style="margin-bottom:12px">❌ 반려 사유 입력</h3>
+        <textarea id="rejectReason" rows="6" style="width:100%;padding:10px;border-radius:4px;border:1px solid #475569;background:#0f172a;color:#fff;font-family:inherit" placeholder="반려 사유를 입력하세요"></textarea>
+        <div style="display:flex;gap:8px;margin-top:12px;justify-content:flex-end">
+          <button class="btn btn-ghost" onclick="closeRejectModal()">취소</button>
+          <button class="btn btn-ng" onclick="confirmReject()">반려 처리</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+  } else {
+    modal.style.display = 'flex';
+    const ta = document.getElementById('rejectReason');
+    if(ta) ta.value = '';
+  }
+}
+
+function closeRejectModal(){
+  const m = document.getElementById('rejectModal');
+  if(m) m.style.display = 'none';
+}
+
+async function confirmReject(){
+  const reason = (document.getElementById('rejectReason')||{}).value || '';
+  if(!reason.trim()){ alert('반려 사유를 입력하세요'); return; }
+  if(!currentReport){ alert('보고서가 없습니다'); return; }
+  const myPin = getMyPin();
+  const myName = getMyName();
+  
+  try{
+    const update = {
+      status: 'REJECTED',
+      reject_reason: reason,
+      reject_by_pin: myPin,
+      reject_by_name: myName,
+      reject_at: new Date().toISOString(),
+      next_approver_pin: currentReport.step1_pin || '',
+      next_approver_name: currentReport.step1_name || '',
+      updated_at: new Date().toISOString()
+    };
+    await sbUpdate('p_monthly_report', `id=eq.${currentReport.id}`, update);
+    try{
+      await sbInsert('p_monthly_approval_log', {
+        report_id: currentReport.id, action: 'REJECT',
+        actor_pin: myPin, actor_name: myName, reason: reason,
+        created_at: new Date().toISOString()
+      });
+    }catch(e){ console.warn('approval_log insert failed:', e.message); }
+    Object.assign(currentReport, update);
+    closeRejectModal();
+    alert('❌ 반려 처리됨 - 작성자에게 다시 전달됨');
+    closeReport();
+  }catch(e){ alert('반려 실패: '+e.message); }
+}
+
+// 완료 보고서 검색
+async function searchReports(){
+  if(!isCfg()){ alert('Supabase 설정이 필요합니다'); return; }
+  try{
+    const yEl = document.getElementById('searchYear');
+    const mEl = document.getElementById('searchMonth');
+    const tEl = document.getElementById('searchTpl');
+    const sEl = document.getElementById('searchStatus');
+    const year = yEl ? yEl.value : '';
+    const month = mEl ? mEl.value : '';
+    const tpl = tEl ? tEl.value : '';
+    const status = sEl ? sEl.value : '';
+    
+    let qs = 'select=*&order=updated_at.desc&limit=200';
+    if(year) qs += `&year=eq.${year}`;
+    if(month) qs += `&month=eq.${month}`;
+    if(tpl) qs += `&template_code=eq.${encodeURIComponent(tpl)}`;
+    if(status) qs += `&status=eq.${status}`;
+    
+    const rows = await sbSelect('p_monthly_report', qs);
+    const cnt = document.getElementById('searchCount');
+    if(cnt) cnt.textContent = `(${rows.length}건)`;
+    
+    const list = document.getElementById('searchList');
+    if(!list) return;
+    if(!rows.length){
+      list.innerHTML = '<div style="padding:20px;text-align:center;color:#94a3b8">검색 결과가 없습니다</div>';
+      return;
+    }
+    list.innerHTML = rows.map(r => `
+      <div class="inbox-item" onclick="openReport(${r.id})" style="cursor:pointer">
+        <div class="inbox-title">${r.template_name||r.template_code||'-'} · ${r.year}-${String(r.month||'').padStart(2,'0')}</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:4px">
+          <span>상태: <b>${r.status||'-'}</b></span>
+          &nbsp;·&nbsp;<span>작성자: <b>${r.step1_name||'-'}</b></span>
+          &nbsp;·&nbsp;<span>업데이트: ${(r.updated_at||'').slice(0,10)}</span>
+        </div>
+      </div>`).join('');
+  }catch(e){ alert('검색 실패: '+e.message); }
+}
+
+</script>
+</body>
+</html>
