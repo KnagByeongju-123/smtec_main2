@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>📋 보고서 결재 v3.21</title>
+<title>📋 보고서 결재 v3.22</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;900&display=swap">
 <style>
   :root {
@@ -185,7 +185,7 @@
 <body>
 
 <div class="hdr">
-  <h1>📋 보고서 결재 v3.21</h1>
+  <h1>📋 보고서 결재 v3.22</h1>
   <p>점검표 통합 월별 결재 시스템 · 4단계 (작성·검토·확인·승인)</p>
   <div class="v">v3.13 · LS_KEY 누락 수정(탭 작동 복구)</div>
   <div id="hdrUserBadge" class="user-badge" style="display:none">👤 -</div>
@@ -2123,62 +2123,109 @@ async function downloadPDF(){
 }
 
 // =========================================================
-// 사인/반려 모달
+// 사인/반려 모달 - 기존 HTML 모달(#signModal, #rejectModal) 사용
 // =========================================================
 let _sigPad = null;
 let _sigCtx = null;
 let _sigDrawing = false;
 let _sigEmpty = true;
+let _sigMyStep = 0;  // 현재 사인하려는 단계
 
 function openSignModal(){
   if(!currentReport){ alert('열려있는 보고서가 없습니다'); return; }
-  let modal = document.getElementById('signModal');
-  if(!modal){
-    modal = document.createElement('div');
-    modal.id = 'signModal';
-    modal.className = 'modal-overlay';
-    modal.style.cssText = 'display:flex;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:99999;align-items:center;justify-content:center;padding:14px';
-    modal.innerHTML = `
-      <div style="background:#1e293b;border-radius:8px;padding:20px;max-width:500px;width:100%;color:#fff">
-        <h3 style="margin-bottom:12px">✍ 전자 서명</h3>
-        <div style="background:#fff;border-radius:4px;border:2px solid #f59e0b">
-          <canvas id="sigPad" width="460" height="200" style="display:block;width:100%;height:200px;cursor:crosshair"></canvas>
-        </div>
-        <div style="display:flex;gap:8px;margin-top:12px;justify-content:flex-end">
-          <button class="btn btn-ghost" onclick="clearSig()">지우기</button>
-          <button class="btn btn-ghost" onclick="closeSignModal()">취소</button>
-          <button class="btn btn-pri" onclick="confirmSign()">확인 및 결재</button>
-        </div>
-      </div>`;
-    document.body.appendChild(modal);
-  } else {
-    modal.style.display = 'flex';
+  const r = currentReport;
+  const myPin = getMyPin();
+  const myName = getMyName();
+  if(!myPin){ alert('설정 탭에서 PIN을 입력하세요'); return; }
+  
+  // 1~4 단계 중 본인 PIN이 일치하고 아직 사인 안 한 단계 찾기
+  let myStep = 0;
+  for(const s of [1,2,3,4]){
+    if(r['step'+s+'_pin'] === myPin && !r['step'+s+'_sig']){
+      myStep = s; break;
+    }
   }
-  // 캔버스 초기화
-  _sigPad = document.getElementById('sigPad');
-  _sigCtx = _sigPad.getContext('2d');
-  _sigCtx.fillStyle = '#fff';
-  _sigCtx.fillRect(0,0,_sigPad.width,_sigPad.height);
-  _sigCtx.strokeStyle = '#000';
-  _sigCtx.lineWidth = 2;
-  _sigCtx.lineCap = 'round';
-  _sigEmpty = true;
+  if(!myStep){ alert('현재 본인 결재 차례가 아닙니다'); return; }
+  _sigMyStep = myStep;
   
-  const getPos = (e) => {
-    const r = _sigPad.getBoundingClientRect();
-    const t = e.touches ? e.touches[0] : e;
-    return { x: (t.clientX-r.left)*(_sigPad.width/r.width), y: (t.clientY-r.top)*(_sigPad.height/r.height) };
-  };
-  const start = (e) => { e.preventDefault(); _sigDrawing=true; _sigEmpty=false; const p=getPos(e); _sigCtx.beginPath(); _sigCtx.moveTo(p.x,p.y); };
-  const move  = (e) => { if(!_sigDrawing)return; e.preventDefault(); const p=getPos(e); _sigCtx.lineTo(p.x,p.y); _sigCtx.stroke(); };
-  const end   = ()  => { _sigDrawing=false; };
+  // 다음 결재자 정보
+  let nextName = '-', nextPin = '';
+  if(myStep < 4){
+    nextName = r['step'+(myStep+1)+'_name'] || '-';
+    nextPin = r['step'+(myStep+1)+'_pin'] ? '(PIN: '+r['step'+(myStep+1)+'_pin']+')' : '';
+  } else {
+    nextName = '🎉 최종 승인 (다음 단계 없음)';
+  }
   
-  _sigPad.onmousedown = start; _sigPad.onmousemove = move; _sigPad.onmouseup = end; _sigPad.onmouseleave = end;
-  _sigPad.ontouchstart = start; _sigPad.ontouchmove = move; _sigPad.ontouchend = end;
+  // UI 채움
+  const titleEl = document.getElementById('signModalTitle');
+  if(titleEl) titleEl.textContent = `${STEP_NAMES[myStep]} 결재 사인`;
+  const roleEl = document.getElementById('signModalRole');
+  if(roleEl) roleEl.textContent = `${myName} (${STEP_NAMES[myStep]}자)`;
+  const nameEl = document.getElementById('nextApproverName');
+  if(nameEl) nameEl.textContent = nextName;
+  const pinEl = document.getElementById('nextApproverPin');
+  if(pinEl) pinEl.textContent = nextPin;
+  const commentEl = document.getElementById('signComment');
+  if(commentEl) commentEl.value = '';
+  
+  // 모달 표시
+  const modal = document.getElementById('signModal');
+  if(modal) modal.classList.add('show');
+  
+  // 캔버스 초기화 (모달 표시 후 실제 크기로 setup)
+  setTimeout(() => {
+    _sigPad = document.getElementById('sigCanvas');
+    if(!_sigPad) return;
+    const rect = _sigPad.getBoundingClientRect();
+    _sigPad.width = Math.max(rect.width, 300);
+    _sigPad.height = Math.max(rect.height, 150);
+    _sigCtx = _sigPad.getContext('2d');
+    _sigCtx.fillStyle = '#fff';
+    _sigCtx.fillRect(0,0,_sigPad.width,_sigPad.height);
+    _sigCtx.strokeStyle = '#000';
+    _sigCtx.lineWidth = 2;
+    _sigCtx.lineCap = 'round';
+    _sigCtx.lineJoin = 'round';
+    _sigEmpty = true;
+    
+    const getPos = (e) => {
+      const r = _sigPad.getBoundingClientRect();
+      const t = e.touches ? e.touches[0] : e;
+      return { 
+        x: (t.clientX - r.left) * (_sigPad.width / r.width), 
+        y: (t.clientY - r.top)  * (_sigPad.height / r.height) 
+      };
+    };
+    const start = (e) => { 
+      e.preventDefault(); 
+      _sigDrawing = true; 
+      _sigEmpty = false; 
+      const p = getPos(e); 
+      _sigCtx.beginPath(); 
+      _sigCtx.moveTo(p.x, p.y); 
+    };
+    const move = (e) => { 
+      if(!_sigDrawing) return; 
+      e.preventDefault(); 
+      const p = getPos(e); 
+      _sigCtx.lineTo(p.x, p.y); 
+      _sigCtx.stroke(); 
+    };
+    const end = () => { _sigDrawing = false; };
+    
+    _sigPad.onmousedown = start; 
+    _sigPad.onmousemove = move; 
+    _sigPad.onmouseup = end; 
+    _sigPad.onmouseleave = end;
+    _sigPad.ontouchstart = start; 
+    _sigPad.ontouchmove = move; 
+    _sigPad.ontouchend = end;
+  }, 50);
 }
 
 function clearSig(){
-  if(!_sigCtx) return;
+  if(!_sigCtx || !_sigPad) return;
   _sigCtx.fillStyle = '#fff';
   _sigCtx.fillRect(0,0,_sigPad.width,_sigPad.height);
   _sigEmpty = true;
@@ -2186,104 +2233,91 @@ function clearSig(){
 
 function closeSignModal(){
   const m = document.getElementById('signModal');
-  if(m) m.style.display = 'none';
+  if(m) m.classList.remove('show');
 }
 
 async function confirmSign(){
   if(_sigEmpty){ alert('서명을 그려주세요'); return; }
   if(!currentReport){ alert('보고서가 없습니다'); return; }
-  const dataUrl = _sigPad.toDataURL('image/png');
+  if(!_sigMyStep){ alert('결재 단계를 찾을 수 없습니다'); return; }
+  
   const myPin = getMyPin();
   const myName = getMyName();
+  const myStep = _sigMyStep;
+  const comment = ((document.getElementById('signComment')||{}).value || '').trim();
+  const dataUrl = _sigPad.toDataURL('image/png');
   
-  // 현재 단계 판정 (next_approver_pin이 본인 PIN일 때만 진행)
-  if(currentReport.next_approver_pin !== myPin){
-    alert('현재 본인 결재 차례가 아닙니다');
-    return;
-  }
-  
-  // 1~4단계 중 본인 단계 찾기
-  const steps = [1,2,3,4];
-  let myStep = 0;
-  for(const s of steps){
-    if(currentReport['step'+s+'_pin'] === myPin && !currentReport['step'+s+'_sig']){
-      myStep = s; break;
-    }
-  }
-  if(!myStep){ alert('결재 단계를 찾을 수 없습니다'); return; }
-  
-  // 다음 단계 결정
+  // 저장 update 객체
   const update = {
     ['step'+myStep+'_sig']: dataUrl,
     ['step'+myStep+'_date']: new Date().toISOString(),
     ['step'+myStep+'_name']: myName,
     updated_at: new Date().toISOString()
   };
-  // 다음 결재자 설정
+  if(comment) update['step'+myStep+'_comment'] = comment;
+  
+  // 다음 결재자/상태
   if(myStep < 4){
-    const nextPin = currentReport['step'+(myStep+1)+'_pin'];
-    const nextName = currentReport['step'+(myStep+1)+'_name'];
-    update.next_approver_pin = nextPin || '';
-    update.next_approver_name = nextName || '';
-    update.current_step = myStep + 1;  // 다음 단계로 이동
-    update.status = myStep === 1 ? 'REVIEW' : (myStep === 2 ? 'CHECK' : 'APPROVAL');
+    update.next_approver_pin = currentReport['step'+(myStep+1)+'_pin'] || '';
+    update.next_approver_name = currentReport['step'+(myStep+1)+'_name'] || '';
+    update.current_step = myStep + 1;
+    update.status = myStep === 1 ? 'REVIEWING' : (myStep === 2 ? 'CONFIRMING' : 'APPROVING');
   } else {
     update.next_approver_pin = '';
     update.next_approver_name = '';
-    update.current_step = 5;  // 완료
+    update.current_step = 5;
     update.status = 'COMPLETED';
     update.completed_at = new Date().toISOString();
   }
   
+  // 버튼 비활성화 (중복 클릭 방지)
+  const btn = document.getElementById('btnConfirmSign');
+  if(btn){ btn.disabled = true; btn.textContent = '저장 중...'; }
+  
   try{
     await sbUpdate('p_monthly_report', `id=eq.${currentReport.id}`, update);
-    // 로그
     try{
       await sbInsert('p_monthly_approval_log', {
-        report_id: currentReport.id, step: myStep, action: 'SIGN',
-        actor_pin: myPin, actor_name: myName, created_at: new Date().toISOString()
+        report_id: currentReport.id, 
+        step: myStep, 
+        action: 'SIGN',
+        actor_pin: myPin, 
+        actor_name: myName,
+        comment: comment || null,
+        created_at: new Date().toISOString()
       });
     }catch(e){ console.warn('approval_log insert failed:', e.message); }
     Object.assign(currentReport, update);
     closeSignModal();
     renderPaperReport();
+    if(typeof loadInbox === 'function') loadInbox();
     alert(myStep === 4 ? '🎉 최종 승인 완료!' : '✅ 결재 완료 - 다음 결재자에게 전달됨');
-  }catch(e){ alert('서명 저장 실패: '+e.message); }
+  }catch(e){ 
+    alert('서명 저장 실패: '+e.message); 
+  } finally {
+    if(btn){ btn.disabled = false; btn.textContent = '✅ 사인 + 다음 결재선'; }
+  }
 }
 
-// 반려 모달
+// =========================================================
+// 반려 모달 - 기존 HTML 모달(#rejectModal) 사용
+// =========================================================
 function openRejectModal(){
   if(!currentReport){ alert('열려있는 보고서가 없습니다'); return; }
-  let modal = document.getElementById('rejectModal');
-  if(!modal){
-    modal = document.createElement('div');
-    modal.id = 'rejectModal';
-    modal.style.cssText = 'display:flex;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:99999;align-items:center;justify-content:center;padding:14px';
-    modal.innerHTML = `
-      <div style="background:#1e293b;border-radius:8px;padding:20px;max-width:500px;width:100%;color:#fff">
-        <h3 style="margin-bottom:12px">❌ 반려 사유 입력</h3>
-        <textarea id="rejectReason" rows="6" style="width:100%;padding:10px;border-radius:4px;border:1px solid #475569;background:#0f172a;color:#fff;font-family:inherit" placeholder="반려 사유를 입력하세요"></textarea>
-        <div style="display:flex;gap:8px;margin-top:12px;justify-content:flex-end">
-          <button class="btn btn-ghost" onclick="closeRejectModal()">취소</button>
-          <button class="btn btn-ng" onclick="confirmReject()">반려 처리</button>
-        </div>
-      </div>`;
-    document.body.appendChild(modal);
-  } else {
-    modal.style.display = 'flex';
-    const ta = document.getElementById('rejectReason');
-    if(ta) ta.value = '';
-  }
+  const ta = document.getElementById('rejectReason');
+  if(ta) ta.value = '';
+  const modal = document.getElementById('rejectModal');
+  if(modal) modal.classList.add('show');
 }
 
 function closeRejectModal(){
   const m = document.getElementById('rejectModal');
-  if(m) m.style.display = 'none';
+  if(m) m.classList.remove('show');
 }
 
 async function confirmReject(){
-  const reason = (document.getElementById('rejectReason')||{}).value || '';
-  if(!reason.trim()){ alert('반려 사유를 입력하세요'); return; }
+  const reason = ((document.getElementById('rejectReason')||{}).value || '').trim();
+  if(!reason){ alert('반려 사유를 입력하세요'); return; }
   if(!currentReport){ alert('보고서가 없습니다'); return; }
   const myPin = getMyPin();
   const myName = getMyName();
@@ -2297,13 +2331,17 @@ async function confirmReject(){
       reject_at: new Date().toISOString(),
       next_approver_pin: currentReport.step1_pin || '',
       next_approver_name: currentReport.step1_name || '',
+      current_step: 1,
       updated_at: new Date().toISOString()
     };
     await sbUpdate('p_monthly_report', `id=eq.${currentReport.id}`, update);
     try{
       await sbInsert('p_monthly_approval_log', {
-        report_id: currentReport.id, action: 'REJECT',
-        actor_pin: myPin, actor_name: myName, reason: reason,
+        report_id: currentReport.id, 
+        action: 'REJECT',
+        actor_pin: myPin, 
+        actor_name: myName, 
+        reason: reason,
         created_at: new Date().toISOString()
       });
     }catch(e){ console.warn('approval_log insert failed:', e.message); }
@@ -2311,6 +2349,7 @@ async function confirmReject(){
     closeRejectModal();
     alert('❌ 반려 처리됨 - 작성자에게 다시 전달됨');
     closeReport();
+    if(typeof loadInbox === 'function') loadInbox();
   }catch(e){ alert('반려 실패: '+e.message); }
 }
 
