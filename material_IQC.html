@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>소재 수입검사 v3.0 | (주)태진다이텍</title>
+<title>소재 수입검사 v2.8 | (주)태진다이텍</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Malgun Gothic','맑은 고딕','Segoe UI',sans-serif;background:#f4f6f9;color:#222;font-size:14px;line-height:1.5}
@@ -143,7 +143,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 
 <div class="hdr">
   <div>
-    <h1>📋 소재 수입검사 시스템 v3.0</h1>
+    <h1>📋 소재 수입검사 시스템 v2.8</h1>
     <div class="sub">(주)태진다이텍 · 품질관리팀 · LOT 그룹 자동 통합 (재질+두께+폭+LOT베이스)</div>
   </div>
   <div class="user-info" id="userInfoBar">검사자: <b id="loginUser">로그인 필요</b></div>
@@ -261,7 +261,6 @@ table{width:100%;border-collapse:collapse;font-size:13px}
       <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn btn-sec" onclick="testConnection()">🔌 연결 테스트</button>
         <button class="btn btn-warn" onclick="loadFromSupabase()">🔄 즉시 동기화</button>
-        <button class="btn btn-pri" onclick="diagnoseServer()">🔬 서버 진단</button>
       </div>
       <div id="cfgStatus" style="margin-top:12px;font-size:13px"></div>
     </div>
@@ -445,13 +444,13 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 
 <script>
 /* ============================================================
-   소재 수입검사 시스템 v3.0
+   소재 수입검사 시스템 v2.8
    - LOT 그룹 = 재질 + 두께 + 폭 + LOT '-' 이전 베이스 (공급자별)
    - 검사자 = 로그인 정보 자동
    - Supabase 연결 정보 고정
    ============================================================ */
 
-const APP_VERSION = '3.0';
+const APP_VERSION = '2.8';
 
 // 🔒 고정 연결 정보 (수정 불가)
 const SB_URL = 'https://omngtyewdaqpphnzeate.supabase.co';
@@ -619,45 +618,19 @@ function showTab(name){
 /* ================ Supabase 동기화 ================ */
 async function loadFromSupabase(){
   try{
-    // ① inspection_certs - 코일별 원본
-    const url1 = SB_URL + '/rest/v1/inspection_certs?select=*&order=created_at.desc&limit=1000';
-    const res1 = await fetch(url1, {
+    const url = SB_URL + '/rest/v1/inspection_certs?select=*&order=created_at.desc&limit=1000';
+    const res = await fetch(url, {
       headers: {
         'apikey': SB_KEY,
         'Authorization': 'Bearer ' + SB_KEY,
         'Content-Type': 'application/json'
       }
     });
-    if(!res1.ok){
-      const txt = await res1.text();
-      throw new Error(`HTTP ${res1.status}: ${txt.substring(0,200)}`);
+    if(!res.ok){
+      const txt = await res.text();
+      throw new Error(`HTTP ${res.status}: ${txt.substring(0,200)}`);
     }
-    raw = await res1.json();
-
-    // ② iqc_inspections - 다른 PC에서 발행한 검사 결과 병합
-    try{
-      const url2 = SB_URL + '/rest/v1/iqc_inspections?select=*&order=updated_at.desc&limit=2000';
-      const res2 = await fetch(url2, {
-        headers: {
-          'apikey': SB_KEY,
-          'Authorization': 'Bearer ' + SB_KEY,
-          'Content-Type': 'application/json'
-        }
-      });
-      if(res2.ok){
-        const serverInsps = await res2.json();
-        mergeServerInspections(serverInsps);
-      } else {
-        const txt = await res2.text();
-        console.warn('[iqc_inspections fetch]', res2.status, txt.substring(0,200));
-        if(res2.status === 404 || /PGRST205|relation .* does not/i.test(txt)){
-          console.warn('⚠ iqc_inspections 테이블이 없습니다. 로컬 데이터만 사용. 설정 > 서버 진단에서 SQL 생성 안내 확인.');
-        }
-      }
-    }catch(e){
-      console.warn('[iqc_inspections fetch]', e);
-    }
-
+    raw = await res.json();
     localStorage.setItem(LS_KEY_LASTSYNC, new Date().toISOString());
     showToast(`✅ ${raw.length}건 동기화 완료`);
     renderWait();
@@ -666,72 +639,6 @@ async function loadFromSupabase(){
   }catch(e){
     console.error('[Supabase load]', e);
     showToast('❌ 조회 실패: ' + e.message);
-  }
-}
-
-/* 서버 iqc_inspections → 로컬 inspections 병합
-   - groupKey 기준 매칭
-   - updated_at 더 최신인 쪽 채택
-   - 서버에만 있는 항목은 로컬에 추가 (다른 PC에서 발행한 결과)
-*/
-function mergeServerInspections(serverInsps){
-  if(!Array.isArray(serverInsps)) return;
-
-  const byKey = new Map();
-  inspections.forEach(x => byKey.set(x.groupKey, x));
-
-  let added = 0, updated = 0;
-  serverInsps.forEach(srv => {
-    const k = srv.group_key;
-    if(!k) return;
-
-    // 서버 row → 로컬 형식 변환
-    const srvInsp = {
-      groupKey: k,
-      certNo: srv.cert_no || '',
-      supplier: srv.supplier || '',
-      material: srv.material_type || '',
-      thickness: srv.thickness != null ? parseFloat(srv.thickness) : null,
-      width: srv.width_mm != null ? parseFloat(srv.width_mm) : null,
-      lotBase: srv.lot_base || '',
-      lotsDetail: (srv.lots_detail || '').split(',').map(s=>s.trim()).filter(Boolean),
-      heat: srv.heat_no || '',
-      recvDate: srv.receipt_date || '',
-      weight: srv.total_weight != null ? parseFloat(srv.total_weight) : null,
-      coilCount: srv.coil_count || 1,
-      supJudge: srv.sup_judge || '',
-      inspDate: srv.insp_date || '',
-      inspector: srv.inspector || '',
-      inspectorDept: srv.inspector_dept || '',
-      approver: srv.approver || '',
-      approverRole: srv.approver_role || '',
-      finalJudge: srv.final_judge || '',
-      label: srv.label || '부착',
-      remark: srv.remark || '',
-      meas: srv.meas_data || {},
-      certIds: srv.cert_ids || [],
-      completed: !!(srv.final_judge && srv.final_judge !== '대기'),
-      updatedAt: srv.updated_at || '',
-      createdAt: srv.updated_at || ''
-    };
-
-    const local = byKey.get(k);
-    if(!local){
-      inspections.push(srvInsp);
-      added++;
-    } else {
-      const srvT = new Date(srv.updated_at || 0).getTime();
-      const localT = new Date(local.updatedAt || 0).getTime();
-      if(srvT > localT){
-        Object.assign(local, srvInsp);
-        updated++;
-      }
-    }
-  });
-
-  if(added || updated){
-    console.log(`[mergeServerInspections] 추가 ${added}건, 갱신 ${updated}건`);
-    saveInspsToLS();
   }
 }
 
@@ -752,7 +659,6 @@ async function pushInspToSupabase(insp){
     inspector: insp.inspector,
     inspector_dept: insp.inspectorDept,
     approver: insp.approver,
-    approver_role: insp.approverRole || '',
     final_judge: insp.finalJudge,
     label: insp.label,
     remark: insp.remark,
@@ -778,48 +684,22 @@ async function pushInspToSupabase(insp){
     if(!res.ok){
       const txt = await res.text();
       console.warn('[iqc_inspections upsert]', res.status, txt);
-      // PostgREST 에러코드 추출
-      let code = '';
-      let hint = '';
-      try{
-        const j = JSON.parse(txt);
-        code = j.code || '';
-        hint = j.message || j.hint || '';
-        if(code === 'PGRST205' || /relation .* does not exist/i.test(txt)){
-          hint = 'iqc_inspections 테이블이 없습니다. Supabase에서 테이블을 생성해야 합니다.';
-        } else if(code === 'PGRST204' || /column .* does not exist/i.test(txt)){
-          const colMatch = txt.match(/column ['"]?(\w+)['"]?/);
-          hint = `iqc_inspections 테이블에 컬럼이 부족합니다${colMatch ? ` (누락: ${colMatch[1]})` : ''}.`;
-        } else if(code === '42501'){
-          hint = 'RLS 권한 오류 - GRANT ALL ON iqc_inspections TO anon, authenticated 필요';
-        }
-      }catch(e){}
-      return { ok: false, status: res.status, code, error: hint || txt.substring(0, 200) };
+      return false;
     }
-    return { ok: true };
+    return true;
   }catch(e){
     console.error('[push insp]', e);
-    return { ok: false, error: e.message || String(e) };
+    return false;
   }
 }
 
 /* ================ 검사 대기 그룹 산출 ================ */
 function computeWaitGroups(){
-  // 완료 그룹 식별 (3중 안전장치)
-  // ① 로컬 inspections에서 finalJudge=OK/NG/보류
-  // ② 서버 inspection_certs.final_judge가 '대기'가 아닌 row의 그룹키
-  //    → 다른 PC에서 발행한 결과가 raw에 PATCH되어 있으면 자동 반영
   const completedKeys = new Set(
     inspections
       .filter(x => x.finalJudge==='OK' || x.finalJudge==='NG' || x.finalJudge==='보류')
       .map(x => x.groupKey)
   );
-  raw.forEach(r => {
-    const fj = (r.final_judge || '').trim();
-    if(fj && fj !== '대기'){
-      completedKeys.add(groupKeyOf(r));
-    }
-  });
 
   const map = new Map();
   raw.forEach(r => {
@@ -1233,18 +1113,24 @@ function buildMeasTable(){
 function parseSpec(spec){
   if(!spec) return null;
   const s = String(spec).trim();
+  // 범위: 1.0 ~ 2.0
   let m = s.match(/(-?\d+(?:\.\d+)?)\s*~\s*(-?\d+(?:\.\d+)?)/);
   if(m) return { min: parseFloat(m[1]), max: parseFloat(m[2]) };
+  // ≤ x
   m = s.match(/[≤<]=?\s*(-?\d+(?:\.\d+)?)/);
   if(m) return { max: parseFloat(m[1]) };
+  // ≥ x
   m = s.match(/[≥>]=?\s*(-?\d+(?:\.\d+)?)/);
   if(m) return { min: parseFloat(m[1]) };
-  m = s.match(/(-?\d+(?:\.\d+)?)\s*[±]\s*(\d+(?:\.\d+)?)/);
+  // ± 패턴: 숫자 뒤 단위 문자(T, mm, 한글 등) 허용
+  // 예: '1.25T ±0.05', '248mm ±0.1', '0.6 ± 0.05'
+  m = s.match(/(-?\d+(?:\.\d+)?)\s*[A-Za-z가-힣]*\s*[±]\s*(\d+(?:\.\d+)?)/);
   if(m){
     const c = parseFloat(m[1]); const t = parseFloat(m[2]);
     return { min: c-t, max: c+t };
   }
-  m = s.match(/(-?\d+(?:\.\d+)?)\s*\+\s*(\d+(?:\.\d+)?)\s*\/\s*-\s*(\d+(?:\.\d+)?)/);
+  // +/- 비대칭: 1.0 +0.05/-0.02
+  m = s.match(/(-?\d+(?:\.\d+)?)\s*[A-Za-z가-힣]*\s*\+\s*(\d+(?:\.\d+)?)\s*\/\s*-\s*(\d+(?:\.\d+)?)/);
   if(m){
     const c = parseFloat(m[1]);
     return { min: c-parseFloat(m[3]), max: c+parseFloat(m[2]) };
@@ -1405,9 +1291,30 @@ function quickOKAll(){
   const matSpec = document.getElementById('m_mat_spec');
   if(!matSpec.value.trim()) matSpec.value = matName;
 
-  // 두께/폭 규격: 입고값 기준 ±0.02 (사용자 요청 공차 범위)
-  document.getElementById('m_thick_spec').value = `${t.toFixed(3)} ± 0.02`;
-  document.getElementById('m_width_spec').value = `${w.toFixed(2)} ± 0.02`;
+  // 두께/폭 규격: 기존 입력값이 있으면 보존, 없을 때만 ±0.02 자동
+  const thickSpecEl = document.getElementById('m_thick_spec');
+  if(!thickSpecEl.value.trim()){
+    thickSpecEl.value = `${t.toFixed(3)} ± 0.05`;
+  }
+  const widthSpecEl = document.getElementById('m_width_spec');
+  if(!widthSpecEl.value.trim()){
+    widthSpecEl.value = `${w.toFixed(2)} ± 0.1`;
+  }
+
+  // 규격에서 공차 추출 (분산 범위 결정에 사용)
+  // 예: '1.25T ±0.05' → 0.05 / '248mm ±0.1' → 0.1
+  // 못 찾을 시 기본값: 두께 ±0.05, 폭 ±0.1
+  const extractTol = (spec, def) => {
+    const m = String(spec||'').match(/[±]\s*(\d+(?:\.\d+)?)/);
+    return m ? parseFloat(m[1]) : def;
+  };
+  const thickTol = extractTol(thickSpecEl.value, 0.05);
+  const widthTol = extractTol(widthSpecEl.value, 0.1);
+
+  // 측정값 분산 안전 마진: 공차의 ~80% 사용 (경계값 NG 방지)
+  // 너무 작은 마진은 분해능에 못 미쳐 분산이 안 되므로 최소 분해능 단위 보장
+  const thickSafe = Math.max(thickTol * 0.8, 0.001);
+  const widthSafe = Math.max(widthTol * 0.8, 0.01);
 
   // ─── 측정값 자동 채우기 ───
   // 공급자(sup): 항상 자동 입력 (강제 덮어쓰기)
@@ -1430,27 +1337,25 @@ function quickOKAll(){
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // 두께 - 마이크로미터 (분해능 0.001)
-  // ▶ 공급자값이 이미 있으면(밀시트 cert_data) → 보존, 수요자는 공급자 min~max 내
-  // ▶ 공급자값이 없으면 → 양쪽 모두 입고값 ±0.01 범위 내 분산
+  // ▶ 분산 범위: 규격 공차의 80% (예: 규격 ±0.05 → 분산 ±0.04)
+  // ▶ 공급자값 있으면 보존, 없으면 양쪽 모두 자동 생성
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   const thickSupExisting = ['sup1','sup2','sup3'].map(s => document.getElementById('m_thick_'+s).value.trim());
   const thickSupHasData = thickSupExisting.some(v => v !== '');
 
   if(!thickSupHasData){
-    // 공급자값 없음 → 양쪽 모두 입고값 ±0.01 분산
-    const thickBoth = generateMeasurements(t, 'micrometer', 0.008);  // 안전 마진 적용한 ±0.01
+    // 공급자값 없음 → 양쪽 모두 분산
+    const thickBoth = generateMeasurements(t, 'micrometer', thickSafe);
     ['sup1','sup2','sup3'].forEach((s,i) => {
       document.getElementById('m_thick_'+s).value = thickBoth[i];
     });
-    // 수요자: 공급자와 동일 범위 내에서 별도 랜덤
     const thickCusBoth = generateCustomerInRange(thickBoth, 'micrometer');
     ['cus1','cus2','cus3'].forEach((s,i) => {
       fillIfEmpty('m_thick_'+s, thickCusBoth[i]);
     });
   } else {
     // 공급자값 있음 → 보존, 빈 칸만 채움. 수요자는 공급자 min~max 내
-    // (혹시 1~2개만 비어있으면 입고값 ±0.018 분산값으로 채움)
-    const thickFill = generateMeasurements(t, 'micrometer');
+    const thickFill = generateMeasurements(t, 'micrometer', thickSafe);
     ['sup1','sup2','sup3'].forEach((s,i) => {
       fillIfEmpty('m_thick_'+s, thickFill[i]);
     });
@@ -1464,14 +1369,13 @@ function quickOKAll(){
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // 폭 - 디지털 버니어캘리퍼스 (분해능 0.01)
+  // ▶ 분산 범위: 규격 공차의 80% (예: 규격 ±0.1 → 분산 ±0.08)
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   const widthSupExisting = ['sup1','sup2','sup3'].map(s => document.getElementById('m_width_'+s).value.trim());
   const widthSupHasData = widthSupExisting.some(v => v !== '');
 
   if(!widthSupHasData){
-    // 공급자값 없음 → 양쪽 모두 입고값 ±0.01 분산
-    // 디지털 캘리퍼스 분해능 0.01 = 공차 0.01 → -0.01, 0, +0.01 3개 후보로 충분
-    const widthBoth = generateMeasurements(w, 'caliper', 0.01);
+    const widthBoth = generateMeasurements(w, 'caliper', widthSafe);
     ['sup1','sup2','sup3'].forEach((s,i) => {
       document.getElementById('m_width_'+s).value = widthBoth[i];
     });
@@ -1480,8 +1384,7 @@ function quickOKAll(){
       fillIfEmpty('m_width_'+s, widthCusBoth[i]);
     });
   } else {
-    // 공급자값 있음 → 보존, 빈 칸만 채움. 수요자는 공급자 min~max 내
-    const widthFill = generateMeasurements(w, 'caliper');
+    const widthFill = generateMeasurements(w, 'caliper', widthSafe);
     ['sup1','sup2','sup3'].forEach((s,i) => {
       fillIfEmpty('m_width_'+s, widthFill[i]);
     });
@@ -1601,10 +1504,10 @@ function openInsp(groupKey){
     document.getElementById('m_surface_spec').value = '결함없을것';
     document.getElementById('m_mat_spec').value = g.material || '';
     if(g.thickness != null){
-      document.getElementById('m_thick_spec').value = `${parseFloat(g.thickness).toFixed(3)} ± 0.02`;
+      document.getElementById('m_thick_spec').value = `${parseFloat(g.thickness).toFixed(3)} ± 0.05`;
     }
     if(g.width != null){
-      document.getElementById('m_width_spec').value = `${parseFloat(g.width).toFixed(2)} ± 0.02`;
+      document.getElementById('m_width_spec').value = `${parseFloat(g.width).toFixed(2)} ± 0.1`;
     }
     // 공급자 cert_data가 있으면 측정값 자동 채움
     const firstRaw = raw.find(r => groupKeyOf(r) === groupKey);
@@ -1717,8 +1620,8 @@ function hasUnsavedChanges(){
     // 두께/폭 규격 default 체크
     const t = parseFloat(document.getElementById('i_thickness').value);
     const w = parseFloat(document.getElementById('i_width').value);
-    const tDef = isFinite(t) ? `${t.toFixed(3)} ± 0.02` : '';
-    const wDef = isFinite(w) ? `${w.toFixed(2)} ± 0.02` : '';
+    const tDef = isFinite(t) ? `${t.toFixed(3)} ± 0.05` : '';
+    const wDef = isFinite(w) ? `${w.toFixed(2)} ± 0.1` : '';
     const tSpec = (document.getElementById('m_thick_spec').value||'').trim();
     const wSpec = (document.getElementById('m_width_spec').value||'').trim();
     if(tSpec && tSpec !== tDef) return true;
@@ -1804,16 +1707,10 @@ async function saveInsp(complete){
   }
   saveInspsToLS();
 
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // 서버 저장 시도 1: iqc_inspections 테이블에 upsert
-  // 서버 저장 시도 2: inspection_certs.final_judge PATCH (검사완료일 때만)
-  // → 둘 다 실패하면 사용자에게 명확히 경고 (로컬만 저장됨)
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  const pushRes = await pushInspToSupabase(insp);
+  let pushed = await pushInspToSupabase(insp);
 
-  let patchRes = { ok: 0, fail: 0 };
   if(complete){
-    patchRes = await updateRawFinalJudge(insp.certIds, finalJudge);
+    await updateRawFinalJudge(insp.certIds, finalJudge);
     raw.forEach(r => {
       if(insp.certIds.includes(r.id)) r.final_judge = finalJudge;
     });
@@ -1823,69 +1720,30 @@ async function saveInsp(complete){
   renderWait();
   renderDone();
 
-  // 결과 알림
   if(complete){
-    const totalCerts = insp.certIds.length || 0;
-    const certOK = totalCerts > 0 && patchRes.fail === 0 && patchRes.ok === totalCerts;
-    const inspOK = pushRes.ok;
-
-    if(inspOK && certOK){
-      showToast(`✅ 검사완료 - 성적서 ${insp.certNo} 발행 (서버 동기화 완료)`);
-    } else if(inspOK && totalCerts === 0){
-      // certIds가 없는 경우 (raw에서 못 찾음) - 그래도 iqc_inspections는 저장됨
-      showToast(`✅ 검사완료 - 성적서 ${insp.certNo} 발행 (서버 동기화)`);
-    } else {
-      // 둘 중 하나라도 실패
-      const errMsg =
-        `⚠ 검사완료 - 성적서 ${insp.certNo}\n\n` +
-        `📦 로컬 저장: ✅\n` +
-        `☁ 서버 iqc_inspections: ${inspOK ? '✅' : '❌ ' + (pushRes.error || '실패')}\n` +
-        `📋 inspection_certs PATCH: ${totalCerts === 0 ? '코일 ID 없음' : (patchRes.ok + '/' + totalCerts + ' 성공' + (patchRes.fail ? ' / ' + patchRes.fail + ' 실패' : ''))}\n` +
-        (patchRes.error ? `\n에러: ${patchRes.error}\n` : '') +
-        `\n⚠ 다른 PC에서 검사완료가 보이지 않을 수 있습니다.\n` +
-        (pushRes.error && pushRes.error.includes('테이블이 없') ? '\n[해결] 설정 탭의 "서버 진단" 버튼을 눌러 안내된 SQL을 실행하세요.' : '');
-      alert(errMsg);
-    }
+    showToast(`✅ 검사완료 - 성적서 ${insp.certNo} 발행${pushed?' (서버 동기화)':' (로컬만)'}`);
   } else {
-    if(pushRes.ok){
-      showToast(`💾 임시저장 완료 (서버 동기화)`);
-    } else {
-      showToast(`💾 임시저장 완료 (로컬만 - ${pushRes.error || '서버 실패'})`);
-    }
+    showToast(`💾 임시저장 완료${pushed?' (서버 동기화)':' (로컬만)'}`);
   }
 }
 
 async function updateRawFinalJudge(certIds, judge){
-  if(!certIds || !certIds.length) return { ok: 0, fail: 0 };
-  let ok = 0, fail = 0;
-  let lastError = '';
+  if(!certIds || !certIds.length) return;
   try{
     for(const id of certIds){
-      try{
-        const url = SB_URL + '/rest/v1/inspection_certs?id=eq.' + encodeURIComponent(id);
-        const res = await fetch(url, {
-          method: 'PATCH',
-          headers: {
-            'apikey': SB_KEY,
-            'Authorization': 'Bearer ' + SB_KEY,
-            'Content-Type': 'application/json',
-            'Prefer': 'return=minimal'
-          },
-          body: JSON.stringify({ final_judge: judge })
-        });
-        if(res.ok) ok++;
-        else {
-          fail++;
-          lastError = `HTTP ${res.status}`;
-          try{ lastError += ': ' + (await res.text()).substring(0,150); }catch(e){}
-        }
-      }catch(e){
-        fail++;
-        lastError = e.message || String(e);
-      }
+      const url = SB_URL + '/rest/v1/inspection_certs?id=eq.' + encodeURIComponent(id);
+      await fetch(url, {
+        method: 'PATCH',
+        headers: {
+          'apikey': SB_KEY,
+          'Authorization': 'Bearer ' + SB_KEY,
+          'Content-Type': 'application/json',
+          'Prefer': 'return=minimal'
+        },
+        body: JSON.stringify({ final_judge: judge })
+      });
     }
   }catch(e){ console.warn('updateRawFinalJudge', e); }
-  return { ok, fail, error: lastError };
 }
 
 function generateCertNo(){
@@ -2109,141 +1967,6 @@ async function testConnection(){
   }catch(e){
     document.getElementById('cfgStatus').innerHTML = `<span style="color:#dc2626">❌ ${e.message}</span>`;
   }
-}
-
-/* 서버 진단 - 두 테이블 상태 확인 + 필요 SQL 안내 */
-async function diagnoseServer(){
-  const statusEl = document.getElementById('cfgStatus');
-  statusEl.innerHTML = '⏳ 서버 진단 중...';
-
-  const result = {
-    certs: { exists: false, error: '', count: 0 },
-    insps: { exists: false, error: '', count: 0, hasApproverRole: false }
-  };
-
-  // 1) inspection_certs 확인
-  try{
-    const r = await fetch(SB_URL + '/rest/v1/inspection_certs?select=id,final_judge&limit=5', {
-      headers: { 'apikey':SB_KEY, 'Authorization':'Bearer '+SB_KEY }
-    });
-    if(r.ok){
-      const j = await r.json();
-      result.certs.exists = true;
-      result.certs.count = j.length;
-    } else {
-      result.certs.error = `HTTP ${r.status}: ` + (await r.text()).substring(0,150);
-    }
-  }catch(e){ result.certs.error = e.message; }
-
-  // 2) iqc_inspections 확인
-  try{
-    const r = await fetch(SB_URL + '/rest/v1/iqc_inspections?select=*&limit=1', {
-      headers: { 'apikey':SB_KEY, 'Authorization':'Bearer '+SB_KEY }
-    });
-    if(r.ok){
-      const j = await r.json();
-      result.insps.exists = true;
-      result.insps.count = j.length;
-      if(j.length > 0){
-        result.insps.hasApproverRole = 'approver_role' in j[0];
-      }
-      // 컬럼 확인을 위해 count로 전체 개수 가져오기
-      try{
-        const r2 = await fetch(SB_URL + '/rest/v1/iqc_inspections?select=group_key', {
-          headers: { 'apikey':SB_KEY, 'Authorization':'Bearer '+SB_KEY, 'Prefer':'count=exact' }
-        });
-        if(r2.ok){
-          const total = r2.headers.get('content-range');
-          if(total){
-            const m = total.match(/\/(\d+)/);
-            if(m) result.insps.count = parseInt(m[1]);
-          }
-        }
-      }catch(e){}
-    } else {
-      result.insps.error = `HTTP ${r.status}: ` + (await r.text()).substring(0,200);
-    }
-  }catch(e){ result.insps.error = e.message; }
-
-  // 결과 HTML
-  let html = '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:12px;font-size:12px;line-height:1.7">';
-  html += '<div style="font-weight:700;font-size:13px;margin-bottom:8px;color:#1e3a5f">🔬 서버 진단 결과</div>';
-
-  // inspection_certs
-  html += `<div style="margin-bottom:6px"><b>📦 inspection_certs (소재입고):</b> `;
-  if(result.certs.exists){
-    html += `<span style="color:#16a34a">✅ 정상 (샘플 ${result.certs.count}건)</span>`;
-  } else {
-    html += `<span style="color:#dc2626">❌ ${result.certs.error}</span>`;
-  }
-  html += '</div>';
-
-  // iqc_inspections
-  html += `<div style="margin-bottom:6px"><b>✅ iqc_inspections (검사완료):</b> `;
-  if(result.insps.exists){
-    html += `<span style="color:#16a34a">✅ 정상 (총 ${result.insps.count}건)`;
-    if(!result.insps.hasApproverRole && result.insps.count > 0){
-      html += ' <span style="color:#f59e0b">⚠ approver_role 컬럼 없음 (선택사항)</span>';
-    }
-    html += '</span>';
-  } else {
-    html += `<span style="color:#dc2626">❌ ${result.insps.error}</span>`;
-  }
-  html += '</div>';
-
-  // SQL 안내 (테이블이 없거나 컬럼 부족한 경우)
-  const needSQL = !result.insps.exists ||
-                  (result.insps.exists && result.insps.count > 0 && !result.insps.hasApproverRole);
-  if(needSQL){
-    html += '<div style="margin-top:12px;padding-top:10px;border-top:1px dashed #cbd5e0">';
-    html += '<div style="font-weight:700;color:#dc2626;margin-bottom:6px">🛠 필요 조치 - Supabase SQL Editor에서 실행</div>';
-    html += '<pre style="background:#1e293b;color:#e2e8f0;padding:10px;border-radius:5px;font-size:11px;overflow-x:auto;white-space:pre">';
-
-    if(!result.insps.exists){
-      html += `-- iqc_inspections 테이블 생성
-CREATE TABLE IF NOT EXISTS public.iqc_inspections (
-  id SERIAL PRIMARY KEY,
-  group_key TEXT UNIQUE NOT NULL,
-  cert_no TEXT,
-  supplier TEXT,
-  material_type TEXT,
-  thickness NUMERIC,
-  width_mm NUMERIC,
-  lot_base TEXT,
-  lots_detail TEXT,
-  heat_no TEXT,
-  coil_count INTEGER DEFAULT 1,
-  total_weight NUMERIC,
-  receipt_date DATE,
-  insp_date DATE,
-  inspector TEXT,
-  inspector_dept TEXT,
-  approver TEXT,
-  approver_role TEXT,
-  final_judge TEXT,
-  label TEXT,
-  remark TEXT,
-  meas_data JSONB,
-  sup_judge TEXT,
-  cert_ids JSONB,
-  updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- RLS 비활성화 + 권한 부여
-ALTER TABLE public.iqc_inspections DISABLE ROW LEVEL SECURITY;
-GRANT ALL ON public.iqc_inspections TO anon, authenticated;
-GRANT USAGE, SELECT ON SEQUENCE iqc_inspections_id_seq TO anon, authenticated;`;
-    } else if(!result.insps.hasApproverRole){
-      html += `-- 승인자 직책 컬럼 추가 (선택)
-ALTER TABLE public.iqc_inspections ADD COLUMN IF NOT EXISTS approver_role TEXT;`;
-    }
-    html += '</pre>';
-    html += '<div style="margin-top:8px;font-size:11px;color:#64748b">실행 후 [🔬 서버 진단]을 다시 눌러 확인하세요.</div>';
-    html += '</div>';
-  }
-
-  html += '</div>';
-  statusEl.innerHTML = html;
 }
 
 function clearLocalCache(){
