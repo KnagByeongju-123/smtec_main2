@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>소재 수입검사 v2.7 | (주)태진다이텍</title>
+<title>소재 수입검사 v2.8 | (주)태진다이텍</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Malgun Gothic','맑은 고딕','Segoe UI',sans-serif;background:#f4f6f9;color:#222;font-size:14px;line-height:1.5}
@@ -143,7 +143,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 
 <div class="hdr">
   <div>
-    <h1>📋 소재 수입검사 시스템 v2.7</h1>
+    <h1>📋 소재 수입검사 시스템 v2.8</h1>
     <div class="sub">(주)태진다이텍 · 품질관리팀 · LOT 그룹 자동 통합 (재질+두께+폭+LOT베이스)</div>
   </div>
   <div class="user-info" id="userInfoBar">검사자: <b id="loginUser">로그인 필요</b></div>
@@ -444,7 +444,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 
 <script>
 /* ============================================================
-   소재 수입검사 시스템 v2.7
+   소재 수입검사 시스템 v2.8
    - LOT 그룹 = 재질 + 두께 + 폭 + LOT '-' 이전 베이스 (공급자별)
    - 검사자 = 로그인 정보 자동
    - Supabase 연결 정보 고정
@@ -1501,44 +1501,47 @@ function closeInsp(){
 }
 
 // 취소 - 변경사항 폐기하고 모달 닫기
-// ① 입력 중이던 화면 값들은 그대로 버림 (저장 안 함)
-// ② 만약 모달 열기 전 임시저장 등으로 inspections에 데이터가 있었다면 백업으로 복원
-//    (현재는 openInsp가 inspections를 수정하지 않으므로 안전 장치 역할)
+// [v2.8] 단순화 + 에러 안전 - 어떤 상황에서도 모달은 닫힘
 function cancelInsp(){
-  // 사용자에게 확인 (입력 중이던 변경사항이 있을 수 있음)
-  // 단, 빈 모달이면 그냥 닫기 - 입력 흔적이 있으면 확인
-  const hasInput = hasUnsavedChanges();
+  // 1) 변경사항 검사 (실패해도 모달은 닫힘)
+  let hasInput = false;
+  try { hasInput = hasUnsavedChanges(); } catch(e) { console.warn('hasUnsavedChanges 에러:', e); hasInput = false; }
+  
   if(hasInput){
-    if(!confirm('⚠ 작성 중인 내용이 있습니다.\n변경사항을 버리고 닫으시겠습니까?')) return;
-  }
-
-  // 백업으로 inspections 원상복귀
-  if(_modalBackup){
-    const idx = _modalBackup.existingIdx;
-    if(_modalBackup.existing){
-      // 기존 검사 데이터가 있었음 → 백업 데이터로 복원
-      if(idx >= 0){
-        inspections[idx] = _modalBackup.existing;
-      } else {
-        // idx가 -1인데 existing이 있는 경우는 거의 없지만 안전하게
-        inspections.push(_modalBackup.existing);
-      }
-    } else {
-      // 신규 작성 중이었음 → openInsp 후 inspections에 추가된 게 있다면 제거
-      // (현재 openInsp는 inspections를 수정하지 않으므로 실제 동작 없음 - 안전망)
-      const curIdx = inspections.findIndex(x => x.groupKey === _modalBackup.groupKey);
-      if(curIdx >= 0 && idx === -1){
-        inspections.splice(curIdx, 1);
-      }
+    if(!confirm('⚠ 작성 중인 내용이 있습니다.\n변경사항을 버리고 닫으시겠습니까?')){
+      return;  // 사용자가 "취소"를 누르면 모달 유지
     }
-    saveInspsToLS();
   }
-
-  document.getElementById('inspModal').classList.remove('show');
+  
+  // 2) 백업 복원 (실패해도 모달은 닫힘)
+  try {
+    if(_modalBackup){
+      const idx = _modalBackup.existingIdx;
+      if(_modalBackup.existing){
+        if(idx >= 0){
+          inspections[idx] = _modalBackup.existing;
+        } else {
+          inspections.push(_modalBackup.existing);
+        }
+      } else {
+        const curIdx = inspections.findIndex(x => x.groupKey === _modalBackup.groupKey);
+        if(curIdx >= 0 && idx === -1){
+          inspections.splice(curIdx, 1);
+        }
+      }
+      saveInspsToLS();
+    }
+  } catch(e) { console.warn('백업 복원 에러:', e); }
+  
+  // 3) 모달 닫기 - 무조건 실행
+  const modal = document.getElementById('inspModal');
+  if(modal) modal.classList.remove('show');
   _modalBackup = null;
-  renderWait();
-  renderDone();
-  showToast('↩ 취소됨 - 변경사항 폐기');
+  
+  // 4) 화면 갱신 (실패해도 무시)
+  try { renderWait(); } catch(e) {}
+  try { renderDone(); } catch(e) {}
+  try { showToast('↩ 취소됨'); } catch(e) {}
 }
 
 // 모달 입력 여부 확인 (취소 확인 다이얼로그 표시 판단용)
@@ -1559,23 +1562,38 @@ function hasUnsavedChanges(){
   // 신규 검사: 어떤 입력이라도 있으면 변경됨
   if(!_modalBackup || !_modalBackup.existing){
     // 자동 채워지는 default 값(예: 표면 규격 '결함없을것', 재질 규격 = 재질명)은 변경으로 간주 안 함
+    const matVal = (document.getElementById('i_material')||{}).value || '';
     const defaults = {
       'm_surface_spec': '결함없을것',
-      'm_mat_spec': document.getElementById('i_material').value || ''
+      'm_mat_spec': matVal,
+      // [v2.8] 표면/재질 측정값이 'OK'인 경우도 자동 채움으로 간주 (변경 아님)
+      'm_surface_sup1': 'OK', 'm_surface_sup2': 'OK', 'm_surface_sup3': 'OK',
+      'm_surface_cus1': 'OK', 'm_surface_cus2': 'OK', 'm_surface_cus3': 'OK',
+      'm_mat_sup1': matVal, 'm_mat_sup2': matVal, 'm_mat_sup3': matVal,
+      'm_mat_cus1': matVal, 'm_mat_cus2': matVal, 'm_mat_cus3': matVal,
+      // 'OK' 텍스트 표시도 default 허용
     };
+    // 재질 측정값은 'OK' 또는 재질명 둘 다 허용
+    const matOkSet = new Set([matVal, 'OK']);
     for(const id of checkIds){
       const el = document.getElementById(id);
       if(!el) continue;
       const v = (el.value||'').trim();
-      if(v && v !== (defaults[id]||'')) return true;
+      if(!v) continue;
+      // 재질 측정 셀은 'OK' 또는 재질명 모두 default
+      if(/^m_mat_(sup|cus)\d$/.test(id)){
+        if(matOkSet.has(v)) continue;
+        return true;
+      }
+      if(v !== (defaults[id]||'')) return true;
     }
     // 두께/폭 규격 default 체크
-    const t = parseFloat(document.getElementById('i_thickness').value);
-    const w = parseFloat(document.getElementById('i_width').value);
+    const t = parseFloat((document.getElementById('i_thickness')||{}).value);
+    const w = parseFloat((document.getElementById('i_width')||{}).value);
     const tDef = isFinite(t) ? `${t.toFixed(3)} ± 0.02` : '';
     const wDef = isFinite(w) ? `${w.toFixed(2)} ± 0.02` : '';
-    const tSpec = (document.getElementById('m_thick_spec').value||'').trim();
-    const wSpec = (document.getElementById('m_width_spec').value||'').trim();
+    const tSpec = ((document.getElementById('m_thick_spec')||{}).value||'').trim();
+    const wSpec = ((document.getElementById('m_width_spec')||{}).value||'').trim();
     if(tSpec && tSpec !== tDef) return true;
     if(wSpec && wSpec !== wDef) return true;
     return false;
