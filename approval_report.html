@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>📋 보고서 결재 v3.17</title>
+<title>📋 보고서 결재 v3.13</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;900&display=swap">
 <style>
   :root {
@@ -185,9 +185,9 @@
 <body>
 
 <div class="hdr">
-  <h1>📋 보고서 결재 v3.17</h1>
+  <h1>📋 보고서 결재 v3.13</h1>
   <p>점검표 통합 월별 결재 시스템 · 4단계 (작성·검토·확인·승인)</p>
-  <div class="v">v3.16 · ESG 로그인 자동 인식(설정 입력 불필요)</div>
+  <div class="v">v3.13 · LS_KEY 누락 수정(탭 작동 복구)</div>
   <div id="hdrUserBadge" class="user-badge" style="display:none">👤 -</div>
 </div>
 
@@ -1024,7 +1024,6 @@ const STATUS_BADGE_CLS = {
   DRAFT:'draft', REVIEWING:'reviewing', CONFIRMING:'confirming',
   APPROVING:'approving', COMPLETED:'completed', REJECTED:'rejected'
 };
-const STEP_NAMES = { 1:'작성', 2:'검토', 3:'확인', 4:'승인' };
 const TPL_ICONS = {
   P_MACHINE:'🏭', QC_MACHINE:'🔬', QC_MEASURE:'📐', WASH:'🧼', SHIPPING:'📦',
   LOAD_MON:'📊', LINE:'🔄', SAFETY:'⚠', PM:'🗓'
@@ -1035,7 +1034,7 @@ const TPL_ICONS = {
 // publishable anon key는 RLS 정책으로 보호됨
 // =========================================================
 const DEFAULT_SB_URL = 'https://omngtyewdaqpphnzeate.supabase.co';
-const DEFAULT_SB_KEY = 'sb_publishable_9j2YkkL-7ul1TrhH-NjVdQ_vWDG2-1D';
+const DEFAULT_SB_KEY = 'sb_publishable_q-EocPWE_6_eYRJ5ZW3-HQ_R02wEMrU';
 const DB_CFG_CACHE_KEY = 'P_MONTHLY_V3_DB_CFG_CACHE';   // sessionStorage 캐시
 const LS_KEY = 'P_MONTHLY_V3_CFG';                       // localStorage 사용자 설정 키
 
@@ -1066,38 +1065,8 @@ function getSbKey(){
   if(db.SB_KEY) return db.SB_KEY.trim();
   return DEFAULT_SB_KEY;
 }
-function getMyPin(){
-  const cfg = getCfg();
-  if(cfg.my_pin) return cfg.my_pin;
-  // ESG 메인페이지 로그인 폴백
-  const esg = readEsgLogin();
-  return esg ? esg.pin : '';
-}
-function getMyName(){
-  const cfg = getCfg();
-  if(cfg.my_name) return cfg.my_name;
-  const esg = readEsgLogin();
-  return esg ? esg.name : '';
-}
-
-// ESG 메인페이지 로그인 정보 통합 읽기 (두 가지 키 모두 체크)
-function readEsgLogin(){
-  // 1) localStorage.esg_pin_auth (측정기 시스템 표준)
-  try{
-    const a = JSON.parse(localStorage.getItem('esg_pin_auth')||'null');
-    if(a && a.pin && a.name){
-      if(!a.exp || Date.now() <= a.exp){
-        return { pin: String(a.pin), name: String(a.name) };
-      }
-    }
-  }catch(e){}
-  // 2) sessionStorage.ESG_USER (구버전 호환)
-  try{
-    const s = JSON.parse(sessionStorage.getItem('ESG_USER')||'null');
-    if(s && s.pin) return { pin: String(s.pin), name: String(s.name||'') };
-  }catch(e){}
-  return null;
-}
+function getMyPin(){ return getCfg().my_pin || ''; }
+function getMyName(){ return getCfg().my_name || ''; }
 function isCfg(){ return !!(getSbUrl()&&getSbKey()); }
 function isUsingDefault(){
   const c = getCfg();
@@ -1202,20 +1171,21 @@ function loadAllSettings(){
   // 사용자가 명시적으로 저장한 값이 있으면 그대로, 없으면 회사 공용 기본값을 보여줌
   document.getElementById('cfgSbUrl').value = c.sb_url || DEFAULT_SB_URL;
   document.getElementById('cfgSbKey').value = c.sb_key || DEFAULT_SB_KEY;
+  document.getElementById('cfgMyPin').value = c.my_pin||'';
+  document.getElementById('cfgMyName').value = c.my_name||'';
 
-  // ESG 메인페이지 로그인 자동 인식 (cfg 우선, 없으면 ESG 로그인)
-  let pin = c.my_pin || '', name = c.my_name || '';
-  if(!pin){
-    const esg = readEsgLogin();
-    if(esg){
-      pin = esg.pin; name = esg.name;
-      // 자동으로 저장해서 다음 진입 시 빠른 로딩
-      c.my_pin = pin; c.my_name = name;
-      saveCfg(c);
-    }
+  // ESG 메인페이지 PIN 자동 인식
+  if(!c.my_pin){
+    try{
+      const sess = JSON.parse(sessionStorage.getItem('ESG_USER')||'null');
+      if(sess && sess.pin){
+        c.my_pin = sess.pin; c.my_name = sess.name||'';
+        saveCfg(c);
+        document.getElementById('cfgMyPin').value = c.my_pin;
+        document.getElementById('cfgMyName').value = c.my_name;
+      }
+    }catch(e){}
   }
-  document.getElementById('cfgMyPin').value = pin;
-  document.getElementById('cfgMyName').value = name;
   updateConnStatus();
 }
 
@@ -1906,31 +1876,21 @@ async function loadCheckData(report, tpl){
 function pickMachine(primary, raw){
   if(primary && String(primary).trim() && primary !== '-') return String(primary).trim();
   if(!raw || typeof raw !== 'object') return '-';
-  const candidates = ['machine','machine_name','equipment_name','line','machine_code','equip_no','resource_code'];
+  const candidates = ['machine','machine_name','equipment_name','equipment',
+                      'line','line_name','machine_code','equip_no','resource_code',
+                      'press_no','machine_no','line_no'];
   for(const k of candidates){
-    const v = raw[k];
-    if(v != null && String(v).trim() && String(v).trim() !== '-'){
-      return String(v).trim();
+    if(raw[k] != null && String(raw[k]).trim() !== ''){
+      return String(raw[k]).trim();
     }
   }
   return '-';
 }
 
-// 결과 판정 식별: 우선순위대로 raw_row에서 결과값 추출
-//  ① 마스터에서 받은 값  ② result  ③ judge  ④ judgment  ⑤ pass_yn  ⑥ ok_ng
+// 결과 판정: result 컬럼 없으면 raw_row의 chk_* 컬럼들 중 하나라도 NG면 NG
 function pickResult(primary, raw){
-  if(primary && String(primary).trim() && primary !== '-') return String(primary).trim();
-  if(!raw || typeof raw !== 'object') return '-';
-  const candidates = ['result','judge','judgment','pass_yn','ok_ng','status'];
-  for(const k of candidates){
-    const v = raw[k];
-    if(v != null && String(v).trim() && String(v).trim() !== '-'){
-      return String(v).trim();
-    }
-  }
-  return '-';
-}
-
-</script>
-</body>
-</html>
+  if(primary && (primary==='OK' || primary==='NG')) return primary;
+  if(!raw || typeof raw !== 'object') return '';
+  // ng_count, bad_count 등이 있으면
+  const ngCnt = raw.ng_count ?? raw.bad_count ?? raw.fail_count ?? 0;
+  if(typeof ngCnt === 'number'
