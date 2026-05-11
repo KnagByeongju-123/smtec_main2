@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>소재 수입검사 v2.8 | (주)태진다이텍</title>
+<title>소재 수입검사 v2.9 | (주)태진다이텍</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Malgun Gothic','맑은 고딕','Segoe UI',sans-serif;background:#f4f6f9;color:#222;font-size:14px;line-height:1.5}
@@ -143,7 +143,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 
 <div class="hdr">
   <div>
-    <h1>📋 소재 수입검사 시스템 v2.8</h1>
+    <h1>📋 소재 수입검사 시스템 v2.9</h1>
     <div class="sub">(주)태진다이텍 · 품질관리팀 · LOT 그룹 자동 통합 (재질+두께+폭+LOT베이스)</div>
   </div>
   <div class="user-info" id="userInfoBar">검사자: <b id="loginUser">로그인 필요</b></div>
@@ -444,13 +444,13 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 
 <script>
 /* ============================================================
-   소재 수입검사 시스템 v2.8
+   소재 수입검사 시스템 v2.9
    - LOT 그룹 = 재질 + 두께 + 폭 + LOT '-' 이전 베이스 (공급자별)
    - 검사자 = 로그인 정보 자동
    - Supabase 연결 정보 고정
    ============================================================ */
 
-const APP_VERSION = '2.8';
+const APP_VERSION = '2.9';
 
 // 🔒 고정 연결 정보 (수정 불가)
 const SB_URL = 'https://omngtyewdaqpphnzeate.supabase.co';
@@ -618,19 +618,41 @@ function showTab(name){
 /* ================ Supabase 동기화 ================ */
 async function loadFromSupabase(){
   try{
-    const url = SB_URL + '/rest/v1/inspection_certs?select=*&order=created_at.desc&limit=1000';
-    const res = await fetch(url, {
+    // 1) inspection_certs - 코일별 원본
+    const url1 = SB_URL + '/rest/v1/inspection_certs?select=*&order=created_at.desc&limit=1000';
+    const res1 = await fetch(url1, {
       headers: {
         'apikey': SB_KEY,
         'Authorization': 'Bearer ' + SB_KEY,
         'Content-Type': 'application/json'
       }
     });
-    if(!res.ok){
-      const txt = await res.text();
-      throw new Error(`HTTP ${res.status}: ${txt.substring(0,200)}`);
+    if(!res1.ok){
+      const txt = await res1.text();
+      throw new Error(`HTTP ${res1.status}: ${txt.substring(0,200)}`);
     }
-    raw = await res.json();
+    raw = await res1.json();
+
+    // 2) iqc_inspections - 다른 PC에서 발행한 검사 결과 병합
+    try{
+      const url2 = SB_URL + '/rest/v1/iqc_inspections?select=*&order=updated_at.desc&limit=2000';
+      const res2 = await fetch(url2, {
+        headers: {
+          'apikey': SB_KEY,
+          'Authorization': 'Bearer ' + SB_KEY,
+          'Content-Type': 'application/json'
+        }
+      });
+      if(res2.ok){
+        const serverInsps = await res2.json();
+        mergeServerInspections(serverInsps);
+      } else {
+        console.warn('[iqc_inspections]', res2.status, '- 로컬 데이터만 사용');
+      }
+    }catch(e){
+      console.warn('[iqc_inspections fetch]', e);
+    }
+
     localStorage.setItem(LS_KEY_LASTSYNC, new Date().toISOString());
     showToast(`✅ ${raw.length}건 동기화 완료`);
     renderWait();
@@ -640,6 +662,70 @@ async function loadFromSupabase(){
     console.error('[Supabase load]', e);
     showToast('❌ 조회 실패: ' + e.message);
   }
+}
+
+/* 서버 iqc_inspections → 로컬 inspections 병합
+   - groupKey 기준으로 매칭
+   - updated_at이 더 최신인 쪽을 채택 (다른 PC에서 발행한 최신 결과 반영)
+   - 서버에만 있는 항목은 추가
+*/
+function mergeServerInspections(serverInsps){
+  if(!Array.isArray(serverInsps)) return;
+
+  const byKey = new Map();
+  inspections.forEach(x => byKey.set(x.groupKey, x));
+
+  serverInsps.forEach(srv => {
+    const k = srv.group_key;
+    if(!k) return;
+
+    // 서버 row → 로컬 형식으로 변환
+    const srvInsp = {
+      groupKey: k,
+      certNo: srv.cert_no || '',
+      supplier: srv.supplier || '',
+      material: srv.material_type || '',
+      thickness: srv.thickness != null ? parseFloat(srv.thickness) : null,
+      width: srv.width_mm != null ? parseFloat(srv.width_mm) : null,
+      lotBase: srv.lot_base || '',
+      lotsDetail: (srv.lots_detail || '').split(',').map(s=>s.trim()).filter(Boolean),
+      heat: srv.heat_no || '',
+      recvDate: srv.receipt_date || '',
+      weight: srv.total_weight != null ? parseFloat(srv.total_weight) : null,
+      coilCount: srv.coil_count || 1,
+      supJudge: srv.sup_judge || '',
+      inspDate: srv.insp_date || '',
+      inspector: srv.inspector || '',
+      inspectorDept: srv.inspector_dept || '',
+      approver: srv.approver || '',
+      approverRole: srv.approver_role || '',
+      finalJudge: srv.final_judge || '',
+      label: srv.label || '부착',
+      remark: srv.remark || '',
+      meas: srv.meas_data || {},
+      certIds: srv.cert_ids || [],
+      completed: !!(srv.final_judge && srv.final_judge !== '대기'),
+      updatedAt: srv.updated_at || '',
+      createdAt: srv.updated_at || ''
+    };
+
+    const local = byKey.get(k);
+    if(!local){
+      // 서버에만 있음 → 추가
+      inspections.push(srvInsp);
+    } else {
+      // 양쪽 모두 있음 → updated_at 비교해서 최신 채택
+      const srvT = new Date(srv.updated_at || 0).getTime();
+      const localT = new Date(local.updatedAt || 0).getTime();
+      if(srvT > localT){
+        // 서버가 더 최신 → 덮어쓰기 (단, 로컬 certIds가 있으면 유지)
+        Object.assign(local, srvInsp);
+      }
+      // 로컬이 더 최신이면 그대로 유지 (다음 푸시 시 서버 업데이트됨)
+    }
+  });
+
+  saveInspsToLS();
 }
 
 async function pushInspToSupabase(insp){
@@ -659,6 +745,7 @@ async function pushInspToSupabase(insp){
     inspector: insp.inspector,
     inspector_dept: insp.inspectorDept,
     approver: insp.approver,
+    approver_role: insp.approverRole || '',
     final_judge: insp.finalJudge,
     label: insp.label,
     remark: insp.remark,
@@ -695,11 +782,22 @@ async function pushInspToSupabase(insp){
 
 /* ================ 검사 대기 그룹 산출 ================ */
 function computeWaitGroups(){
+  // 완료된 그룹 키 집합 (3중 안전장치)
+  // ① 로컬 inspections에서 finalJudge OK/NG/보류인 것
+  // ② inspection_certs.final_judge가 '대기'가 아닌 row가 속한 그룹
+  //    → 다른 PC에서 발행한 결과가 raw에 PATCH되어 있으면 자동 반영
   const completedKeys = new Set(
     inspections
       .filter(x => x.finalJudge==='OK' || x.finalJudge==='NG' || x.finalJudge==='보류')
       .map(x => x.groupKey)
   );
+  // inspection_certs.final_judge가 '대기'/null이 아닌 row의 그룹키도 추가
+  raw.forEach(r => {
+    const fj = (r.final_judge || '').trim();
+    if(fj && fj !== '대기'){
+      completedKeys.add(groupKeyOf(r));
+    }
+  });
 
   const map = new Map();
   raw.forEach(r => {
