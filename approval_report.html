@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>📋 보고서 결재 v3.20</title>
+<title>📋 보고서 결재 v3.21</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;900&display=swap">
 <style>
   :root {
@@ -185,7 +185,7 @@
 <body>
 
 <div class="hdr">
-  <h1>📋 보고서 결재 v3.20</h1>
+  <h1>📋 보고서 결재 v3.21</h1>
   <p>점검표 통합 월별 결재 시스템 · 4단계 (작성·검토·확인·승인)</p>
   <div class="v">v3.13 · LS_KEY 누락 수정(탭 작동 복구)</div>
   <div id="hdrUserBadge" class="user-badge" style="display:none">👤 -</div>
@@ -1668,13 +1668,26 @@ function renderMyUploads(rows){
     wrap.innerHTML = '<div style="text-align:center;padding:14px;color:var(--text3);font-size:12px">최근 작성 보고서 없음</div>';
     return;
   }
+  const myPin = getMyPin();
   wrap.innerHTML = rows.map(r=>{
     const ico = TPL_ICONS[r.template_code]||'📋';
     const stepLabel = r.status==='COMPLETED'?'완료':r.status==='REJECTED'?'반려':`${STEP_NAMES[r.current_step]} 결재중`;
+    // [v3.21] 삭제 가능: 작성자(step1_pin) 본인 + 완료(COMPLETED) 제외
+    const isOwner = (r.step1_pin && r.step1_pin === myPin);
+    const canDelete = isOwner && r.status !== 'COMPLETED';
+    const safeName = (r.template_name||r.template_code).replace(/'/g,"\\'").replace(/"/g,'&quot;');
+    const delBtn = canDelete
+      ? `<button onclick="event.stopPropagation();deleteReport(${r.id},'${safeName}',${r.target_year},${r.target_month},'${r.status}')"
+                 style="background:rgba(239,68,68,.15);color:#fca5a5;border:1px solid rgba(239,68,68,.3);padding:3px 8px;border-radius:6px;font-size:10px;font-weight:700;cursor:pointer;margin-left:6px"
+                 title="잘못 작성된 보고서 삭제·회수">🗑 삭제</button>`
+      : '';
     return `<div class="inbox-item" onclick="openReport(${r.id})">
       <div class="inbox-hdr">
         <div class="inbox-title" style="font-size:13px">${ico} ${r.template_name||r.template_code} · ${r.target_year}.${String(r.target_month).padStart(2,'0')}</div>
-        <span class="badge ${STATUS_BADGE_CLS[r.status]}">${STATUS_NAMES[r.status]}</span>
+        <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
+          <span class="badge ${STATUS_BADGE_CLS[r.status]}">${STATUS_NAMES[r.status]}</span>
+          ${delBtn}
+        </div>
       </div>
       <div class="inbox-meta">
         <span>현재: <b>${stepLabel}</b></span>
@@ -1783,7 +1796,9 @@ async function deleteReport(id, name, y, m, currentStatus){
     // 보고서 삭제
     await sbReq('DELETE', `p_monthly_report?id=eq.${id}`);
     alert('🗑 보고서가 회수·삭제되었습니다.');
-    await loadDraftList();
+    // [v3.21] 결재함 + 작성탭 둘 다 갱신
+    try { await loadInbox(); } catch(e) {}
+    try { await loadDraftList(); } catch(e) {}
   }catch(e){
     alert('삭제 실패: '+e.message);
   }
