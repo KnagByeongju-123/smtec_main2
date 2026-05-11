@@ -695,11 +695,35 @@ function showRwAdd(){fillCustSelects();['rwAddParent','rwHeatInner','rwHeatOuter
 async function saveRW(){
   const cust=document.getElementById('rwAddCust').value,parent=document.getElementById('rwAddParent').value.trim();
   if(!cust||!parent){toast('고객사/기준기종 입력');return}
-  const rows=[];
-  if(document.getElementById('rwAddInner').value==='Y'){rows.push({customer:cust,parent_part:parent,child_type:'Inner',heat_part:document.getElementById('rwHeatInner').value.trim()||parent+'Inner',surface_part:'',process_route:document.getElementById('rwRoute').value,sort_order:0})}
-  if(document.getElementById('rwAddOuter').value==='Y'){rows.push({customer:cust,parent_part:parent,child_type:'Outer',heat_part:document.getElementById('rwHeatOuter').value.trim()||parent+'Outer',surface_part:'',process_route:document.getElementById('rwRoute').value,sort_order:1})}
+  const route=document.getElementById('rwRoute').value;
+  const rows=[],defectModels=[];
+  if(document.getElementById('rwAddInner').value==='Y'){
+    const heat=document.getElementById('rwHeatInner').value.trim()||parent+'Inner';
+    rows.push({customer:cust,parent_part:parent,child_type:'Inner',child_part:heat,heat_part:heat,surface_part:'',process_route:route,sort_order:0});
+    defectModels.push({customer:cust,model_name:heat,category1:'레이스웨이',category2:'Inner'});
+  }
+  if(document.getElementById('rwAddOuter').value==='Y'){
+    const heat=document.getElementById('rwHeatOuter').value.trim()||parent+'Outer';
+    rows.push({customer:cust,parent_part:parent,child_type:'Outer',child_part:heat,heat_part:heat,surface_part:'',process_route:route,sort_order:1});
+    defectModels.push({customer:cust,model_name:heat,category1:'레이스웨이',category2:'Outer'});
+  }
   if(!rows.length){toast('Inner/Outer 최소 1개');return}
-  try{await sbInsert('part_hierarchy',rows);if(!_custs.find(c=>c.name===cust)){const ns=_custs.length+1;await sbInsert('common_code',{code_group:'customer',code_value:cust,sort_order:ns});_custs.push({id:0,name:cust,sort:ns})}document.getElementById('rwModal').classList.remove('show');toast('✅ '+parent);await loadRW(true)}catch(e){toast('❌ '+e.message)}
+  try{
+    await sbInsert('part_hierarchy',rows);
+    // defect_model에도 동시 등록 (주간보고서 미지정 방지) - 중복은 무시
+    for(const dm of defectModels){
+      try{await sbInsert('defect_model',{...dm,sort_order:0})}
+      catch(e){/* unique 충돌 등은 무시 */}
+    }
+    if(!_custs.find(c=>c.name===cust)){
+      const ns=_custs.length+1;
+      await sbInsert('common_code',{code_group:'customer',code_value:cust,sort_order:ns});
+      _custs.push({id:0,name:cust,sort:ns});
+    }
+    document.getElementById('rwModal').classList.remove('show');
+    toast('✅ '+parent+' 추가 (defect_model 동시등록)');
+    await loadRW(true);
+  }catch(e){toast('❌ '+e.message)}
 }
 async function delRwItem(id){if(!confirm('삭제?'))return;try{await sbDel('part_hierarchy',id);toast('삭제됨');await loadRW(true)}catch(e){}}
 async function delRwByCust(cust){const items=_rw.filter(r=>r.customer===cust);if(!confirm(cust+' '+items.length+'건 삭제?'))return;try{for(const r of items)await sbDel('part_hierarchy',r.id);toast('✅ 삭제');await loadRW(true)}catch(e){}}
