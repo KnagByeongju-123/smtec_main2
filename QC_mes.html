@@ -7,7 +7,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <meta name="theme-color" content="#0c4a6e">
-<title>일일 검사기 가동현황 v3.9 - 태진다이텍</title>
+<title>일일 검사기 가동현황 v4.0 - 태진다이텍</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;900&display=swap">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
@@ -337,6 +337,33 @@
     overflow-y:auto;
     box-shadow:0 12px 40px rgba(0,0,0,.6);
   }
+  /* ── 모바일에서 모달이 화면 벗어남 방지 ─────── */
+  @media (max-width:768px){
+    .modal-overlay{padding:6px}
+    .modal{
+      width:calc(100vw - 12px) !important;
+      max-width:calc(100vw - 12px) !important;
+      padding:14px 14px !important;
+      max-height:calc(100vh - 12px);
+      border-radius:10px;
+    }
+    .modal-header{margin-bottom:12px;padding-bottom:10px}
+    .modal-header h2{font-size:1.05em}
+    .settings-section{margin-bottom:12px}
+    .settings-section h3{font-size:.9em;margin-bottom:6px}
+    /* 모달 안의 ±버튼 및 input 모바일에서 한 칸 좁게 */
+    .modal .btn{padding:8px 10px !important;font-size:.85em !important;min-width:36px}
+    .modal input[type="number"]{
+      font-size:1em !important;
+      padding:8px 4px !important;
+      min-width:0 !important;
+    }
+    .modal select{
+      font-size:.95em !important;
+      padding:9px 8px !important;
+    }
+    .modal textarea{font-size:.9em !important}
+  }
   .modal-header{
     display:flex;
     justify-content:space-between;
@@ -459,7 +486,7 @@
 
 <!-- ── 헤더 ─────────────────────────── -->
 <div class="hdr">
-  <h1>🏭 일일 검사기 가동현황 v3.9</h1>
+  <h1>🏭 일일 검사기 가동현황 v4.0</h1>
   <p>품질관리팀 · ESP32 실시간 SHOT 모니터링</p>
   <div class="badges">
     <span id="userBadge" class="badge user off">👤 로그인 필요</span>
@@ -689,7 +716,7 @@
   </div>
 
   <div style="text-align:center;padding:14px;font-size:.8em;color:var(--text3)">
-    v3.9 · 3~12호기 (10대, 5세트) · KPI 하단 이동 · 호기클릭 작업일보 · 10초 갱신
+    v4.0 · 기종변경시 카운터 리셋 · 모바일 모달 최적화 · 10초 갱신
   </div>
 
 </div>
@@ -1335,16 +1362,41 @@ function saveMachineModal(){
   setRec.restMinutes = r;
   
   // 작업기종 세트 전체에 적용 (같은 setId 호기 모두)
+  let modelChanged = false;
+  let resetCounter = false;
+  const oldModel = machine.model;
+  
+  if(newModel && newModel !== oldModel){
+    modelChanged = true;
+    // 카운터 리셋 여부 확인
+    resetCounter = confirm(
+      `🔄 작업기종이 "${oldModel || '없음'}" → "${newModel}"(으)로 변경됩니다.\n\n` +
+      `현재까지의 SHOT 카운트를 새로 시작하시겠습니까?\n\n` +
+      `✅ 예: 지금부터의 SHOT만 카운트 (이전 데이터는 제외)\n` +
+      `❌ 아니오: 누적 카운트 유지`
+    );
+  }
+  
   if(newModel){
     let changedCount = 0;
+    const now = new Date().toISOString();
     settings.machines.forEach(m => {
-      if(m.setId === setId && m.model !== newModel){
-        m.model = newModel;
-        changedCount++;
+      if(m.setId === setId){
+        if(m.model !== newModel){
+          m.model = newModel;
+          changedCount++;
+        }
+        // 카운터 리셋 동의 시: 세트 전체 호기에 리셋 시각 기록
+        if(resetCounter){
+          m.counterResetAt = now;
+        }
       }
     });
     if(changedCount > 0){
-      log(`📦 SET${setId+1} 작업기종 변경: ${newModel} (${changedCount}대 적용)`);
+      log(`📦 SET${setId+1} 작업기종 변경: ${oldModel||'-'} → ${newModel} (${changedCount}대 적용)`);
+    }
+    if(resetCounter){
+      log(`🔄 SET${setId+1} 카운터 리셋: ${formatKSTTime(new Date())} 이후 SHOT만 집계`);
     }
   }
   
@@ -1458,6 +1510,17 @@ function processData(data) {
     }
   });
   
+  // ★ 카운터 리셋 시각 이후의 SHOT만 집계 (기종 변경 시 새로 카운트)
+  settings.machines.forEach(m => {
+    if(!m.enabled || !m.counterResetAt) return;
+    const resetTs = new Date(m.counterResetAt).getTime();
+    if(!isFinite(resetTs)) return;
+    const rec = recordsByMachine[m.line];
+    if(!rec) return;
+    rec.good = rec.good.filter(r => new Date(r.detected_at).getTime() >= resetTs);
+    rec.bad  = rec.bad.filter(r => new Date(r.detected_at).getTime() >= resetTs);
+  });
+  
   let totalAll=0, totalGood=0, totalBad=0;
   let totalOperRate=0, totalEff=0, activeCount=0;
   
@@ -1538,6 +1601,16 @@ function processData(data) {
     const offBadge = isEnabled ? '' : 
       '<span style="display:inline-block;padding:2px 6px;border-radius:8px;background:rgba(100,116,139,.2);color:var(--text3);font-size:.62em;font-weight:700;margin-left:4px">OFF</span>';
     
+    // 카운터 리셋 표시 (오늘 안에 리셋된 경우만)
+    let resetInfo = '';
+    if(isEnabled && m.counterResetAt){
+      const resetDt = new Date(m.counterResetAt);
+      const workStart = getTodayWorkStart();
+      if(resetDt >= workStart){
+        resetInfo = `<div style="font-size:.6em;color:#fbbf24;margin-top:2px">🔄 ${formatKSTTime(resetDt, false)}~</div>`;
+      }
+    }
+    
     tr.innerHTML = `
       <td class="line-name">
         <span class="led ${ledClass}"></span>
@@ -1545,7 +1618,10 @@ function processData(data) {
         <span style="display:inline-block;padding:2px 6px;border-radius:8px;background:${setColor}${isEnabled?'22':'11'};color:${isEnabled?setColor:'var(--text3)'};font-size:.62em;font-weight:700;margin-left:4px">SET${m.setId+1}</span>
         ${offBadge}
       </td>
-      <td class="model-name" style="${isEnabled?'':'color:var(--text3)'}">${m.model || '-'}</td>
+      <td class="model-name" style="${isEnabled?'':'color:var(--text3)'}">
+        ${m.model || '-'}
+        ${resetInfo}
+      </td>
       <td class="qty-good">
         ${qtyGoodDisplay}
         <div class="di-info">(${m.goodDI || '-'})</div>
@@ -1782,7 +1858,7 @@ async function runDiagnostics() {
 
 // ── 초기화 ──────────────────────────────
 async function init() {
-  log('🚀 시스템 시작 (v3.9)');
+  log('🚀 시스템 시작 (v4.0)');
   loadSettings();
   updateUserBadge();
   updateWorkTimeDisplay();
