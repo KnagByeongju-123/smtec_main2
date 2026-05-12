@@ -7,7 +7,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <meta name="theme-color" content="#0c4a6e">
-<title>일일 검사기 가동현황 v4.6 - 태진다이텍</title>
+<title>일일 검사기 가동현황 v4.7 - 태진다이텍</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;900&display=swap">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
@@ -486,7 +486,7 @@
 
 <!-- ── 헤더 ─────────────────────────── -->
 <div class="hdr">
-  <h1>🏭 일일 검사기 가동현황 v4.6</h1>
+  <h1>🏭 일일 검사기 가동현황 v4.7</h1>
   <p>품질관리팀 · ESP32 실시간 SHOT 모니터링</p>
   <div class="badges">
     <span id="userBadge" class="badge user off">👤 로그인 필요</span>
@@ -712,7 +712,7 @@
   </div>
 
   <div style="text-align:center;padding:14px;font-size:.8em;color:var(--text3)">
-    v4.6 · 호기 강제 복구 · localStorage 자동복구 (자동 10초) · 모바일 모달 최적화 · 10초 갱신
+    v4.7 · 호기 즉시 표시 + 로딩 중 표기 (자동 10초) · 모바일 모달 최적화 · 10초 갱신
   </div>
 
 </div>
@@ -886,6 +886,7 @@ let autoRefresh = true;
 let autoRefreshInterval = null;
 let realtimeChannel = null;
 let lastData = [];
+let _initialLoadDone = false;  // 첫 데이터 조회 완료 여부 (true 되면 실제 수량 표시)
 
 // ── 탭 전환 ──────────────────────────────
 function swTab(n){
@@ -1521,6 +1522,7 @@ async function refreshData() {
     
     log(`✅ ${data.length}개 SHOT 수신`);
     lastData = data;
+    _initialLoadDone = true;  // 첫 데이터 조회 완료 - 이후부터 실제 수량 표시
     processData(data);
     updateESP32Status(data);
   } catch (err) {
@@ -1609,7 +1611,7 @@ function processData(data) {
       // 비활성 호기: 회색 표시
       ledClass = 'off';
       rowClass = 'disabled-row';
-      lastSignal = '비활성';
+      lastSignal = '<span style="color:var(--text3)">비활성</span>';
     } else {
       const allRec = [...rec.good, ...rec.bad];
       if (allRec.length > 0) {
@@ -1650,12 +1652,31 @@ function processData(data) {
     tr.setAttribute('data-line', m.line);
     tr.onclick = function(){ openMachineModal(m.line); };
     
-    // 비활성 호기는 수량/효율을 '-'로 표시 (혼란 방지)
-    const qtyGoodDisplay = isEnabled ? goodQty.toLocaleString() : '<span style="color:var(--text3)">-</span>';
-    const qtyBadDisplay  = isEnabled ? badQty.toLocaleString()  : '<span style="color:var(--text3)">-</span>';
-    const yieldDisplay   = isEnabled && totalQty > 0 ? `${yieldRate.toFixed(1)}%` : '<span style="color:var(--text3)">-</span>';
-    const operDisplay    = isEnabled ? `${operRate.toFixed(1)}%` : '<span style="color:var(--text3)">-</span>';
-    const effDisplay     = isEnabled ? `${efficiency.toFixed(1)}%` : '<span style="color:var(--text3)">-</span>';
+    // 로딩 중 표시 (활성 호기, 첫 데이터 조회 전)
+    const loadingHtml = '<span style="color:var(--accent);font-size:.85em;font-weight:600">...</span>';
+    const isLoading = isEnabled && !_initialLoadDone;
+    
+    // 비활성: '-' / 로딩중: '...' / 정상: 실제값
+    const qtyGoodDisplay = !isEnabled ? '<span style="color:var(--text3)">-</span>'
+                          : isLoading ? loadingHtml
+                          : goodQty.toLocaleString();
+    const qtyBadDisplay  = !isEnabled ? '<span style="color:var(--text3)">-</span>'
+                          : isLoading ? loadingHtml
+                          : badQty.toLocaleString();
+    const yieldDisplay   = !isEnabled ? '<span style="color:var(--text3)">-</span>'
+                          : isLoading ? loadingHtml
+                          : (totalQty > 0 ? `${yieldRate.toFixed(1)}%` : '<span style="color:var(--text3)">-</span>');
+    const operDisplay    = !isEnabled ? '<span style="color:var(--text3)">-</span>'
+                          : isLoading ? loadingHtml
+                          : `${operRate.toFixed(1)}%`;
+    const effDisplay     = !isEnabled ? '<span style="color:var(--text3)">-</span>'
+                          : isLoading ? loadingHtml
+                          : `${efficiency.toFixed(1)}%`;
+    
+    // 마지막 시각도 로딩 중이면 '데이터 조회중'
+    if(isLoading){
+      lastSignal = '<span style="color:var(--accent);font-size:.85em">📡 조회중...</span>';
+    }
     
     // 비활성 표시 배지
     const offBadge = isEnabled ? '' : 
@@ -1693,11 +1714,11 @@ function processData(data) {
       <td class="rate-cell rate-${yieldClass}">${yieldDisplay}</td>
       <td>
         <div class="rate-cell rate-${rateClass}">${operDisplay}</div>
-        ${isEnabled ? `<div class="progress-bar"><div class="progress-fill ${rateClass === 'high' ? '' : rateClass}" style="width:${Math.min(operRate,100)}%"></div></div>` : ''}
+        ${isEnabled && !isLoading ? `<div class="progress-bar"><div class="progress-fill ${rateClass === 'high' ? '' : rateClass}" style="width:${Math.min(operRate,100)}%"></div></div>` : ''}
       </td>
       <td>
         <div class="rate-cell rate-${effClass}">${effDisplay}</div>
-        ${isEnabled ? `<div class="progress-bar"><div class="progress-fill ${effClass === 'high' ? '' : effClass}" style="width:${Math.min(efficiency,100)}%"></div></div>` : ''}
+        ${isEnabled && !isLoading ? `<div class="progress-bar"><div class="progress-fill ${effClass === 'high' ? '' : effClass}" style="width:${Math.min(efficiency,100)}%"></div></div>` : ''}
       </td>
       <td style="font-size:.85em;color:var(--text2)">${lastSignal}</td>
     `;
@@ -1918,7 +1939,7 @@ async function runDiagnostics() {
 
 // ── 초기화 ──────────────────────────────
 async function init() {
-  log('🚀 시스템 시작 (v4.6)');
+  log('🚀 시스템 시작 (v4.7)');
   loadSettings();
   
   // ★★★ loadSettings 직후 즉시 검증 - machines가 10대가 아니면 강제 복구
