@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>전자 열람확인 시스템 v1.1</title>
+<title>전자 열람확인 시스템 v1.2</title>
 <style>
 :root{--bg:#0f172a;--surface:#1e293b;--surface2:#334155;--border:#475569;--text:#f1f5f9;--text2:#cbd5e1;--text3:#94a3b8;--accent:#f59e0b;--accent2:#fbbf24;--ok:#22c55e;--ng:#ef4444;--info:#38bdf8}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -129,7 +129,7 @@ body{margin:0;font-family:'Noto Sans KR',-apple-system,sans-serif;background:var
 <body>
 
 <div class="hdr">
-  <h1>📄 전자 열람확인 시스템 v1.1 <span id="hdrUserBadge" class="badge"></span> <span id="netBadge" class="badge" style="display:none;font-size:10px;padding:2px 8px"></span></h1>
+  <h1>📄 전자 열람확인 시스템 v1.2 <span id="hdrUserBadge" class="badge"></span> <span id="netBadge" class="badge" style="display:none;font-size:10px;padding:2px 8px"></span></h1>
   <p>사내문서 · 도면 · 공지사항 디지털 회람</p>
 </div>
 
@@ -408,7 +408,7 @@ body{margin:0;font-family:'Noto Sans KR',-apple-system,sans-serif;background:var
 </div>
 
 <!-- ====== 파일 링크 팝업 모달 ====== -->
-<div class="modal" id="fileModal">
+<div class="modal" id="fileModal" style="z-index:2000">
   <div class="modal-box" style="max-width:480px">
     <div class="modal-header">
       📂 첨부 파일
@@ -795,6 +795,8 @@ function daysUntil(dateStr){
   return Math.floor((d-t)/(1000*60*60*24));
 }
 function escHtml(s){if(s==null)return '';return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+// onclick 인라인의 작은따옴표 인자로 안전하게 쓰기 위한 escape
+function escJs(s){if(s==null)return '';return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'\\"').replace(/\n/g,'\\n').replace(/\r/g,'').replace(/</g,'\\x3c')}
 
 /* ═══════════════════════════════════════════
    Supabase
@@ -1223,7 +1225,7 @@ function renderDocItem(d,mode){
   const allLogs=_viewLogs.filter(l=>l.doc_id===d.id);
   const commentCnt=allLogs.filter(l=>l.comment&&l.comment.trim()).length;
   const ownerCommentBadge=(isOwner&&commentCnt>0)?`<div style="background:linear-gradient(135deg,rgba(251,191,36,.18),rgba(245,158,11,.08));border:1px solid var(--accent);border-radius:6px;padding:6px 10px;margin-bottom:6px;font-size:11px;font-weight:700;color:var(--accent2)">💬 확인자 의견 ${commentCnt}건 도착 (클릭하여 확인)</div>`:'';
-  const fileBtn=d.file_url?`<button class="btn btn-info btn-sm" onclick="event.stopPropagation();openFile('${escHtml(d.file_url)}')">📂 파일</button>`:'';
+  const fileBtn=d.file_url?`<button class="btn btn-info btn-sm" onclick="event.stopPropagation();openFile('${escJs(d.file_url)}')">📂 파일</button>`:'';
   const confirmBtn=confirmed?`<button class="btn btn-ghost btn-sm" disabled>✓ 확인됨</button>`:`<button class="btn btn-success btn-sm" onclick="event.stopPropagation();openConfirmModal(${d.id})">✓ 확인</button>`;
   // 부서 칩 + 개별 대상자 칩
   const tagHtml=[
@@ -1233,7 +1235,7 @@ function renderDocItem(d,mode){
   ].filter(Boolean).join('');
   // 설명 (지시사항) + 파일 링크 표시
   const descHtml=d.description?`<div class="doc-desc">📝 ${escHtml(d.description)}</div>`:'';
-  const linkHtml=d.file_url?`<div class="doc-link" onclick="event.stopPropagation();openFile('${escHtml(d.file_url)}')">🔗 ${escHtml(d.file_url.length>50?d.file_url.substring(0,50)+'...':d.file_url)}</div>`:'';
+  const linkHtml=d.file_url?`<div class="doc-link" onclick="event.stopPropagation();openFile('${escJs(d.file_url)}')">🔗 ${escHtml(d.file_url.length>50?d.file_url.substring(0,50)+'...':d.file_url)}</div>`:'';
   return `<div class="${cls}" onclick="openDetail(${d.id})">
     <div class="doc-no">${escHtml(d.doc_no)} · ${TYPE_NAMES[d.doc_type]||d.doc_type}</div>
     <div class="doc-title">${escHtml(d.title)}</div>
@@ -1323,6 +1325,7 @@ function openDetail(docId){
   const userTargets=parseTargets(d.target_users);
   const logs=_viewLogs.filter(l=>l.doc_id===d.id).sort((a,b)=>new Date(b.viewed_at)-new Date(a.viewed_at));
   const confirmed=isConfirmed(d.id,me);
+  const isOwner=d.registered_by===me;
   // 대상자 전체 명단 (부서원 + 개별)
   const allTargets=new Set();
   userTargets.forEach(n=>allTargets.add(n));
@@ -1331,7 +1334,17 @@ function openDetail(docId){
   });
   const confirmedSet=new Set(logs.map(l=>l.viewer_name));
   const pending=[...allTargets].filter(n=>!confirmedSet.has(n));
+  // 등록자에게 의견 알림 배너
+  const commentsFromOthers=logs.filter(l=>l.comment&&l.comment.trim());
+  let commentBanner='';
+  if(isOwner&&commentsFromOthers.length){
+    commentBanner=`<div style="background:linear-gradient(135deg,rgba(251,191,36,.18),rgba(245,158,11,.1));border:1.5px solid var(--accent);border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:12px">
+      <div style="font-weight:800;color:var(--accent);margin-bottom:6px">💬 확인자 의견 ${commentsFromOthers.length}건이 있습니다</div>
+      ${commentsFromOthers.map(l=>`<div style="padding:6px 0;border-top:1px dashed rgba(245,158,11,.3);margin-top:6px"><b style="color:#fde68a">${escHtml(l.viewer_name)}</b> <span style="color:var(--text3);font-size:10px">(${escHtml(l.dept||'-')} · ${fmt(l.viewed_at)})</span><div style="margin-top:3px;color:var(--text);white-space:pre-wrap;word-break:break-word">${escHtml(l.comment)}</div></div>`).join('')}
+    </div>`;
+  }
   document.getElementById('detailBody').innerHTML=`
+    ${commentBanner}
     <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:10px;font-size:12px;line-height:1.8">
       <div><b>문서번호:</b> ${escHtml(d.doc_no)}</div>
       <div><b>종류:</b> ${TYPE_NAMES[d.doc_type]||d.doc_type}</div>
@@ -1341,7 +1354,7 @@ function openDetail(docId){
       <div><b>마감일:</b> ${d.deadline?fmtDate(d.deadline):'-'}</div>
       <div><b>상태:</b> ${escHtml(d.status||'active')}</div>
     </div>
-    ${d.file_url?`<button class="btn btn-info btn-block" onclick="openFile('${escHtml(d.file_url)}')" style="margin-bottom:10px">📂 첨부 파일 열기</button>`:''}
+    ${d.file_url?`<button class="btn btn-info btn-block" onclick="openFile('${escJs(d.file_url)}')" style="margin-bottom:10px">📂 첨부 파일 열기</button>`:''}
     ${d.description?`<div style="background:rgba(56,189,248,.05);border:1px solid rgba(56,189,248,.2);border-radius:8px;padding:10px;margin-bottom:10px;font-size:12px;white-space:pre-wrap">${escHtml(d.description)}</div>`:''}
     <div style="font-size:12px;font-weight:700;margin-bottom:6px;color:var(--accent)">📋 대상 (${allTargets.size}명)</div>
     <div class="doc-tags" style="margin-bottom:10px">
@@ -1368,17 +1381,6 @@ function openDetail(docId){
       ${pending.map(n=>{const u=_users.find(x=>x.name===n);return `<div class="viewer-row" style="opacity:.7"><span class="icon">⏳</span><span class="name">${escHtml(n)} <span class="dept">(${escHtml(u?u.dept||'-':'-')})</span></span></div>`}).join('')}
     </div>`:''}
   `;
-  const isOwner=d.registered_by===me;
-  // 등록자에게 의견 알림 배너
-  const commentsFromOthers=logs.filter(l=>l.comment&&l.comment.trim());
-  let commentBanner='';
-  if(isOwner&&commentsFromOthers.length){
-    commentBanner=`<div style="background:linear-gradient(135deg,rgba(251,191,36,.18),rgba(245,158,11,.1));border:1.5px solid var(--accent);border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:12px">
-      <div style="font-weight:800;color:var(--accent);margin-bottom:6px">💬 확인자 의견 ${commentsFromOthers.length}건이 있습니다</div>
-      ${commentsFromOthers.map(l=>`<div style="padding:6px 0;border-top:1px dashed rgba(245,158,11,.3);margin-top:6px"><b style="color:#fde68a">${escHtml(l.viewer_name)}</b> <span style="color:var(--text3);font-size:10px">(${escHtml(l.dept||'-')} · ${fmt(l.viewed_at)})</span><div style="margin-top:3px;color:var(--text);white-space:pre-wrap;word-break:break-word">${escHtml(l.comment)}</div></div>`).join('')}
-    </div>`;
-  }
-  document.getElementById('detailBody').innerHTML=commentBanner+document.getElementById('detailBody').innerHTML;
   let footer='';
   if(!confirmed)footer+=`<button class="btn btn-success" onclick="closeDetailModal();openConfirmModal(${d.id})">✓ 확인 등록</button>`;
   else footer+=`<button class="btn btn-ghost" disabled>✓ 확인 완료</button>`;
@@ -2125,7 +2127,7 @@ function buildHistoryPdfHtml(){
       <div class="legal-notice">
         ⚖️ <b>법적 효력 안내:</b> 본 확인서는 「전자서명법」에 따라 작성되었으며, 각 서명에는 SHA-256 무결성 해시·디바이스 정보·접속 IP 해시가 함께 기록되어 위변조를 방지합니다. 사후 무결성 검증이 가능하며, 검증 절차를 통해 원본 서명임을 입증할 수 있습니다.
       </div>
-      <div class="footer">출력일: ${escHtml(today)} · 태진다이텍 ESG Smart Factory · 전자 열람확인 시스템 v1.1</div>
+      <div class="footer">출력일: ${escHtml(today)} · 태진다이텍 ESG Smart Factory · 전자 열람확인 시스템 v1.2</div>
     </div>`;
   });
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>전자 열람 확인서</title>
@@ -2221,11 +2223,4 @@ function showSql(){
 -- 1. 문서 마스터
 CREATE TABLE IF NOT EXISTS public.doc_register (
   id BIGSERIAL PRIMARY KEY,
-  doc_no TEXT UNIQUE,
-  title TEXT NOT NULL,
-  doc_type TEXT,
-  receipt_date DATE,
-  deadline DATE,
-  file_url TEXT,
-  description TEXT,
-  target_dept
+  d
