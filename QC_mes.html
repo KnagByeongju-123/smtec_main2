@@ -7,7 +7,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <meta name="theme-color" content="#0c4a6e">
-<title>일일 검사기 가동현황 v5.0 - 태진다이텍</title>
+<title>일일 검사기 가동현황 v5.3 - 태진다이텍</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&display=swap">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
@@ -124,13 +124,14 @@
 <body>
 
 <div class="hdr">
-  <h1>🏭 일일 검사기 가동현황 <span style="font-size:.65em;color:rgba(255,255,255,.7)">v5.0</span></h1>
+  <h1>🏭 일일 검사기 가동현황 <span style="font-size:.65em;color:rgba(255,255,255,.7)">v5.3</span></h1>
   <div class="sub">품질관리팀 · ESP32 실시간 SHOT 모니터링</div>
   <div class="info">
     <span id="userBadge" class="user-badge guest">🔒 로그인 필요</span>
     <span>📅 <span id="todayDate">-</span></span>
     <span>🕐 <span id="liveClock">-</span></span>
     <span style="background:rgba(34,197,94,.25);color:#86efac">⚡ 자동 10초</span>
+    <span style="background:rgba(56,189,248,.25);color:#7dd3fc">☁️ 클라우드 동기화</span>
   </div>
 </div>
 
@@ -200,8 +201,12 @@
         </div>
       </div>
       <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
+        <button class="btn ok" onclick="saveSettings(true)" style="flex:1;min-width:140px">💾 설정 저장 (클라우드)</button>
         <button class="btn warn" onclick="runDiagnostics()">🔍 진단 실행</button>
         <button class="btn" onclick="resetAllSettings()" style="color:var(--ng)">🗑️ 기본값 복원</button>
+      </div>
+      <div id="saveStatus" style="margin-top:6px;font-size:.78em;color:var(--text3);text-align:right">
+        💡 체크박스 변경 후 <b style="color:var(--ok)">저장 버튼</b>을 눌러야 클라우드에 반영됩니다
       </div>
     </div>
   </div>
@@ -426,71 +431,213 @@ function updateClock(){
   if(c) c.textContent = fmtTime(n);
 }
 
-function loadSettings(){
+// ════════════════════════════════════════════════════════════
+//  설정 저장/로드 - Supabase 우선 + localStorage 백업
+// ════════════════════════════════════════════════════════════
+
+// 1) localStorage 백업 로드 (Supabase 로드 전 빠른 표시용)
+function loadSettingsFromLocal(){
   const saved = localStorage.getItem('mes_inspection_settings_v5');
-  if(!saved) return;
+  if(!saved) return false;
   try {
     const p = JSON.parse(saved);
     settings = { ...DEFAULT_SETTINGS, ...p };
-    
-    if(!Array.isArray(settings.machines) || settings.machines.length !== 10){
-      const old = Array.isArray(settings.machines) ? settings.machines : [];
-      settings.machines = JSON.parse(JSON.stringify(DEFAULT_SETTINGS.machines));
-      old.forEach(o => {
-        const t = settings.machines.find(m => m.line === o.line);
-        if(t){
-          if(typeof o.enabled === 'boolean') t.enabled = o.enabled;
-          if(o.model) t.model = o.model;
-          if(o.counterResetAt) t.counterResetAt = o.counterResetAt;
-        }
-      });
-    }
-    
-    settings.machines.forEach((m,i) => {
-      if(typeof m.setId !== 'number') m.setId = Math.floor(i/2);
-      if(typeof m.enabled !== 'boolean') m.enabled = false;
-      if(!m.line) m.line = (i+3)+'호기';
-      if(typeof m.model !== 'string') m.model = '';
-      if(!m.goodDI) m.goodDI = m.line+'_양품';
-      if(!m.badDI) m.badDI = m.line+'_불량';
-      if(typeof m.targetPerHour !== 'number') m.targetPerHour = 100;
-    });
-    
-    if(!Array.isArray(settings.sets) || settings.sets.length !== 5){
-      settings.sets = JSON.parse(JSON.stringify(DEFAULT_SETTINGS.sets));
-    }
-    if(!Array.isArray(settings.modelList) || settings.modelList.length === 0){
-      settings.modelList = [...DEFAULT_SETTINGS.modelList];
-    }
+    normalizeSettings();
+    return true;
   } catch(e){
-    log('⚠️ 설정 로드 실패: '+e.message, 'warn');
+    log('⚠️ 로컬 설정 로드 실패: '+e.message, 'warn');
+    return false;
   }
 }
 
-function saveSettingsToStorage(){
+// 2) Supabase에서 설정 로드 (메인)
+async function loadSettingsFromCloud(){
+  try {
+    const { data, error } = await sb
+      .from('qc_settings')
+      .select('*')
+      .eq('id', 'main')
+      .single();
+    
+    if(error){
+      if(error.code === 'PGRST116'){
+        // row 없음 - 첫 사용. 현재 설정을 클라우드에 업로드
+        log('🆕 첫 사용 - 기본값을 클라우드에 업로드');
+        await saveSettingsToCloud(true);
+        return;
+      }
+      log('⚠️ 클라우드 설정 로드 실패: '+error.message, 'warn');
+      return;
+    }
+    
+    if(!data) return;
+    
+    // 클라우드 데이터 적용
+    if(Array.isArray(data.model_list) && data.model_list.length > 0){
+      settings.modelList = data.model_list;
+    }
+    if(Array.isArray(data.machines) && data.machines.length === 10){
+      settings.machines = data.machines;
+    }
+    if(Array.isArray(data.sets) && data.sets.length === 5){
+      settings.sets = data.sets;
+    }
+    normalizeSettings();
+    
+    // localStorage에 백업
+    saveSettingsToLocal();
+    
+    const updated = data.updated_at ? fmtTime(new Date(data.updated_at)) : '?';
+    const by = data.updated_by || '?';
+    log(`☁️ 클라우드 설정 로드 완료 (수정: ${by} @ ${updated})`);
+    
+    renderSettings();
+    refreshData();
+  } catch(e){
+    log('❌ 클라우드 로드 오류: '+e.message, 'err');
+  }
+}
+
+// 3) 설정 정규화 (필수 필드 보정)
+function normalizeSettings(){
+  if(!Array.isArray(settings.machines) || settings.machines.length !== 10){
+    const old = Array.isArray(settings.machines) ? settings.machines : [];
+    settings.machines = JSON.parse(JSON.stringify(DEFAULT_SETTINGS.machines));
+    old.forEach(o => {
+      const t = settings.machines.find(m => m.line === o.line);
+      if(t){
+        if(typeof o.enabled === 'boolean') t.enabled = o.enabled;
+        if(o.model) t.model = o.model;
+        if(o.counterResetAt) t.counterResetAt = o.counterResetAt;
+      }
+    });
+  }
+  settings.machines.forEach((m,i) => {
+    if(typeof m.setId !== 'number') m.setId = Math.floor(i/2);
+    if(typeof m.enabled !== 'boolean') m.enabled = false;
+    if(!m.line) m.line = (i+3)+'호기';
+    if(typeof m.model !== 'string') m.model = '';
+    if(!m.goodDI) m.goodDI = m.line+'_양품';
+    if(!m.badDI) m.badDI = m.line+'_불량';
+    if(typeof m.targetPerHour !== 'number') m.targetPerHour = 100;
+  });
+  if(!Array.isArray(settings.sets) || settings.sets.length !== 5){
+    settings.sets = JSON.parse(JSON.stringify(DEFAULT_SETTINGS.sets));
+  }
+  if(!Array.isArray(settings.modelList) || settings.modelList.length === 0){
+    settings.modelList = [...DEFAULT_SETTINGS.modelList];
+  }
+}
+
+// 4) localStorage 저장 (백업용)
+function saveSettingsToLocal(){
   try {
     localStorage.setItem('mes_inspection_settings_v5', JSON.stringify(settings));
   } catch(e){
-    log('❌ 설정 저장 실패: '+e.message, 'err');
+    log('❌ 로컬 저장 실패: '+e.message, 'err');
   }
 }
 
-function saveSettings(showMsg){
+// 5) Supabase 저장 (메인)
+async function saveSettingsToCloud(silent){
+  try {
+    const payload = {
+      id: 'main',
+      model_list: settings.modelList,
+      machines: settings.machines,
+      sets: settings.sets,
+      updated_at: new Date().toISOString(),
+      updated_by: currentUser || '익명'
+    };
+    
+    const { error } = await sb
+      .from('qc_settings')
+      .upsert(payload, { onConflict: 'id' });
+    
+    if(error){
+      log('❌ 클라우드 저장 실패: '+error.message, 'err');
+      log('⚠️ 로컬에만 저장됨 (오프라인 모드)', 'warn');
+      return false;
+    }
+    
+    if(!silent) log(`☁️ 클라우드 저장 완료 (${currentUser||'익명'})`);
+    return true;
+  } catch(e){
+    log('❌ 클라우드 저장 오류: '+e.message, 'err');
+    return false;
+  }
+}
+
+// 6) 통합 저장 함수 (Supabase + localStorage 동시)
+async function persistSettings(silent){
+  saveSettingsToLocal();         // 즉시 (오프라인 대비)
+  await saveSettingsToCloud(silent);  // 비동기 (메인)
+}
+
+// 호환성: 기존 코드에서 호출하는 함수
+function loadSettings(){
+  loadSettingsFromLocal();  // 일단 로컬에서 빠르게 (UI 즉시 표시)
+  // loadSettingsFromCloud()는 init에서 비동기 호출
+}
+function saveSettingsToStorage(){
+  // 동기 호출용 - localStorage만 저장 후, 클라우드는 비동기로
+  saveSettingsToLocal();
+  saveSettingsToCloud(true);  // fire-and-forget
+}
+
+// 7) 명시적 저장 (체크박스 변경 등에서 호출)
+// 변경됨 표시 (체크박스 클릭 시)
+function markUnsaved(){
+  const div = document.getElementById('saveStatus');
+  if(!div) return;
+  div.innerHTML = '⚠️ <b style="color:var(--warn)">변경사항이 있습니다 - "💾 설정 저장" 버튼을 눌러주세요</b>';
+  div.style.color = 'var(--warn)';
+}
+
+// 저장 완료 표시
+function markSaved(){
+  const div = document.getElementById('saveStatus');
+  if(!div) return;
+  div.innerHTML = '✅ <span style="color:var(--ok)">저장됨</span> - <span id="lastSavedTime">' + fmtTime(new Date()) + '</span>';
+  div.style.color = 'var(--text3)';
+}
+
+async function saveSettings(showMsg){
+  // 체크박스 상태 수집
   for(let i=0; i<settings.machines.length; i++){
     const cb = document.getElementById('m_enabled_'+i);
     if(cb) settings.machines[i].enabled = cb.checked;
   }
-  saveSettingsToStorage();
-  if(showMsg) log('✅ 설정 저장됨');
+  
+  // 저장 중 표시
+  const div = document.getElementById('saveStatus');
+  if(div){
+    div.innerHTML = '⏳ <span style="color:var(--accent)">클라우드에 저장 중...</span>';
+  }
+  
+  // localStorage + Supabase 동시 저장
+  saveSettingsToLocal();
+  const ok = await saveSettingsToCloud(!showMsg);
+  
+  if(ok){
+    if(showMsg) log('✅ 설정 저장됨 (로컬 + 클라우드)');
+    markSaved();
+  } else {
+    if(div){
+      div.innerHTML = '⚠️ <b style="color:var(--ng)">클라우드 저장 실패 - 로컬에만 저장됨</b>';
+    }
+  }
+  
   renderSettings();
   refreshData();
 }
 
 function resetAllSettings(){
-  if(!confirm('⚠️ 모든 설정을 기본값으로 복원하시겠습니까?\n(모델 마스터, 호기 활성화, 카운터 리셋 모두 초기화)')) return;
+  if(!confirm('⚠️ 모든 설정을 기본값으로 복원하시겠습니까?\n(모델 마스터, 호기 활성화, 카운터 리셋 모두 초기화)\n\n※ 클라우드 설정도 모든 사용자에게 적용됩니다.')) return;
   settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
-  saveSettingsToStorage();
+  persistSettings(false);
   log('🔧 설정 기본값 복원 완료');
+  markSaved();
   renderSettings();
   refreshData();
 }
@@ -509,7 +656,7 @@ function renderSettings(){
       const sc = SET_COLORS[m.setId] || '#94a3b8';
       return `
         <div class="cfg-row">
-          <input type="checkbox" id="m_enabled_${i}" ${m.enabled?'checked':''} onchange="saveSettings(false)">
+          <input type="checkbox" id="m_enabled_${i}" ${m.enabled?'checked':''} onchange="markUnsaved()">
           <label for="m_enabled_${i}" style="flex:1;cursor:pointer;color:${m.enabled?'var(--text)':'var(--text3)'}">
             ${m.line}
             <span class="badge" style="background:${sc}22;color:${sc}">SET${m.setId+1}</span>
@@ -520,7 +667,7 @@ function renderSettings(){
   }
 }
 
-function addModel(){
+async function addModel(){
   const input = document.getElementById('newModelInput');
   if(!input) return;
   const v = (input.value||'').trim();
@@ -528,17 +675,19 @@ function addModel(){
   if(settings.modelList.includes(v)){ alert('이미 존재하는 기종입니다.'); return; }
   settings.modelList.push(v);
   input.value = '';
-  saveSettingsToStorage();
+  saveSettingsToLocal();
+  const ok = await saveSettingsToCloud(true);
   renderSettings();
-  log('📦 기종 추가: '+v);
+  log('📦 기종 추가: '+v + (ok ? ' (☁️ 클라우드)' : ' (로컬만)'));
 }
 
-function removeModel(md){
+async function removeModel(md){
   if(!confirm(`"${md}" 기종을 삭제하시겠습니까?`)) return;
   settings.modelList = settings.modelList.filter(m => m !== md);
-  saveSettingsToStorage();
+  saveSettingsToLocal();
+  const ok = await saveSettingsToCloud(true);
   renderSettings();
-  log('🗑️ 기종 삭제: '+md);
+  log('🗑️ 기종 삭제: '+md + (ok ? ' (☁️ 클라우드)' : ' (로컬만)'));
 }
 
 async function refreshData(){
@@ -660,7 +809,7 @@ function processData(data){
         <span class="badge" style="background:${sc}22;color:${sc}">SET${m.setId+1}</span>
         ${isEnabled ? '' : '<span class="badge" style="background:rgba(100,116,139,.2);color:var(--text3)">OFF</span>'}
       </td>
-      <td>${m.model || '-'}${resetInfo}</td>
+      <td>${m.model === '__NONE__' ? '<span style="color:#fca5a5;font-size:.85em">⛔ 없음</span>' : (m.model || '-')}${resetInfo}</td>
       <td>${goodCell}</td>
       <td>${badCell}</td>
       <td>${yldCell}</td>
@@ -780,7 +929,12 @@ function openMachineModal(line){
   `;
   
   const modelSel = document.getElementById('mmModel');
-  modelSel.innerHTML = '<option value="">기종 선택...</option>' + 
+  // 옵션 구성: [기종 선택...] [── 없음(비가동) ──] [등록된 기종들]
+  const noneSelected = (m.model === '__NONE__') ? 'selected' : '';
+  modelSel.innerHTML = 
+    '<option value="">기종 선택...</option>' +
+    `<option value="__NONE__" ${noneSelected} style="color:#fca5a5">⛔ 없음 (비가동)</option>` +
+    '<option disabled>───────────</option>' +
     settings.modelList.map(md => `<option value="${md}" ${md===m.model?'selected':''}>${md}</option>`).join('');
   
   const s = settings.sets.find(x => x.setId === m.setId) || settings.sets[0];
@@ -849,8 +1003,10 @@ function saveMachineModal(){
   _pendingSave = { line:_currentModalLine, setId:m.setId, newModel, oldModel, n, o, l, r, memo, changed };
   
   if(changed){
+    const oldText = oldModel === '__NONE__' ? '없음(비가동)' : (oldModel || '없음');
+    const newText = newModel === '__NONE__' ? '없음(비가동)' : newModel;
     document.getElementById('resetMsg').innerHTML = 
-      `🔄 작업기종이 <b>"${oldModel||'없음'}"</b> → <b style="color:var(--accent)">"${newModel}"</b>(으)로 변경됩니다.`;
+      `🔄 작업기종이 <b>"${oldText}"</b> → <b style="color:var(--accent)">"${newText}"</b>(으)로 변경됩니다.`;
     document.getElementById('resetModal').classList.add('show');
     return;
   }
@@ -882,7 +1038,11 @@ function commitSave(resetCounter){
     }
   });
   
-  if(changed && cnt > 0) log(`📦 SET${setId+1} 기종변경: ${oldModel||'-'} → ${newModel} (${cnt}대)`);
+  if(changed && cnt > 0){
+    const oldText = oldModel === '__NONE__' ? '없음' : (oldModel || '-');
+    const newText = newModel === '__NONE__' ? '없음(비가동)' : newModel;
+    log(`📦 SET${setId+1} 기종변경: ${oldText} → ${newText} (${cnt}대)`);
+  }
   if(resetCounter) log(`🔄 SET${setId+1} 카운터 리셋: ${fmtTime(new Date())} 이후만 집계`);
   else if(changed) log(`📊 SET${setId+1} 누적 카운트 유지`);
   
@@ -952,16 +1112,27 @@ function startRealtime(){
         log(`🎯 ${payload.new.machine_code}: ${payload.new.shot_count}회`);
         refreshData();
       })
+    .on('postgres_changes',
+      { event:'*', schema:'public', table:'qc_settings' },
+      (payload) => {
+        // 다른 PC/사용자가 설정 변경 시 즉시 반영
+        if(payload.new && payload.new.id === 'main'){
+          const by = payload.new.updated_by || '?';
+          log(`☁️ ${by}님이 설정 변경 → 자동 반영`);
+          loadSettingsFromCloud();
+        }
+      })
     .subscribe();
 }
 
 async function init(){
-  log('🚀 시스템 시작 (v5.0)');
+  log('🚀 시스템 시작 (v5.3 - 클라우드 동기화 + 저장버튼)');
+  
+  // 1단계: localStorage에서 빠르게 로드 (UI 즉시 표시)
   loadSettings();
   
   if(!Array.isArray(settings.machines) || settings.machines.length !== 10){
     settings.machines = JSON.parse(JSON.stringify(DEFAULT_SETTINGS.machines));
-    saveSettingsToStorage();
   }
   
   updateUserBadge();
@@ -973,11 +1144,25 @@ async function init(){
   
   try { processData([]); renderESP32([]); } catch(e){ console.error(e); }
   
+  // 2단계: Supabase에서 최신 설정 로드 (백그라운드)
+  loadSettingsFromCloud();  // 비동기 - 완료되면 자동으로 UI 갱신
+  
   await refreshData();
   startRealtime();
   setInterval(refreshData, 10000);
   
-  log(`✅ 시스템 준비 완료 - 호기 ${settings.machines.length}대 / ESP32 ${ESP32_BOARDS.length}대 구성`);
+  log(`✅ 시스템 준비 완료 - 호기 ${settings.machines.length}대 / ESP32 ${ESP32_BOARDS.length}대`);
+  markSaved();
+  
+  // 페이지 떠나기 전 미저장 변경 경고
+  window.addEventListener('beforeunload', (e) => {
+    const status = document.getElementById('saveStatus');
+    if(status && status.innerHTML.includes('변경사항이 있습니다')){
+      e.preventDefault();
+      e.returnValue = '저장하지 않은 변경사항이 있습니다.';
+      return e.returnValue;
+    }
+  });
 }
 
 document.addEventListener('DOMContentLoaded', init);
