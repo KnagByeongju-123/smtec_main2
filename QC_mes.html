@@ -7,7 +7,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <meta name="theme-color" content="#0c4a6e">
-<title>일일 검사기 가동현황 v5.3 - 태진다이텍</title>
+<title>일일 검사기 가동현황 v5.6 - 태진다이텍</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&display=swap">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
@@ -124,7 +124,7 @@
 <body>
 
 <div class="hdr">
-  <h1>🏭 일일 검사기 가동현황 <span style="font-size:.65em;color:rgba(255,255,255,.7)">v5.3</span></h1>
+  <h1>🏭 일일 검사기 가동현황 <span style="font-size:.65em;color:rgba(255,255,255,.7)">v5.6</span></h1>
   <div class="sub">품질관리팀 · ESP32 실시간 SHOT 모니터링</div>
   <div class="info">
     <span id="userBadge" class="user-badge guest">🔒 로그인 필요</span>
@@ -813,8 +813,10 @@ function openMachineModal(line){
   `;
   
   const modelSel = document.getElementById('mmModel');
+  const isNoneActive = (!m.enabled) || (m.model === '__NONE__');
   modelSel.innerHTML = '<option value="">기종 선택...</option>' + 
-    settings.modelList.map(md => `<option value="${md}" ${md===m.model?'selected':''}>${md}</option>`).join('');
+    `<option value="__NONE__" ${isNoneActive?'selected':''}>❌ 미가동</option>` +
+    settings.modelList.map(md => `<option value="${md}" ${md===m.model && m.enabled?'selected':''}>${md}</option>`).join('');
   
   const s = settings.sets.find(x => x.setId === m.setId) || settings.sets[0];
   document.getElementById('mmNormal').value = s.normalHours;
@@ -864,26 +866,35 @@ function saveMachineModal(){
   const m = settings.machines.find(x => x.line === _currentModalLine);
   if(!m) return;
   
-  const newModel = (document.getElementById('mmModel').value||'').trim();
+  const rawModel = (document.getElementById('mmModel').value||'').trim();
+  const isNone = (rawModel === '__NONE__');
+  const newModel = isNone ? '' : rawModel;
   const n = parseInt(document.getElementById('mmNormal').value||0);
   const o = parseInt(document.getElementById('mmOver').value||0);
   const l = parseInt(document.getElementById('mmLunch').value||0);
   const r = parseInt(document.getElementById('mmRest').value||0);
   const memo = (document.getElementById('mmMemo').value||'').trim();
   
-  if((n+o)*60 - l - r <= 0){
+  if(!isNone && (n+o)*60 - l - r <= 0){
     alert('⚠️ 유효 가동시간이 0 이하입니다.');
     return;
   }
   
   const oldModel = m.model;
-  const changed = newModel && newModel !== oldModel;
+  const wasEnabled = m.enabled;
+  const changed = isNone ? wasEnabled : (newModel && newModel !== oldModel);
   
-  _pendingSave = { line:_currentModalLine, setId:m.setId, newModel, oldModel, n, o, l, r, memo, changed };
+  _pendingSave = { line:_currentModalLine, setId:m.setId, newModel, oldModel, n, o, l, r, memo, changed, isNone };
+  
+  if(isNone){
+    // 미가동 선택 → 확인창 없이 바로 비활성화 처리
+    commitSave(false);
+    return;
+  }
   
   if(changed){
     document.getElementById('resetMsg').innerHTML = 
-      `🔄 작업기종이 <b>"${oldModel||'없음'}"</b> → <b style="color:var(--accent)">"${newModel}"</b>(으)로 변경됩니다.`;
+      `🔄 <b>${_currentModalLine}</b> 작업기종이 <b>"${oldModel||'없음'}"</b> → <b style="color:var(--accent)">"${newModel}"</b>(으)로 변경됩니다.`;
     document.getElementById('resetModal').classList.add('show');
     return;
   }
@@ -899,8 +910,23 @@ function confirmReset(resetCounter){
 
 function commitSave(resetCounter){
   if(!_pendingSave) return;
-  const { line, setId, newModel, oldModel, n, o, l, r, memo, changed } = _pendingSave;
+  const { line, setId, newModel, oldModel, n, o, l, r, memo, changed, isNone } = _pendingSave;
   _pendingSave = null;
+  
+  // 미가동: 해당 호기만 비활성화, 근무시간 변경 없음
+  if(isNone){
+    const tm = settings.machines.find(mm => mm.line === line);
+    if(tm){
+      tm.enabled = false;
+      tm.model = '';
+    }
+    log(`⛔ ${line} 미가동 처리 (비활성화)`);
+    saveSettingsToStorage();
+    renderSettings();
+    closeMachineModal();
+    refreshData();
+    return;
+  }
   
   let s = settings.sets.find(x => x.setId === setId);
   if(!s){ s = {setId, normalHours:8, overtimeHours:0, lunchMinutes:60, restMinutes:0}; settings.sets.push(s); }
@@ -915,6 +941,13 @@ function commitSave(resetCounter){
     }
   });
   
+  // 기종 새로 선택하면 비활성화 호기는 자동 활성화 (해당 호기만)
+  const tm = settings.machines.find(mm => mm.line === line);
+  if(tm && newModel && !tm.enabled){
+    tm.enabled = true;
+    log(`✅ ${line} 자동 활성화 (기종 배정됨)`);
+  }
+  
   if(changed && cnt > 0) log(`📦 SET${setId+1} 기종변경: ${oldModel||'-'} → ${newModel} (${cnt}대)`);
   if(resetCounter) log(`🔄 SET${setId+1} 카운터 리셋: ${fmtTime(new Date())} 이후만 집계`);
   else if(changed) log(`📊 SET${setId+1} 누적 카운트 유지`);
@@ -924,6 +957,7 @@ function commitSave(resetCounter){
   if(memo) log(`📝 메모: ${memo}`);
   
   saveSettingsToStorage();
+  renderSettings();
   closeMachineModal();
   refreshData();
 }
@@ -989,7 +1023,7 @@ function startRealtime(){
 }
 
 async function init(){
-  log('🚀 시스템 시작 (v5.3)');
+  log('🚀 시스템 시작 (v5.6)');
   loadSettings();
   
   if(!Array.isArray(settings.machines) || settings.machines.length !== 10){
