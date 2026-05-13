@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>전자 열람확인 시스템</title>
+<title>전자 열람확인 시스템 v1.1</title>
 <style>
 :root{--bg:#0f172a;--surface:#1e293b;--surface2:#334155;--border:#475569;--text:#f1f5f9;--text2:#cbd5e1;--text3:#94a3b8;--accent:#f59e0b;--accent2:#fbbf24;--ok:#22c55e;--ng:#ef4444;--info:#38bdf8}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -129,7 +129,7 @@ body{margin:0;font-family:'Noto Sans KR',-apple-system,sans-serif;background:var
 <body>
 
 <div class="hdr">
-  <h1>📄 전자 열람확인 시스템 <span id="hdrUserBadge" class="badge"></span> <span id="netBadge" class="badge" style="display:none;font-size:10px;padding:2px 8px"></span></h1>
+  <h1>📄 전자 열람확인 시스템 v1.1 <span id="hdrUserBadge" class="badge"></span> <span id="netBadge" class="badge" style="display:none;font-size:10px;padding:2px 8px"></span></h1>
   <p>사내문서 · 도면 · 공지사항 디지털 회람</p>
 </div>
 
@@ -362,6 +362,14 @@ body{margin:0;font-family:'Noto Sans KR',-apple-system,sans-serif;background:var
         <div style="font-weight:800;color:var(--accent);margin-bottom:4px" id="confirmDocTitle"></div>
         <div style="color:var(--text3);font-size:11px" id="confirmDocNo"></div>
       </div>
+      <div id="confirmDescBox" style="display:none;background:rgba(56,189,248,.08);border-left:3px solid var(--info);border-radius:6px;padding:10px;margin-bottom:12px;font-size:12px;line-height:1.6;color:var(--text2);white-space:pre-wrap;word-break:break-word">
+        <div style="font-weight:700;color:#7dd3fc;margin-bottom:4px">📝 등록자 지시사항</div>
+        <div id="confirmDescText"></div>
+      </div>
+      <div id="confirmFileBox" style="display:none;margin-bottom:12px">
+        <button type="button" class="btn btn-info btn-block" id="confirmFileBtn">📂 첨부 파일 열기</button>
+        <div id="confirmFileUrl" style="font-size:10px;color:var(--text3);margin-top:4px;word-break:break-all;font-family:monospace;text-align:center"></div>
+      </div>
       <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:12px;font-size:12px;line-height:1.7">
         <div><span style="color:var(--text3)">확인자:</span> <strong id="confirmName">-</strong></div>
         <div><span style="color:var(--text3)">소속:</span> <strong id="confirmDept">-</strong></div>
@@ -393,6 +401,31 @@ body{margin:0;font-family:'Noto Sans KR',-apple-system,sans-serif;background:var
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeConfirmModal()">취소</button>
       <button class="btn btn-success" onclick="submitConfirm()">✓ 확인 등록</button>
+    </div>
+  </div>
+</div>
+
+<!-- ====== 파일 링크 팝업 모달 ====== -->
+<div class="modal" id="fileModal" style="z-index:1500">
+  <div class="modal-box" style="max-width:480px">
+    <div class="modal-header">
+      📂 첨부 파일
+      <button class="modal-close" onclick="closeFileModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <div style="background:var(--bg);border:1.5px solid var(--info);border-radius:8px;padding:12px;margin-bottom:12px">
+        <div style="font-size:11px;color:var(--text3);font-weight:700;margin-bottom:6px">🔗 파일 경로</div>
+        <div id="fileModalUrl" style="font-family:monospace;font-size:12px;color:#7dd3fc;word-break:break-all;line-height:1.5;background:rgba(0,0,0,.3);padding:8px 10px;border-radius:6px;border:1px solid rgba(56,189,248,.2);max-height:120px;overflow:auto"></div>
+      </div>
+      <div id="fileModalPreview" style="display:none;background:#fff;border-radius:8px;padding:6px;margin-bottom:12px;text-align:center">
+        <img id="fileModalImg" style="max-width:100%;max-height:300px;border-radius:4px" alt="">
+      </div>
+      <div id="fileModalHelp" style="font-size:11px;color:var(--text2);background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3);border-radius:6px;padding:10px;line-height:1.6"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeFileModal()">닫기</button>
+      <button class="btn btn-info" onclick="copyFileUrl()">📋 경로 복사</button>
+      <button class="btn btn-primary" id="fileModalOpenBtn" onclick="openFileExternal()">🌐 열기</button>
     </div>
   </div>
 </div>
@@ -1290,7 +1323,15 @@ function openDetail(docId){
   });
   const confirmedSet=new Set(logs.map(l=>l.viewer_name));
   const pending=[...allTargets].filter(n=>!confirmedSet.has(n));
+  // 등록자에게 의견 알림 배너 (의견 있는 로그만)
+  const isOwner=d.registered_by===me;
+  const commentsFromOthers=logs.filter(l=>l.comment&&l.comment.trim());
+  const commentBanner=(isOwner&&commentsFromOthers.length)?`<div style="background:linear-gradient(135deg,rgba(251,191,36,.18),rgba(245,158,11,.1));border:1.5px solid var(--accent);border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:12px">
+    <div style="font-weight:800;color:var(--accent);margin-bottom:6px">💬 확인자 의견 ${commentsFromOthers.length}건이 있습니다</div>
+    ${commentsFromOthers.map(l=>`<div style="padding:6px 0;border-top:1px dashed rgba(245,158,11,.3);margin-top:6px"><b style="color:#fde68a">${escHtml(l.viewer_name)}</b> <span style="color:var(--text3);font-size:10px">(${escHtml(l.dept||'-')} · ${fmt(l.viewed_at)})</span><div style="margin-top:3px;color:var(--text);white-space:pre-wrap;word-break:break-word">${escHtml(l.comment)}</div></div>`).join('')}
+  </div>`:'';
   document.getElementById('detailBody').innerHTML=`
+    ${commentBanner}
     <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:10px;font-size:12px;line-height:1.8">
       <div><b>문서번호:</b> ${escHtml(d.doc_no)}</div>
       <div><b>종류:</b> ${TYPE_NAMES[d.doc_type]||d.doc_type}</div>
@@ -1310,14 +1351,16 @@ function openDetail(docId){
     </div>
     <div style="font-size:12px;font-weight:700;margin-bottom:6px;color:var(--ok)">✅ 확인 완료 (${logs.length}명)</div>
     <div class="viewer-list" style="margin-bottom:10px">
-      ${logs.length?logs.map(l=>`<div class="viewer-row"><span class="icon">✓</span><span class="name">${escHtml(l.viewer_name)} <span class="dept">(${escHtml(l.dept||'-')})</span></span><span class="time">${fmt(l.viewed_at)}</span></div>`).join(''):'<div style="color:var(--text3);font-size:11px;text-align:center;padding:14px">아직 확인자가 없습니다</div>'}
+      ${logs.length?logs.map(l=>{
+        const cmt=l.comment&&l.comment.trim()?`<div style="margin:4px 0 0 26px;padding:6px 10px;background:rgba(251,191,36,.1);border-left:3px solid var(--accent);border-radius:4px;font-size:11px;color:var(--text);white-space:pre-wrap;word-break:break-word"><span style="color:var(--accent);font-weight:700">💬 의견:</span> ${escHtml(l.comment)}</div>`:'';
+        return `<div class="viewer-row"><span class="icon">✓</span><span class="name">${escHtml(l.viewer_name)} <span class="dept">(${escHtml(l.dept||'-')})</span></span><span class="time">${fmt(l.viewed_at)}</span></div>${cmt}`;
+      }).join(''):'<div style="color:var(--text3);font-size:11px;text-align:center;padding:14px">아직 확인자가 없습니다</div>'}
     </div>
     ${pending.length?`<div style="font-size:12px;font-weight:700;margin-bottom:6px;color:var(--ng)">⏳ 미확인 (${pending.length}명)</div>
     <div class="viewer-list">
       ${pending.map(n=>{const u=_users.find(x=>x.name===n);return `<div class="viewer-row" style="opacity:.7"><span class="icon">⏳</span><span class="name">${escHtml(n)} <span class="dept">(${escHtml(u?u.dept||'-':'-')})</span></span></div>`}).join('')}
     </div>`:''}
   `;
-  const isOwner=d.registered_by===me;
   let footer='';
   if(!confirmed)footer+=`<button class="btn btn-success" onclick="closeDetailModal();openConfirmModal(${d.id})">✓ 확인 등록</button>`;
   else footer+=`<button class="btn btn-ghost" disabled>✓ 확인 완료</button>`;
@@ -1328,12 +1371,89 @@ function openDetail(docId){
 function closeDetailModal(){document.getElementById('detailModal').classList.remove('show')}
 function openFile(url){
   if(!url)return;
-  // file:// 또는 \\\\ 경로면 alert
-  if(url.startsWith('\\\\')||url.startsWith('file:')){
-    alert('🔗 파일 경로:\n\n'+url+'\n\n위 경로를 탐색기에 붙여넣어 여세요. (보안상 브라우저에서 직접 열 수 없음)');
+  const m=document.getElementById('fileModal');
+  if(!m){
+    // fallback - 모달이 없으면 기존 동작
+    if(url.indexOf('\\\\')===0||url.indexOf('file:')===0){
+      alert('🔗 파일 경로:\n\n'+url+'\n\n위 경로를 탐색기에 붙여넣어 여세요.');
+      return;
+    }
+    window.open(url,'_blank','noopener');
+    return;
+  }
+  document.getElementById('fileModalUrl').textContent=url;
+  const preview=document.getElementById('fileModalPreview');
+  const img=document.getElementById('fileModalImg');
+  const help=document.getElementById('fileModalHelp');
+  const openBtn=document.getElementById('fileModalOpenBtn');
+  const isImg=/\.(png|jpe?g|gif|webp|bmp|svg)(\?|#|$)/i.test(url);
+  const isHttp=/^https?:\/\//i.test(url);
+  if(isImg&&isHttp){
+    img.src=url;
+    img.onerror=function(){preview.style.display='none'};
+    preview.style.display='block';
+  }else{
+    preview.style.display='none';
+    img.src='';
+  }
+  if(url.indexOf('\\\\')===0||url.indexOf('file:')===0){
+    help.innerHTML='💡 <b>사내 공유 폴더 경로</b>입니다.<br>📋 \'경로 복사\' 버튼을 눌러 윈도우 탐색기 주소창에 붙여넣어 열어주세요.<br>(보안상 브라우저에서 직접 열 수 없음)';
+    openBtn.disabled=true;
+    openBtn.style.opacity='.4';
+    openBtn.style.cursor='not-allowed';
+  }else if(isHttp){
+    help.innerHTML='💡 <b>웹 링크</b>입니다.<br>🌐 \'열기\' 버튼을 누르면 새 창에서 파일을 확인할 수 있습니다.';
+    openBtn.disabled=false;
+    openBtn.style.opacity='1';
+    openBtn.style.cursor='pointer';
+  }else{
+    help.innerHTML='💡 외부 경로입니다.<br>📋 경로를 복사해서 직접 열거나 \'열기\' 버튼을 시도해보세요.';
+    openBtn.disabled=false;
+    openBtn.style.opacity='1';
+    openBtn.style.cursor='pointer';
+  }
+  m.dataset.url=url;
+  m.classList.add('show');
+}
+function closeFileModal(){
+  const m=document.getElementById('fileModal');
+  if(!m)return;
+  m.classList.remove('show');
+  const img=document.getElementById('fileModalImg');
+  if(img)img.src='';
+  delete m.dataset.url;
+}
+function openFileExternal(){
+  const m=document.getElementById('fileModal');
+  if(!m)return;
+  const url=m.dataset.url;
+  if(!url)return;
+  if(url.indexOf('\\\\')===0||url.indexOf('file:')===0){
+    toast('보안상 브라우저에서 직접 열 수 없습니다. 경로를 복사해주세요.','err');
     return;
   }
   window.open(url,'_blank','noopener');
+}
+function copyFileUrl(){
+  const m=document.getElementById('fileModal');
+  if(!m)return;
+  const url=m.dataset.url;
+  if(!url)return;
+  function fallbackCopy(){
+    const ta=document.createElement('textarea');
+    ta.value=url;ta.style.position='fixed';ta.style.opacity='0';
+    document.body.appendChild(ta);ta.select();
+    try{document.execCommand('copy');toast('📋 경로가 복사되었습니다','ok')}
+    catch(e){toast('복사 실패: '+e.message,'err')}
+    document.body.removeChild(ta);
+  }
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(url).then(function(){
+      toast('📋 경로가 복사되었습니다','ok');
+    }).catch(fallbackCopy);
+  }else{
+    fallbackCopy();
+  }
 }
 
 /* ═══════════════════════════════════════════
@@ -1426,6 +1546,26 @@ function openConfirmModal(docId){
   sel.onchange=()=>{document.getElementById('confirmDept').textContent=sel.value||'(부서 미지정)';localStorage.setItem('mes_user_dept',sel.value)};
   document.getElementById('confirmTime').textContent=fmt(kstISO());
   document.getElementById('confirmComment').value='';
+  // 등록자 지시사항/첨부파일 표시
+  const descBox=document.getElementById('confirmDescBox');
+  const descText=document.getElementById('confirmDescText');
+  if(d.description&&d.description.trim()){
+    descText.textContent=d.description;
+    descBox.style.display='block';
+  }else{
+    descBox.style.display='none';
+  }
+  const fileBox=document.getElementById('confirmFileBox');
+  const fileUrlEl=document.getElementById('confirmFileUrl');
+  const fileBtn=document.getElementById('confirmFileBtn');
+  if(d.file_url&&d.file_url.trim()){
+    fileUrlEl.textContent='🔗 '+d.file_url;
+    fileBtn.onclick=function(){openFile(d.file_url)};
+    fileBox.style.display='block';
+  }else{
+    fileBox.style.display='none';
+    fileBtn.onclick=null;
+  }
   document.getElementById('confirmModal').classList.add('show');
   // 서명패드 초기화
   setTimeout(()=>{
@@ -1974,7 +2114,7 @@ function buildHistoryPdfHtml(){
       <div class="legal-notice">
         ⚖️ <b>법적 효력 안내:</b> 본 확인서는 「전자서명법」에 따라 작성되었으며, 각 서명에는 SHA-256 무결성 해시·디바이스 정보·접속 IP 해시가 함께 기록되어 위변조를 방지합니다. 사후 무결성 검증이 가능하며, 검증 절차를 통해 원본 서명임을 입증할 수 있습니다.
       </div>
-      <div class="footer">출력일: ${escHtml(today)} · 태진다이텍 ESG Smart Factory · 전자 열람확인 시스템 v1.0</div>
+      <div class="footer">출력일: ${escHtml(today)} · 태진다이텍 ESG Smart Factory · 전자 열람확인 시스템 v1.1</div>
     </div>`;
   });
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>전자 열람 확인서</title>
@@ -2100,73 +2240,4 @@ CREATE TABLE IF NOT EXISTS public.doc_view_log (
   confirm_signature TEXT,
   -- 법적 효력 강화 컬럼 (2026-04 추가)
   integrity_hash TEXT,    -- SHA-256(doc_id + viewer + viewed_at + signature)
-  device_info TEXT,       -- User-Agent + 화면 해상도
-  ip_hash TEXT,           -- 클라이언트 IP의 해시 (개인정보 보호)
-  pin_first_digit TEXT    -- PIN 첫자리 (부서 추적용)
-);
--- 기존 테이블에 컬럼이 없으면 추가
-ALTER TABLE public.doc_view_log ADD COLUMN IF NOT EXISTS integrity_hash TEXT;
-ALTER TABLE public.doc_view_log ADD COLUMN IF NOT EXISTS device_info TEXT;
-ALTER TABLE public.doc_view_log ADD COLUMN IF NOT EXISTS ip_hash TEXT;
-ALTER TABLE public.doc_view_log ADD COLUMN IF NOT EXISTS pin_first_digit TEXT;
-ALTER TABLE public.doc_view_log DISABLE ROW LEVEL SECURITY;
-GRANT ALL ON public.doc_view_log TO anon, authenticated;
-GRANT USAGE, SELECT ON SEQUENCE doc_view_log_id_seq TO anon, authenticated;
-
--- 3. 부서 마스터
-CREATE TABLE IF NOT EXISTS public.doc_dept (
-  id BIGSERIAL PRIMARY KEY,
-  dept_name TEXT UNIQUE NOT NULL,
-  enter_date TIMESTAMPTZ DEFAULT now()
-);
-ALTER TABLE public.doc_dept DISABLE ROW LEVEL SECURITY;
-GRANT ALL ON public.doc_dept TO anon, authenticated;
-GRANT USAGE, SELECT ON SEQUENCE doc_dept_id_seq TO anon, authenticated;
-
--- 4. 인덱스
-CREATE INDEX IF NOT EXISTS idx_doc_register_status ON public.doc_register(status);
-CREATE INDEX IF NOT EXISTS idx_doc_register_receipt ON public.doc_register(receipt_date DESC);
-CREATE INDEX IF NOT EXISTS idx_doc_view_log_doc ON public.doc_view_log(doc_id);
-CREATE INDEX IF NOT EXISTS idx_doc_view_log_viewer ON public.doc_view_log(viewer_name);
-
--- 5. ESG 사용자 테이블 (user_pin) - ESG 시스템에서 이미 사용 중
--- 이 시스템은 user_pin 테이블의 다음 컬럼을 읽어 사용합니다:
---   name, dept, position, emp_id, pin_plain
--- user_pin이 없으면 ESG 관리자 페이지에서 먼저 사원 등록을 해야 합니다.
--- (PIN 첫자리로 부서 자동 매핑: 0=대표/1=개발/2=생산/3=설계/4=품질/5=영업/6=공장장)
-
--- 끝.`;
-  if(navigator.clipboard){
-    navigator.clipboard.writeText(sql).then(()=>{
-      alert('📋 SQL이 클립보드에 복사되었습니다!\n\nSupabase SQL Editor에 붙여넣고 실행하세요.\n(최초 1회만 실행)');
-    });
-  }else{
-    prompt('SQL을 복사하세요:',sql);
-  }
-}
-
-/* ═══════════════════════════════════════════
-   초기화
-═══════════════════════════════════════════ */
-window.addEventListener('DOMContentLoaded',async()=>{
-  // 설정 카드 표시 (마스킹)
-  document.getElementById('sbUrl').value=SB_URL;
-  document.getElementById('sbKey').value=SB_KEY;
-  // 이력관리 기본 날짜 - 최근 1개월
-  try{
-    const k=kstNow();
-    const end=k.toISOString().slice(0,10);
-    const startD=new Date(k);startD.setMonth(startD.getMonth()-1);
-    document.getElementById('histStart').value=startD.toISOString().slice(0,10);
-    document.getElementById('histEnd').value=end;
-  }catch(e){}
-  // 데이터 로드
-  await loadUsers();
-  await loadDepts();
-  await loadAllDocs();
-  // ※ ntfy 외부 알림 비활성화 - 전 직원 무차별 알림 방지
-  //   알림은 ESG 메인 진입 시 자동 팝업으로 대체됨
-});
-</script>
-</body>
-</html>
+  dev
