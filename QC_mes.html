@@ -107,7 +107,7 @@
     <span id="userBadge" class="user-badge guest">🔒 로그인 필요</span>
     <span>📅 <span id="todayDate">-</span></span>
     <span style="background:rgba(34,197,94,.25);color:#86efac">⚡ 자동 10초</span>
-    <span style="background:rgba(245,158,11,.25);color:#fcd34d">🔥 펌웨어 v3.4</span>
+    <span style="background:rgba(245,158,11,.25);color:#fcd34d">🔥 펌웨어 v3.2</span>
   </div>
 </div>
 
@@ -190,12 +190,11 @@
   </div>
 
   <div class="box collapsed">
-    <div class="box-hdr" onclick="toggleBox(this)"><span>🔌 ESP32 펌웨어 v3.4 (ISR + Dual-Core, POST -1 해결)</span><span class="toggle">▼ 펼치기</span></div>
+    <div class="box-hdr" onclick="toggleBox(this)"><span>🔌 ESP32 펌웨어 v3.2 (안정버전)</span><span class="toggle">▼ 펼치기</span></div>
     <div class="box-body">
       <div style="font-size:.78em;color:var(--text2);line-height:1.6;margin-bottom:10px">
-        <b style="color:var(--ok)">★ v3.4 (현재 안정버전):</b> DI 인터럽트(ISR) + POST는 Core0 별도 Task → SHOT 누락 0건<br>
-        <b style="color:var(--ok)">★ HTTPS 인증서 우회:</b> WiFiClientSecure + setInsecure() → POST FAIL (-1) 완전 해결<br>
-        <b>처리 속도:</b> 약 600 SHOT/분 (SPM 600 한계까지)<br>
+        <b style="color:var(--ok)">★ v3.2 안정버전:</b> Polling 방식 (단순/검증완료, 30ms 디바운스)<br>
+        <b>처리 속도:</b> 약 10 SHOT/초 (느리지만 100% 검증됨)<br>
         보드별로 <b>DEVICE_ID / local_IP / MACHINE_CODES</b> 3가지만 다릅니다.<br>
         하드웨어: 광센서 PNP출력(WH) → DI 직결 / 24V 1.5A 어댑터 / Multi-WiFi(TAEJIN+iptime, 비번 taejinpress)
       </div>
@@ -204,7 +203,6 @@
         <button class="btn" onclick="showFW(2)" id="fwTab2">ESP32 #2 (5,6호기)</button>
         <button class="btn" onclick="showFW(3)" id="fwTab3">ESP32 #3 (7,8호기)</button>
         <button class="btn" onclick="showFW(4)" id="fwTab4">ESP32 #4 (9,10호기)</button>
-        <button class="btn" onclick="showFW(5)" id="fwTab5">ESP32 #5 (11,12호기)</button>
       </div>
       <div style="display:flex;gap:5px;margin-bottom:8px">
         <button class="btn primary" onclick="copyFW()">📋 코드 복사</button>
@@ -270,10 +268,10 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const SET_COLORS = ['#38bdf8','#a78bfa','#fb923c','#34d399','#f472b6'];
 
 const ESP32_BOARDS = [
-  { id:'ESP32_SET1', name:'ESP32 #1', ip:'192.168.10.101', setId:0, lines:['3호기','4호기'] },
-  { id:'ESP32_SET2', name:'ESP32 #2', ip:'192.168.10.102', setId:1, lines:['5호기','6호기'] },
-  { id:'ESP32_SET3', name:'ESP32 #3', ip:'192.168.10.103', setId:2, lines:['7호기','8호기'] },
-  { id:'ESP32_SET4', name:'ESP32 #4', ip:'192.168.10.104', setId:3, lines:['9호기','10호기'] }
+  { id:'ESP32_SET1', name:'ESP32 #1', ip:'192.168.10.101', mac:'',                    setId:0, lines:['3호기','4호기'] },
+  { id:'ESP32_SET2', name:'ESP32 #2', ip:'192.168.10.102', mac:'',                    setId:1, lines:['5호기','6호기'] },
+  { id:'ESP32_SET3', name:'ESP32 #3', ip:'192.168.10.103', mac:'',                    setId:2, lines:['7호기','8호기'] },
+  { id:'ESP32_SET4', name:'ESP32 #4', ip:'192.168.10.104', mac:'90:70:69:19:B9:84',   setId:3, lines:['9호기','10호기'] }
 ];
 
 const DEFAULT_SETTINGS = {
@@ -546,27 +544,41 @@ function renderESP32(data){
   (data||[]).forEach(row => {
     const ts = new Date(row.detected_at);
     let m = null;
+    // 1순위: esp32_id 정확 일치
     if(row.esp32_id) m = ESP32_BOARDS.find(b => b.id === row.esp32_id);
-    if(!m && row.esp32_ip) m = ESP32_BOARDS.find(b => b.ip === row.esp32_ip);
+    // 2순위: MAC 주소 일치 (대소문자 무시)
+    if(!m && row.esp32_mac){
+      const mac = String(row.esp32_mac).toUpperCase();
+      m = ESP32_BOARDS.find(b => b.mac && b.mac.toUpperCase() === mac);
+    }
+    // 3순위: machine_code 접두사로 매칭 (가장 신뢰성 높음 - WiFi/IP 무관)
     if(!m && row.machine_code){
       const mc = String(row.machine_code);
       m = ESP32_BOARDS.find(b => b.lines.some(l => mc.startsWith(l+'_') || mc === l));
     }
+    // 4순위: 고정 IP 일치 (DHCP 사용 시엔 매칭 안 됨, fallback용)
+    if(!m && row.esp32_ip) m = ESP32_BOARDS.find(b => b.ip === row.esp32_ip);
+    
     if(m){ const prev = lastByEsp[m.id]; if(!prev || ts > prev.ts) lastByEsp[m.id] = { ts, row }; }
   });
   let on=0, idle=0, off=0;
   grid.innerHTML = ESP32_BOARDS.map(b => {
     const last = lastByEsp[b.id];
-    let cls, status, info, mac='';
+    let cls, status, info, mac='', actualIp='';
     if(!last){ cls='off'; status='🔴 신호 없음'; info='데이터 없음'; off++; }
     else {
       mac = last.row.esp32_mac || '';
+      actualIp = last.row.esp32_ip || '';
       const diff = (getKSTNow() - last.ts) / 60000;
       if(diff < 2){ cls='on'; status='🟢 정상'; info=fmtTime(last.ts); on++; }
       else if(diff < 5){ cls='idle'; status='🟡 IDLE'; info=`${Math.floor(diff)}분 전`; idle++; }
       else { cls='off'; status='🔴 오프라인'; info=`${Math.floor(diff)}분 전`; off++; }
     }
-    return `<div class="esp-card ${cls}"><div class="top"><span>${b.name}</span><span style="font-size:.85em">${status}</span></div><div class="meta"><div>📍 SET${b.setId+1}: ${b.lines.join(' + ')}</div><div class="ip">IP: ${b.ip}</div>${mac ? `<div class="ip">MAC: ${mac}</div>` : ''}<div style="margin-top:3px">마지막: ${info}</div></div></div>`;
+    // 실제 IP가 등록 IP와 다르면 DHCP 사용 표시
+    const ipDisplay = actualIp && actualIp !== b.ip 
+      ? `<div class="ip" style="color:var(--warn)">IP: ${actualIp} <span style="font-size:.85em">(DHCP)</span></div><div class="ip" style="font-size:.85em;opacity:.6">등록: ${b.ip}</div>`
+      : `<div class="ip">IP: ${b.ip}</div>`;
+    return `<div class="esp-card ${cls}"><div class="top"><span>${b.name}</span><span style="font-size:.85em">${status}</span></div><div class="meta"><div>📍 SET${b.setId+1}: ${b.lines.join(' + ')}</div>${ipDisplay}${mac ? `<div class="ip">MAC: ${mac}</div>` : ''}<div style="margin-top:3px">마지막: ${info}</div></div></div>`;
   }).join('');
   if(summary) summary.textContent = `🟢${on} 🟡${idle} 🔴${off} / ${ESP32_BOARDS.length}대`;
 }
@@ -703,15 +715,19 @@ async function runDiagnostics(){
   ESP32_BOARDS.forEach(b => {
     const m = lastData.find(r => {
       if(r.esp32_id === b.id) return true;
-      if(r.esp32_ip === b.ip) return true;
+      if(r.esp32_mac && b.mac && String(r.esp32_mac).toUpperCase() === b.mac.toUpperCase()) return true;
       if(r.machine_code && b.lines.some(l => String(r.machine_code).startsWith(l+'_') || r.machine_code === l)) return true;
+      if(r.esp32_ip === b.ip) return true;
       return false;
     });
+    // 실제 매칭된 IP 표시 (DHCP 변경 시 확인용)
+    const labelIp = m && m.esp32_ip ? m.esp32_ip : b.ip;
+    const labelSuffix = m && m.esp32_ip && m.esp32_ip !== b.ip ? ` ⚠ DHCP:${m.esp32_ip}` : '';
     if(!m){ results.push({name:b.name+' ('+b.ip+')', ok:false, val:'신호 없음'}); }
     else {
       const diff = (getKSTNow() - new Date(m.detected_at)) / 60000;
       const ok = diff < 5;
-      results.push({name:b.name+' ('+b.ip+')', ok, val: ok ? `정상 (${Math.floor(diff)}분 전)` : `오프라인 (${Math.floor(diff)}분 전)`});
+      results.push({name:b.name+labelSuffix, ok, val: ok ? `정상 (${Math.floor(diff)}분 전)` : `오프라인 (${Math.floor(diff)}분 전)`});
     }
   });
   results.push({name:'사용자', ok:!!currentUser, val:currentUser||'미로그인'});
@@ -734,7 +750,7 @@ function startRealtime(){
 }
 
 async function init(){
-  log('🚀 시스템 시작 (v6.1 - 펌웨어 v3.4 ISR+Dual-Core 모드)');
+  log('🚀 시스템 시작 (v6.1 - DHCP 매칭 강화)');
   loadSettings();
   if(!Array.isArray(settings.machines) || settings.machines.length !== 10){
     settings.machines = JSON.parse(JSON.stringify(DEFAULT_SETTINGS.machines));
@@ -754,15 +770,13 @@ async function init(){
 }
 
 // ════════════════════════════════════════════════════════════
-//  ESP32 펌웨어 v3.4 (ISR + Dual-Core Task + HTTPS WiFiClientSecure)
-//  - 현장 검증: SHOT 누락 0건, POST FAIL(-1) 해결
+//  ESP32 펌웨어 v3.3 (ISR 모드 - 짧은 신호 누락 방지)
 // ════════════════════════════════════════════════════════════
 const FW_BOARDS = [
-  { num:1, lines:['3호기','4호기'],   ip:'192.168.10.101' },
-  { num:2, lines:['5호기','6호기'],   ip:'192.168.10.102' },
-  { num:3, lines:['7호기','8호기'],   ip:'192.168.10.103' },
-  { num:4, lines:['9호기','10호기'],  ip:'192.168.10.104' },
-  { num:5, lines:['11호기','12호기'], ip:'192.168.10.105' }
+  { num:1, lines:['3호기','4호기'],  ip:'192.168.10.101' },
+  { num:2, lines:['5호기','6호기'],  ip:'192.168.10.102' },
+  { num:3, lines:['7호기','8호기'],  ip:'192.168.10.103' },
+  { num:4, lines:['9호기','10호기'], ip:'192.168.10.104' }
 ];
 
 function buildFW(b){
@@ -770,19 +784,9 @@ function buildFW(b){
   const [l1, l2] = b.lines;
   return `/*
   ============================================================
-  ESP32-S3-ETH-8DI-8RO  SHOT 카운터 펌웨어 v3.4
+  ESP32-S3-ETH-8DI-8RO  SHOT 카운터 펌웨어 v3.2
   ESP32 #${b.num}  ${l1} + ${l2}
   ============================================================
-  ★ v3.3 대비 변경점 (현장 검증 완료):
-  (1) DI 입력을 GPIO 인터럽트(ISR)로 처리
-      → POST가 블로킹돼도 SHOT은 ISR로 즉시 카운트 (누락 0건)
-  (2) Supabase POST 를 Core0 별도 FreeRTOS Task 로 분리
-      → main loop(Core1) 는 SHOT 처리만 담당
-  (3) HTTPS WiFiClientSecure + setInsecure()
-      → POST FAIL (-1 CONNECTION_REFUSED) 완전 해결
-  (4) ISR 디바운싱 (마이크로초 단위, 30ms)
-  (5) portMUX_TYPE 으로 멀티코어 동기화 안전
-
   보드: ESP32S3 Dev Module / USB CDC On Boot: Enabled
   업로드: 921600  / COM 자동
   라이브러리: ArduinoJson (WiFiMulti는 코어 기본)
@@ -798,7 +802,6 @@ function buildFW(b){
 
 #include <WiFi.h>
 #include <WiFiMulti.h>
-#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include "esp_mac.h"
@@ -810,8 +813,8 @@ function buildFW(b){
 IPAddress local_IP(${ipParts[0]}, ${ipParts[1]}, ${ipParts[2]}, ${ipParts[3]});
 IPAddress gateway(${ipParts[0]}, ${ipParts[1]}, ${ipParts[2]}, 1);
 IPAddress subnet(255, 255, 255, 0);
-IPAddress dns1(8, 8, 8, 8);
-IPAddress dns2(168, 126, 63, 1);
+IPAddress dns1(168, 126, 63, 1);
+IPAddress dns2(8, 8, 8, 8);
 
 // ===== Multi-WiFi =====
 WiFiMulti wifiMulti;
@@ -830,270 +833,141 @@ const char* MACHINE_CODES[4] = {
   "${l2}_불량"
 };
 
-// ===== 인터럽트용 공유변수 =====
-volatile unsigned long shotCount[4]       = {0, 0, 0, 0};
-volatile unsigned long lastShotMicros[4]  = {0, 0, 0, 0};
-volatile unsigned long lastIntervalMs[4]  = {0, 0, 0, 0};
-unsigned long lastSentCount[4]            = {0, 0, 0, 0};
-unsigned long lastReportedCount[4]        = {0, 0, 0, 0};
+// ===== 카운터 상태 =====
+volatile uint32_t shotCount[4] = {0,0,0,0};
+uint32_t lastSentCount[4]      = {0,0,0,0};
+unsigned long lastEdgeMs[4]    = {0,0,0,0};
+int  lastLevel[4]              = {1,1,1,1};
+unsigned long lastShotMs[4]    = {0,0,0,0};
 
-portMUX_TYPE shotMux = portMUX_INITIALIZER_UNLOCKED;
+const unsigned long DEBOUNCE_MS  = 30;
+const unsigned long POST_PERIOD  = 1000;
+unsigned long lastPostMs = 0;
 
-// ISR 디바운싱 (마이크로초)
-const unsigned long DEBOUNCE_US     = 30000;   // 30ms
-const unsigned long MIN_INTERVAL_US = 100000;  // 100ms (SPM 600 한계)
-
-// 타이밍
-unsigned long lastWifiCheck = 0;
-const unsigned long WIFI_CHECK_MS = 30000;
-
-// 통계
-volatile unsigned long postSuccess = 0;
-volatile unsigned long postFail    = 0;
-
-String macAddress = "";
-String currentIP  = "";
-
-// Task 핸들
-TaskHandle_t postTaskHandle = NULL;
+String macStr = "";
 
 // ──────────────────────────────────────────────
-//  ISR (4개 핀 각각)
-//  ※ IRAM_ATTR 필수, Serial.print 금지
-// ──────────────────────────────────────────────
-void IRAM_ATTR isrChannel(int ch) {
-  unsigned long now = micros();
-  if (now - lastShotMicros[ch] < DEBOUNCE_US) return;
-  if (lastShotMicros[ch] != 0 && (now - lastShotMicros[ch]) < MIN_INTERVAL_US) return;
+void connectWiFi(){
+  WiFi.mode(WIFI_STA);
+  WiFi.config(local_IP, gateway, subnet, dns1, dns2);
 
-  portENTER_CRITICAL_ISR(&shotMux);
-  if (lastShotMicros[ch] != 0) {
-    lastIntervalMs[ch] = (now - lastShotMicros[ch]) / 1000UL;
+  wifiMulti.addAP("TAEJIN", WIFI_PASS);
+  wifiMulti.addAP("iptime", WIFI_PASS);
+
+  Serial.print("[WiFi] 연결중");
+  unsigned long t0 = millis();
+  while(wifiMulti.run() != WL_CONNECTED && millis()-t0 < 30000){
+    Serial.print(".");
+    delay(500);
   }
-  lastShotMicros[ch] = now;
-  shotCount[ch]++;
-  portEXIT_CRITICAL_ISR(&shotMux);
+  Serial.println();
+
+  if(WiFi.status() == WL_CONNECTED){
+    Serial.printf("[WiFi] ✅ SSID=%s  RSSI=%d  IP=%s\\n",
+      WiFi.SSID().c_str(), WiFi.RSSI(), WiFi.localIP().toString().c_str());
+  } else {
+    Serial.println("[WiFi] ❌ 연결 실패 (재시도 대기)");
+  }
 }
 
-void IRAM_ATTR isr0() { isrChannel(0); }
-void IRAM_ATTR isr1() { isrChannel(1); }
-void IRAM_ATTR isr2() { isrChannel(2); }
-void IRAM_ATTR isr3() { isrChannel(3); }
-
-// ──────────────────────────────────────────────
-String getMacString() {
+void readMAC(){
   uint8_t mac[6];
   esp_read_mac(mac, ESP_MAC_WIFI_STA);
   char buf[20];
   snprintf(buf, sizeof(buf), "%02X:%02X:%02X:%02X:%02X:%02X",
-           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-  return String(buf);
+           mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
+  macStr = String(buf);
+  Serial.printf("[MAC] %s\\n", macStr.c_str());
 }
 
-String httpErrorToString(int code) {
-  switch (code) {
-    case -1:  return "CONNECTION_REFUSED";
-    case -2:  return "SEND_HEADER_FAILED";
-    case -3:  return "SEND_PAYLOAD_FAILED";
-    case -4:  return "NOT_CONNECTED";
-    case -5:  return "CONNECTION_LOST";
-    case -11: return "READ_TIMEOUT";
-    default:  return "ERR";
-  }
-}
-
-bool connectWiFi() {
-  Serial.println("\\n[WiFi] 연결 시도 (Multi-AP RSSI 자동선택)...");
-  WiFi.config(local_IP, gateway, subnet, dns1, dns2);
-
-  unsigned long start = millis();
-  while (wifiMulti.run() != WL_CONNECTED && millis() - start < 30000) {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println();
-
-  if (WiFi.status() == WL_CONNECTED) {
-    currentIP = WiFi.localIP().toString();
-    Serial.printf("[WiFi] ✅ SSID:%s  RSSI:%d  IP:%s\\n",
-                  WiFi.SSID().c_str(), WiFi.RSSI(), currentIP.c_str());
-    return true;
-  }
-  Serial.println("[WiFi] ❌ 연결 실패");
-  return false;
-}
-
-// ──────────────────────────────────────────────
-//  Supabase POST (Core0 Task에서 실행)
-// ──────────────────────────────────────────────
-bool postShotBatch() {
-  if (WiFi.status() != WL_CONNECTED) return false;
-
-  // 인터럽트에서 안전하게 카운트 스냅샷
-  unsigned long snap[4];
-  unsigned long snapInterval[4];
-  portENTER_CRITICAL(&shotMux);
-  for (int i = 0; i < 4; i++) {
-    snap[i] = shotCount[i];
-    snapInterval[i] = lastIntervalMs[i];
-  }
-  portEXIT_CRITICAL(&shotMux);
-
-  StaticJsonDocument<2048> doc;
-  JsonArray arr = doc.to<JsonArray>();
-  bool hasData = false;
-  for (int i = 0; i < 4; i++) {
-    unsigned long delta = snap[i] - lastSentCount[i];
-    if (delta == 0) continue;
-
-    JsonObject obj = arr.createNestedObject();
-    obj["machine_code"]     = MACHINE_CODES[i];
-    obj["shot_count"]       = (long)delta;
-    obj["shot_interval_ms"] = (long)snapInterval[i];
-    obj["esp32_mac"]        = macAddress;
-    obj["esp32_ip"]         = currentIP;
-    hasData = true;
-  }
-  if (!hasData) return true;
-
-  String body;
-  serializeJson(arr, body);
-
-  // ★ HTTPS 인증서 우회 (매번 새 client - 메모리 누수 방지)
-  WiFiClientSecure secureClient;
-  secureClient.setInsecure();
-  secureClient.setTimeout(8);
+bool postShot(int idx, uint32_t cnt, unsigned long intervalMs){
+  if(WiFi.status() != WL_CONNECTED) return false;
 
   HTTPClient http;
-  http.setTimeout(8000);
-  http.setConnectTimeout(8000);
-  http.setReuse(false);
-
-  if (!http.begin(secureClient, SUPA_URL)) {
-    Serial.println("[POST] begin() FAIL");
-    postFail++;
-    return false;
-  }
+  http.begin(SUPA_URL);
   http.addHeader("Content-Type", "application/json");
-  http.addHeader("apikey", SUPA_KEY);
+  http.addHeader("apikey",    SUPA_KEY);
   http.addHeader("Authorization", String("Bearer ") + SUPA_KEY);
-  http.addHeader("Prefer", "return=minimal");
+  http.addHeader("Prefer",    "return=minimal");
+  http.setTimeout(8000);
+
+  StaticJsonDocument<384> doc;
+  doc["machine_code"]     = MACHINE_CODES[idx];
+  doc["shot_count"]       = cnt;
+  doc["shot_interval_ms"] = (int)intervalMs;
+  doc["esp32_mac"]        = macStr;
+  doc["esp32_ip"]         = WiFi.localIP().toString();
+
+  String body;
+  serializeJson(doc, body);
 
   int code = http.POST(body);
-
-  if (code >= 200 && code < 300) {
-    for (int i = 0; i < 4; i++) lastSentCount[i] = snap[i];
-    postSuccess++;
-    Serial.printf("[POST] ✅ %d  body=%s\\n", code, body.c_str());
-    http.end();
-    return true;
-  } else {
-    String resp = http.getString();
-    Serial.printf("[POST] ❌ %d %s  응답:%s\\n",
-                  code, httpErrorToString(code).c_str(), resp.c_str());
-    postFail++;
-    http.end();
-    return false;
-  }
+  bool ok  = (code >= 200 && code < 300);
+  Serial.printf("[POST] %s  cnt=%lu  HTTP=%d %s\\n",
+    MACHINE_CODES[idx], (unsigned long)cnt, code, ok?"OK":"FAIL");
+  http.end();
+  return ok;
 }
 
 // ──────────────────────────────────────────────
-//  POST Task (Core0)
-//  ※ 5초마다 POST 시도. 통신이 오래 걸려도 main loop와 무관
-// ──────────────────────────────────────────────
-void postTask(void* param) {
-  Serial.printf("[Task] POST Task started on Core %d\\n", xPortGetCoreID());
-  for (;;) {
-    vTaskDelay(pdMS_TO_TICKS(5000));   // 5초 대기
-    postShotBatch();
-  }
-}
-
-// ──────────────────────────────────────────────
-//  메인루프에서 SHOT 카운트 변동 로그 (Core1)
-// ──────────────────────────────────────────────
-void reportNewShots() {
-  unsigned long snap[4];
-  unsigned long snapInt[4];
-  portENTER_CRITICAL(&shotMux);
-  for (int i = 0; i < 4; i++) {
-    snap[i] = shotCount[i];
-    snapInt[i] = lastIntervalMs[i];
-  }
-  portEXIT_CRITICAL(&shotMux);
-
-  for (int i = 0; i < 4; i++) {
-    while (lastReportedCount[i] < snap[i]) {
-      lastReportedCount[i]++;
-      Serial.printf("[SHOT] %s  count=%lu  interval=%lu ms\\n",
-                    MACHINE_CODES[i], lastReportedCount[i], snapInt[i]);
-    }
-  }
-}
-
-// ──────────────────────────────────────────────
-void setup() {
+void setup(){
   Serial.begin(115200);
   delay(500);
-  Serial.println("\\n============================================");
-  Serial.println(" 태진다이텍 SHOT 카운터 ESP32 #${b.num}  v3.4");
-  Serial.println("  (ISR + Dual-Core Task + HTTPS Secure)");
-  Serial.println("============================================");
+  Serial.println();
+  Serial.println("=== ESP32 #${b.num} (${l1}+${l2}) SHOT 카운터 v3.2 ===");
 
-  // DI 핀 + 인터럽트 등록
-  pinMode(DI_PINS[0], INPUT_PULLUP);  attachInterrupt(DI_PINS[0], isr0, FALLING);
-  pinMode(DI_PINS[1], INPUT_PULLUP);  attachInterrupt(DI_PINS[1], isr1, FALLING);
-  pinMode(DI_PINS[2], INPUT_PULLUP);  attachInterrupt(DI_PINS[2], isr2, FALLING);
-  pinMode(DI_PINS[3], INPUT_PULLUP);  attachInterrupt(DI_PINS[3], isr3, FALLING);
-  for (int i = 0; i < 4; i++) {
-    Serial.printf(" DI%d (GPIO%d) → %s  ISR FALLING\\n",
-                  i+1, DI_PINS[i], MACHINE_CODES[i]);
+  for(int i=0;i<4;i++){
+    pinMode(DI_PINS[i], INPUT_PULLDOWN);
+    lastLevel[i] = digitalRead(DI_PINS[i]);
   }
 
-  macAddress = getMacString();
-  Serial.printf(" MAC: %s\\n", macAddress.c_str());
-
-  // Multi-WiFi
-  wifiMulti.addAP("TAEJIN", WIFI_PASS);
-  wifiMulti.addAP("iptime", WIFI_PASS);
-  WiFi.mode(WIFI_STA);
+  readMAC();
   connectWiFi();
 
-  // POST Task 를 Core 0 에 고정 (Arduino loop 는 Core 1)
-  xTaskCreatePinnedToCore(
-    postTask,           // 함수
-    "PostTask",         // 이름
-    16384,              // 스택 16KB (HTTPS TLS 메모리 필요)
-    NULL,
-    1,                  // 우선순위
-    &postTaskHandle,
-    0                   // Core 0
-  );
-
-  Serial.println("------ SHOT 카운트 시작 (ISR 모드) ------");
+  lastPostMs = millis();
 }
 
-// ──────────────────────────────────────────────
-//  loop() - Core1, SHOT 보고만 담당
-// ──────────────────────────────────────────────
-void loop() {
-  unsigned long now = millis();
-
-  reportNewShots();
-
-  if (now - lastWifiCheck >= WIFI_CHECK_MS) {
-    lastWifiCheck = now;
-    if (WiFi.status() != WL_CONNECTED) {
-      Serial.println("[WiFi] 끊김 - 재연결");
-      connectWiFi();
-    } else {
-      Serial.printf("[STAT] Core%d  RSSI:%d  POST 성공:%lu 실패:%lu\\n",
-                    xPortGetCoreID(), WiFi.RSSI(), postSuccess, postFail);
+void loop(){
+  // WiFi 끊기면 재연결
+  if(WiFi.status() != WL_CONNECTED){
+    static unsigned long lastTry = 0;
+    if(millis()-lastTry > 10000){
+      lastTry = millis();
+      Serial.println("[WiFi] 재연결 시도...");
       wifiMulti.run();
     }
   }
 
-  delay(5);  // CPU 양보
+  // DI 엣지 검출 (LOW → HIGH 상승엣지에서 카운트)
+  unsigned long now = millis();
+  for(int i=0;i<4;i++){
+    int lv = digitalRead(DI_PINS[i]);
+    if(lv != lastLevel[i] && (now - lastEdgeMs[i]) > DEBOUNCE_MS){
+      lastEdgeMs[i] = now;
+      if(lastLevel[i] == 0 && lv == 1){
+        shotCount[i]++;
+        lastShotMs[i] = now;
+        Serial.printf("[SHOT] %s  count=%lu\\n",
+          MACHINE_CODES[i], (unsigned long)shotCount[i]);
+      }
+      lastLevel[i] = lv;
+    }
+  }
+
+  // 1초마다 변화분 전송
+  if(millis() - lastPostMs >= POST_PERIOD){
+    lastPostMs = millis();
+    for(int i=0;i<4;i++){
+      if(shotCount[i] != lastSentCount[i]){
+        uint32_t delta = shotCount[i] - lastSentCount[i];
+        unsigned long interval = (lastShotMs[i] > 0) ? (millis() - lastShotMs[i]) : 0;
+        if(postShot(i, shotCount[i], interval)){
+          lastSentCount[i] = shotCount[i];
+        }
+        delay(50);
+      }
+    }
+  }
 }
 `;
 }
@@ -1104,8 +978,8 @@ function showFW(n){
   currentFW = n;
   const b = FW_BOARDS.find(x => x.num === n); if(!b) return;
   document.getElementById('fwCode').textContent = buildFW(b);
-  document.getElementById('fwInfo').textContent = `ESP32 #${b.num} / ${b.lines.join(' + ')} / IP: ${b.ip} / v3.4 ISR+DualCore`;
-  for(let i=1;i<=5;i++){
+  document.getElementById('fwInfo').textContent = `ESP32 #${b.num} / ${b.lines.join(' + ')} / IP: ${b.ip} / v3.3 ISR`;
+  for(let i=1;i<=4;i++){
     const t = document.getElementById('fwTab'+i);
     if(t) t.classList.toggle('primary', i===n);
   }
@@ -1115,7 +989,7 @@ function copyFW(){
   const code = document.getElementById('fwCode').textContent;
   if(navigator.clipboard && navigator.clipboard.writeText){
     navigator.clipboard.writeText(code)
-      .then(() => log(`📋 ESP32 #${currentFW} v3.4 펌웨어 복사됨 (${code.length}자)`))
+      .then(() => log(`📋 ESP32 #${currentFW} v3.2 펌웨어 복사됨 (${code.length}자)`))
       .catch(() => fallbackCopy(code));
   } else { fallbackCopy(code); }
 }
@@ -1132,7 +1006,7 @@ function fallbackCopy(text){
 function downloadFW(){
   const code = document.getElementById('fwCode').textContent;
   const b = FW_BOARDS.find(x => x.num === currentFW);
-  const filename = `ESP32_${currentFW}_v34_${b.lines.join('_').replace(/호기/g,'h')}.ino`;
+  const filename = `ESP32_${currentFW}_v32_${b.lines.join('_').replace(/호기/g,'h')}.ino`;
   const blob = new Blob([code], { type:'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
