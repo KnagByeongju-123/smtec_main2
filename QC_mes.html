@@ -7,7 +7,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <meta name="theme-color" content="#0c4a6e">
-<title>일일 검사기 가동현황 v5.9 - 태진다이텍</title>
+<title>일일 검사기 가동현황 v5.10 - 태진다이텍</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&display=swap">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
@@ -102,12 +102,12 @@
 <body>
 
 <div class="hdr">
-  <h1>🏭 일일 검사기 가동현황 <span style="font-size:.65em;color:rgba(255,255,255,.7)">v5.9</span></h1>
+  <h1>🏭 일일 검사기 가동현황 <span style="font-size:.65em;color:rgba(255,255,255,.7)">v5.10</span></h1>
   <div class="info">
     <span id="userBadge" class="user-badge guest">🔒 로그인 필요</span>
     <span>📅 <span id="todayDate">-</span></span>
     <span style="background:rgba(34,197,94,.25);color:#86efac">⚡ 자동 10초</span>
-    <span style="background:rgba(245,158,11,.25);color:#fcd34d">🔥 펌웨어 v3.3 ISR</span>
+    <span style="background:rgba(245,158,11,.25);color:#fcd34d">🔥 펌웨어 v3.3.1 DHCP</span>
   </div>
 </div>
 
@@ -190,7 +190,7 @@
   </div>
 
   <div class="box collapsed">
-    <div class="box-hdr" onclick="toggleBox(this)"><span>🔌 ESP32 펌웨어 v3.3 ISR (CPP)</span><span class="toggle">▼ 펼치기</span></div>
+    <div class="box-hdr" onclick="toggleBox(this)"><span>🔌 ESP32 펌웨어 v3.3.1 (ISR+DHCP+Alive)</span><span class="toggle">▼ 펼치기</span></div>
     <div class="box-body">
       <div style="font-size:.78em;color:var(--text2);line-height:1.6;margin-bottom:10px">
         <b style="color:var(--warn)">★ v3.3 핵심:</b> 하드웨어 인터럽트(ISR) + 5ms 디바운스로 짧은 주기 SHOT 누락 방지<br>
@@ -732,7 +732,7 @@ function startRealtime(){
 }
 
 async function init(){
-  log('🚀 시스템 시작 (v5.9 - 펌웨어 v3.3 ISR 모드)');
+  log('🚀 시스템 시작 (v5.10 - 펌웨어 v3.3.1 모드)');
   loadSettings();
   if(!Array.isArray(settings.machines) || settings.machines.length !== 10){
     settings.machines = JSON.parse(JSON.stringify(DEFAULT_SETTINGS.machines));
@@ -766,7 +766,7 @@ function buildFW(b){
   const [l1, l2] = b.lines;
   return `/*
   ============================================================
-  ESP32-S3-ETH-8DI-8RO  SHOT 카운터 펌웨어 v3.3 (ISR 모드)
+  ESP32-S3-ETH-8DI-8RO  SHOT 카운터 펌웨어 v3.3.1 (ISR + DHCP + Alive)
   ESP32 #${b.num}  ${l1} + ${l2}
   ============================================================
   ★ v3.3 핵심 (짧은 주기 신호 누락 방지):
@@ -863,7 +863,8 @@ void IRAM_ATTR isr_di3(){
 
 void connectWiFi(){
   WiFi.mode(WIFI_STA);
-  WiFi.config(local_IP, gateway, subnet, dns1, dns2);
+  // v3.3.1: 고정 IP 대신 DHCP 사용 (TAEJIN=10.x, iptime=1.x 자동 적응)
+  // WiFi.config(local_IP, gateway, subnet, dns1, dns2);
   wifiMulti.addAP("TAEJIN", WIFI_PASS);
   wifiMulti.addAP("iptime", WIFI_PASS);
 
@@ -926,7 +927,7 @@ void setup(){
   Serial.begin(115200);
   delay(500);
   Serial.println();
-  Serial.println("=== ESP32 #${b.num} (${l1}+${l2}) v3.3 ISR ===");
+  Serial.println("=== ESP32 #${b.num} (${l1}+${l2}) v3.3.1 ISR DHCP ===");
   Serial.printf("DEVICE: %s / 디바운스: %lu us\\n", DEVICE_ID, (unsigned long)DEBOUNCE_US);
 
   pinMode(DI_PINS[0], INPUT_PULLDOWN);
@@ -973,6 +974,17 @@ void loop(){
     }
   }
 
+  // v3.3.1: 5초마다 살아있다는 로그 (디버깅용)
+  static unsigned long lastAlive = 0;
+  if(millis() - lastAlive >= 5000){
+    lastAlive = millis();
+    Serial.printf("[ALIVE] %lus / WiFi=%s IP=%s RSSI=%d / Cnt: %lu,%lu,%lu,%lu\\n",
+      millis()/1000, WiFi.SSID().c_str(),
+      WiFi.localIP().toString().c_str(), WiFi.RSSI(),
+      (unsigned long)shotCount[0], (unsigned long)shotCount[1],
+      (unsigned long)shotCount[2], (unsigned long)shotCount[3]);
+  }
+
   delay(1);  // CPU 양보 (ISR은 영향 없음)
 }
 `;
@@ -1011,7 +1023,7 @@ function fallbackCopy(text){
 function downloadFW(){
   const code = document.getElementById('fwCode').textContent;
   const b = FW_BOARDS.find(x => x.num === currentFW);
-  const filename = `ESP32_${currentFW}_v33_${b.lines.join('_').replace(/호기/g,'h')}.ino`;
+  const filename = `ESP32_${currentFW}_v331_${b.lines.join('_').replace(/호기/g,'h')}.ino`;
   const blob = new Blob([code], { type:'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
