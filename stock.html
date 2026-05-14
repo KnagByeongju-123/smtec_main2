@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>재고관리(금형부품) 통합 v3.1</title>
+<title>재고관리(금형부품) 통합 v3.2</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
@@ -530,10 +530,9 @@ input[type="file"] { display: none; }
 <body>
 
 <header id="appHeader">
-  <h1 id="appTitle">📦 재고관리 통합 <span class="ver">v3.1</span><span id="corpName" style="font-size:11px;opacity:0.7;margin-left:8px"></span></h1>
+  <h1 id="appTitle">📦 재고관리 통합 <span class="ver">v3.2</span><span id="corpName" style="font-size:11px;opacity:0.7;margin-left:8px"></span></h1>
   <div style="display:flex;gap:4px;align-items:center">
-    <div class="user-badge" id="userBadge" title="로그인/사용자">👤 <span id="userBadgeText">로그인</span></div>
-    <button class="btn-icon" id="btnSettings" title="설정">⚙️</button>
+    <div class="user-badge" id="userBadge" title="현재 로그인 사용자" style="cursor:default">👤 <span id="userBadgeText">로그인 필요</span></div>
   </div>
 </header>
 
@@ -549,11 +548,6 @@ input[type="file"] { display: none; }
 
   <!-- ===== 메인 ===== -->
   <div id="page-main">
-    <div class="main-warn" id="warnDb">
-      ⚠️ DB 접속정보 미설정
-      <button type="button" id="btnGoSetting">설정 열기</button>
-    </div>
-
     <div class="section-title">📦 작업</div>
     <div class="main-grid">
       <button class="main-card c1" type="button" data-go="stock">
@@ -578,27 +572,8 @@ input[type="file"] { display: none; }
       </button>
     </div>
 
-    <div class="section-title">👤 사용자 / 관리</div>
-    <div class="main-grid">
-      <button class="main-card c4" type="button" id="cardLogin">
-        <div class="ico">👤</div>
-        <div class="lbl">PIN 로그인</div>
-        <div class="dsc">사용자 선택 / 추가</div>
-      </button>
-      <button class="main-card c5" type="button" id="cardDbSetting">
-        <div class="ico">🗄</div>
-        <div class="lbl">DB 설정</div>
-        <div class="dsc">Supabase URL/Key</div>
-      </button>
-      <button class="main-card c6" type="button" id="cardLogout">
-        <div class="ico">🚪</div>
-        <div class="lbl">로그아웃</div>
-        <div class="dsc">현재 사용자 해제</div>
-      </button>
-    </div>
-
     <div class="app-footer">
-      v3.1 · <span id="ftCorp">신규 회사</span>
+      v3.2 · <span id="ftCorp">신규 회사</span>
     </div>
   </div>
 
@@ -1237,8 +1212,38 @@ GRANT USAGE, SELECT ON SEQUENCE msm2_users_id_seq TO anon, authenticated;</div>
     showNotice('💾 DB 설정 저장됨');
   }
 
-  // ============ 인증 ============
+  // ============ 인증 (ESG 자동로그인 연동) ============
+  // ESG 메인페이지 PIN 로그인 → localStorage('esg_pin_auth') 활용
+  function getCurrentUserName(){
+    try{
+      var esgAuth=JSON.parse(localStorage.getItem('esg_pin_auth')||'null');
+      if(esgAuth&&esgAuth.exp>Date.now()&&esgAuth.name){
+        try{sessionStorage.setItem('ESG_USER',esgAuth.name)}catch(e){}
+        return esgAuth.name;
+      }
+      var s=sessionStorage.getItem('ESG_USER');if(s)return s;
+      var p=new URLSearchParams(location.search);
+      var u=p.get('user')||p.get('worker')||p.get('name')||p.get('inspector');
+      if(u){try{sessionStorage.setItem('ESG_USER',u)}catch(e){}return u}
+      var last=localStorage.getItem('mes_last_worker');if(last)return last;
+      return localStorage.getItem(K_USER_NAME)||'';
+    }catch(e){return ''}
+  }
+  function getCurrentUserDept(){
+    try{
+      var esgAuth=JSON.parse(localStorage.getItem('esg_pin_auth')||'null');
+      if(esgAuth&&esgAuth.exp>Date.now()&&esgAuth.dept)return esgAuth.dept;
+    }catch(e){}
+    return localStorage.getItem(K_USER_DEPT)||'';
+  }
   function getAuth() {
+    // ESG 자동로그인 우선
+    var name=getCurrentUserName();
+    var dept=getCurrentUserDept();
+    if(name){
+      return { name:name, dept:dept||'', exp:Date.now()+AUTH_EXPIRE_MS };
+    }
+    // fallback: 기존 stock 자체 인증
     try {
       const a = JSON.parse(localStorage.getItem(K_USER_AUTH) || 'null');
       if (a && a.exp > Date.now()) return a;
@@ -1260,10 +1265,11 @@ GRANT USAGE, SELECT ON SEQUENCE msm2_users_id_seq TO anon, authenticated;</div>
   function refreshBadge() {
     const auth = getAuth();
     const text  = $('userBadgeText');
+    if(!text)return;
     if (auth) {
-      text.textContent = auth.name + (auth.dept ? '·' + auth.dept : '');
+      text.textContent = '👤 ' + auth.name + (auth.dept ? '·' + auth.dept : '');
     } else {
-      text.textContent = '로그인';
+      text.textContent = '로그인 필요';
     }
   }
   function getCurrentUser() {
@@ -3004,9 +3010,9 @@ GRANT USAGE, SELECT ON SEQUENCE msm2_users_id_seq TO anon, authenticated;</div>
     // 헤더 타이틀
     const title = $('appTitle');
     if (name === 'report') {
-      title.innerHTML = '📄 소모품 보고서 <span class="ver">v3.1</span><span id="corpName" style="font-size:11px;opacity:0.7;margin-left:8px"></span>';
+      title.innerHTML = '📄 소모품 보고서 <span class="ver">v3.2</span><span id="corpName" style="font-size:11px;opacity:0.7;margin-left:8px"></span>';
     } else {
-      title.innerHTML = '📦 재고관리 통합 <span class="ver">v3.1</span><span id="corpName" style="font-size:11px;opacity:0.7;margin-left:8px"></span>';
+      title.innerHTML = '📦 재고관리 통합 <span class="ver">v3.2</span><span id="corpName" style="font-size:11px;opacity:0.7;margin-left:8px"></span>';
     }
     refreshCorpName();
     // FAB는 재고 탭에서만
@@ -3121,22 +3127,12 @@ GRANT USAGE, SELECT ON SEQUENCE msm2_users_id_seq TO anon, authenticated;</div>
     loadAll();
 
     // ===== Header =====
-    tap('btnSettings', openSettings);
-    tap('userBadge', openLogin);
+    // 자동로그인이므로 배지/톱니 클릭 핸들러 없음
 
     // ===== Main 탭 카드들 =====
     document.querySelectorAll('[data-go]').forEach(el => {
       tap(el, () => switchTab(el.dataset.go));
     });
-    tap('cardLogin', openLogin);
-    tap('cardDbSetting', openDbModal);
-    tap('cardLogout', () => {
-      if (confirm('로그아웃 하시겠습니까?')) {
-        fullLogout();
-        showNotice('🚪 로그아웃 되었습니다.');
-      }
-    });
-    tap('btnGoSetting', openDbModal);
 
     // ===== Tab 버튼 =====
     document.querySelectorAll('.tabs .tab').forEach(t => {
