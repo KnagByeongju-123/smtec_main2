@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>출하의뢰서 관리</title>
+<title>출하의뢰서 관리 v1.1</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&display=swap');
@@ -81,7 +81,7 @@
 </head>
 <body>
 
-<div class="hdr"><h1>📦 출하의뢰서 관리 <span class="conn-dot ng" id="connDot"></span></h1><span class="hdr-sub">Supabase 기반</span></div>
+<div class="hdr"><h1>📦 출하의뢰서 관리 v1.1 <span class="conn-dot ng" id="connDot"></span></h1><span class="hdr-sub">Supabase 기반</span></div>
 <div class="tabs">
   <div class="tab on" onclick="swTab(0)">📦 출하작업</div>
   <div class="tab" onclick="swTab(1)">📋 이력</div>
@@ -177,24 +177,33 @@
     <div class="fg"><label>Anon Key</label><div style="padding:10px 12px;font-size:14px;background:#eee;border:1.5px solid #ddd;border-radius:8px;color:#999;letter-spacing:2px;user-select:none;pointer-events:none">••••••••••••••••••••••••••••••••••••••</div></div>
   </div>
   <!-- 10. SQL 아코디언 -->
-  <details style="margin-bottom:12px"><summary style="cursor:pointer;font-size:12px;font-weight:700;color:#1565c0;padding:10px 14px;background:#fff;border:1px solid #e0e0e0;border-radius:12px;box-shadow:0 1px 4px rgba(0,0,0,.08)">▶ 📋 Supabase SQL (테이블 생성)</summary><pre style="margin-top:6px;padding:12px;background:#f5f5f5;border:1px solid #e0e0e0;border-radius:8px;font-size:9px;color:#2e7d32;overflow-x:auto;white-space:pre-wrap;line-height:1.5;font-family:monospace">CREATE TABLE IF NOT EXISTS shipment_history (
+  <details style="margin-bottom:12px"><summary style="cursor:pointer;font-size:12px;font-weight:700;color:#1565c0;padding:10px 14px;background:#fff;border:1px solid #e0e0e0;border-radius:12px;box-shadow:0 1px 4px rgba(0,0,0,.08)">▶ 📋 Supabase SQL (테이블 생성 + updated_at 컬럼 추가)</summary><pre style="margin-top:6px;padding:12px;background:#f5f5f5;border:1px solid #e0e0e0;border-radius:8px;font-size:9px;color:#2e7d32;overflow-x:auto;white-space:pre-wrap;line-height:1.5;font-family:monospace">-- ★ 기존 테이블 사용 시 아래 ALTER만 실행
+ALTER TABLE shipment_history ADD COLUMN IF NOT EXISTS updated_at timestamptz default now();
+ALTER TABLE box_unit          ADD COLUMN IF NOT EXISTS updated_at timestamptz default now();
+ALTER TABLE shipment_work     ADD COLUMN IF NOT EXISTS updated_at timestamptz default now();
+
+-- 신규 설치 시 (테이블 생성)
+CREATE TABLE IF NOT EXISTS shipment_history (
   id bigint generated always as identity primary key,
   reg_date date, part_number text, qty integer,
   lot_number text, box_count integer, per_box integer,
   customer text, note text,
-  created_at timestamptz default now()
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
 );
 CREATE TABLE IF NOT EXISTS box_unit (
   id bigint generated always as identity primary key,
   part_number text not null, per_box integer default 1,
   customer text, is_active boolean default true,
-  created_at timestamptz default now()
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
 );
 CREATE TABLE IF NOT EXISTS work_items (
   id bigint generated always as identity primary key,
   part_number text, qty integer, lot_number text,
   box_count integer, per_box integer, customer text,
-  created_at timestamptz default now()
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
 );
 -- RLS
 ALTER TABLE shipment_history ENABLE ROW LEVEL SECURITY;
@@ -327,7 +336,7 @@ async function loadProdDates(){const sec=document.getElementById('prodDateSectio
 
 function renderProdDateChips(){const list=document.getElementById('prodDateList');const parts=[...new Set(workItems.map(w=>w.part_no))];let hasAny=false,html='';parts.forEach(part=>{const items=_prodDateMap[part];const wi=workItems.find(w=>w.part_no===part);const hl=wi&&wi.lot_no&&wi.lot_no.trim();html+='<div style="margin-bottom:8px"><div style="font-size:11px;font-weight:700;color:#0d47a1;margin-bottom:4px">'+esc(part);if(hl)html+=' <span style="font-size:10px;color:#2e7d32;font-weight:600">✅ LOT: '+esc(wi.lot_no)+'</span>';html+='</div>';if(items&&items.length){hasAny=true;const seen=new Set();const cld=[];if(hl){wi.lot_no.split('/').forEach(p=>{const d=p.trim();if(d.length>=8)cld.push(d);else cld.push(d)})}items.forEach(d=>{if(seen.has(d.lot))return;seen.add(d.lot);const wid=wi?wi.id:0;html+='<button onclick="applyProdDateLot('+wid+',\''+esc(d.lot)+'\',\''+esc(part)+'\')" style="display:inline-block;margin:2px 4px 2px 0;padding:6px 12px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;border:1.5px solid #1565c0;background:#fff;color:#0d47a1;font-family:inherit">📅 '+esc(d.lot);if(d.qty)html+=' <span style="font-size:10px;color:#888;font-weight:400">('+d.qty+')</span>';html+='</button>'})}else{html+='<span style="font-size:11px;color:#999">생산일자 없음</span>'}html+='</div>'});list.innerHTML=html}
 
-async function applyProdDateLot(wid,lot,pn){if(!wid){toast('품목 없음');return}function toSD(r){return r.split(/[,\/]/).map(s=>s.trim().replace(/-/g,'')).filter(s=>s)}const wi=workItems.find(w=>w.id===wid);const el=(wi&&wi.lot_no)?wi.lot_no:'';const ed=el?el.split('/').map(s=>s.trim()).filter(s=>s):[];toSD(lot).forEach(nd=>{const f8=nd.length===4&&ed.length?ed[0].substring(0,4)+nd:nd;if(!ed.some(e=>{const ef=e.length===4&&ed[0]?ed[0].substring(0,4)+e:e;return ef===f8}))ed.push(f8.length>=8?f8:nd)});ed.sort();let fmt='';if(ed.length){const nm=ed.map(d=>d.replace(/-/g,'')).filter(d=>d.length>=4);const f=nm[0];const r=[f];for(let i=1;i<nm.length;i++){const d=nm[i];if(d.length>=8&&d.substring(0,4)===f.substring(0,4))r.push(d.substring(4));else r.push(d)}fmt=r.join('/')}try{await sbUpdate('shipment_work',wid,{lot_no:fmt,updated_at:new Date().toISOString()});toast('✅ '+pn+' LOT → '+fmt);if(navigator.vibrate)navigator.vibrate([50,30,50]);loadWork()}catch(e){toast('LOT 실패: '+e.message)}}
+async function applyProdDateLot(wid,lot,pn){if(!wid){toast('품목 없음');return}function toSD(r){return r.split(/[,\/]/).map(s=>s.trim().replace(/-/g,'')).filter(s=>s)}const wi=workItems.find(w=>w.id===wid);const el=(wi&&wi.lot_no)?wi.lot_no:'';const ed=el?el.split('/').map(s=>s.trim()).filter(s=>s):[];toSD(lot).forEach(nd=>{const f8=nd.length===4&&ed.length?ed[0].substring(0,4)+nd:nd;if(!ed.some(e=>{const ef=e.length===4&&ed[0]?ed[0].substring(0,4)+e:e;return ef===f8}))ed.push(f8.length>=8?f8:nd)});ed.sort();let fmt='';if(ed.length){const nm=ed.map(d=>d.replace(/-/g,'')).filter(d=>d.length>=4);const f=nm[0];const r=[f];for(let i=1;i<nm.length;i++){const d=nm[i];if(d.length>=8&&d.substring(0,4)===f.substring(0,4))r.push(d.substring(4));else r.push(d)}fmt=r.join('/')}try{await sbUpdate('shipment_work',wid,{lot_no:fmt});toast('✅ '+pn+' LOT → '+fmt);if(navigator.vibrate)navigator.vibrate([50,30,50]);loadWork()}catch(e){toast('LOT 실패: '+e.message)}}
 
 async function addWorkItem(){const pn=document.getElementById('addPart').value.trim();const qty=parseInt(document.getElementById('addQty').value)||0;if(!pn){toast('품번 입력');return}const bs=findBoxSize(pn);const bc=(bs&&qty)?Math.ceil(qty/bs):0;try{await sbInsert('shipment_work',{part_no:pn,box_size:bs,box_count:bc,qty:qty||null,lot_no:'',sort_order:workItems.length,status:'working'});document.getElementById('addPart').value='';document.getElementById('addQty').value='';document.getElementById('addInfo').textContent='박스단위를 자동 조회합니다';toast('✅ '+pn+' 추가');loadWork()}catch(e){toast('추가 실패: '+e.message)}}
 async function deleteWorkItem(id){if(!confirm('삭제?'))return;try{await sbDelete('shipment_work','id=eq.'+id);toast('삭제됨');loadWork()}catch(e){toast('삭제 실패: '+e.message)}}
@@ -345,7 +354,7 @@ function kpInput(c){kpValue+=c;document.getElementById('kpDisplay').textContent=
 function kpBackspace(){kpValue=kpValue.slice(0,-1);document.getElementById('kpDisplay').textContent=kpValue||''}
 function kpClear(){kpValue='';document.getElementById('kpDisplay').textContent=''}
 function kpCancel(){document.getElementById('kpModal').classList.remove('on');kpTargetId=null}
-async function kpConfirm(){document.getElementById('kpModal').classList.remove('on');if(kpTargetId===null)return;try{await sbUpdate('shipment_work',kpTargetId,{lot_no:kpValue,updated_at:new Date().toISOString()});toast('✅ 로트번호 저장');loadWork()}catch(e){toast('저장 실패: '+e.message)}kpTargetId=null}
+async function kpConfirm(){document.getElementById('kpModal').classList.remove('on');if(kpTargetId===null)return;try{await sbUpdate('shipment_work',kpTargetId,{lot_no:kpValue});toast('✅ 로트번호 저장');loadWork()}catch(e){toast('저장 실패: '+e.message)}kpTargetId=null}
 
 let histPage=0;const HIST_LIMIT=50;let histData=[];
 async function loadHistory(){histPage=0;histData=[];const c=document.getElementById('histList');const s=document.getElementById('histSearch').value.trim();const df=document.getElementById('histDateFrom').value;const dt=document.getElementById('histDateTo').value;let q='order=reg_date.desc,part_no.asc,created_at.desc&limit='+HIST_LIMIT;if(s)q+='&part_no=ilike.*'+encodeURIComponent(s)+'*';if(df)q+='&reg_date=gte.'+df;if(dt)q+='&reg_date=lte.'+dt;try{histData=await sbSelect('shipment_history',q);renderHistory();document.getElementById('histMore').style.display=histData.length>=HIST_LIMIT?'':'none'}catch(e){c.innerHTML='<div class="h-empty">로드 실패</div>'}}
@@ -359,11 +368,11 @@ function renderBuTable(){const c=document.getElementById('buTable');if(!buData.l
 function showBuAdd(){document.getElementById('buEditId').value='';document.getElementById('buEditPart').value='';document.getElementById('buEditSize').value='';document.getElementById('buEditMemo').value='';document.getElementById('buModal').classList.add('on')}
 function editBu(id){const b=buData.find(x=>x.id===id);if(!b)return;document.getElementById('buEditId').value=b.id;document.getElementById('buEditPart').value=b.part_no;document.getElementById('buEditSize').value=b.box_size;document.getElementById('buEditMemo').value=b.memo||'';document.getElementById('buModal').classList.add('on')}
 function closeBuModal(){document.getElementById('buModal').classList.remove('on')}
-async function saveBuEdit(){const id=document.getElementById('buEditId').value;const pn=document.getElementById('buEditPart').value.trim();const bs=parseInt(document.getElementById('buEditSize').value)||0;const mm=document.getElementById('buEditMemo').value.trim();if(!pn){toast('품번 입력');return}try{if(id){await sbUpdate('box_unit',id,{part_no:pn,box_size:bs,memo:mm,updated_at:new Date().toISOString()});toast('✅ 수정')}else{await sbInsert('box_unit',{part_no:pn,box_size:bs,memo:mm});toast('✅ 추가')}closeBuModal();loadBoxUnits()}catch(e){toast('저장 실패: '+e.message)}}
-async function toggleBu(id,a){try{await sbUpdate('box_unit',id,{is_active:!a,updated_at:new Date().toISOString()});toast(a?'비활성':'활성');loadBoxUnits()}catch(e){toast('실패: '+e.message)}}
+async function saveBuEdit(){const id=document.getElementById('buEditId').value;const pn=document.getElementById('buEditPart').value.trim();const bs=parseInt(document.getElementById('buEditSize').value)||0;const mm=document.getElementById('buEditMemo').value.trim();if(!pn){toast('품번 입력');return}try{if(id){await sbUpdate('box_unit',id,{part_no:pn,box_size:bs,memo:mm});toast('✅ 수정')}else{await sbInsert('box_unit',{part_no:pn,box_size:bs,memo:mm});toast('✅ 추가')}closeBuModal();loadBoxUnits()}catch(e){toast('저장 실패: '+e.message)}}
+async function toggleBu(id,a){try{await sbUpdate('box_unit',id,{is_active:!a});toast(a?'비활성':'활성');loadBoxUnits()}catch(e){toast('실패: '+e.message)}}
 function downloadBuTemplate(){const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([['품번','박스당수량'],['1234-567',1000],['5678-901',2500]]),'박스단위');XLSX.writeFile(wb,'박스단위_템플릿.xlsx')}
 function uploadBuExcel(){document.getElementById('buFileInput').click()}
-document.getElementById('buFileInput').addEventListener('change',async function(e){const file=e.target.files[0];if(!file)return;e.target.value='';const prog=document.getElementById('buProgress');prog.style.display='block';prog.textContent='읽는 중...';try{const data=await file.arrayBuffer();const wb=XLSX.read(data,{type:'array'});const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1});if(rows.length<2){toast('데이터 없음');prog.style.display='none';return}const items=[];for(let i=1;i<rows.length;i++){const pn=String(rows[i][0]||'').trim();const bs=parseInt(rows[i][1])||0;if(pn)items.push({part_no:pn,box_size:bs})}if(!items.length){toast('유효 데이터 없음');prog.style.display='none';return}if(!confirm(items.length+'건 업로드?')){prog.style.display='none';return}const ex=await sbSelect('box_unit');const em={};ex.forEach(b=>{em[b.part_no]=b});const ins=[],upd=[];items.forEach(it=>{const e=em[it.part_no];if(e){if(e.box_size!==it.box_size)upd.push({id:e.id,box_size:it.box_size})}else ins.push(it)});let done=0;for(let i=0;i<ins.length;i+=50){await sbInsert('box_unit',ins.slice(i,i+50));done+=Math.min(50,ins.length-i);prog.textContent='추가 '+done+'/'+ins.length}for(let i=0;i<upd.length;i++){await sbUpdate('box_unit',upd[i].id,{box_size:upd[i].box_size,is_active:true,updated_at:new Date().toISOString()})}prog.style.display='none';toast('✅ 추가:'+ins.length+' 수정:'+upd.length);loadBoxUnits()}catch(e){prog.style.display='none';toast('실패: '+e.message)}});
+document.getElementById('buFileInput').addEventListener('change',async function(e){const file=e.target.files[0];if(!file)return;e.target.value='';const prog=document.getElementById('buProgress');prog.style.display='block';prog.textContent='읽는 중...';try{const data=await file.arrayBuffer();const wb=XLSX.read(data,{type:'array'});const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1});if(rows.length<2){toast('데이터 없음');prog.style.display='none';return}const items=[];for(let i=1;i<rows.length;i++){const pn=String(rows[i][0]||'').trim();const bs=parseInt(rows[i][1])||0;if(pn)items.push({part_no:pn,box_size:bs})}if(!items.length){toast('유효 데이터 없음');prog.style.display='none';return}if(!confirm(items.length+'건 업로드?')){prog.style.display='none';return}const ex=await sbSelect('box_unit');const em={};ex.forEach(b=>{em[b.part_no]=b});const ins=[],upd=[];items.forEach(it=>{const e=em[it.part_no];if(e){if(e.box_size!==it.box_size)upd.push({id:e.id,box_size:it.box_size})}else ins.push(it)});let done=0;for(let i=0;i<ins.length;i+=50){await sbInsert('box_unit',ins.slice(i,i+50));done+=Math.min(50,ins.length-i);prog.textContent='추가 '+done+'/'+ins.length}for(let i=0;i<upd.length;i++){await sbUpdate('box_unit',upd[i].id,{box_size:upd[i].box_size,is_active:true})}prog.style.display='none';toast('✅ 추가:'+ins.length+' 수정:'+upd.length);loadBoxUnits()}catch(e){prog.style.display='none';toast('실패: '+e.message)}});
 async function deleteAllBoxUnits(){if(!buData.length)return;if(!confirm('⚠ 전체 '+buData.length+'건 삭제?'))return;if(!confirm('최종 확인'))return;try{await sbDelete('box_unit','id=gt.0');toast('전체 삭제');loadBoxUnits()}catch(e){toast('실패: '+e.message)}}
 
 function exportHistXlsx(){if(!histData.length){toast('이력 없음');return}const ws=XLSX.utils.aoa_to_sheet([['일자','품번','박스당수량','박스수량','수량','로트번호'],...histData.map(h=>[h.reg_date,h.part_no,h.box_size,h.box_count,h.qty,h.lot_no||''])]);ws['!cols']=[{wch:11},{wch:18},{wch:10},{wch:8},{wch:10},{wch:16}];const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'출하이력');XLSX.writeFile(wb,'출하이력_'+new Date().toISOString().split('T')[0].replace(/-/g,'')+'.xlsx')}
@@ -431,7 +440,7 @@ async function saveEditWork(){
   const lot=document.getElementById('ewLot').value.trim();
   if(!pn){toast('품번 입력');return}
   try{
-    await sbUpdate('shipment_work',id,{part_no:pn,box_size:bs,box_count:bc,qty:qty||null,lot_no:lot,updated_at:new Date().toISOString()});
+    await sbUpdate('shipment_work',id,{part_no:pn,box_size:bs,box_count:bc,qty:qty||null,lot_no:lot});
     closeEditWork();
     toast('✅ 수정 완료');
     loadWork();
@@ -478,7 +487,7 @@ async function saveEditHist(){
   const lot=document.getElementById('ehLot').value.trim();
   if(!pn){toast('품번 입력');return}
   try{
-    await sbUpdate('shipment_history',id,{reg_date:rd,part_no:pn,box_size:bs,box_count:bc,qty:qty||null,lot_no:lot,updated_at:new Date().toISOString()});
+    await sbUpdate('shipment_history',id,{reg_date:rd,part_no:pn,box_size:bs,box_count:bc,qty:qty||null,lot_no:lot});
     closeEditHist();
     toast('✅ 이력 수정 완료');
     loadWork();
