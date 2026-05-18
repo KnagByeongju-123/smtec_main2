@@ -3,12 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>DI 원시 신호 모니터 v1.0</title>
+<title>SHOT 카운터 모니터 v2.0</title>
 <style>
   :root{
     --bg:#0f1419; --panel:#1a2332; --border:#2a3a52;
     --text:#e8eef7; --muted:#7a8aa0;
     --ok:#22c55e; --ng:#ef4444; --idle:#475569; --accent:#3b82f6;
+    --pass:#22c55e; --fail:#ef4444;
   }
   *{box-sizing:border-box;margin:0;padding:0}
   body{
@@ -20,80 +21,192 @@
     display:flex; justify-content:space-between; align-items:center;
     background:var(--panel); border:1px solid var(--border);
     padding:14px 20px; border-radius:10px; margin-bottom:16px;
+    flex-wrap:wrap; gap:12px;
   }
   .header h1{font-size:20px; font-weight:600}
-  .header .meta{display:flex; gap:18px; align-items:center; font-size:13px; color:var(--muted)}
-  .header .meta span b{color:var(--text); font-weight:600}
+  .header .meta{display:flex; gap:14px; align-items:center; font-size:13px; color:var(--muted); flex-wrap:wrap}
+  .header .meta b{color:var(--text); font-weight:600}
   .status-dot{
     display:inline-block; width:9px; height:9px; border-radius:50%;
     margin-right:6px; background:var(--idle);
   }
   .status-dot.online{background:var(--ok); box-shadow:0 0 8px var(--ok)}
   .status-dot.offline{background:var(--ng)}
+  .btn{
+    padding:8px 16px; border-radius:6px; border:1px solid var(--border);
+    background:#0c1320; color:var(--text); cursor:pointer; font-size:13px;
+    font-family:inherit;
+  }
+  .btn:hover{background:#1a2332; border-color:var(--accent)}
+  .btn.primary{background:var(--accent); border-color:var(--accent)}
+  .btn.primary:hover{background:#2563eb}
+  .btn.danger{background:transparent; border-color:var(--ng); color:var(--ng)}
+
+  /* 디바이스 섹션 */
+  .dev-section{
+    background:var(--panel); border:1px solid var(--border);
+    border-radius:10px; padding:16px; margin-bottom:16px;
+  }
+  .dev-header{
+    display:flex; justify-content:space-between; align-items:center;
+    margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--border);
+    flex-wrap:wrap; gap:8px;
+  }
+  .dev-title{
+    font-size:17px; font-weight:700; display:flex; align-items:center; gap:10px;
+  }
+  .dev-badge{
+    padding:4px 10px; border-radius:5px; font-size:12px; font-weight:600;
+    background:var(--accent); color:white;
+  }
+  .dev-info{font-size:12px; color:var(--muted); display:flex; gap:14px; flex-wrap:wrap}
+  .dev-info b{color:var(--text)}
 
   .grid{
     display:grid; grid-template-columns:repeat(4, 1fr);
-    gap:14px;
+    gap:10px;
   }
-  @media (max-width: 1100px){ .grid{grid-template-columns:repeat(2,1fr)} }
+  @media (max-width: 1200px){ .grid{grid-template-columns:repeat(2,1fr)} }
   @media (max-width: 600px){ .grid{grid-template-columns:1fr} }
 
   .card{
-    background:var(--panel); border:1px solid var(--border);
-    border-radius:10px; padding:18px;
+    background:#0c1320; border:1px solid var(--border);
+    border-radius:8px; padding:12px;
     transition:border-color .2s, box-shadow .2s;
+    position:relative;
   }
-  .card.has-data{ border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset }
+  .card.has-data{ border-color:var(--accent) }
   .card.recent{ border-color:var(--ok); box-shadow:0 0 12px rgba(34,197,94,.35) }
-  .card.empty{ opacity:.55 }
+  .card.empty{ opacity:.45 }
+  .card.pass{ border-left:4px solid var(--pass) }
+  .card.fail{ border-left:4px solid var(--fail) }
 
   .card .ch-head{
     display:flex; justify-content:space-between; align-items:center;
-    margin-bottom:14px;
+    margin-bottom:8px;
   }
-  .card .ch-name{font-size:22px; font-weight:700; letter-spacing:.5px}
-  .card .ch-gpio{font-size:11px; color:var(--muted); background:#0c1320; padding:3px 8px; border-radius:5px}
-
+  .card .ch-name{font-size:16px; font-weight:700}
+  .card .ch-gpio{font-size:10px; color:var(--muted); background:#1a2332; padding:2px 6px; border-radius:4px}
+  .card .mapping{
+    font-size:11px; color:var(--accent); margin-bottom:8px;
+    background:rgba(59,130,246,.1); padding:4px 8px; border-radius:4px;
+    min-height:22px; display:flex; align-items:center;
+  }
+  .card .mapping.empty{color:var(--muted); background:transparent; font-style:italic}
+  
   .count{
-    font-size:48px; font-weight:700; line-height:1;
-    color:var(--text); margin-bottom:6px;
+    font-size:32px; font-weight:700; line-height:1;
+    color:var(--text); margin-bottom:4px;
     font-variant-numeric:tabular-nums;
   }
-  .count-label{font-size:11px; color:var(--muted); letter-spacing:.5px; margin-bottom:14px}
-
-  .stats{display:flex; gap:14px; font-size:11px}
-  .stat{flex:1; padding:8px 10px; background:#0c1320; border-radius:6px}
-  .stat-label{color:var(--muted); margin-bottom:3px}
+  .count-label{font-size:10px; color:var(--muted); margin-bottom:8px}
+  .stats{display:flex; gap:6px; font-size:10px}
+  .stat{flex:1; padding:5px 7px; background:#1a2332; border-radius:4px}
+  .stat-label{color:var(--muted); margin-bottom:2px}
   .stat-val{color:var(--text); font-weight:600; font-variant-numeric:tabular-nums}
 
-  .footer{
-    margin-top:18px; padding:12px 16px;
-    background:var(--panel); border:1px solid var(--border); border-radius:10px;
-    font-size:12px; color:var(--muted); display:flex; justify-content:space-between;
+  /* 호기 집계 섹션 */
+  .machine-summary{
+    background:var(--panel); border:1px solid var(--border);
+    border-radius:10px; padding:16px; margin-bottom:16px;
   }
-  .footer b{color:var(--text)}
-  .blink{animation:blink .8s ease-out}
-  @keyframes blink{
-    0%{background:rgba(34,197,94,.3)} 100%{background:transparent}
+  .machine-summary h2{font-size:15px; margin-bottom:12px; color:var(--text)}
+  .machine-grid{
+    display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));
+    gap:10px;
+  }
+  .machine-card{
+    background:#0c1320; border:1px solid var(--border); border-radius:8px;
+    padding:12px;
+  }
+  .machine-name{font-size:14px; font-weight:700; margin-bottom:8px}
+  .machine-stats{display:flex; gap:12px; align-items:center}
+  .machine-stats .num{font-size:24px; font-weight:700; font-variant-numeric:tabular-nums}
+  .machine-stats .pass{color:var(--pass)}
+  .machine-stats .fail{color:var(--fail)}
+  .machine-stats .rate{font-size:11px; color:var(--muted); margin-top:2px}
+
+  /* 모달 */
+  .modal-bg{
+    display:none; position:fixed; top:0;left:0;right:0;bottom:0;
+    background:rgba(0,0,0,.7); z-index:100;
+    align-items:center; justify-content:center; padding:20px;
+  }
+  .modal-bg.show{display:flex}
+  .modal{
+    background:var(--panel); border:1px solid var(--border); border-radius:10px;
+    max-width:900px; width:100%; max-height:90vh; overflow:auto; padding:20px;
+  }
+  .modal h2{font-size:18px; margin-bottom:16px}
+  .modal-section{
+    background:#0c1320; border:1px solid var(--border); border-radius:8px;
+    padding:14px; margin-bottom:12px;
+  }
+  .modal-section h3{font-size:14px; margin-bottom:10px; color:var(--accent)}
+  .modal-row{
+    display:grid; grid-template-columns:80px 1fr 1fr 90px;
+    gap:8px; align-items:center; margin-bottom:6px; font-size:13px;
+  }
+  .modal-row .di-label{font-weight:700; color:var(--accent)}
+  .modal-row input, .modal-row select{
+    background:#1a2332; border:1px solid var(--border); color:var(--text);
+    padding:6px 8px; border-radius:5px; font-family:inherit; font-size:13px;
+  }
+  .modal-row input:focus, .modal-row select:focus{outline:1px solid var(--accent)}
+  .modal-actions{display:flex; gap:8px; justify-content:flex-end; margin-top:16px; padding-top:12px; border-top:1px solid var(--border)}
+  
+  .no-device{
+    text-align:center; padding:40px 20px; color:var(--muted);
+    background:var(--panel); border:1px dashed var(--border); border-radius:10px;
+  }
+  .footer{
+    margin-top:16px; padding:10px 14px;
+    background:var(--panel); border:1px solid var(--border); border-radius:8px;
+    font-size:11px; color:var(--muted); display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px;
   }
 </style>
 </head>
 <body>
 
 <div class="header">
-  <h1>📡 DI 원시 신호 모니터 v1.0</h1>
+  <h1>📡 SHOT 카운터 모니터 v2.0</h1>
   <div class="meta">
     <span><span class="status-dot" id="connDot"></span><b id="connText">연결 확인 중</b></span>
-    <span>마지막 갱신: <b id="lastUpdate">-</b></span>
+    <span>장비: <b id="deviceCount">0</b></span>
     <span>전체 누적: <b id="totalCount">0</b></span>
+    <span>갱신: <b id="lastUpdate">-</b></span>
+    <button class="btn primary" onclick="openSettings()">⚙️ 호기 매핑 설정</button>
   </div>
 </div>
 
-<div class="grid" id="grid"></div>
+<!-- 호기별 집계 (매핑 있을 때만 표시) -->
+<div class="machine-summary" id="machineSummary" style="display:none">
+  <h2>🏭 호기별 집계 (매핑 적용)</h2>
+  <div class="machine-grid" id="machineGrid"></div>
+</div>
+
+<!-- 디바이스별 원시 데이터 -->
+<div id="container"></div>
 
 <div class="footer">
-  <span>Supabase: <b>shot_count</b> 테이블 · 폴링 주기 <b>2초</b> · machine_code = <b>DI1 ~ DI8</b></span>
-  <span>나중에 호기 매핑 예정</span>
+  <span>Supabase <b>shot_count</b> · 폴링 <b>2초</b> · 매핑은 브라우저 <b>localStorage</b>에 저장됨</span>
+  <span>v2.0</span>
+</div>
+
+<!-- 설정 모달 -->
+<div class="modal-bg" id="modalBg">
+  <div class="modal">
+    <h2>⚙️ 디바이스 → 호기 매핑 설정</h2>
+    <p style="font-size:13px; color:var(--muted); margin-bottom:14px">
+      각 디바이스의 DI1~DI8 채널에 호기명과 종류(양품/불량)을 매핑하세요. 비워두면 매핑 없이 DI 원시 데이터만 표시됩니다.
+    </p>
+    <div id="mappingContainer"></div>
+    <div class="modal-actions">
+      <button class="btn danger" onclick="resetMapping()">매핑 초기화</button>
+      <button class="btn" onclick="closeSettings()">취소</button>
+      <button class="btn primary" onclick="saveMapping()">저장</button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -102,47 +215,35 @@
   const SUPABASE_KEY = 'sb_publishable_9j2YkkL-7ul1TrhH-NjVdQ_vWDG2-1D';
   const TABLE = 'shot_count';
   const POLL_MS = 2000;
-  const RECENT_THRESHOLD_MS = 10000;   // 10초 이내 신호 들어온 채널 = 활성 표시
-
+  const RECENT_THRESHOLD_MS = 10000;
   const DI_LIST = ['DI1','DI2','DI3','DI4','DI5','DI6','DI7','DI8'];
+  const STORAGE_KEY = 'shot_monitor_mapping_v2';
 
-  // ===== UI 생성 =====
-  const grid = document.getElementById('grid');
-  const cards = {};
-  DI_LIST.forEach((di, idx) => {
-    const gpio = 4 + idx;   // DI1=GPIO4, DI2=5, ... DI8=GPIO11
-    const card = document.createElement('div');
-    card.className = 'card empty';
-    card.id = `card-${di}`;
-    card.innerHTML = `
-      <div class="ch-head">
-        <div class="ch-name">${di}</div>
-        <div class="ch-gpio">GPIO${gpio}</div>
-      </div>
-      <div class="count" id="cnt-${di}">0</div>
-      <div class="count-label">누적 SHOT</div>
-      <div class="stats">
-        <div class="stat">
-          <div class="stat-label">마지막 신호</div>
-          <div class="stat-val" id="last-${di}">-</div>
-        </div>
-        <div class="stat">
-          <div class="stat-label">간격(ms)</div>
-          <div class="stat-val" id="ivl-${di}">-</div>
-        </div>
-      </div>
-    `;
-    grid.appendChild(card);
-    cards[di] = {
-      card,
-      cnt: card.querySelector(`#cnt-${di}`),
-      last: card.querySelector(`#last-${di}`),
-      ivl: card.querySelector(`#ivl-${di}`),
-      prevCount: 0
-    };
-  });
+  // ===== 매핑 데이터 구조 =====
+  // mapping = {
+  //   "ESP32_01": {
+  //     "DI1": { machine: "3호기", type: "양품" },
+  //     "DI2": { machine: "3호기", type: "불량" },
+  //     ...
+  //   },
+  //   ...
+  // }
+  let mapping = {};
 
-  // ===== KST 시각 포맷 =====
+  // ===== localStorage 로드 / 저장 =====
+  function loadMapping(){
+    try{
+      const raw = localStorage.getItem(STORAGE_KEY);
+      mapping = raw ? JSON.parse(raw) : {};
+    }catch(e){
+      mapping = {};
+    }
+  }
+  function persistMapping(){
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(mapping));
+  }
+
+  // ===== KST 시각 =====
   function fmtKST(iso){
     if(!iso) return '-';
     const d = new Date(iso);
@@ -155,13 +256,11 @@
     return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
   }
 
-  // ===== Supabase 조회 (각 DI별 최신 1건) =====
-  // 효율: machine_code IN (DI1..DI8) 한 번 + 클라이언트에서 채널별 최신 추출
-  // shot_count는 시간순 누적이므로 created_at 기준 desc 정렬, 충분히 많이 받아서 처리
+  // ===== Supabase 조회 =====
   async function fetchLatest(){
     const url = `${SUPABASE_URL}/rest/v1/${TABLE}` +
                 `?machine_code=in.(${DI_LIST.join(',')})` +
-                `&order=created_at.desc&limit=200`;
+                `&order=created_at.desc&limit=800`;
     try{
       const res = await fetch(url, {
         headers:{
@@ -169,10 +268,7 @@
           'Authorization': 'Bearer ' + SUPABASE_KEY
         }
       });
-      if(!res.ok){
-        setConn(false, `HTTP ${res.status}`);
-        return null;
-      }
+      if(!res.ok){ setConn(false, `HTTP ${res.status}`); return null; }
       const data = await res.json();
       setConn(true, '연결됨');
       return data;
@@ -190,70 +286,308 @@
     txt.textContent = msg;
   }
 
-  // ===== 채널별 최신 1건 + 누적합 계산 =====
+  // ===== 그룹화 =====
   function processRows(rows){
-    // 1) 채널별 최신 레코드 (shot_count 자체가 누적값)
-    const latestByCh = {};
+    const grouped = {};
     for(const r of rows){
-      if(!latestByCh[r.machine_code]){
-        latestByCh[r.machine_code] = r;
+      const dev = r.device_id || 'LEGACY';
+      if(!grouped[dev]) grouped[dev] = {};
+      if(!grouped[dev][r.machine_code]){
+        grouped[dev][r.machine_code] = r;
       }
     }
-    return latestByCh;
+    return grouped;
   }
 
-  // ===== 카드 갱신 =====
-  function renderCards(latestByCh){
+  // ===== 매핑된 호기 정보 가져오기 =====
+  function getMap(deviceId, di){
+    return mapping[deviceId]?.[di] || null;
+  }
+
+  // ===== 호기별 집계 =====
+  function aggregateByMachine(grouped){
+    // { "3호기": { pass: 0, fail: 0, lastTs: null } }
+    const summary = {};
+    for(const dev of Object.keys(grouped)){
+      for(const di of DI_LIST){
+        const rec = grouped[dev][di];
+        if(!rec) continue;
+        const map = getMap(dev, di);
+        if(!map || !map.machine) continue;
+        
+        if(!summary[map.machine]){
+          summary[map.machine] = { pass:0, fail:0, lastTs:null };
+        }
+        const cnt = rec.shot_count || 0;
+        if(map.type === '양품'){
+          summary[map.machine].pass += cnt;
+        } else if(map.type === '불량'){
+          summary[map.machine].fail += cnt;
+        }
+        if(!summary[map.machine].lastTs || new Date(rec.created_at) > new Date(summary[map.machine].lastTs)){
+          summary[map.machine].lastTs = rec.created_at;
+        }
+      }
+    }
+    return summary;
+  }
+
+  // ===== 메인 렌더 =====
+  function render(grouped){
+    const container = document.getElementById('container');
+    const devices = Object.keys(grouped).sort();
+
+    // 호기별 집계 영역
+    const summary = aggregateByMachine(grouped);
+    const machineNames = Object.keys(summary).sort();
+    const summaryEl = document.getElementById('machineSummary');
+    const machineGrid = document.getElementById('machineGrid');
+    
+    if(machineNames.length > 0){
+      summaryEl.style.display = 'block';
+      let mh = '';
+      for(const m of machineNames){
+        const s = summary[m];
+        const total = s.pass + s.fail;
+        const rate = total>0 ? ((s.pass/total)*100).toFixed(2) : '0.00';
+        mh += `
+          <div class="machine-card">
+            <div class="machine-name">${m}</div>
+            <div class="machine-stats">
+              <div>
+                <div class="num pass">${s.pass.toLocaleString()}</div>
+                <div class="rate">양품</div>
+              </div>
+              <div>
+                <div class="num fail">${s.fail.toLocaleString()}</div>
+                <div class="rate">불량</div>
+              </div>
+              <div>
+                <div class="num">${rate}%</div>
+                <div class="rate">합격률</div>
+              </div>
+            </div>
+          </div>
+        `;
+      }
+      machineGrid.innerHTML = mh;
+    } else {
+      summaryEl.style.display = 'none';
+    }
+
+    // 디바이스별 원시 영역
+    if(devices.length === 0){
+      container.innerHTML = `<div class="no-device">아직 데이터가 없습니다. ESP32에서 SHOT 신호 대기 중...</div>`;
+      document.getElementById('deviceCount').textContent = '0';
+      document.getElementById('totalCount').textContent = '0';
+      return;
+    }
+
     let total = 0;
     const now = Date.now();
-    DI_LIST.forEach(di => {
-      const rec = latestByCh[di];
-      const c = cards[di];
-      if(!rec){
-        c.card.className = 'card empty';
-        c.cnt.textContent = '0';
-        c.last.textContent = '-';
-        c.ivl.textContent = '-';
-        return;
-      }
-      const cnt = rec.shot_count || 0;
-      total += cnt;
+    let html = '';
 
-      // 카운트 증가했으면 깜빡임 효과
-      if(cnt > c.prevCount && c.prevCount > 0){
-        c.cnt.classList.remove('blink');
-        void c.cnt.offsetWidth;   // reflow
-        c.cnt.classList.add('blink');
+    for(const dev of devices){
+      const channels = grouped[dev];
+      let mac = '-', ip = '-', lastTs = null;
+      for(const di of DI_LIST){
+        const r = channels[di];
+        if(r){
+          if(!lastTs || new Date(r.created_at) > new Date(lastTs)){
+            lastTs = r.created_at;
+            mac = r.esp32_mac || '-';
+            ip = r.esp32_ip || '-';
+          }
+        }
       }
-      c.prevCount = cnt;
-      c.cnt.textContent = cnt.toLocaleString();
-      c.last.textContent = fmtKST(rec.created_at);
-      c.ivl.textContent = (rec.shot_interval_ms || 0).toLocaleString();
 
-      // 최근성 판단
-      const recordTime = new Date(rec.created_at).getTime();
-      const ageMs = now - recordTime;
-      if(ageMs < RECENT_THRESHOLD_MS){
-        c.card.className = 'card recent';
-      } else {
-        c.card.className = 'card has-data';
+      html += `
+        <div class="dev-section">
+          <div class="dev-header">
+            <div class="dev-title">
+              <span class="dev-badge">${dev}</span>
+            </div>
+            <div class="dev-info">
+              <span>MAC: <b>${mac}</b></span>
+              <span>IP: <b>${ip}</b></span>
+              <span>최신: <b>${fmtKST(lastTs)}</b></span>
+            </div>
+          </div>
+          <div class="grid">
+      `;
+      
+      for(let i = 0; i < DI_LIST.length; i++){
+        const di = DI_LIST[i];
+        const gpio = 4 + i;
+        const rec = channels[di];
+        const cnt = rec ? (rec.shot_count || 0) : 0;
+        total += cnt;
+        const ivl = rec ? (rec.shot_interval_ms || 0) : 0;
+        const ts = rec ? rec.created_at : null;
+        
+        let cls = 'card empty';
+        if(rec){
+          const age = now - new Date(rec.created_at).getTime();
+          cls = (age < RECENT_THRESHOLD_MS) ? 'card recent' : 'card has-data';
+        }
+        
+        const map = getMap(dev, di);
+        if(map?.type === '양품') cls += ' pass';
+        else if(map?.type === '불량') cls += ' fail';
+        
+        const mapLabel = map?.machine 
+          ? `${map.machine} · ${map.type||'-'}`
+          : '미매핑';
+        const mapCls = map?.machine ? '' : 'empty';
+        
+        html += `
+          <div class="${cls}">
+            <div class="ch-head">
+              <div class="ch-name">${di}</div>
+              <div class="ch-gpio">GPIO${gpio}</div>
+            </div>
+            <div class="mapping ${mapCls}">${mapLabel}</div>
+            <div class="count">${cnt.toLocaleString()}</div>
+            <div class="count-label">누적 SHOT</div>
+            <div class="stats">
+              <div class="stat">
+                <div class="stat-label">마지막</div>
+                <div class="stat-val">${fmtKST(ts)}</div>
+              </div>
+              <div class="stat">
+                <div class="stat-label">간격(ms)</div>
+                <div class="stat-val">${ivl.toLocaleString()}</div>
+              </div>
+            </div>
+          </div>
+        `;
       }
-    });
-
+      html += `</div></div>`;
+    }
+    
+    container.innerHTML = html;
+    document.getElementById('deviceCount').textContent = devices.length;
     document.getElementById('totalCount').textContent = total.toLocaleString();
     document.getElementById('lastUpdate').textContent = nowKST();
   }
 
-  // ===== 메인 폴링 루프 =====
+  // ===== 설정 모달 =====
+  let knownDevices = [];   // 데이터 받은 디바이스 목록
+  
+  function openSettings(){
+    // 현재까지 발견된 디바이스 + localStorage에 있는 디바이스 합치기
+    const fromStorage = Object.keys(mapping);
+    const allDevs = [...new Set([...knownDevices, ...fromStorage])].sort();
+    
+    // 디바이스 없으면 빈 ESP32_01 추가
+    if(allDevs.length === 0) allDevs.push('ESP32_01');
+    
+    const container = document.getElementById('mappingContainer');
+    let html = '';
+    for(const dev of allDevs){
+      html += `<div class="modal-section"><h3>${dev}</h3>`;
+      for(const di of DI_LIST){
+        const cur = mapping[dev]?.[di] || {};
+        html += `
+          <div class="modal-row">
+            <span class="di-label">${di}</span>
+            <input type="text" placeholder="호기명 (예: 3호기)" 
+                   data-dev="${dev}" data-di="${di}" data-field="machine"
+                   value="${cur.machine || ''}">
+            <select data-dev="${dev}" data-di="${di}" data-field="type">
+              <option value="">- 종류 선택 -</option>
+              <option value="양품" ${cur.type==='양품'?'selected':''}>양품</option>
+              <option value="불량" ${cur.type==='불량'?'selected':''}>불량</option>
+            </select>
+            <button class="btn" onclick="clearRow('${dev}','${di}')" style="padding:4px 10px">지움</button>
+          </div>
+        `;
+      }
+      html += `</div>`;
+    }
+    
+    // 새 디바이스 추가 안내
+    html += `
+      <div class="modal-section" style="border-style:dashed">
+        <h3>➕ 디바이스 수동 추가</h3>
+        <div style="display:flex; gap:8px; align-items:center">
+          <input type="text" id="newDevInput" placeholder="예: ESP32_02" 
+                 style="flex:1; background:#1a2332; border:1px solid var(--border); color:var(--text); padding:8px; border-radius:5px; font-family:inherit">
+          <button class="btn primary" onclick="addNewDevice()">추가</button>
+        </div>
+        <p style="font-size:11px; color:var(--muted); margin-top:8px">
+          ※ 데이터가 들어오면 자동으로 목록에 나타납니다. 미리 매핑하려면 여기서 추가하세요.
+        </p>
+      </div>
+    `;
+    
+    container.innerHTML = html;
+    document.getElementById('modalBg').classList.add('show');
+  }
+  
+  function closeSettings(){
+    document.getElementById('modalBg').classList.remove('show');
+  }
+  
+  function clearRow(dev, di){
+    if(mapping[dev]) delete mapping[dev][di];
+    openSettings(); // 새로 그리기
+  }
+  
+  function addNewDevice(){
+    const v = document.getElementById('newDevInput').value.trim();
+    if(!v){ alert('디바이스명을 입력하세요'); return; }
+    if(!mapping[v]) mapping[v] = {};
+    openSettings();
+  }
+  
+  function saveMapping(){
+    // 모달 안의 모든 input/select 읽기
+    const newMap = {};
+    document.querySelectorAll('[data-dev]').forEach(el => {
+      const dev = el.dataset.dev;
+      const di  = el.dataset.di;
+      const field = el.dataset.field;
+      if(!newMap[dev]) newMap[dev] = {};
+      if(!newMap[dev][di]) newMap[dev][di] = {};
+      newMap[dev][di][field] = el.value.trim();
+    });
+    // 빈 항목 제거
+    for(const dev of Object.keys(newMap)){
+      for(const di of Object.keys(newMap[dev])){
+        const m = newMap[dev][di];
+        if(!m.machine && !m.type){
+          delete newMap[dev][di];
+        }
+      }
+      if(Object.keys(newMap[dev]).length === 0) delete newMap[dev];
+    }
+    mapping = newMap;
+    persistMapping();
+    closeSettings();
+    tick(); // 즉시 갱신
+  }
+  
+  function resetMapping(){
+    if(!confirm('모든 매핑을 삭제하시겠습니까?')) return;
+    mapping = {};
+    persistMapping();
+    closeSettings();
+    tick();
+  }
+
+  // ===== 메인 폴링 =====
   async function tick(){
     const rows = await fetchLatest();
     if(rows){
-      const latestByCh = processRows(rows);
-      renderCards(latestByCh);
+      const grouped = processRows(rows);
+      knownDevices = Object.keys(grouped);  // 설정 모달용
+      render(grouped);
     }
   }
 
-  // 초기 + 주기 실행
+  // 초기화
+  loadMapping();
   tick();
   setInterval(tick, POLL_MS);
 </script>
