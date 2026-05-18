@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>MES 가동설비 모니터링 v3.9</title>
+<title>MES 가동설비 모니터링 v4.0</title>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -311,7 +311,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 </style>
 </head>
 <body>
-<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v3.9</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">30초 갱신</span></div></div></div>
+<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v4.0</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">30초 갱신</span></div></div></div>
 <div class="tabs"><div class="tab active" data-tab="monitor" onclick="switchTab('monitor')">📊 모니터링</div><div class="tab" data-tab="settings" onclick="switchTab('settings')">📋 이력/설정</div></div>
 <div class="panel active" id="panel-monitor">
   <div class="stats"><div class="st"><div class="st-label">전체</div><div class="st-val" id="sTotal">-</div></div><div class="st run"><div class="st-label">가동</div><div class="st-val" id="sRun">-</div></div><div class="st stop"><div class="st-label">비가동</div><div class="st-val" id="sStop">-</div></div><div class="st warn"><div class="st-label">⏰30분이내</div><div class="st-val" id="sSoon">-</div></div><div class="st ng"><div class="st-label">NG</div><div class="st-val" id="sNg">-</div></div></div>
@@ -1594,11 +1594,19 @@ function renderChkContent(){
   addBtn.onclick=function(){addChkRowDialog()};
   c.appendChild(addBtn);
   var pa=document.createElement('div');pa.className='chk-photo-area';
-  var lab=document.createElement('label');lab.className='chk-photo-btn';lab.textContent='📸 사진 선택/촬영';
-  var inp2=document.createElement('input');inp2.type='file';inp2.accept='image/*';inp2.capture='environment';inp2.multiple=true;inp2.style.display='none';
-  inp2.onchange=function(e){handlePhotos(e.target.files)};
-  lab.appendChild(inp2);
-  pa.appendChild(lab);
+  var btnRow=document.createElement('div');btnRow.style.cssText='display:flex;gap:8px;flex-wrap:wrap';
+  // 갤러리 선택 (capture 없음 → 갤러리 우선)
+  var labGal=document.createElement('label');labGal.className='chk-photo-btn';labGal.textContent='🖼️ 갤러리에서 선택';
+  var inpGal=document.createElement('input');inpGal.type='file';inpGal.accept='image/*';inpGal.multiple=true;inpGal.style.display='none';
+  inpGal.onchange=function(e){handlePhotos(e.target.files);e.target.value=''};
+  labGal.appendChild(inpGal);
+  // 카메라 촬영 (capture=environment → 후면카메라 직접)
+  var labCam=document.createElement('label');labCam.className='chk-photo-btn';labCam.textContent='📸 카메라 촬영';
+  var inpCam=document.createElement('input');inpCam.type='file';inpCam.accept='image/*';inpCam.capture='environment';inpCam.style.display='none';
+  inpCam.onchange=function(e){handlePhotos(e.target.files);e.target.value=''};
+  labCam.appendChild(inpCam);
+  btnRow.appendChild(labGal);btnRow.appendChild(labCam);
+  pa.appendChild(btnRow);
   var prev=document.createElement('div');prev.className='chk-photo-preview';prev.id='chkPhPrev';
   pa.appendChild(prev);
   c.appendChild(pa);
@@ -1639,18 +1647,18 @@ function compressImage(file,targetBytes,cb){
     var img=new Image();
     img.onload=function(){
       var canvas=document.createElement('canvas');
-      // 안전 마진: 목표의 95%로 설정 (Base64→Blob 변환 시 약간의 오차 보정)
-      var safeTarget=Math.floor(targetBytes*0.95);
+      // 안전 마진: 목표의 90%로 설정 (Base64→Blob 변환 시 오차 보정)
+      var safeTarget=Math.floor(targetBytes*0.90);
       function tryCompress(maxDim,quality,attempt){
-        if(attempt>20){
+        if(attempt>25){
           // 최후 수단: 매우 작게
           var w2=img.width,h2=img.height;
-          var dim2=300;
+          var dim2=240;
           if(w2>dim2||h2>dim2){if(w2>h2){h2=Math.round(h2*dim2/w2);w2=dim2}else{w2=Math.round(w2*dim2/h2);h2=dim2}}
           canvas.width=w2;canvas.height=h2;
           var ctx2=canvas.getContext('2d');ctx2.fillStyle='#fff';ctx2.fillRect(0,0,w2,h2);
           ctx2.drawImage(img,0,0,w2,h2);
-          var d2=canvas.toDataURL('image/jpeg',0.3);
+          var d2=canvas.toDataURL('image/jpeg',0.25);
           var b22=d2.split(',')[1]||'';
           cb(d2,Math.floor(b22.length*3/4));
           return;
@@ -1671,10 +1679,11 @@ function compressImage(file,targetBytes,cb){
         // 품질이 한계 도달하면 크기를 줄이고 품질 리셋
         if(nq<0.4){nq=0.7;nDim=Math.round(maxDim*0.75)}
         // 너무 작아지면 품질만 더 낮춤
-        if(nDim<200){nDim=200;nq=Math.max(0.3,quality-0.05)}
+        if(nDim<200){nDim=200;nq=Math.max(0.25,quality-0.05)}
         tryCompress(nDim,nq,attempt+1);
       }
-      tryCompress(1000,0.82,0);
+      // 초기 해상도 800px·품질 0.75로 시작 (30KB는 작은 목표이므로 보수적 시작)
+      tryCompress(800,0.75,0);
     };
     img.src=e.target.result;
   };
