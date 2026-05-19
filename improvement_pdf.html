@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, maximum-scale=5.0">
-<title>개선활동 보고서 출력 v2.0</title>
+<title>개선활동 보고서 출력 v2.0 Rev.1</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <style>
@@ -389,17 +389,52 @@ body {
 </head>
 <body>
 
-<!-- 인증 가드 -->
+<!-- 인증 가드 (미리보기 + ESG PIN 세션 호환) -->
 <script>
 (function(){
   'use strict';
-  var s;
-  try{ s = JSON.parse(localStorage.getItem('mm_user_session')||'null'); }catch(e){ s=null; }
+  // 미리보기 환경 감지
+  var host = location.hostname || '';
+  var isPreview = (location.protocol === 'file:'
+                || host === ''
+                || host === 'localhost'
+                || host.indexOf('claude') >= 0
+                || host.indexOf('anthropic') >= 0
+                || host.indexOf('claudeusercontent') >= 0);
+
+  // 1) 기존 mm_user_session 확인
+  var s = null;
+  try{ s = JSON.parse(localStorage.getItem('mm_user_session')||'null'); }catch(e){}
+
+  // 2) 없으면 ESG PIN 세션(esg_pin_auth)에서 자동 변환
   if(!s || !s.exp || s.exp <= Date.now()){
-    try{ localStorage.removeItem('mm_user_session'); }catch(e){}
-    location.replace('index.html');
-    document.documentElement.style.display = 'none';
-    throw new Error('Unauthorized');
+    try{
+      var a = JSON.parse(localStorage.getItem('esg_pin_auth')||'null');
+      if(a && a.name && a.exp && a.exp > Date.now()){
+        s = {
+          name: a.name,
+          dept: a.dept || '',
+          role: (a.role || 'user'),
+          exp: a.exp
+        };
+      }
+    }catch(e){}
+  }
+
+  // 3) 그래도 없으면 미리보기 더미 또는 안내 후 종료
+  if(!s || !s.exp || s.exp <= Date.now()){
+    if(isPreview){
+      s = { name:'미리보기', dept:'PREVIEW', role:'user', exp: Date.now()+86400000 };
+    } else {
+      if(window.opener){
+        try{ window.close(); }catch(e){}
+        alert('인증 정보가 없습니다.\n메인 페이지에서 PIN 인증 후 다시 시도하세요.');
+      } else {
+        location.replace('index.html');
+        document.documentElement.style.display = 'none';
+      }
+      throw new Error('Unauthorized');
+    }
   }
   window.__msmSession = s;
 })();
@@ -407,7 +442,7 @@ body {
 
 <div class="app-header no-print">
   <a href="improvement_report.html" class="back-btn">‹ 개선활동</a>
-  <h1>📄 개선활동 보고서 출력 <span class="ver" onclick="showVer()">v2.0</span></h1>
+  <h1>📄 개선활동 보고서 출력 <span class="ver" onclick="showVer()">v2.0 Rev.1</span></h1>
   <button class="btn-settings" onclick="openSettings()" type="button" title="설정">⚙️</button>
 </div>
 
@@ -469,7 +504,12 @@ function showVer(){
   alert(
     '📄 개선활동 보고서 출력 변경 이력\n' +
     '━━━━━━━━━━━━━━━━━━━━━━━━\n\n' +
-    'v2.0 (현재)\n' +
+    'v2.0 Rev.1 (현재)\n' +
+    '• 인증 가드 확장: ESG PIN 세션(esg_pin_auth) 자동 인식\n' +
+    '  → index.html에서 팝업으로 열려도 정상 접근\n' +
+    '• 팝업 창에서 인증 실패 시 알림 표시 후 자동 종료\n' +
+    '• 미리보기 환경 자동 우회\n\n' +
+    'v2.0\n' +
     '• 🔒 개인용(localStorage) / 🌐 공용(Supabase) PDF 출력 지원\n' +
     '• 저장 위치별 자동 분기 (보고서 측에서 전달)\n' +
     '• 보고서에 저장위치 표기 추가\n' +
