@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>ESG Smart Factory v3.14 Rev.1</title>
+<title>ESG Smart Factory v3.14 Rev.3</title>
 <meta name="theme-color" content="#0f172a">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -178,7 +178,7 @@ body.locked{overflow:hidden}
 </div>
 
 <div class="hdr">
-  <div class="hdr-title">ESG Smart Factory <span style="font-size:11px;color:#fbbf24;font-weight:600;margin-left:6px;background:rgba(251,191,36,0.12);padding:2px 8px;border-radius:8px;border:1px solid rgba(251,191,36,0.3);vertical-align:middle">v3.14 Rev.1</span></div>
+  <div class="hdr-title">ESG Smart Factory <span style="font-size:11px;color:#fbbf24;font-weight:600;margin-left:6px;background:rgba(251,191,36,0.12);padding:2px 8px;border-radius:8px;border:1px solid rgba(251,191,36,0.3);vertical-align:middle">v3.14 Rev.3</span></div>
   <div class="hdr-bar" id="hdrBar" style="display:none">
     <div class="hdr-bar-left">
       <button class="edit-toggle" id="editToggleBtn" onclick="toggleEditMode()">🔧 편집</button>
@@ -204,7 +204,7 @@ body.locked{overflow:hidden}
 </div>
 
 <div class="cat-list" id="catList"></div>
-<div class="footer">ESG Smart Factory v3.14 Rev.1</div>
+<div class="footer">ESG Smart Factory v3.14 Rev.3</div>
 
 <canvas id="analysisCv" style="display:none"></canvas>
 <div class="toast" id="toast"></div>
@@ -212,11 +212,19 @@ body.locked{overflow:hidden}
 <script>
 /* ============ 버전 변경 자동 감지 (캐시 회피) ============ */
 (function(){
-  const APP_VERSION = 'v3.14_Rev.1';
+  const APP_VERSION = 'v3.14_Rev.3';
+  // 미리보기 환경에서는 리로드 스킵
+  const host = location.hostname || '';
+  const isPreview = (location.protocol === 'file:'
+                  || host === '' || host === 'localhost'
+                  || host.indexOf('claude') >= 0
+                  || host.indexOf('anthropic') >= 0
+                  || host.indexOf('claudeusercontent') >= 0);
+  if(isPreview) return;
+
   try{
     const prev = localStorage.getItem('esg_main_version');
     if(prev && prev !== APP_VERSION){
-      // 버전 바뀜 → 캐시 강제 무효화 한 번
       localStorage.setItem('esg_main_version', APP_VERSION);
       if(!sessionStorage.getItem('esg_main_reloaded_for_'+APP_VERSION)){
         sessionStorage.setItem('esg_main_reloaded_for_'+APP_VERSION, '1');
@@ -328,10 +336,23 @@ function getSortedCats(){
   var saved=getSavedOrder();
   if(!saved||!saved.length) return CATS.slice();
   var byId={}; CATS.forEach(c=>byId[c.id]=c);
+
+  // 1단계: 저장된 순서대로 배치
   var ordered=[];
   saved.forEach(id=>{if(byId[id]){ordered.push(byId[id]);delete byId[id]}});
-  // CATS에 있지만 저장순서에 없는 것(신규 추가된 것)은 뒤에 추가
-  CATS.forEach(c=>{if(byId[c.id])ordered.push(byId[c.id])});
+
+  // 2단계: 저장순서에 없는 신규 카드는 CATS 정의 순서상 "직전 카드" 뒤에 자동 삽입
+  CATS.forEach((c, idx)=>{
+    if(!byId[c.id]) return;
+    var insertAt = ordered.length;
+    for(var i = idx - 1; i >= 0; i--){
+      var prevId = CATS[i].id;
+      var pos = ordered.findIndex(x => x.id === prevId);
+      if(pos >= 0){ insertAt = pos + 1; break; }
+    }
+    ordered.splice(insertAt, 0, c);
+    delete byId[c.id];
+  });
   return ordered;
 }
 
@@ -515,6 +536,18 @@ function setFail(f){localStorage.setItem(LK_FAIL,JSON.stringify(f))}
 function clearFail(){localStorage.removeItem(LK_FAIL)}
 
 function initLock(){
+  // 미리보기 환경에서는 PIN 자동 우회
+  var host = location.hostname || '';
+  var isPreview = (location.protocol === 'file:'
+                || host === '' || host === 'localhost'
+                || host.indexOf('claude') >= 0
+                || host.indexOf('anthropic') >= 0
+                || host.indexOf('claudeusercontent') >= 0);
+  if(isPreview){
+    unlock('미리보기');
+    return;
+  }
+
   const a = getAuth();
   if(a && a.exp>Date.now() && a.name){unlock(a.name);return}
   renderKeypad();
