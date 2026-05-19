@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>🛠 개선활동 보고 v2.0 Rev.1</title>
+<title>🛠 개선활동 보고 v2.0 Rev.3</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
@@ -369,11 +369,11 @@ input[type="file"] { display: none; }
 </head>
 <body>
 
-<!-- 인증 가드 (미리보기 환경에서는 자동 우회) -->
+<!-- 인증 가드 (미리보기 + ESG PIN 세션 호환) -->
 <script>
 (function(){
   'use strict';
-  // 미리보기 환경 감지 (claude.ai 아티팩트, file://, anthropic preview 등)
+  // 미리보기 환경 감지
   var host = location.hostname || '';
   var isPreview = (location.protocol === 'file:'
                 || host === ''
@@ -382,17 +382,39 @@ input[type="file"] { display: none; }
                 || host.indexOf('anthropic') >= 0
                 || host.indexOf('claudeusercontent') >= 0);
 
-  var s;
-  try{ s = JSON.parse(localStorage.getItem('mm_user_session')||'null'); }catch(e){ s=null; }
+  // 1) 기존 mm_user_session 확인
+  var s = null;
+  try{ s = JSON.parse(localStorage.getItem('mm_user_session')||'null'); }catch(e){}
 
+  // 2) 없으면 ESG PIN 세션(esg_pin_auth)에서 자동 변환
+  if(!s || !s.exp || s.exp <= Date.now()){
+    try{
+      var a = JSON.parse(localStorage.getItem('esg_pin_auth')||'null');
+      if(a && a.name && a.exp && a.exp > Date.now()){
+        s = {
+          name: a.name,
+          dept: a.dept || '',
+          role: (a.role || 'user'),
+          exp: a.exp
+        };
+        // 메모리만 사용 (mm_user_session에 쓰면 원래 PIN 시스템 충돌 가능)
+      }
+    }catch(e){}
+  }
+
+  // 3) 그래도 없으면 미리보기 더미 또는 index로 복귀
   if(!s || !s.exp || s.exp <= Date.now()){
     if(isPreview){
-      // 미리보기에서는 더미 세션으로 우회 (localStorage 오염 방지 위해 메모리만)
       s = { name:'미리보기', dept:'PREVIEW', role:'user', exp: Date.now()+86400000 };
     } else {
-      try{ localStorage.removeItem('mm_user_session'); }catch(e){}
-      location.replace('index.html');
-      document.documentElement.style.display = 'none';
+      // index.html로 복귀 (팝업 새창이면 닫음)
+      if(window.opener){
+        try{ window.close(); }catch(e){}
+        alert('인증 정보가 없습니다.\n메인 페이지에서 PIN 인증 후 다시 시도하세요.');
+      } else {
+        location.replace('index.html');
+        document.documentElement.style.display = 'none';
+      }
       throw new Error('Unauthorized');
     }
   }
@@ -402,7 +424,7 @@ input[type="file"] { display: none; }
 
 <div class="app-header">
   <a href="tryout_report.html" class="back-btn">‹ 일지로</a>
-  <h1>🛠 개선활동 보고 <span class="ver" onclick="showVer()">v2.0 Rev.1</span></h1>
+  <h1>🛠 개선활동 보고 <span class="ver" onclick="showVer()">v2.0 Rev.3</span></h1>
 </div>
 
 <div class="user-bar">
@@ -731,7 +753,7 @@ input[type="file"] { display: none; }
 
 </div>
 
-<div class="footer">개선활동 보고 v2.0 Rev.1 · msm</div>
+<div class="footer">개선활동 보고 v2.0 Rev.3 · msm</div>
 
 <div class="toast" id="toast"></div>
 
@@ -740,9 +762,12 @@ function showVer(){
   alert(
     '🛠 개선활동 보고 변경 이력\n' +
     '━━━━━━━━━━━━━━━━━━━━━━━━\n\n' +
-    'v2.0 Rev.1 (현재)\n' +
+    'v2.0 Rev.3 (현재)\n' +
+    '• 인증 가드 확장: ESG PIN 세션(esg_pin_auth) 자동 인식\n' +
+    '  → index.html에서 팝업으로 열려도 정상 접근\n' +
+    '• 팝업 창에서 인증 실패 시 알림 표시 후 자동 종료\n\n' +
+    'v2.0 Rev.1\n' +
     '• 미리보기 환경 감지 → 더미 세션 자동 적용\n' +
-    '  (claude.ai, file://, localhost 등에서 화면 보임)\n' +
     '• 헤더/푸터 Rev 표기 추가\n\n' +
     'v2.0\n' +
     '• 저장 위치 선택: 🔒 개인용(이 기기) / 🌐 공용(팀 공유)\n' +
