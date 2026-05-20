@@ -6,7 +6,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<title>로드모니터 하중 일일점검 v8.9</title>
+<title>로드모니터 하중 일일점검 v9.0</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
@@ -120,6 +120,28 @@ table.hist tr:hover{background:#f0f7ff}
 /* 숫자 입력 모달 */
 .numpad-modal{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.7);z-index:9998;align-items:center;justify-content:center;padding:20px}
 .numpad-modal.show{display:flex}
+
+/* 이력 수정 모달 */
+.edit-modal{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.65);z-index:9990;align-items:flex-start;justify-content:center;padding:20px;overflow-y:auto}
+.edit-modal.show{display:flex}
+.edit-box{background:#fff;border-radius:14px;width:100%;max-width:560px;overflow:hidden;box-shadow:0 8px 28px rgba(0,0,0,.4);margin:auto}
+.edit-header{padding:14px 18px;background:linear-gradient(135deg,#1e3a5f,#2c5282);color:#fff;display:flex;justify-content:space-between;align-items:center}
+.edit-header .em-title{font-size:14px;font-weight:700}
+.edit-header .em-close{background:rgba(255,255,255,.18);border:none;color:#fff;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:16px;font-weight:700}
+.edit-header .em-close:hover{background:rgba(255,255,255,.3)}
+.edit-body{padding:16px 18px;max-height:calc(100vh - 200px);overflow-y:auto}
+.edit-body label.flbl{font-size:11px;font-weight:700;color:#1e3a5f;display:block;margin-bottom:4px}
+.edit-body .fg{margin-bottom:10px}
+.edit-body .fg2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
+.edit-body input[type="text"],.edit-body input[type="date"],.edit-body input[type="number"],.edit-body textarea{width:100%;padding:8px 10px;border:1.5px solid #ddd;border-radius:6px;font-size:13px;font-family:inherit;box-sizing:border-box}
+.edit-body input:focus,.edit-body textarea:focus{outline:none;border-color:#2c5282}
+.edit-body textarea{resize:vertical;min-height:50px}
+.edit-section-title{font-size:12px;font-weight:700;color:#1e3a5f;margin:14px 0 8px;padding-bottom:5px;border-bottom:1.5px solid #e2e8f0}
+.edit-footer{padding:12px 18px;background:#f7fafc;display:flex;gap:8px;justify-content:flex-end;border-top:1px solid #e2e8f0}
+.edit-footer button{padding:9px 18px;border:none;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit}
+.edit-footer .em-cancel{background:#e2e8f0;color:#4a5568}
+.edit-footer .em-save{background:#2c5282;color:#fff}
+.edit-footer .em-save:hover{background:#1e3a5f}
 .numpad-box{background:#fff;border-radius:14px;width:100%;max-width:340px;overflow:hidden;box-shadow:0 8px 24px rgba(0,0,0,.4)}
 .numpad-header{padding:14px 16px;background:linear-gradient(135deg,#1e3a5f,#2c5282);color:#fff}
 .numpad-header .np-title{font-size:13px;font-weight:600;opacity:.85;margin-bottom:4px}
@@ -145,7 +167,7 @@ table.hist tr:hover{background:#f0f7ff}
 <div class="hdr">
   <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
     <div>
-      <h1>📊 로드모니터 하중 일일점검 <span class="rev-badge">Rev. 8.9</span> <span class="rev-badge" style="background:rgba(255,193,7,.3);cursor:pointer" onclick="window._npDebug=!window._npDebug;alert('진단 모드: '+(window._npDebug?'ON':'OFF'))" title="진단 모드 토글">🔍</span></h1>
+      <h1>📊 로드모니터 하중 일일점검 <span class="rev-badge">Rev. 9.0</span> <span class="rev-badge" style="background:rgba(255,193,7,.3);cursor:pointer" onclick="window._npDebug=!window._npDebug;alert('진단 모드: '+(window._npDebug?'ON':'OFF'))" title="진단 모드 토글">🔍</span></h1>
       <p>프레스 Smart Load Monitor · 하루 3회 측정 (08:30 / 13:30 / 16:30)</p>
     </div>
     <div id="hdrInspector" style="background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.35);color:#fff;padding:8px 12px;border-radius:10px;font-size:12px;font-weight:600;white-space:nowrap;display:flex;align-items:center;gap:6px;backdrop-filter:blur(4px);min-width:fit-content;flex-shrink:0">
@@ -385,6 +407,42 @@ table.hist tr:hover{background:#f0f7ff}
       <button type="button" class="np-cancel" onclick="closeNumpad()">취소</button>
       <button type="button" class="np-back" onclick="numpadBack()" style="background:#fff3e0;color:#e65100">⌫ 지우기</button>
       <button type="button" class="np-ok" onclick="numpadOK()">✓ 확인</button>
+    </div>
+  </div>
+</div>
+
+<!-- 이력 수정 모달 -->
+<div class="edit-modal" id="editModal">
+  <div class="edit-box">
+    <div class="edit-header">
+      <div class="em-title" id="editModalTitle">이력 수정</div>
+      <button type="button" class="em-close" onclick="closeEditModal()">✕</button>
+    </div>
+    <div class="edit-body">
+      <div class="fg2">
+        <div class="fg"><label class="flbl">일자</label><input type="date" id="eDate"></div>
+        <div class="fg"><label class="flbl">호기</label><input type="text" id="eMachineName" readonly style="background:#f1f5f9;color:#4a5568"></div>
+      </div>
+      <div class="fg2">
+        <div class="fg"><label class="flbl">고객사</label><input type="text" id="eCustomer" placeholder="예: SBC"></div>
+        <div class="fg"><label class="flbl">기종</label><input type="text" id="eItem" placeholder="예: 1106CA Inner"></div>
+      </div>
+      <div class="fg"><label class="flbl">일일 타발수</label><input type="number" id="eDailyShot" placeholder="예: 17500" inputmode="numeric"></div>
+
+      <div class="edit-section-title">📊 측정값 (CH1·CH2 셀을 탭하면 키패드 표시)</div>
+      <div class="measure-grid" style="margin-bottom:5px;background:#eef2f7;padding:4px 4px 2px;border-radius:5px">
+        <label style="background:transparent">시간</label>
+        <label style="background:#fff9c4;color:#8d6e00">CH1</label>
+        <label style="background:#fce4ec;color:#a02550">CH2</label>
+        <label style="background:#dcedc8;color:#1b5e20">TOTAL</label>
+      </div>
+      <div id="eMeasureRows"></div>
+
+      <div class="fg" style="margin-top:14px"><label class="flbl">메모</label><textarea id="eMemo" placeholder="특이사항"></textarea></div>
+    </div>
+    <div class="edit-footer">
+      <button type="button" class="em-cancel" onclick="closeEditModal()">취소</button>
+      <button type="button" class="em-save" onclick="saveEditRow()">💾 저장</button>
     </div>
   </div>
 </div>
