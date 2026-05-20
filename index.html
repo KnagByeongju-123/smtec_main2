@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>ESG Smart Factory v3.14 Rev.4</title>
+<title>ESG Smart Factory v3.15 Rev.2</title>
 <meta name="theme-color" content="#0f172a">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -123,6 +123,17 @@ body.edit-mode .cat-single{cursor:grab;text-decoration:none}
 
 .lockout{color:#ef4444;font-size:13px;font-weight:600;text-align:center;margin-bottom:16px}
 
+/* ===== Guest 읽기전용 배너 (메인) ===== */
+.guest-banner{background:linear-gradient(90deg,rgba(100,116,139,.18),rgba(71,85,105,.18));border-bottom:1px solid rgba(148,163,184,.3);padding:8px 14px;display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11.5px;color:#cbd5e1;font-weight:600}
+.guest-banner .g-left{display:flex;align-items:center;gap:6px}
+.guest-banner .g-tag{background:rgba(148,163,184,.25);color:#e2e8f0;padding:2px 8px;border-radius:6px;font-size:10px;font-weight:800;letter-spacing:.5px}
+.guest-banner .g-login{background:rgba(226,176,74,.18);border:1px solid rgba(226,176,74,.4);color:#e2b04a;padding:5px 11px;border-radius:8px;font-size:11px;cursor:pointer;font-weight:700;font-family:inherit}
+.guest-banner .g-login:active{transform:scale(.95)}
+
+/* Guest 모드에서 잠금 카드 표시 */
+.cat.guest-locked,.cat-single.guest-locked .cat{opacity:.45;position:relative}
+.cat.guest-locked::after,.cat-single.guest-locked .cat::after{content:'🔒';position:absolute;top:12px;right:48px;font-size:14px;pointer-events:none}
+
 body.locked{overflow:hidden}
 
 .loading{width:24px;height:24px;border:3px solid #2a2e3d;border-top-color:#e2b04a;border-radius:50%;animation:spin 0.8s linear infinite;margin:8px auto}
@@ -166,7 +177,7 @@ body.locked{overflow:hidden}
   <div class="lock-sub">페이퍼리스 생산현장 통합관리</div>
 
   <div class="lock-mode">PIN 입력</div>
-  <div class="lock-hint" id="pinHint">4자리 PIN을 입력하세요</div>
+  <div class="lock-hint" id="pinHint">4자리 PIN 입력 · 0000=Guest</div>
   <div class="pin-dots" id="pinDots">
     <div class="pin-dot"></div><div class="pin-dot"></div><div class="pin-dot"></div><div class="pin-dot"></div>
   </div>
@@ -178,7 +189,7 @@ body.locked{overflow:hidden}
 </div>
 
 <div class="hdr">
-  <div class="hdr-title">ESG Smart Factory <span style="font-size:11px;color:#fbbf24;font-weight:600;margin-left:6px;background:rgba(251,191,36,0.12);padding:2px 8px;border-radius:8px;border:1px solid rgba(251,191,36,0.3);vertical-align:middle">v3.14 Rev.4</span></div>
+  <div class="hdr-title">ESG Smart Factory <span style="font-size:11px;color:#fbbf24;font-weight:600;margin-left:6px;background:rgba(251,191,36,0.12);padding:2px 8px;border-radius:8px;border:1px solid rgba(251,191,36,0.3);vertical-align:middle">v3.15 Rev.2</span></div>
   <div class="hdr-bar" id="hdrBar" style="display:none">
     <div class="hdr-bar-left">
       <button class="edit-toggle" id="editToggleBtn" onclick="toggleEditMode()">🔧 편집</button>
@@ -194,6 +205,15 @@ body.locked{overflow:hidden}
   </div>
 </div>
 
+<!-- Guest 모드 배너 (Guest 진입 시에만 표시) -->
+<div class="guest-banner" id="guestBanner" style="display:none">
+  <div class="g-left">
+    <span class="g-tag">GUEST</span>
+    <span>읽기전용 모드 · 등록/수정/삭제는 불가합니다</span>
+  </div>
+  <button class="g-login" onclick="logout()">🔑 PIN 로그인</button>
+</div>
+
 <!-- 편집 모드 안내바 -->
 <div class="edit-bar" id="editBar">
   <div class="edit-bar-txt">✋ 카드를 드래그해서 원하는 순서로 정렬하세요</div>
@@ -204,7 +224,7 @@ body.locked{overflow:hidden}
 </div>
 
 <div class="cat-list" id="catList"></div>
-<div class="footer">ESG Smart Factory v3.14 Rev.4</div>
+<div class="footer">ESG Smart Factory v3.15 Rev.2</div>
 
 <canvas id="analysisCv" style="display:none"></canvas>
 <div class="toast" id="toast"></div>
@@ -212,7 +232,7 @@ body.locked{overflow:hidden}
 <script>
 /* ============ 버전 변경 자동 감지 (캐시 회피) ============ */
 (function(){
-  const APP_VERSION = 'v3.14_Rev.4';
+  const APP_VERSION = 'v3.15_Rev.2';
   // 미리보기 환경에서는 리로드 스킵
   const host = location.hostname || '';
   const isPreview = (location.protocol === 'file:'
@@ -529,6 +549,7 @@ const MAX_FAIL = 5;
 const LOCKOUT_SEC = 60;
 const LK_AUTH = 'esg_pin_auth';
 const LK_FAIL = 'esg_pin_fail';
+const GUEST_PIN = '0000';  // Guest 진입용 PIN (Supabase 조회 생략)
 
 let curPin = '';
 let lockTimer = null;
@@ -557,6 +578,12 @@ function initLock(){
                 || host.indexOf('claudeusercontent') >= 0);
   if(isPreview){
     unlock('미리보기');
+    return;
+  }
+
+  // 같은 탭 내 Guest 세션 자동복원 (브라우저 닫으면 해제)
+  if(sessionStorage.getItem('ESG_GUEST') === '1'){
+    unlock('Guest');
     return;
   }
 
@@ -620,6 +647,18 @@ function pinDel(){
 async function handlePinComplete(){
   busy = true;
   setHint('확인 중...');
+
+  // PIN 0000 → Guest 모드 진입 (Supabase 조회 생략)
+  if(curPin === GUEST_PIN){
+    clearFail();
+    setHint('Guest 모드 진입', 'ok');
+    setTimeout(()=>{
+      busy = false;
+      loginAsGuest();
+    }, 300);
+    return;
+  }
+
   try{
     const pinHash = await sha256hex(curPin);
     const r = await fetch(
@@ -670,7 +709,7 @@ function checkLockout(){
         msg.style.display='none';
         clearFail();
         clearInterval(lockTimer);
-        setHint('4자리 PIN을 입력하세요');
+        setHint('4자리 PIN 입력 · 0000=Guest');
         return;
       }
       msg.textContent = '🔒 잠금: '+r+'초 후 재시도';
@@ -689,6 +728,26 @@ function unlock(name){
   document.getElementById('hdrBar').style.display = 'flex';
   document.getElementById('uidDisplay').textContent = name;
   sessionStorage.setItem('ESG_USER', name);
+
+  // Guest 모드 처리
+  var isGuest = (name === 'Guest' || sessionStorage.getItem('ESG_GUEST') === '1');
+  if(isGuest){
+    sessionStorage.setItem('ESG_GUEST','1');
+    document.body.classList.add('guest-mode');
+    var gb = document.getElementById('guestBanner');
+    if(gb) gb.style.display = 'flex';
+    // 편집/카운터 버튼 숨김
+    var et = document.getElementById('editToggleBtn'); if(et) et.style.display='none';
+    var cb = document.getElementById('counterBtn'); if(cb) cb.style.display='none';
+    var vs = document.getElementById('vStatusBtn'); if(vs) vs.style.display='none';
+    // 잠금 버튼 → "로그인"으로 라벨 변경 (잠금 동작은 동일)
+    var lb = document.getElementById('logoutBtn'); if(lb){ lb.textContent='로그인'; }
+    // 미열람 문서/일상점검 알림 스킵
+    applyGuestCardLocks();
+    return;
+  }
+
+  sessionStorage.removeItem('ESG_GUEST');
   // 잠금해제 후 미열람 문서 체크 (1초 지연 - UI 안정화 후)
   setTimeout(checkUnreadDocs, 1000);
   // 잠금해제 후 일상점검 미실시 설비 체크 (1.5초 지연)
@@ -717,6 +776,76 @@ function unlock(name){
       }
     }, 5*60*1000);
   }
+}
+
+/* ============================================================
+   👁️ Guest 모드 (읽기전용)
+   - 마스터관리/접속핀관리/백업 등 민감 카드 잠금
+   - 하위 페이지 진입 시 sessionStorage 플래그로 읽기전용 강제
+   ============================================================ */
+// Guest 차단 카드 id (그룹 단위 차단)
+const GUEST_BLOCK_IDS = ['master','backup'];
+// 그룹 내에서 차단할 하위 링크 키워드 (subs의 name 기준)
+const GUEST_BLOCK_SUB_KEYWORDS = ['접속핀','관리자','admin_pin','마스터','백업보관','부서차량','금형부품발주','근무계획'];
+
+function loginAsGuest(){
+  sessionStorage.setItem('ESG_GUEST','1');
+  // localStorage에는 저장하지 않음 (브라우저 닫으면 해제)
+  unlock('Guest');
+}
+
+function isGuestNow(){
+  return sessionStorage.getItem('ESG_GUEST') === '1';
+}
+
+function applyGuestCardLocks(){
+  if(!isGuestNow()) return;
+  // 카테고리 카드 잠금
+  document.querySelectorAll('[data-cat-id]').forEach(function(el){
+    var id = el.getAttribute('data-cat-id');
+    if(GUEST_BLOCK_IDS.indexOf(id) >= 0){
+      el.classList.add('guest-locked');
+      // 클릭 차단 (단일링크 카드)
+      var single = el.querySelector('.cat-single') || (el.classList.contains('cat-single') ? el : null);
+      if(single){
+        single.addEventListener('click', guestBlockClick, true);
+      }
+      // 펼침 카드: 헤더 클릭은 허용(목록 보기), 하위 링크는 차단
+      el.querySelectorAll('.sub-link').forEach(function(a){
+        a.addEventListener('click', guestBlockClick, true);
+        a.classList.add('guest-locked-sub');
+        a.style.opacity = '0.5';
+      });
+    } else {
+      // 비차단 그룹 내에서도 민감 하위 링크는 개별 차단
+      el.querySelectorAll('.sub-link').forEach(function(a){
+        var nm = (a.querySelector('.sub-name')||{}).textContent || '';
+        var hr = a.getAttribute('href') || '';
+        var hit = GUEST_BLOCK_SUB_KEYWORDS.some(function(k){
+          return nm.indexOf(k) >= 0 || hr.indexOf(k) >= 0;
+        });
+        if(hit){
+          a.addEventListener('click', guestBlockClick, true);
+          a.style.opacity = '0.5';
+          // 자물쇠 아이콘
+          if(!a.querySelector('.gst-lock')){
+            var lk = document.createElement('span');
+            lk.className='gst-lock';
+            lk.textContent='🔒';
+            lk.style.cssText='margin-left:auto;font-size:13px';
+            a.appendChild(lk);
+          }
+        }
+      });
+    }
+  });
+}
+
+function guestBlockClick(e){
+  e.preventDefault();
+  e.stopPropagation();
+  showToast('🔒 Guest는 접근할 수 없습니다. PIN 로그인 필요');
+  return false;
 }
 
 /* ============================================================
@@ -1087,9 +1216,12 @@ function snoozeDocAlert(minutes){
 }
 
 function logout(){
-  if(!confirm('잠금하시겠습니까?')) return;
+  var guest = isGuestNow();
+  var msg = guest ? 'PIN 로그인 화면으로 이동합니다.' : '잠금하시겠습니까?';
+  if(!confirm(msg)) return;
   clearAuth();
   sessionStorage.removeItem('ESG_USER');
+  sessionStorage.removeItem('ESG_GUEST');
   location.reload();
 }
 
