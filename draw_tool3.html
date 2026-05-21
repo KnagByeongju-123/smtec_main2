@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Catia3D v1.0 - 프레스 금형 부품 3D 모델러</title>
+<title>Catia3D v1.1 - 프레스 금형 부품 3D 모델러</title>
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
@@ -104,7 +104,7 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
 
 <header>
   <h1>📐 Catia3D</h1>
-  <span class="ver">v1.0 - 프레스 금형 부품 3D 모델러</span>
+  <span class="ver">v1.1 - 프레스 금형 부품 3D 모델러</span>
   <span class="mode-badge" id="modeBadge">스케처 모드</span>
   <span class="stat" id="statText">준비됨</span>
 </header>
@@ -116,6 +116,9 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
       <div class="menu-item" onclick="newProject()"><span class="ico">📄</span>새 프로젝트<span class="shortcut">Ctrl+N</span></div>
       <div class="menu-item" onclick="saveProject()"><span class="ico">💾</span>저장 (JSON)<span class="shortcut">Ctrl+S</span></div>
       <div class="menu-item" onclick="document.getElementById('fileInput').click()"><span class="ico">📂</span>열기 (JSON)<span class="shortcut">Ctrl+O</span></div>
+      <div class="menu-sep"></div>
+      <div class="menu-item" onclick="manualImportFromDrawTool()"><span class="ico">📥</span>draw_tool에서 가져오기</div>
+      <div class="menu-item" onclick="location.href='draw_tool.html'"><span class="ico">↩️</span>draw_tool로 돌아가기</div>
       <div class="menu-sep"></div>
       <div class="menu-item" onclick="exportSTL()"><span class="ico">📦</span>STL 내보내기</div>
       <div class="menu-item" onclick="exportImage()"><span class="ico">🖼️</span>이미지 저장(PNG)</div>
@@ -1652,7 +1655,100 @@ function init(){
   renderPartsList();
   updateInfo();
   redrawSketch();
-  setStat('Catia3D v1.0 준비됨 - 스케치를 시작하세요');
+  setStat('Catia3D v1.1 준비됨 - 스케치를 시작하세요');
+  // draw_tool에서 전송된 도형 자동 import
+  importFromDrawTool();
+}
+
+/* 메뉴에서 수동 import 호출용 */
+function manualImportFromDrawTool(){
+  const raw = localStorage.getItem('c3d_import_from_draw_tool');
+  if (!raw) {
+    toast('draw_tool에 전송된 도형이 없습니다. draw_tool에서 C3D 탭을 먼저 클릭하세요.');
+    return;
+  }
+  importFromDrawTool();
+}
+
+/* ===== draw_tool.html → C3D 도형 import ===== */
+function importFromDrawTool(){
+  let payload = null;
+  try {
+    const raw = localStorage.getItem('c3d_import_from_draw_tool');
+    if (!raw) return;
+    payload = JSON.parse(raw);
+  } catch(e) { return; }
+  if (!payload || !payload.shapes || !payload.shapes.length) return;
+
+  // 자동 fit을 위해 도형들의 바운딩박스 계산 (선택)
+  const incoming = payload.shapes.slice();
+
+  // 도형을 현재 스케치에 누적이 아닌 "치환" 여부 확인
+  let doReplace = true;
+  if (state.shapes.length > 0) {
+    doReplace = confirm(
+      'draw_tool에서 ' + incoming.length + '개 도형이 도착했습니다.\n\n' +
+      '확인 = 기존 스케치 지우고 가져오기\n' +
+      '취소 = 무시 (다음에 다시 시도)\n\n' +
+      '⚠️ 누적은 새로 그린 도형이 있을 때 권장하지 않습니다.'
+    );
+    if (!doReplace) return; // localStorage는 남겨둠 (재시도용)
+  }
+
+  pushHistory();
+  state.shapes = incoming;
+  state.selectedShapes.clear();
+
+  // 가져온 도형이 캔버스 안에 들어오도록 자동 줌/패닝
+  fitSketchToShapes();
+
+  redrawSketch();
+  updateInfo();
+
+  // 한 번 import 후 localStorage 제거 (재진입 시 중복 방지)
+  try { localStorage.removeItem('c3d_import_from_draw_tool'); } catch(e){}
+
+  toast('📥 draw_tool에서 ' + incoming.length + '개 도형 가져옴 (스케일 ×' + payload.scale + ')');
+  setStat('draw_tool 도형 import 완료 - 돌출/회전으로 3D 생성하세요');
+}
+
+/* 가져온 도형 전체가 화면에 들어오도록 자동 fit */
+function fitSketchToShapes(){
+  if (!state.shapes.length) return;
+  let minX=Infinity, maxX=-Infinity, minY=Infinity, maxY=-Infinity;
+  state.shapes.forEach(s=>{
+    if (s.type === 'line' || s.type === 'rect') {
+      minX = Math.min(minX, s.x1, s.x2);
+      maxX = Math.max(maxX, s.x1, s.x2);
+      minY = Math.min(minY, s.y1, s.y2);
+      maxY = Math.max(maxY, s.y1, s.y2);
+    } else if (s.type === 'circle') {
+      minX = Math.min(minX, s.cx - s.r);
+      maxX = Math.max(maxX, s.cx + s.r);
+      minY = Math.min(minY, s.cy - s.r);
+      maxY = Math.max(maxY, s.cy + s.r);
+    } else if (s.type === 'arc') {
+      minX = Math.min(minX, s.cx - s.r);
+      maxX = Math.max(maxX, s.cx + s.r);
+      minY = Math.min(minY, s.cy - s.r);
+      maxY = Math.max(maxY, s.cy + s.r);
+    }
+  });
+  if (!isFinite(minX)) return;
+  const w = maxX - minX, h = maxY - minY;
+  if (w <= 0 && h <= 0) return;
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  // 캔버스 크기에 80% 차도록
+  const padding = 0.8;
+  const pxW = skCanvas.width * padding;
+  const pxH = skCanvas.height * padding;
+  const sx = pxW / Math.max(1, w);
+  const sy = pxH / Math.max(1, h);
+  state.pixelsPerMm = Math.max(0.1, Math.min(200, Math.min(sx, sy)));
+  // 중심을 원점에 오도록 패닝
+  state.panX = -cx * state.pixelsPerMm;
+  state.panY = cy * state.pixelsPerMm; // Y 반전 좌표계
 }
 
 window.addEventListener('load', init);
