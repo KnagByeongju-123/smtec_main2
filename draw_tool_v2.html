@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<title>도면 작도기 Rev.7.7 - 드롭다운 메뉴바</title>
+<title>도면 작도기 Rev.7.8 - 헤더 선택 + 라이브 스냅</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Malgun Gothic', sans-serif; background: #2b2b2b; color: #eee; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
@@ -109,8 +109,10 @@
 <body>
 
 <header>
-  <h1>📐 도면 작도기 Rev.7.7</h1>
-  <span class="ver">v7.7 (드롭다운 메뉴바)</span>
+  <h1>📐 도면 작도기 Rev.7.8</h1>
+  <span class="ver">v7.8 (헤더 선택 + 라이브 스냅)</span>
+  <button id="headerBtnSelect" style="padding:5px 12px; background:#9b59b6; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:12px; font-weight:bold;" title="선택 도구로 전환 (V)">🔲 선택</button>
+  <button id="headerBtnLiveSnap" style="padding:5px 10px; background:#555; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:11px; font-weight:bold;" title="마우스가 도형 근처에 갈 때 자동 흡착 (점/선/면)">🧲 라이브스냅 OFF</button>
   <span class="cvstat" id="cvStat">OpenCV 로딩 중...</span>
   <span class="snapstat" id="snapStat">스냅: 비활성 (배경 없음)</span>
   <span class="snapstat" id="calibStat" style="background:#e67e22;">📏 캘리브: 미설정 (1px = 1mm)</span>
@@ -574,6 +576,9 @@ let endpointPickState = null;
 let editingArcId = null;          // 편집 중인 호의 id
 let arcHandleDrag = null;         // {type:'start'|'end'|'middle', startMouseAngle, originalStart, originalEnd}
 
+// 라이브 스냅 (Rev.7.8): 마우스가 도형 근처에 갈 때 점/선/면으로 자동 흡착
+let liveSnapMode = false;
+
 setCanvasSize(baseW, baseH);
 
 function setCanvasSize(w, h) {
@@ -689,11 +694,14 @@ document.getElementById('btnSnap').addEventListener('click', () => {
 
 function updateSnapStat() {
   const el = document.getElementById('snapStat');
-  if (!bgImage) {
-    el.textContent = '스냅: 비활성 (배경 없음)';
+  if (!bgImage && !shapes.length) {
+    el.textContent = '스냅: 비활성 (배경/도형 없음)';
     el.classList.remove('ready');
   } else {
-    el.textContent = `🧲 스냅점 ${snapPoints.length}개 / 라운드 ${detectedArcs.length}개` + (snapMode ? ' (ON)' : '');
+    let txt = `🧲 점${snapPoints.length} 호${detectedArcs.length}`;
+    if (snapMode) txt += ' [고정ON]';
+    if (liveSnapMode) txt += ' [라이브ON]';
+    el.textContent = txt;
     el.classList.add('ready');
   }
 }
@@ -911,15 +919,50 @@ function getAllSnapTargets() {
 }
 
 function findNearestSnap(p) {
-  if (!snapMode) return null;
+  if (!snapMode && !liveSnapMode) return null;
   const radius = parseInt(document.getElementById('snapRadius').value) || 15;
   const r2 = radius * radius;
   let best = null, bestD = Infinity;
-  for (const t of getAllSnapTargets()) {
-    const dx = t.x - p.x, dy = t.y - p.y;
-    const d2 = dx*dx + dy*dy;
-    if (d2 < r2 && d2 < bestD) { bestD = d2; best = t; }
+  
+  // 1) 일반 스냅 점들 (배경 코너 + 도형 특징점)
+  if (snapMode) {
+    for (const t of getAllSnapTargets()) {
+      const dx = t.x - p.x, dy = t.y - p.y;
+      const d2 = dx*dx + dy*dy;
+      if (d2 < r2 && d2 < bestD) { bestD = d2; best = {...t, kind: t.kind || 'corner'}; }
+    }
   }
+  
+  // 2) 라이브 스냅: 모든 도형의 가장 가까운 점 (선 위/원 위/사각형 변 위)
+  if (liveSnapMode) {
+    // 선택 도구로 도형을 이동 중일때는 자기 자신 제외
+    const excludeIds = (dragState && dragState.type === 'move') 
+      ? new Set(dragState.offsets.map(o => o.id)) 
+      : new Set();
+    
+    for (const s of shapes) {
+      if (excludeIds.has(s.id)) continue;
+      const np = nearestPointOnShape(p, s);
+      if (!np) continue;
+      const dx = np.x - p.x, dy = np.y - p.y;
+      const d2 = dx*dx + dy*dy;
+      if (d2 < r2 && d2 < bestD) {
+        bestD = d2;
+        best = {x: np.x, y: np.y, kind: 'on-shape', shapeType: s.type};
+      }
+      // 특징점들도 후보로 (라이브 스냅이 켜져 있으면 끝점/중점도 자동 후보)
+      const kps = getShapeKeyPoints(s);
+      for (const kp of kps) {
+        const ddx = kp.x - p.x, ddy = kp.y - p.y;
+        const dd2 = ddx*ddx + ddy*ddy;
+        if (dd2 < r2 && dd2 < bestD) {
+          bestD = dd2;
+          best = {x: kp.x, y: kp.y, kind: kp.kind};
+        }
+      }
+    }
+  }
+  
   return best;
 }
 
@@ -1502,16 +1545,51 @@ function drawPreview(p1, p2) {
 }
 
 function drawSnapIndicator() {
-  if (!snapShown || !snapMode) return;
+  if (!snapShown) return;
+  if (!snapMode && !liveSnapMode) return;
   preCtx.save();
-  preCtx.strokeStyle = '#f39c12';
-  preCtx.lineWidth = 2; preCtx.setLineDash([]);
+  preCtx.lineWidth = 2;
+  preCtx.setLineDash([]);
+  
+  const kind = snapShown.kind || 'corner';
   const r = 8;
-  preCtx.strokeRect(snapShown.x - r, snapShown.y - r, r*2, r*2);
-  preCtx.beginPath();
-  preCtx.moveTo(snapShown.x - r/2, snapShown.y); preCtx.lineTo(snapShown.x + r/2, snapShown.y);
-  preCtx.moveTo(snapShown.x, snapShown.y - r/2); preCtx.lineTo(snapShown.x, snapShown.y + r/2);
-  preCtx.stroke();
+  
+  // 종류별 색상 + 모양
+  if (kind === 'on-shape') {
+    // 라이브 스냅: 청록색 X 표시
+    preCtx.strokeStyle = '#16a085';
+    preCtx.beginPath();
+    preCtx.moveTo(snapShown.x - r, snapShown.y - r); preCtx.lineTo(snapShown.x + r, snapShown.y + r);
+    preCtx.moveTo(snapShown.x + r, snapShown.y - r); preCtx.lineTo(snapShown.x - r, snapShown.y + r);
+    preCtx.stroke();
+  } else if (kind === 'midpoint') {
+    // 중점: 청록색 삼각형
+    preCtx.strokeStyle = '#16a085';
+    preCtx.beginPath();
+    preCtx.moveTo(snapShown.x, snapShown.y - r);
+    preCtx.lineTo(snapShown.x + r, snapShown.y + r);
+    preCtx.lineTo(snapShown.x - r, snapShown.y + r);
+    preCtx.closePath();
+    preCtx.stroke();
+  } else if (kind === 'center') {
+    // 중심: 빨간 원 + 십자
+    preCtx.strokeStyle = '#e74c3c';
+    preCtx.beginPath();
+    preCtx.arc(snapShown.x, snapShown.y, r, 0, Math.PI*2);
+    preCtx.stroke();
+    preCtx.beginPath();
+    preCtx.moveTo(snapShown.x - r/2, snapShown.y); preCtx.lineTo(snapShown.x + r/2, snapShown.y);
+    preCtx.moveTo(snapShown.x, snapShown.y - r/2); preCtx.lineTo(snapShown.x, snapShown.y + r/2);
+    preCtx.stroke();
+  } else {
+    // 기본: 주황 사각형 + 십자 (코너/끝점)
+    preCtx.strokeStyle = '#f39c12';
+    preCtx.strokeRect(snapShown.x - r, snapShown.y - r, r*2, r*2);
+    preCtx.beginPath();
+    preCtx.moveTo(snapShown.x - r/2, snapShown.y); preCtx.lineTo(snapShown.x + r/2, snapShown.y);
+    preCtx.moveTo(snapShown.x, snapShown.y - r/2); preCtx.lineTo(snapShown.x, snapShown.y + r/2);
+    preCtx.stroke();
+  }
   preCtx.restore();
 }
 
@@ -3775,6 +3853,51 @@ function updateLastMeshInfo() {
   }
 }
 
+// ====== 헤더 버튼 (Rev.7.8) ======
+// 선택 도구 버튼
+document.getElementById('headerBtnSelect').addEventListener('click', () => {
+  const btn = document.querySelector('.tool-menu-item[data-tool="select"]');
+  if (btn) btn.click();
+});
+
+// 라이브 스냅 토글 버튼
+document.getElementById('headerBtnLiveSnap').addEventListener('click', () => {
+  liveSnapMode = !liveSnapMode;
+  updateLiveSnapButton();
+});
+function updateLiveSnapButton() {
+  const btn = document.getElementById('headerBtnLiveSnap');
+  if (!btn) return;
+  if (liveSnapMode) {
+    btn.style.background = '#16a085';
+    btn.textContent = '🧲 라이브스냅 ON';
+  } else {
+    btn.style.background = '#555';
+    btn.textContent = '🧲 라이브스냅 OFF';
+  }
+  updateSnapStat();
+}
+
+// 헤더 선택 버튼 상태 표시 (선택 도구 활성 시 강조)
+function updateHeaderSelectButton() {
+  const btn = document.getElementById('headerBtnSelect');
+  if (!btn) return;
+  if (tool === 'select') {
+    btn.style.background = '#d9534f';
+    btn.textContent = '🔲 선택 (ON)';
+  } else {
+    btn.style.background = '#9b59b6';
+    btn.textContent = '🔲 선택';
+  }
+}
+
+// updateToolStatus 후에 헤더 버튼 갱신
+const _origUpdateToolStatus2 = updateToolStatus;
+updateToolStatus = function() {
+  _origUpdateToolStatus2();
+  updateHeaderSelectButton();
+};
+
 // ====== 드롭다운 메뉴바 (Rev.7.7) ======
 document.querySelectorAll('.menu .menu-title').forEach(t => {
   t.addEventListener('click', e => {
@@ -3908,6 +4031,8 @@ updateToolStatus();
 updateCalibStat();
 updateLastMeshInfo();
 updateAxisStatus();
+updateLiveSnapButton();
+updateHeaderSelectButton();
 redrawAll();
 </script>
 </body>
