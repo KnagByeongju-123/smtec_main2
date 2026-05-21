@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<title>도면 작도기 v2.0 - 자동 도형 검출</title>
+<title>도면 작도기 v4.0 - 라운드 피팅 + 영역 채우기</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Malgun Gothic', sans-serif; background: #2b2b2b; color: #eee; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
@@ -12,6 +12,8 @@
   header .ver { font-size: 11px; color: #aac8ff; }
   header .cvstat { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: #555; }
   header .cvstat.ready { background: #28a745; }
+  header .snapstat { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: #555; }
+  header .snapstat.ready { background: #f39c12; }
   
   .toolbar { background: #3a3a3a; padding: 8px 12px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; border-bottom: 1px solid #555; }
   .group { display: flex; align-items: center; gap: 6px; padding: 4px 10px; background: #2b2b2b; border-radius: 6px; border: 1px solid #555; }
@@ -25,6 +27,9 @@
   button.success { background: #28a745; }
   button.detect { background: #f39c12; }
   button.detect:hover { background: #f5af3a; }
+  button.snap { background: #9b59b6; }
+  button.snap.active { background: #d9534f; }
+  button.fill { background: #e67e22; }
   
   input[type="file"] { font-size: 11px; color: #ccc; }
   input[type="number"], input[type="text"], select { padding: 4px 6px; background: #1f1f1f; color: #fff; border: 1px solid #666; border-radius: 3px; font-size: 12px; }
@@ -36,12 +41,19 @@
   .canvas-stack { position: relative; }
   canvas { display: block; position: absolute; left: 0; top: 0; }
   #bgCanvas { z-index: 1; }
-  #drawCanvas { z-index: 2; cursor: crosshair; }
-  #previewCanvas { z-index: 3; pointer-events: none; }
+  #fillCanvas { z-index: 2; pointer-events: none; }
+  #drawCanvas { z-index: 3; cursor: crosshair; }
+  #previewCanvas { z-index: 4; pointer-events: none; }
   
   footer { background: #1a1a1a; padding: 6px 12px; font-size: 11px; color: #aaa; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; border-top: 1px solid #444; }
   
   .badge { display: inline-block; padding: 2px 8px; background: #4a6fa5; border-radius: 10px; font-size: 11px; }
+  .badge.tool-select { background: #9b59b6; }
+  .badge.tool-line { background: #4a6fa5; }
+  .badge.tool-rect { background: #16a085; }
+  .badge.tool-circle { background: #27ae60; }
+  .badge.tool-arc { background: #f39c12; }
+  .badge.tool-fill { background: #e67e22; }
   .hint { color: #ffd966; font-size: 11px; }
   
   .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: none; align-items: center; justify-content: center; z-index: 1000; }
@@ -68,8 +80,9 @@
 
 <header>
   <h1>📐 도면 작도기</h1>
-  <span class="ver">v2.0 (자동 도형 검출)</span>
+  <span class="ver">v4.0 (라운드 자동피팅 + 영역 채우기)</span>
   <span class="cvstat" id="cvStat">OpenCV 로딩 중...</span>
+  <span class="snapstat" id="snapStat">스냅: 비활성 (배경 없음)</span>
 </header>
 
 <div class="toolbar">
@@ -86,15 +99,23 @@
   </div>
   
   <div class="group">
-    <label>수동:</label>
+    <label>도구:</label>
+    <button class="toolbtn" data-tool="select">🔲 선택</button>
     <button class="toolbtn active" data-tool="line">／ 선</button>
     <button class="toolbtn" data-tool="rect">▭ 사각형</button>
     <button class="toolbtn" data-tool="circle">○ 원</button>
+    <button class="toolbtn" data-tool="arc" style="background:#f39c12;">⌒ 라운드</button>
+    <button class="toolbtn" data-tool="fill" style="background:#e67e22;">🎨 영역채움</button>
+  </div>
+  
+  <div class="group" style="background:#322640; border-color:#9b59b6;">
+    <button class="snap" id="btnContinuous" title="연속선 모드">⛓ 연속선</button>
+    <button class="snap" id="btnSnap" title="배경 코너/교차점 자동흡착">🧲 스냅</button>
+    <input type="number" id="snapRadius" value="15" min="3" max="50" style="width:50px;" title="흡착 반경(px)">
   </div>
   
   <div class="group" style="background:#3d2f1f; border-color:#f39c12;">
-    <label>🔍 자동검출:</label>
-    <button class="detect" id="btnDetect" disabled>도형 자동검출...</button>
+    <button class="detect" id="btnDetect" disabled>🔍 도형 자동검출</button>
   </div>
   
   <div class="group">
@@ -102,15 +123,18 @@
     <input type="color" id="strokeColor" value="#000000">
     <label>두께:</label>
     <input type="number" id="strokeWidth" value="2" min="1" max="30" style="width:50px;">
-    <label>채움:</label>
-    <input type="checkbox" id="fillEnable">
-    <input type="color" id="fillColor" value="#ff0000">
+    <label>채움색:</label>
+    <input type="color" id="fillColor" value="#ffaa00">
+    <label>투명도:</label>
+    <input type="range" id="fillAlpha" min="0" max="100" value="50" style="width:70px;">
+    <span id="fillAlphaVal" style="font-size:11px; min-width:32px;">50%</span>
   </div>
   
   <div class="group">
     <button id="btnUndo">↶ 실행취소</button>
     <button id="btnRedo">↷ 다시실행</button>
-    <button class="danger" id="btnClearAll">🗑 도형 모두지우기</button>
+    <button class="danger" id="btnDelSel">🗑 선택삭제</button>
+    <button class="danger" id="btnClearAll">🗑 모두지우기</button>
   </div>
   
   <div class="group">
@@ -121,6 +145,7 @@
 <div class="canvas-wrap" id="canvasWrap">
   <div class="canvas-stack" id="canvasStack">
     <canvas id="bgCanvas"></canvas>
+    <canvas id="fillCanvas"></canvas>
     <canvas id="drawCanvas"></canvas>
     <canvas id="previewCanvas"></canvas>
   </div>
@@ -128,99 +153,46 @@
 
 <footer>
   <span>
-    <span class="badge" id="statusTool">선</span>
-    <span class="hint" id="statusHint">첫 클릭 → 두 번째 클릭으로 그리기 / 또는 [자동검출]로 일괄 작도</span>
+    <span class="badge tool-line" id="statusTool">선</span>
+    <span class="hint" id="statusHint">첫 클릭 → 두 번째 클릭으로 직선 / Shift: 직각 / ESC: 취소</span>
   </span>
-  <span>도형 수: <span id="statusCount">0</span> | 좌표: <span id="statusCoord">-</span></span>
+  <span>도형: <span id="statusCount">0</span> | 채움: <span id="fillCount">0</span> | 선택: <span id="statusSel">0</span> | <span id="statusCoord">-</span></span>
 </footer>
 
-<!-- 자동검출 옵션 모달 -->
+<!-- 자동검출 모달 -->
 <div class="modal-overlay" id="detectModal">
   <div class="modal">
     <h3>🔍 도형 자동검출 설정</h3>
-    
     <div class="section">
       <h4>검출할 도형 종류</h4>
       <div class="row">
-        <div class="checkbox-group">
-          <input type="checkbox" id="detLine" checked>
-          <label for="detLine" style="min-width:auto;">／ 직선</label>
-        </div>
-        <div class="checkbox-group">
-          <input type="checkbox" id="detCircle" checked>
-          <label for="detCircle" style="min-width:auto;">○ 원</label>
-        </div>
-        <div class="checkbox-group">
-          <input type="checkbox" id="detEllipse">
-          <label for="detEllipse" style="min-width:auto;">⬭ 타원/반원</label>
-        </div>
+        <div class="checkbox-group"><input type="checkbox" id="detLine" checked><label for="detLine" style="min-width:auto;">／ 직선</label></div>
+        <div class="checkbox-group"><input type="checkbox" id="detCircle" checked><label for="detCircle" style="min-width:auto;">○ 원</label></div>
+        <div class="checkbox-group"><input type="checkbox" id="detEllipse"><label for="detEllipse" style="min-width:auto;">⬭ 타원/반원</label></div>
       </div>
-      <div class="hint-text">⚠ 타원/반원 검출은 도면이 깨끗할 때 정확합니다.</div>
     </div>
-    
     <div class="section">
       <h4>검출 감도 (엣지)</h4>
-      <div class="row">
-        <label>민감도(낮음):</label>
-        <input type="range" id="cannyLow" min="10" max="200" value="50" style="flex:1;">
-        <span id="cannyLowVal" style="min-width:40px;">50</span>
-      </div>
-      <div class="row">
-        <label>민감도(높음):</label>
-        <input type="range" id="cannyHigh" min="50" max="400" value="150" style="flex:1;">
-        <span id="cannyHighVal" style="min-width:40px;">150</span>
-      </div>
-      <div class="hint-text">낮은값을 줄이면 더 많이 검출됨 (노이즈 증가). 기본 50/150 권장.</div>
+      <div class="row"><label>민감도(낮음):</label><input type="range" id="cannyLow" min="10" max="200" value="50" style="flex:1;"><span id="cannyLowVal" style="min-width:40px;">50</span></div>
+      <div class="row"><label>민감도(높음):</label><input type="range" id="cannyHigh" min="50" max="400" value="150" style="flex:1;"><span id="cannyHighVal" style="min-width:40px;">150</span></div>
     </div>
-    
     <div class="section">
-      <h4>직선 검출 파라미터</h4>
-      <div class="row">
-        <label>최소 선 길이(px):</label>
-        <input type="number" id="lineMinLen" value="40" min="5" max="500" style="flex:1;">
-      </div>
-      <div class="row">
-        <label>최대 끊김(px):</label>
-        <input type="number" id="lineMaxGap" value="10" min="0" max="100" style="flex:1;">
-      </div>
-      <div class="row">
-        <label>임계값:</label>
-        <input type="number" id="lineThreshold" value="50" min="10" max="300" style="flex:1;">
-      </div>
+      <h4>직선 검출</h4>
+      <div class="row"><label>최소 선 길이(px):</label><input type="number" id="lineMinLen" value="40" min="5" max="500" style="flex:1;"></div>
+      <div class="row"><label>최대 끊김(px):</label><input type="number" id="lineMaxGap" value="10" min="0" max="100" style="flex:1;"></div>
+      <div class="row"><label>임계값:</label><input type="number" id="lineThreshold" value="50" min="10" max="300" style="flex:1;"></div>
     </div>
-    
     <div class="section">
-      <h4>원 검출 파라미터</h4>
-      <div class="row">
-        <label>최소 반지름(px):</label>
-        <input type="number" id="circleMinR" value="10" min="3" max="500" style="flex:1;">
-      </div>
-      <div class="row">
-        <label>최대 반지름(px):</label>
-        <input type="number" id="circleMaxR" value="200" min="10" max="1000" style="flex:1;">
-      </div>
-      <div class="row">
-        <label>최소 간격(px):</label>
-        <input type="number" id="circleMinDist" value="20" min="5" max="200" style="flex:1;">
-      </div>
+      <h4>원 검출</h4>
+      <div class="row"><label>최소 반지름(px):</label><input type="number" id="circleMinR" value="10" min="3" max="500" style="flex:1;"></div>
+      <div class="row"><label>최대 반지름(px):</label><input type="number" id="circleMaxR" value="200" min="10" max="1000" style="flex:1;"></div>
+      <div class="row"><label>최소 간격(px):</label><input type="number" id="circleMinDist" value="20" min="5" max="200" style="flex:1;"></div>
     </div>
-    
     <div class="section">
       <h4>출력 설정</h4>
-      <div class="row">
-        <label>출력 색상:</label>
-        <input type="color" id="detColor" value="#cc0000">
-        <label style="min-width:auto;">두께:</label>
-        <input type="number" id="detWidth" value="2" min="1" max="10" style="width:60px;">
-      </div>
-      <div class="row">
-        <div class="checkbox-group">
-          <input type="checkbox" id="clearBefore">
-          <label for="clearBefore" style="min-width:auto;">검출 전 기존 도형 모두 지우기</label>
-        </div>
-      </div>
+      <div class="row"><label>출력 색상:</label><input type="color" id="detColor" value="#cc0000"><label style="min-width:auto;">두께:</label><input type="number" id="detWidth" value="2" min="1" max="10" style="width:60px;"></div>
+      <div class="row"><div class="checkbox-group"><input type="checkbox" id="clearBefore"><label for="clearBefore" style="min-width:auto;">검출 전 기존 도형 모두 지우기</label></div></div>
     </div>
-    
     <div class="actions">
       <button id="btnCancelDetect">취소</button>
       <button class="detect" id="btnDoDetect">🔍 검출 실행</button>
@@ -228,16 +200,12 @@
   </div>
 </div>
 
-<!-- 저장 옵션 모달 -->
+<!-- 저장 모달 -->
 <div class="modal-overlay" id="saveModal">
   <div class="modal">
     <h3>💾 투명이미지 저장 설정</h3>
-    <div class="row">
-      <label>파일명:</label>
-      <input type="text" id="saveName" value="도면" style="flex:1;">
-    </div>
-    <div class="row">
-      <label>저장 비율:</label>
+    <div class="row"><label>파일명:</label><input type="text" id="saveName" value="도면" style="flex:1;"></div>
+    <div class="row"><label>저장 비율:</label>
       <select id="saveScale" style="flex:1;">
         <option value="1">원본 크기 (100%)</option>
         <option value="2">2배 (200%, 고해상도)</option>
@@ -246,12 +214,8 @@
         <option value="custom">사용자 지정...</option>
       </select>
     </div>
-    <div class="row" id="customScaleRow" style="display:none;">
-      <label>배율 입력:</label>
-      <input type="number" id="customScale" value="1" min="0.1" max="10" step="0.1" style="flex:1;">
-    </div>
-    <div class="row">
-      <label>크롭:</label>
+    <div class="row" id="customScaleRow" style="display:none;"><label>배율 입력:</label><input type="number" id="customScale" value="1" min="0.1" max="10" step="0.1" style="flex:1;"></div>
+    <div class="row"><label>크롭:</label>
       <select id="saveCrop" style="flex:1;">
         <option value="content">도형 영역만 자동 자르기 (권장)</option>
         <option value="canvas">전체 캔버스 크기 그대로</option>
@@ -264,13 +228,11 @@
   </div>
 </div>
 
-<!-- 로딩 -->
 <div id="loadingOverlay">
   <div class="spinner"></div>
   <div id="loadingText" style="font-size:14px;">처리 중...</div>
 </div>
 
-<!-- OpenCV.js -->
 <script>
   function onOpenCvReady() {
     document.getElementById('cvStat').textContent = '✓ OpenCV 준비완료';
@@ -284,9 +246,11 @@
 'use strict';
 
 const bgCanvas = document.getElementById('bgCanvas');
+const fillCanvas = document.getElementById('fillCanvas');
 const drawCanvas = document.getElementById('drawCanvas');
 const previewCanvas = document.getElementById('previewCanvas');
 const bgCtx = bgCanvas.getContext('2d');
+const fillCtx = fillCanvas.getContext('2d');
 const drawCtx = drawCanvas.getContext('2d');
 const preCtx = previewCanvas.getContext('2d');
 
@@ -295,15 +259,28 @@ let zoom = 1.0;
 let bgImage = null;
 let tool = 'line';
 let shapes = [];
+let fills = [];        // 영역 채움 목록 [{type:'fill', points:[{x,y}...], color, alpha}]
 let redoStack = [];
 let firstClick = null;
+
+let continuousMode = false;
+let snapMode = false;
+let snapPoints = [];
+let snapShown = null;
+let selectedIds = new Set();
+let dragState = null;
+let shapeIdSeq = 0;
+
+// 라운드(호) 그리기용 마우스 경로 추적
+let arcPath = [];           // 1차 클릭 후 마우스 이동 경로
+let detectedArcs = [];      // 배경에서 검출된 호/원 후보 [{cx,cy,r,startAng,endAng,isFull}]
 
 setCanvasSize(baseW, baseH);
 
 function setCanvasSize(w, h) {
   baseW = w; baseH = h;
   const dw = w * zoom, dh = h * zoom;
-  [bgCanvas, drawCanvas, previewCanvas].forEach(c => {
+  [bgCanvas, fillCanvas, drawCanvas, previewCanvas].forEach(c => {
     c.width = w; c.height = h;
     c.style.width = dw + 'px';
     c.style.height = dh + 'px';
@@ -323,6 +300,10 @@ document.getElementById('imgFile').addEventListener('change', e => {
     img.onload = () => {
       bgImage = img;
       setCanvasSize(img.naturalWidth, img.naturalHeight);
+      if (typeof cv !== 'undefined' && cv.Mat) {
+        detectSnapPoints();
+        detectBackgroundArcs();
+      }
     };
     img.src = ev.target.result;
   };
@@ -331,14 +312,20 @@ document.getElementById('imgFile').addEventListener('change', e => {
 
 document.getElementById('btnClearBg').addEventListener('click', () => {
   bgImage = null;
+  snapPoints = []; detectedArcs = [];
+  updateSnapStat();
   redrawBg();
 });
 
-// ====== 줌 ======
 document.getElementById('zoom').addEventListener('input', e => {
   zoom = parseInt(e.target.value) / 100;
   document.getElementById('zoomVal').textContent = e.target.value + '%';
   setCanvasSize(baseW, baseH);
+});
+
+// 채움 투명도 표시
+document.getElementById('fillAlpha').addEventListener('input', e => {
+  document.getElementById('fillAlphaVal').textContent = e.target.value + '%';
 });
 
 // ====== 도구 선택 ======
@@ -348,122 +335,1033 @@ document.querySelectorAll('.toolbtn').forEach(btn => {
     btn.classList.add('active');
     tool = btn.dataset.tool;
     firstClick = null;
+    arcPath = [];
     preCtx.clearRect(0,0,baseW,baseH);
-    const names = {line:'선', rect:'사각형', circle:'원'};
-    document.getElementById('statusTool').textContent = names[tool];
-    document.getElementById('statusHint').textContent = 
-      tool === 'line' ? '첫 클릭 → 두 번째 클릭으로 직선 완성' :
-      tool === 'rect' ? '첫 클릭 → 두 번째 클릭으로 사각형' :
-                        '첫 클릭(중심) → 두 번째 클릭으로 반지름';
+    updateToolStatus();
+    if (tool === 'select') drawCanvas.style.cursor = 'default';
+    else if (tool === 'fill') drawCanvas.style.cursor = 'cell';
+    else drawCanvas.style.cursor = 'crosshair';
+    if (tool !== 'select') { selectedIds.clear(); updateSelStat(); redrawDraw(); }
   });
 });
 
-// ====== 마우스 ======
+function updateToolStatus() {
+  const names = {select:'선택', line:'선', rect:'사각형', circle:'원', arc:'라운드', fill:'영역채움'};
+  const el = document.getElementById('statusTool');
+  el.textContent = names[tool];
+  el.className = 'badge tool-' + tool;
+  const hints = {
+    select: '클릭=선택 / Shift+클릭=추가 / 빈곳드래그=박스 / 드래그=이동 / Del=삭제',
+    line: continuousMode ? '⛓ 연속선: 매 클릭마다 선 추가 / 더블클릭/ESC=종료' : '첫 클릭→두 번째 클릭 / Shift=직각',
+    rect: '첫 클릭→두 번째 클릭으로 사각형',
+    circle: '첫 클릭(중심)→두 번째 클릭으로 반지름',
+    arc: '⌒ 1차 클릭 → 라운드를 따라 마우스 이동 → 2차 클릭 시 가장 가까운 배경 라운드 자동 피팅!',
+    fill: '🎨 닫힌 영역(도형 안쪽) 클릭 → 자동 채움 / 도형 따라 정확히 색칠'
+  };
+  document.getElementById('statusHint').textContent = hints[tool] || '';
+}
+
+document.getElementById('btnContinuous').addEventListener('click', () => {
+  continuousMode = !continuousMode;
+  document.getElementById('btnContinuous').classList.toggle('active', continuousMode);
+  document.getElementById('btnContinuous').textContent = continuousMode ? '⛓ 연속선 ON' : '⛓ 연속선';
+  firstClick = null;
+  preCtx.clearRect(0,0,baseW,baseH);
+  updateToolStatus();
+});
+
+document.getElementById('btnSnap').addEventListener('click', () => {
+  snapMode = !snapMode;
+  document.getElementById('btnSnap').classList.toggle('active', snapMode);
+  document.getElementById('btnSnap').textContent = snapMode ? '🧲 스냅 ON' : '🧲 스냅';
+  if (!snapMode) snapShown = null;
+  updateSnapStat();
+});
+
+function updateSnapStat() {
+  const el = document.getElementById('snapStat');
+  if (!bgImage) {
+    el.textContent = '스냅: 비활성 (배경 없음)';
+    el.classList.remove('ready');
+  } else {
+    el.textContent = `🧲 스냅점 ${snapPoints.length}개 / 라운드 ${detectedArcs.length}개` + (snapMode ? ' (ON)' : '');
+    el.classList.add('ready');
+  }
+}
+
+// ====== 스냅점 검출 ======
+function detectSnapPoints() {
+  if (!bgImage) return;
+  try {
+    const tmpC = document.createElement('canvas');
+    tmpC.width = baseW; tmpC.height = baseH;
+    tmpC.getContext('2d').drawImage(bgImage, 0, 0, baseW, baseH);
+    const src = cv.imread(tmpC);
+    const gray = new cv.Mat();
+    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+    const corners = new cv.Mat();
+    cv.goodFeaturesToTrack(gray, corners, 500, 0.01, 10);
+    snapPoints = [];
+    for (let i = 0; i < corners.rows; i++) {
+      snapPoints.push({x: Math.round(corners.data32F[i*2]), y: Math.round(corners.data32F[i*2+1])});
+    }
+    // 직선 교차점 추가
+    const edges = new cv.Mat();
+    cv.Canny(gray, edges, 50, 150);
+    const lines = new cv.Mat();
+    cv.HoughLinesP(edges, lines, 1, Math.PI/180, 50, 40, 10);
+    const lineSegs = [];
+    for (let i = 0; i < lines.rows; i++) {
+      lineSegs.push({x1:lines.data32S[i*4],y1:lines.data32S[i*4+1],x2:lines.data32S[i*4+2],y2:lines.data32S[i*4+3]});
+    }
+    const maxLines = Math.min(lineSegs.length, 80);
+    for (let i = 0; i < maxLines; i++) {
+      for (let j = i+1; j < maxLines; j++) {
+        const ip = lineIntersection(lineSegs[i], lineSegs[j]);
+        if (ip && ip.x>=0 && ip.y>=0 && ip.x<baseW && ip.y<baseH) {
+          if (isPointNearSegment(ip, lineSegs[i], 5) && isPointNearSegment(ip, lineSegs[j], 5)) {
+            snapPoints.push({x: Math.round(ip.x), y: Math.round(ip.y)});
+          }
+        }
+      }
+    }
+    snapPoints = dedupePoints(snapPoints, 5);
+    src.delete(); gray.delete(); corners.delete(); edges.delete(); lines.delete();
+    updateSnapStat();
+  } catch(e) { console.error('스냅 검출:', e); }
+}
+
+// ====== 배경 라운드(호/원) 자동검출 (라운드 도구용) ======
+function detectBackgroundArcs() {
+  if (!bgImage) return;
+  try {
+    const tmpC = document.createElement('canvas');
+    tmpC.width = baseW; tmpC.height = baseH;
+    tmpC.getContext('2d').drawImage(bgImage, 0, 0, baseW, baseH);
+    const src = cv.imread(tmpC);
+    const gray = new cv.Mat();
+    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+    
+    detectedArcs = [];
+    
+    // 1) Hough Circles로 완전한 원/큰 호
+    const circles = new cv.Mat();
+    const grayBlur = new cv.Mat();
+    cv.medianBlur(gray, grayBlur, 5);
+    cv.HoughCircles(grayBlur, circles, cv.HOUGH_GRADIENT, 1, 15, 100, 25, 5, 300);
+    for (let i = 0; i < circles.cols; i++) {
+      detectedArcs.push({
+        cx: circles.data32F[i*3],
+        cy: circles.data32F[i*3+1],
+        r: circles.data32F[i*3+2],
+        startAngle: 0, endAngle: Math.PI*2, isFull: true
+      });
+    }
+    circles.delete(); grayBlur.delete();
+    
+    // 2) Contour + fitEllipse로 부분 호(라운드 코너) 검출
+    const bin = new cv.Mat();
+    cv.threshold(gray, bin, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
+    const contours = new cv.MatVector();
+    const hierarchy = new cv.Mat();
+    cv.findContours(bin, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_NONE);
+    
+    for (let i = 0; i < contours.size(); i++) {
+      const cnt = contours.get(i);
+      if (cnt.rows < 15) { cnt.delete(); continue; }
+      
+      try {
+        // 윤곽선을 작은 세그먼트로 잘라서 각 부분이 호인지 검사
+        // 간단히: fitEllipse → 원에 가까우면 (rx≈ry) 호로 등록
+        if (cnt.rows >= 5) {
+          const rrect = cv.fitEllipse(cnt);
+          const rx = rrect.size.width / 2;
+          const ry = rrect.size.height / 2;
+          const ratio = Math.max(rx,ry) / Math.max(Math.min(rx,ry), 0.001);
+          
+          // 원에 가까운 (ratio < 1.5) 작은 호만 (반지름 3~200px)
+          if (ratio < 1.5 && rx >= 3 && rx <= 200 && ry >= 3 && ry <= 200) {
+            const cx = rrect.center.x;
+            const cy = rrect.center.y;
+            const r = (rx + ry) / 2;
+            
+            // 윤곽선 점들이 실제로 이 원 위에 있는지 검증
+            let onCircle = 0;
+            for (let k = 0; k < cnt.rows; k++) {
+              const px = cnt.data32S[k*2];
+              const py = cnt.data32S[k*2+1];
+              const d = Math.hypot(px-cx, py-cy);
+              if (Math.abs(d - r) < r * 0.15) onCircle++;
+            }
+            const onRatio = onCircle / cnt.rows;
+            
+            if (onRatio > 0.7) {
+              // 시작/끝 각도 계산 (윤곽선 양 끝점 기준)
+              const sx = cnt.data32S[0], sy = cnt.data32S[1];
+              const ex = cnt.data32S[(cnt.rows-1)*2], ey = cnt.data32S[(cnt.rows-1)*2+1];
+              const startAng = Math.atan2(sy-cy, sx-cx);
+              const endAng = Math.atan2(ey-cy, ex-cx);
+              
+              const fullPerim = 2 * Math.PI * r;
+              const cntPerim = cv.arcLength(cnt, false);
+              const coverage = cntPerim / fullPerim;
+              
+              detectedArcs.push({
+                cx, cy, r,
+                startAngle: startAng,
+                endAngle: endAng,
+                isFull: coverage > 0.85
+              });
+            }
+          }
+        }
+      } catch(e) {}
+      cnt.delete();
+    }
+    
+    contours.delete(); hierarchy.delete(); bin.delete();
+    src.delete(); gray.delete();
+    
+    // 중복 제거 (중심과 반지름이 거의 같은것)
+    const filtered = [];
+    for (const a of detectedArcs) {
+      let dup = false;
+      for (const b of filtered) {
+        if (Math.abs(a.cx-b.cx)<5 && Math.abs(a.cy-b.cy)<5 && Math.abs(a.r-b.r)<5) { dup = true; break; }
+      }
+      if (!dup) filtered.push(a);
+    }
+    detectedArcs = filtered;
+    
+    updateSnapStat();
+  } catch(e) { console.error('배경 호 검출:', e); }
+}
+
+function lineIntersection(L1, L2) {
+  const x1=L1.x1, y1=L1.y1, x2=L1.x2, y2=L1.y2;
+  const x3=L2.x1, y3=L2.y1, x4=L2.x2, y4=L2.y2;
+  const denom = (x1-x2)*(y3-y4) - (y1-y2)*(x3-x4);
+  if (Math.abs(denom) < 1e-6) return null;
+  const t = ((x1-x3)*(y3-y4) - (y1-y3)*(x3-x4)) / denom;
+  return { x: x1 + t*(x2-x1), y: y1 + t*(y2-y1) };
+}
+function isPointNearSegment(p, L, tol) {
+  return p.x >= Math.min(L.x1,L.x2)-tol && p.x <= Math.max(L.x1,L.x2)+tol &&
+         p.y >= Math.min(L.y1,L.y2)-tol && p.y <= Math.max(L.y1,L.y2)+tol;
+}
+function dedupePoints(pts, tol) {
+  const r = [];
+  for (const p of pts) {
+    let dup = false;
+    for (const q of r) { if (Math.abs(p.x-q.x)<tol && Math.abs(p.y-q.y)<tol) { dup=true; break; }}
+    if (!dup) r.push(p);
+  }
+  return r;
+}
+
+function getAllSnapTargets() {
+  const t = [...snapPoints];
+  shapes.forEach(s => {
+    if (s.type === 'line' || s.type === 'rect') {
+      t.push({x:s.p1.x, y:s.p1.y});
+      t.push({x:s.p2.x, y:s.p2.y});
+      if (s.type === 'rect') {
+        t.push({x:s.p1.x, y:s.p2.y});
+        t.push({x:s.p2.x, y:s.p1.y});
+      }
+    } else if (s.type === 'circle') {
+      t.push({x:s.p1.x, y:s.p1.y});
+    } else if (s.type === 'arc') {
+      t.push({x:s.cx, y:s.cy});
+      // 호의 시작점과 끝점도
+      t.push({x: s.cx + s.r*Math.cos(s.startAngle), y: s.cy + s.r*Math.sin(s.startAngle)});
+      t.push({x: s.cx + s.r*Math.cos(s.endAngle), y: s.cy + s.r*Math.sin(s.endAngle)});
+    }
+  });
+  return t;
+}
+
+function findNearestSnap(p) {
+  if (!snapMode) return null;
+  const radius = parseInt(document.getElementById('snapRadius').value) || 15;
+  const r2 = radius * radius;
+  let best = null, bestD = Infinity;
+  for (const t of getAllSnapTargets()) {
+    const dx = t.x - p.x, dy = t.y - p.y;
+    const d2 = dx*dx + dy*dy;
+    if (d2 < r2 && d2 < bestD) { bestD = d2; best = t; }
+  }
+  return best;
+}
+
 function getCanvasPoint(e) {
   const r = drawCanvas.getBoundingClientRect();
-  return {
+  const p = {
     x: Math.round((e.clientX - r.left) / zoom),
     y: Math.round((e.clientY - r.top) / zoom)
   };
+  const snap = findNearestSnap(p);
+  if (snap) { p.snapped = true; p.x = snap.x; p.y = snap.y; snapShown = snap; }
+  else snapShown = null;
+  return p;
 }
+
+// ====== 마우스 이벤트 ======
 drawCanvas.addEventListener('mousemove', e => {
   const p = getCanvasPoint(e);
-  document.getElementById('statusCoord').textContent = `${p.x}, ${p.y}`;
-  if (firstClick) drawPreview(firstClick, p);
-});
-drawCanvas.addEventListener('click', e => {
-  const p = getCanvasPoint(e);
-  if (!firstClick) firstClick = p;
-  else { addShape(firstClick, p); firstClick = null; preCtx.clearRect(0,0,baseW,baseH); }
-});
-window.addEventListener('keydown', e => {
-  if (e.key === 'Escape') { firstClick = null; preCtx.clearRect(0,0,baseW,baseH); }
-  else if (e.ctrlKey && e.key === 'z') { e.preventDefault(); undo(); }
-  else if (e.ctrlKey && e.key === 'y') { e.preventDefault(); redo(); }
+  document.getElementById('statusCoord').textContent = `${p.x}, ${p.y}` + (p.snapped ? ' 🧲' : '');
+  
+  if (tool === 'select') {
+    if (dragState && dragState.type === 'move') {
+      const dx = p.x - dragState.startX, dy = p.y - dragState.startY;
+      for (const off of dragState.offsets) {
+        const s = shapes.find(x => x.id === off.id);
+        if (s) moveShapeTo(s, off, dx, dy);
+      }
+      redrawDraw(); drawSnapIndicator();
+      return;
+    } else if (dragState && dragState.type === 'box') {
+      drawBoxSelectPreview(dragState.boxStart, p);
+      return;
+    }
+  } else if (tool === 'arc' && firstClick) {
+    // 라운드 도구: 마우스 경로 기록
+    if (arcPath.length === 0 || 
+        (Math.abs(p.x - arcPath[arcPath.length-1].x) + Math.abs(p.y - arcPath[arcPath.length-1].y)) > 2) {
+      arcPath.push({x: p.x, y: p.y});
+    }
+    drawArcPreview(firstClick, p);
+    return;
+  } else if (firstClick) {
+    drawPreview(firstClick, p);
+    return;
+  }
+  drawSnapIndicator();
 });
 
+drawCanvas.addEventListener('mousedown', e => {
+  if (tool !== 'select') return;
+  const p = getCanvasPoint(e);
+  const hit = hitTest(p);
+  if (hit) {
+    if (!selectedIds.has(hit.id)) {
+      if (!e.shiftKey) selectedIds.clear();
+      selectedIds.add(hit.id);
+      updateSelStat(); redrawDraw();
+    }
+    const offsets = [];
+    selectedIds.forEach(id => {
+      const s = shapes.find(x => x.id === id);
+      if (s) offsets.push(snapshotShape(s));
+    });
+    dragState = { type: 'move', startX: p.x, startY: p.y, offsets };
+  } else {
+    if (!e.shiftKey) { selectedIds.clear(); updateSelStat(); redrawDraw(); }
+    dragState = { type: 'box', boxStart: p };
+  }
+});
+
+drawCanvas.addEventListener('mouseup', e => {
+  if (tool !== 'select') return;
+  const p = getCanvasPoint(e);
+  if (dragState && dragState.type === 'box') {
+    boxSelect(dragState.boxStart, p, e.shiftKey);
+    preCtx.clearRect(0,0,baseW,baseH);
+  }
+  dragState = null;
+});
+
+drawCanvas.addEventListener('click', e => {
+  if (tool === 'select') return;
+  const p = getCanvasPoint(e);
+  
+  if (tool === 'fill') {
+    doFillAtPoint(p);
+    return;
+  }
+  
+  if (tool === 'arc') {
+    if (!firstClick) {
+      firstClick = {x: p.x, y: p.y};
+      arcPath = [{x: p.x, y: p.y}];
+    } else {
+      // 2차 클릭: 마우스 경로와 가장 잘 맞는 배경 호 찾기
+      addArcFromPath(firstClick, p, arcPath);
+      firstClick = null;
+      arcPath = [];
+      preCtx.clearRect(0,0,baseW,baseH);
+    }
+    return;
+  }
+  
+  if (!firstClick) {
+    firstClick = {x: p.x, y: p.y};
+  } else {
+    addShape(firstClick, p);
+    if (tool === 'line' && continuousMode) {
+      firstClick = {x: p.x, y: p.y};
+    } else {
+      firstClick = null;
+      preCtx.clearRect(0,0,baseW,baseH);
+    }
+  }
+});
+
+drawCanvas.addEventListener('dblclick', () => {
+  if (continuousMode && firstClick) {
+    firstClick = null;
+    preCtx.clearRect(0,0,baseW,baseH);
+  }
+});
+
+let shiftDown = false;
+window.addEventListener('keydown', e => {
+  if (e.key === 'Shift') shiftDown = true;
+  if (e.key === 'Escape') {
+    firstClick = null; arcPath = []; dragState = null;
+    preCtx.clearRect(0,0,baseW,baseH);
+  } else if (e.ctrlKey && e.key === 'z') { e.preventDefault(); undo(); }
+  else if (e.ctrlKey && e.key === 'y') { e.preventDefault(); redo(); }
+  else if (e.key === 'Delete' || e.key === 'Backspace') {
+    if (tool === 'select' && selectedIds.size > 0) { e.preventDefault(); deleteSelected(); }
+  } else if (e.ctrlKey && e.key === 'a' && tool === 'select') {
+    e.preventDefault();
+    shapes.forEach(s => selectedIds.add(s.id));
+    updateSelStat(); redrawDraw();
+  }
+});
+window.addEventListener('keyup', e => { if (e.key === 'Shift') shiftDown = false; });
+
+function applyShiftConstraint(p1, p2) {
+  if (!shiftDown || tool !== 'line') return p2;
+  const dx = p2.x - p1.x, dy = p2.y - p1.y;
+  if (Math.abs(dx) > Math.abs(dy)) return {x: p2.x, y: p1.y};
+  return {x: p1.x, y: p2.y};
+}
+
 function addShape(p1, p2) {
+  const _p2 = applyShiftConstraint(p1, p2);
   shapes.push({
-    type: tool, p1, p2,
+    id: ++shapeIdSeq, type: tool,
+    p1: {x:p1.x, y:p1.y}, p2: {x:_p2.x, y:_p2.y},
     stroke: document.getElementById('strokeColor').value,
-    strokeWidth: parseInt(document.getElementById('strokeWidth').value),
-    fill: document.getElementById('fillEnable').checked ? document.getElementById('fillColor').value : null
+    strokeWidth: parseInt(document.getElementById('strokeWidth').value)
   });
   redoStack = [];
   redrawDraw(); updateCount();
 }
 
+// ====== 라운드 자동 피팅 ======
+function addArcFromPath(p1, p2, path) {
+  // 1) 마우스 경로 + 시작/끝점으로 가장 잘 맞는 배경 호 찾기
+  const fittedArc = findBestMatchingArc(p1, p2, path);
+  
+  if (fittedArc) {
+    shapes.push({
+      id: ++shapeIdSeq, type: 'arc',
+      cx: Math.round(fittedArc.cx),
+      cy: Math.round(fittedArc.cy),
+      r: Math.round(fittedArc.r),
+      startAngle: fittedArc.startAngle,
+      endAngle: fittedArc.endAngle,
+      ccw: fittedArc.ccw,
+      stroke: document.getElementById('strokeColor').value,
+      strokeWidth: parseInt(document.getElementById('strokeWidth').value),
+      p1: {x: Math.round(p1.x), y: Math.round(p1.y)},
+      p2: {x: Math.round(p2.x), y: Math.round(p2.y)},
+      autoFit: fittedArc.source === 'bg'
+    });
+  } else {
+    // 배경 호 매칭 실패 시: 경로점들로 원 피팅 (3점법)
+    const fitted = fitCircleFromPath(path);
+    if (fitted) {
+      shapes.push({
+        id: ++shapeIdSeq, type: 'arc',
+        cx: Math.round(fitted.cx), cy: Math.round(fitted.cy),
+        r: Math.round(fitted.r),
+        startAngle: Math.atan2(p1.y - fitted.cy, p1.x - fitted.cx),
+        endAngle: Math.atan2(p2.y - fitted.cy, p2.x - fitted.cx),
+        ccw: fitted.ccw,
+        stroke: document.getElementById('strokeColor').value,
+        strokeWidth: parseInt(document.getElementById('strokeWidth').value),
+        p1: {x: Math.round(p1.x), y: Math.round(p1.y)},
+        p2: {x: Math.round(p2.x), y: Math.round(p2.y)},
+        autoFit: false
+      });
+    } else {
+      alert('라운드 피팅 실패. 마우스를 곡선을 따라 좀 더 천천히 움직여보세요.');
+      return;
+    }
+  }
+  redoStack = [];
+  redrawDraw(); updateCount();
+}
+
+// 배경에서 검출된 호 중 마우스 경로와 가장 일치하는 것 찾기
+function findBestMatchingArc(p1, p2, path) {
+  if (detectedArcs.length === 0) return null;
+  
+  let best = null, bestScore = Infinity;
+  
+  for (const arc of detectedArcs) {
+    // 1) 시작점과 끝점이 모두 호 위에 있는지 (거리 검사)
+    const d1 = Math.abs(Math.hypot(p1.x - arc.cx, p1.y - arc.cy) - arc.r);
+    const d2 = Math.abs(Math.hypot(p2.x - arc.cx, p2.y - arc.cy) - arc.r);
+    
+    if (d1 > 20 || d2 > 20) continue;  // 시작/끝이 호에서 너무 멀면 제외
+    
+    // 2) 마우스 경로의 모든 점이 호 위에 있는지 평균 거리
+    let pathScore = 0;
+    let onCount = 0;
+    for (const pt of path) {
+      const d = Math.abs(Math.hypot(pt.x - arc.cx, pt.y - arc.cy) - arc.r);
+      pathScore += d;
+      if (d < arc.r * 0.2) onCount++;
+    }
+    pathScore /= Math.max(path.length, 1);
+    const onRatio = onCount / Math.max(path.length, 1);
+    
+    // 3) 경로가 호 위에 있는 비율이 50% 이상이면 후보
+    if (onRatio < 0.5) continue;
+    
+    // 4) 종합 점수: 시작/끝 거리 + 경로 평균거리
+    const score = d1 + d2 + pathScore * 2;
+    
+    if (score < bestScore) {
+      bestScore = score;
+      // 시작/끝 각도 결정 (실제 클릭점 기준)
+      const startAng = Math.atan2(p1.y - arc.cy, p1.x - arc.cx);
+      const endAng = Math.atan2(p2.y - arc.cy, p2.x - arc.cx);
+      
+      // 회전 방향 결정: 마우스 경로의 중간점을 기준으로
+      const midPathPt = path[Math.floor(path.length / 2)];
+      const midAng = Math.atan2(midPathPt.y - arc.cy, midPathPt.x - arc.cx);
+      const ccw = isAngleBetween(midAng, startAng, endAng, true);
+      
+      best = {
+        cx: arc.cx, cy: arc.cy, r: arc.r,
+        startAngle: startAng, endAngle: endAng,
+        ccw: !ccw,  // canvas arc: CCW=false 가 시계방향
+        source: 'bg'
+      };
+    }
+  }
+  
+  return best;
+}
+
+// 각도 a가 start→end 사이에 있는지 (방향 고려)
+function isAngleBetween(a, start, end, ccw) {
+  const norm = x => { while(x < 0) x += Math.PI*2; while(x >= Math.PI*2) x -= Math.PI*2; return x; };
+  a = norm(a); start = norm(start); end = norm(end);
+  if (ccw) {
+    if (start <= end) return a >= start && a <= end;
+    return a >= start || a <= end;
+  } else {
+    if (start >= end) return a <= start && a >= end;
+    return a <= start || a >= end;
+  }
+}
+
+// 경로 점들로 원 피팅 (3점 또는 최소제곱)
+function fitCircleFromPath(path) {
+  if (path.length < 5) return null;
+  
+  // 간단한 방법: 시작점, 중간점, 끝점으로 3점 원 피팅
+  const p1 = path[0];
+  const p2 = path[Math.floor(path.length / 2)];
+  const p3 = path[path.length - 1];
+  
+  const ax = p1.x, ay = p1.y;
+  const bx = p2.x, by = p2.y;
+  const cx = p3.x, cy = p3.y;
+  
+  const d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
+  if (Math.abs(d) < 1e-6) return null;  // 일직선
+  
+  const ux = ((ax*ax + ay*ay) * (by - cy) + (bx*bx + by*by) * (cy - ay) + (cx*cx + cy*cy) * (ay - by)) / d;
+  const uy = ((ax*ax + ay*ay) * (cx - bx) + (bx*bx + by*by) * (ax - cx) + (cx*cx + cy*cy) * (bx - ax)) / d;
+  
+  const r = Math.hypot(ax - ux, ay - uy);
+  
+  if (r < 5 || r > 1000) return null;
+  
+  // 회전 방향 결정 (외적)
+  const cross = (bx - ax) * (cy - by) - (by - ay) * (cx - bx);
+  
+  return { cx: ux, cy: uy, r, ccw: cross > 0 };
+}
+
+// 라운드 그리기 중 프리뷰
+function drawArcPreview(p1, currentP) {
+  preCtx.clearRect(0,0,baseW,baseH);
+  preCtx.save();
+  
+  // 1) 마우스 경로 표시 (연한 노란선)
+  if (arcPath.length > 1) {
+    preCtx.strokeStyle = 'rgba(243, 156, 18, 0.5)';
+    preCtx.lineWidth = 2;
+    preCtx.setLineDash([]);
+    preCtx.beginPath();
+    preCtx.moveTo(arcPath[0].x, arcPath[0].y);
+    for (let i = 1; i < arcPath.length; i++) {
+      preCtx.lineTo(arcPath[i].x, arcPath[i].y);
+    }
+    preCtx.stroke();
+  }
+  
+  // 2) 시작점 표시
+  preCtx.fillStyle = '#28a745';
+  preCtx.beginPath();
+  preCtx.arc(p1.x, p1.y, 4, 0, Math.PI*2);
+  preCtx.fill();
+  
+  // 3) 실시간 라운드 매칭 미리보기
+  if (arcPath.length > 3) {
+    const candidate = findBestMatchingArc(p1, currentP, arcPath);
+    let arc = candidate;
+    if (!arc) {
+      const fitted = fitCircleFromPath(arcPath);
+      if (fitted) {
+        arc = {
+          cx: fitted.cx, cy: fitted.cy, r: fitted.r,
+          startAngle: Math.atan2(p1.y - fitted.cy, p1.x - fitted.cx),
+          endAngle: Math.atan2(currentP.y - fitted.cy, currentP.x - fitted.cx),
+          ccw: fitted.ccw, source: 'fit'
+        };
+      }
+    }
+    if (arc) {
+      preCtx.strokeStyle = candidate ? '#27ae60' : '#3498db';
+      preCtx.lineWidth = 2;
+      preCtx.setLineDash([5,3]);
+      preCtx.beginPath();
+      preCtx.arc(arc.cx, arc.cy, arc.r, arc.startAngle, arc.endAngle, arc.ccw);
+      preCtx.stroke();
+      
+      // 중심 표시
+      preCtx.setLineDash([]);
+      preCtx.strokeStyle = candidate ? '#27ae60' : '#3498db';
+      preCtx.beginPath();
+      preCtx.arc(arc.cx, arc.cy, 3, 0, Math.PI*2);
+      preCtx.stroke();
+      
+      // 안내 텍스트
+      preCtx.fillStyle = candidate ? '#27ae60' : '#3498db';
+      preCtx.font = 'bold 12px sans-serif';
+      preCtx.fillText(
+        candidate ? '✓ 배경 라운드 매칭됨' : '○ 경로 기반 피팅',
+        p1.x + 8, p1.y - 8
+      );
+    }
+  }
+  
+  preCtx.restore();
+  drawSnapIndicator();
+}
+
 function drawPreview(p1, p2) {
+  const _p2 = applyShiftConstraint(p1, p2);
   preCtx.clearRect(0,0,baseW,baseH);
   preCtx.save();
   preCtx.strokeStyle = document.getElementById('strokeColor').value;
   preCtx.lineWidth = parseInt(document.getElementById('strokeWidth').value);
   preCtx.setLineDash([6,4]); preCtx.lineCap='round';
-  if (tool==='line') { preCtx.beginPath(); preCtx.moveTo(p1.x,p1.y); preCtx.lineTo(p2.x,p2.y); preCtx.stroke(); }
-  else if (tool==='rect') { preCtx.strokeRect(Math.min(p1.x,p2.x), Math.min(p1.y,p2.y), Math.abs(p2.x-p1.x), Math.abs(p2.y-p1.y)); }
-  else if (tool==='circle') { const r=Math.hypot(p2.x-p1.x,p2.y-p1.y); preCtx.beginPath(); preCtx.arc(p1.x,p1.y,r,0,Math.PI*2); preCtx.stroke(); }
+  if (tool==='line') { preCtx.beginPath(); preCtx.moveTo(p1.x,p1.y); preCtx.lineTo(_p2.x,_p2.y); preCtx.stroke(); }
+  else if (tool==='rect') { preCtx.strokeRect(Math.min(p1.x,_p2.x), Math.min(p1.y,_p2.y), Math.abs(_p2.x-p1.x), Math.abs(_p2.y-p1.y)); }
+  else if (tool==='circle') { const r=Math.hypot(_p2.x-p1.x,_p2.y-p1.y); preCtx.beginPath(); preCtx.arc(p1.x,p1.y,r,0,Math.PI*2); preCtx.stroke(); }
+  preCtx.restore();
+  drawSnapIndicator();
+}
+
+function drawSnapIndicator() {
+  if (!snapShown || !snapMode) return;
+  preCtx.save();
+  preCtx.strokeStyle = '#f39c12';
+  preCtx.lineWidth = 2; preCtx.setLineDash([]);
+  const r = 8;
+  preCtx.strokeRect(snapShown.x - r, snapShown.y - r, r*2, r*2);
+  preCtx.beginPath();
+  preCtx.moveTo(snapShown.x - r/2, snapShown.y); preCtx.lineTo(snapShown.x + r/2, snapShown.y);
+  preCtx.moveTo(snapShown.x, snapShown.y - r/2); preCtx.lineTo(snapShown.x, snapShown.y + r/2);
+  preCtx.stroke();
   preCtx.restore();
 }
 
+function drawBoxSelectPreview(p1, p2) {
+  preCtx.clearRect(0,0,baseW,baseH);
+  preCtx.save();
+  preCtx.strokeStyle = '#9b59b6';
+  preCtx.fillStyle = 'rgba(155, 89, 182, 0.15)';
+  preCtx.lineWidth = 1; preCtx.setLineDash([4,3]);
+  const x = Math.min(p1.x, p2.x), y = Math.min(p1.y, p2.y);
+  const w = Math.abs(p2.x-p1.x), h = Math.abs(p2.y-p1.y);
+  preCtx.fillRect(x, y, w, h);
+  preCtx.strokeRect(x, y, w, h);
+  preCtx.restore();
+}
+
+// ====== 영역 채움 (페인트버킷) ======
+function doFillAtPoint(p) {
+  // 채움 캔버스에 그릴 임시 캔버스 만들고 flood fill
+  // 알고리즘: 모든 도형(외곽선만)을 흰 배경의 검은 선으로 임시 그리고,
+  //          클릭한 점을 시드로 floodFill → 영역의 픽셀 위치 수집 → 채움 도형으로 등록
+  
+  if (shapes.length === 0) {
+    alert('채울 도형이 없습니다. 먼저 선/사각형/원/라운드로 닫힌 영역을 만들어주세요.');
+    return;
+  }
+  
+  if (typeof cv === 'undefined' || !cv.Mat) {
+    alert('OpenCV가 아직 로딩 중입니다.');
+    return;
+  }
+  
+  showLoading('영역 채움 계산 중...');
+  setTimeout(() => {
+    try {
+      // 1) 도형 외곽선만 그린 임시 캔버스
+      const maskCanvas = document.createElement('canvas');
+      maskCanvas.width = baseW; maskCanvas.height = baseH;
+      const mctx = maskCanvas.getContext('2d');
+      mctx.fillStyle = '#ffffff';
+      mctx.fillRect(0, 0, baseW, baseH);
+      mctx.strokeStyle = '#000000';
+      mctx.fillStyle = '#000000';
+      mctx.lineWidth = 2;
+      mctx.lineCap = 'round'; mctx.lineJoin = 'round';
+      
+      shapes.forEach(s => {
+        mctx.beginPath();
+        if (s.type === 'line') { mctx.moveTo(s.p1.x, s.p1.y); mctx.lineTo(s.p2.x, s.p2.y); mctx.stroke(); }
+        else if (s.type === 'rect') {
+          const x=Math.min(s.p1.x,s.p2.x), y=Math.min(s.p1.y,s.p2.y);
+          const w=Math.abs(s.p2.x-s.p1.x), h=Math.abs(s.p2.y-s.p1.y);
+          mctx.strokeRect(x,y,w,h);
+        } else if (s.type === 'circle') {
+          const r=Math.hypot(s.p2.x-s.p1.x, s.p2.y-s.p1.y);
+          mctx.arc(s.p1.x, s.p1.y, r, 0, Math.PI*2); mctx.stroke();
+        } else if (s.type === 'arc') {
+          mctx.arc(s.cx, s.cy, s.r, s.startAngle, s.endAngle, s.ccw); mctx.stroke();
+        } else if (s.type === 'ellipse') {
+          mctx.ellipse(s.cx, s.cy, s.rx, s.ry, s.angle||0, 0, Math.PI*2); mctx.stroke();
+        }
+      });
+      
+      // 2) OpenCV로 floodFill
+      const src = cv.imread(maskCanvas);
+      const gray = new cv.Mat();
+      cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+      
+      // 이진화 (선은 검은색, 배경은 흰색)
+      const bin = new cv.Mat();
+      cv.threshold(gray, bin, 200, 255, cv.THRESH_BINARY);
+      
+      // 클릭 지점이 선 위인지 확인
+      const clickPixel = bin.ucharPtr(p.y, p.x)[0];
+      if (clickPixel < 100) {
+        alert('선 위가 아닌 빈 영역을 클릭하세요.');
+        src.delete(); gray.delete(); bin.delete();
+        hideLoading();
+        return;
+      }
+      
+      // floodFill 마스크 (cv.floodFill은 +2px 큰 마스크 요구)
+      const ffMask = new cv.Mat.zeros(bin.rows + 2, bin.cols + 2, cv.CV_8UC1);
+      
+      // floodFill: 클릭점에서 같은 값(흰색) 영역을 회색(128)으로 채움
+      const seedPoint = new cv.Point(p.x, p.y);
+      const newVal = new cv.Scalar(128);
+      const loDiff = new cv.Scalar(10);
+      const upDiff = new cv.Scalar(10);
+      
+      cv.floodFill(bin, ffMask, seedPoint, newVal, null, loDiff, upDiff, 4);
+      
+      // 채워진 영역(128)의 윤곽선 추출
+      const filled = new cv.Mat();
+      cv.inRange(bin, new cv.Mat(bin.rows, bin.cols, bin.type(), new cv.Scalar(127)), 
+                       new cv.Mat(bin.rows, bin.cols, bin.type(), new cv.Scalar(129)), filled);
+      
+      // 더 간단하게: bin에서 128인 픽셀만 골라냄
+      const mask128 = new cv.Mat();
+      cv.threshold(bin, mask128, 127, 255, cv.THRESH_BINARY);
+      cv.bitwise_not(mask128, mask128);  // 128보다 작은 부분만 → 도형 외곽선과 채워진 영역
+      
+      // 간단한 방법: bin 자체에서 128 값을 가진 영역만 마스킹
+      const fillRegion = new cv.Mat();
+      const lower = new cv.Mat(bin.rows, bin.cols, bin.type(), new cv.Scalar(120));
+      const upper = new cv.Mat(bin.rows, bin.cols, bin.type(), new cv.Scalar(135));
+      cv.inRange(bin, lower, upper, fillRegion);
+      
+      // 윤곽선 찾기
+      const contours = new cv.MatVector();
+      const hierarchy = new cv.Mat();
+      cv.findContours(fillRegion, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+      
+      if (contours.size() === 0) {
+        alert('채울 영역을 찾지 못했습니다. 도형이 완전히 닫혀있는지 확인하세요.');
+      } else {
+        // 가장 큰 윤곽선만 사용 (보통 클릭한 영역)
+        let maxArea = 0, maxIdx = 0;
+        for (let i = 0; i < contours.size(); i++) {
+          const a = cv.contourArea(contours.get(i));
+          if (a > maxArea) { maxArea = a; maxIdx = i; }
+        }
+        
+        if (maxArea < 20) {
+          alert('영역이 너무 작습니다.');
+        } else {
+          const cnt = contours.get(maxIdx);
+          // 윤곽선 점들 추출 (단순화)
+          const approx = new cv.Mat();
+          const epsilon = 1.5;  // 단순화 정도
+          cv.approxPolyDP(cnt, approx, epsilon, true);
+          
+          const points = [];
+          for (let i = 0; i < approx.rows; i++) {
+            points.push({x: approx.data32S[i*2], y: approx.data32S[i*2+1]});
+          }
+          
+          if (points.length >= 3) {
+            const alpha = parseInt(document.getElementById('fillAlpha').value) / 100;
+            fills.push({
+              id: ++shapeIdSeq,
+              type: 'fill',
+              points,
+              color: document.getElementById('fillColor').value,
+              alpha
+            });
+            redoStack = [];
+            redrawFills();
+            updateCount();
+          }
+          approx.delete();
+        }
+      }
+      
+      src.delete(); gray.delete(); bin.delete();
+      ffMask.delete(); filled.delete(); mask128.delete();
+      fillRegion.delete(); lower.delete(); upper.delete();
+      contours.delete(); hierarchy.delete();
+      
+    } catch(e) {
+      console.error(e);
+      alert('채움 오류: ' + e.message);
+    }
+    hideLoading();
+  }, 50);
+}
+
 // ====== 도형 렌더 ======
-function drawShape(ctx, s) {
+function drawShape(ctx, s, selected) {
   ctx.save();
   ctx.strokeStyle = s.stroke;
   ctx.lineWidth = s.strokeWidth;
   ctx.lineCap='round'; ctx.lineJoin='round';
+  ctx.beginPath();
   if (s.type === 'line') {
-    ctx.beginPath(); ctx.moveTo(s.p1.x,s.p1.y); ctx.lineTo(s.p2.x,s.p2.y); ctx.stroke();
+    ctx.moveTo(s.p1.x,s.p1.y); ctx.lineTo(s.p2.x,s.p2.y); ctx.stroke();
   } else if (s.type === 'rect') {
     const x=Math.min(s.p1.x,s.p2.x), y=Math.min(s.p1.y,s.p2.y);
     const w=Math.abs(s.p2.x-s.p1.x), h=Math.abs(s.p2.y-s.p1.y);
-    if (s.fill) { ctx.fillStyle=s.fill; ctx.fillRect(x,y,w,h); }
     ctx.strokeRect(x,y,w,h);
   } else if (s.type === 'circle') {
     const r=Math.hypot(s.p2.x-s.p1.x, s.p2.y-s.p1.y);
-    ctx.beginPath(); ctx.arc(s.p1.x,s.p1.y,r,0,Math.PI*2);
-    if (s.fill) { ctx.fillStyle=s.fill; ctx.fill(); }
-    ctx.stroke();
-  } else if (s.type === 'ellipse') {
-    ctx.beginPath();
-    ctx.ellipse(s.cx, s.cy, s.rx, s.ry, s.angle || 0, 0, Math.PI*2);
-    if (s.fill) { ctx.fillStyle=s.fill; ctx.fill(); }
-    ctx.stroke();
+    ctx.arc(s.p1.x,s.p1.y,r,0,Math.PI*2); ctx.stroke();
   } else if (s.type === 'arc') {
-    ctx.beginPath();
-    ctx.arc(s.cx, s.cy, s.r, s.startAngle, s.endAngle);
-    ctx.stroke();
+    ctx.arc(s.cx, s.cy, s.r, s.startAngle, s.endAngle, s.ccw); ctx.stroke();
+  } else if (s.type === 'ellipse') {
+    ctx.ellipse(s.cx, s.cy, s.rx, s.ry, s.angle||0, 0, Math.PI*2); ctx.stroke();
   }
+  ctx.restore();
+  if (selected) drawSelectionMarker(ctx, s);
+}
+
+function drawFill(ctx, f) {
+  if (!f.points || f.points.length < 3) return;
+  ctx.save();
+  ctx.fillStyle = hexToRgba(f.color, f.alpha);
+  ctx.beginPath();
+  ctx.moveTo(f.points[0].x, f.points[0].y);
+  for (let i = 1; i < f.points.length; i++) {
+    ctx.lineTo(f.points[i].x, f.points[i].y);
+  }
+  ctx.closePath();
+  ctx.fill();
   ctx.restore();
 }
 
-function redrawAll() { redrawBg(); redrawDraw(); }
+function hexToRgba(hex, alpha) {
+  const r = parseInt(hex.substr(1,2), 16);
+  const g = parseInt(hex.substr(3,2), 16);
+  const b = parseInt(hex.substr(5,2), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+function drawSelectionMarker(ctx, s) {
+  ctx.save();
+  ctx.strokeStyle = '#d9534f';
+  ctx.fillStyle = '#ffffff';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([4,2]);
+  const bb = shapeBoundingBox(s);
+  ctx.strokeRect(bb.minX - 3, bb.minY - 3, bb.maxX - bb.minX + 6, bb.maxY - bb.minY + 6);
+  ctx.setLineDash([]);
+  const hs = 4;
+  [[bb.minX, bb.minY],[bb.maxX, bb.minY],[bb.minX, bb.maxY],[bb.maxX, bb.maxY]].forEach(([x,y]) => {
+    ctx.fillRect(x-hs, y-hs, hs*2, hs*2);
+    ctx.strokeRect(x-hs, y-hs, hs*2, hs*2);
+  });
+  ctx.restore();
+}
+
+function shapeBoundingBox(s) {
+  if (s.type === 'line' || s.type === 'rect') {
+    return { minX: Math.min(s.p1.x, s.p2.x), maxX: Math.max(s.p1.x, s.p2.x),
+             minY: Math.min(s.p1.y, s.p2.y), maxY: Math.max(s.p1.y, s.p2.y) };
+  } else if (s.type === 'circle') {
+    const r = Math.hypot(s.p2.x-s.p1.x, s.p2.y-s.p1.y);
+    return { minX: s.p1.x-r, maxX: s.p1.x+r, minY: s.p1.y-r, maxY: s.p1.y+r };
+  } else if (s.type === 'arc') {
+    return { minX: s.cx-s.r, maxX: s.cx+s.r, minY: s.cy-s.r, maxY: s.cy+s.r };
+  } else if (s.type === 'ellipse') {
+    return { minX: s.cx-s.rx, maxX: s.cx+s.rx, minY: s.cy-s.ry, maxY: s.cy+s.ry };
+  }
+  return { minX:0, maxX:0, minY:0, maxY:0 };
+}
+
+function hitTest(p) {
+  for (let i = shapes.length - 1; i >= 0; i--) {
+    const s = shapes[i];
+    if (isPointOnShape(p, s)) return s;
+  }
+  return null;
+}
+
+function isPointOnShape(p, s) {
+  const tol = Math.max(5, s.strokeWidth + 3);
+  if (s.type === 'line') return pointToSegmentDist(p, s.p1, s.p2) <= tol;
+  if (s.type === 'rect') {
+    const x=Math.min(s.p1.x,s.p2.x), y=Math.min(s.p1.y,s.p2.y);
+    const w=Math.abs(s.p2.x-s.p1.x), h=Math.abs(s.p2.y-s.p1.y);
+    const onX = (Math.abs(p.x-x)<=tol || Math.abs(p.x-(x+w))<=tol) && p.y>=y-tol && p.y<=y+h+tol;
+    const onY = (Math.abs(p.y-y)<=tol || Math.abs(p.y-(y+h))<=tol) && p.x>=x-tol && p.x<=x+w+tol;
+    return onX || onY;
+  }
+  if (s.type === 'circle') {
+    const r = Math.hypot(s.p2.x-s.p1.x, s.p2.y-s.p1.y);
+    return Math.abs(Math.hypot(p.x-s.p1.x, p.y-s.p1.y) - r) <= tol;
+  }
+  if (s.type === 'arc') {
+    return Math.abs(Math.hypot(p.x-s.cx, p.y-s.cy) - s.r) <= tol;
+  }
+  if (s.type === 'ellipse') {
+    const bb = shapeBoundingBox(s);
+    return p.x>=bb.minX-tol && p.x<=bb.maxX+tol && p.y>=bb.minY-tol && p.y<=bb.maxY+tol;
+  }
+  return false;
+}
+
+function pointToSegmentDist(p, a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const len2 = dx*dx + dy*dy;
+  if (len2 < 1e-6) return Math.hypot(p.x-a.x, p.y-a.y);
+  let t = ((p.x-a.x)*dx + (p.y-a.y)*dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(p.x - (a.x + t*dx), p.y - (a.y + t*dy));
+}
+
+function boxSelect(p1, p2, addMode) {
+  const minX = Math.min(p1.x, p2.x), maxX = Math.max(p1.x, p2.x);
+  const minY = Math.min(p1.y, p2.y), maxY = Math.max(p1.y, p2.y);
+  if (!addMode) selectedIds.clear();
+  shapes.forEach(s => {
+    const bb = shapeBoundingBox(s);
+    if (bb.minX >= minX && bb.maxX <= maxX && bb.minY >= minY && bb.maxY <= maxY) {
+      selectedIds.add(s.id);
+    }
+  });
+  updateSelStat(); redrawDraw();
+}
+
+function snapshotShape(s) {
+  const snap = { id: s.id, type: s.type };
+  if (s.type === 'line' || s.type === 'rect' || s.type === 'circle') {
+    snap.p1 = {x:s.p1.x, y:s.p1.y}; snap.p2 = {x:s.p2.x, y:s.p2.y};
+  } else if (s.type === 'arc' || s.type === 'ellipse') {
+    snap.cx = s.cx; snap.cy = s.cy;
+  }
+  return snap;
+}
+function moveShapeTo(s, snap, dx, dy) {
+  if (s.type === 'line' || s.type === 'rect' || s.type === 'circle') {
+    s.p1.x = snap.p1.x + dx; s.p1.y = snap.p1.y + dy;
+    s.p2.x = snap.p2.x + dx; s.p2.y = snap.p2.y + dy;
+  } else if (s.type === 'arc' || s.type === 'ellipse') {
+    s.cx = snap.cx + dx; s.cy = snap.cy + dy;
+  }
+}
+
+function deleteSelected() {
+  if (selectedIds.size === 0) return;
+  const removed = shapes.filter(s => selectedIds.has(s.id));
+  shapes = shapes.filter(s => !selectedIds.has(s.id));
+  redoStack.push({_delAction: true, removed});
+  selectedIds.clear();
+  updateSelStat(); updateCount();
+  redrawDraw();
+}
+document.getElementById('btnDelSel').addEventListener('click', deleteSelected);
+
+function redrawAll() { redrawBg(); redrawFills(); redrawDraw(); }
 function redrawBg() {
   bgCtx.clearRect(0,0,baseW,baseH);
   if (bgImage) bgCtx.drawImage(bgImage, 0, 0, baseW, baseH);
 }
+function redrawFills() {
+  fillCtx.clearRect(0,0,baseW,baseH);
+  fills.forEach(f => drawFill(fillCtx, f));
+}
 function redrawDraw() {
   drawCtx.clearRect(0,0,baseW,baseH);
-  shapes.forEach(s => drawShape(drawCtx, s));
+  shapes.forEach(s => drawShape(drawCtx, s, selectedIds.has(s.id)));
 }
 function updateCount() {
   document.getElementById('statusCount').textContent = shapes.length;
+  document.getElementById('fillCount').textContent = fills.length;
+}
+function updateSelStat() {
+  document.getElementById('statusSel').textContent = selectedIds.size;
 }
 
-function undo() { if(shapes.length){ redoStack.push(shapes.pop()); redrawDraw(); updateCount(); }}
-function redo() { if(redoStack.length){ shapes.push(redoStack.pop()); redrawDraw(); updateCount(); }}
+function undo() {
+  // 채움이 마지막에 추가된 경우 우선 제거
+  if (fills.length && (!shapes.length || fills[fills.length-1].id > shapes[shapes.length-1].id)) {
+    redoStack.push(fills.pop());
+  } else if (shapes.length) {
+    redoStack.push(shapes.pop());
+  }
+  redrawFills(); redrawDraw(); updateCount();
+}
+function redo() {
+  if(!redoStack.length) return;
+  const item = redoStack.pop();
+  if (item._delAction) item.removed.forEach(s => shapes.push(s));
+  else if (item.type === 'fill') fills.push(item);
+  else shapes.push(item);
+  redrawFills(); redrawDraw(); updateCount();
+}
 document.getElementById('btnUndo').addEventListener('click', undo);
 document.getElementById('btnRedo').addEventListener('click', redo);
 
 document.getElementById('btnClearAll').addEventListener('click', () => {
-  if (!shapes.length) return;
-  if (!confirm('도형 ' + shapes.length + '개를 모두 지우시겠습니까?')) return;
-  redoStack = shapes.slice().reverse(); shapes = [];
-  redrawDraw(); updateCount();
+  if (!shapes.length && !fills.length) return;
+  if (!confirm(`도형 ${shapes.length}개 + 채움 ${fills.length}개를 모두 지우시겠습니까?`)) return;
+  redoStack = []; shapes = []; fills = []; selectedIds.clear();
+  redrawFills(); redrawDraw(); updateCount(); updateSelStat();
 });
 
-// ===========================================================
-// 자동 도형 검출
-// ===========================================================
+// 자동검출 (간략화 - 라운드는 자동 등록 안하고 캐시만 갱신)
 const detectModal = document.getElementById('detectModal');
 document.getElementById('btnDetect').addEventListener('click', () => {
   if (!bgImage) { alert('먼저 배경 이미지를 불러오세요.'); return; }
@@ -471,7 +1369,6 @@ document.getElementById('btnDetect').addEventListener('click', () => {
   detectModal.classList.add('show');
 });
 document.getElementById('btnCancelDetect').addEventListener('click', () => detectModal.classList.remove('show'));
-
 ['cannyLow','cannyHigh'].forEach(id => {
   const el = document.getElementById(id);
   el.addEventListener('input', () => document.getElementById(id+'Val').textContent = el.value);
@@ -511,171 +1408,60 @@ function runDetection() {
   const detColor = document.getElementById('detColor').value;
   const detWidth = parseInt(document.getElementById('detWidth').value);
   
-  if (clearBefore) {
-    redoStack = shapes.slice().reverse();
-    shapes = [];
-    redrawDraw();
-  }
+  if (clearBefore) { redoStack = shapes.slice().reverse(); shapes = []; selectedIds.clear(); redrawDraw(); }
   
   const tmpC = document.createElement('canvas');
   tmpC.width = baseW; tmpC.height = baseH;
   tmpC.getContext('2d').drawImage(bgImage, 0, 0, baseW, baseH);
-  
   const src = cv.imread(tmpC);
   const gray = new cv.Mat();
   const edges = new cv.Mat();
   const blurred = new cv.Mat();
-  
   cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
   cv.GaussianBlur(gray, blurred, new cv.Size(3,3), 0);
   cv.Canny(blurred, edges, cannyLow, cannyHigh);
+  let counts = { line:0, circle:0, ellipse:0, arc:0 };
   
-  let counts = { line: 0, circle: 0, ellipse: 0, arc: 0 };
-  
-  // === 1) 직선 (Hough Lines P) ===
   if (detLine) {
     const lines = new cv.Mat();
     cv.HoughLinesP(edges, lines, 1, Math.PI/180, lineThr, lineMinLen, lineMaxGap);
     for (let i = 0; i < lines.rows; i++) {
-      const x1 = lines.data32S[i*4];
-      const y1 = lines.data32S[i*4+1];
-      const x2 = lines.data32S[i*4+2];
-      const y2 = lines.data32S[i*4+3];
       shapes.push({
-        type: 'line',
-        p1: {x:x1, y:y1}, p2: {x:x2, y:y2},
-        stroke: detColor, strokeWidth: detWidth, fill: null
+        id: ++shapeIdSeq, type: 'line',
+        p1: {x:lines.data32S[i*4], y:lines.data32S[i*4+1]},
+        p2: {x:lines.data32S[i*4+2], y:lines.data32S[i*4+3]},
+        stroke: detColor, strokeWidth: detWidth
       });
       counts.line++;
     }
     lines.delete();
   }
-  
-  // === 2) 원 (Hough Circles) ===
   if (detCircle) {
     const circles = new cv.Mat();
     const grayBlur = new cv.Mat();
     cv.medianBlur(gray, grayBlur, 5);
-    cv.HoughCircles(grayBlur, circles, cv.HOUGH_GRADIENT,
-                    1, circleMinDist, cannyHigh, 30, circleMinR, circleMaxR);
+    cv.HoughCircles(grayBlur, circles, cv.HOUGH_GRADIENT, 1, circleMinDist, cannyHigh, 30, circleMinR, circleMaxR);
     for (let i = 0; i < circles.cols; i++) {
-      const cx = circles.data32F[i*3];
-      const cy = circles.data32F[i*3+1];
-      const r = circles.data32F[i*3+2];
+      const cx = circles.data32F[i*3], cy = circles.data32F[i*3+1], r = circles.data32F[i*3+2];
       shapes.push({
-        type: 'circle',
+        id: ++shapeIdSeq, type: 'circle',
         p1: {x: Math.round(cx), y: Math.round(cy)},
-        p2: {x: Math.round(cx + r), y: Math.round(cy)},
-        stroke: detColor, strokeWidth: detWidth, fill: null
+        p2: {x: Math.round(cx+r), y: Math.round(cy)},
+        stroke: detColor, strokeWidth: detWidth
       });
       counts.circle++;
     }
-    circles.delete();
-    grayBlur.delete();
+    circles.delete(); grayBlur.delete();
   }
-  
-  // === 3) 타원 / 반원 (Contour + fitEllipse) ===
-  if (detEllipse) {
-    const contours = new cv.MatVector();
-    const hierarchy = new cv.Mat();
-    const bin = new cv.Mat();
-    cv.threshold(gray, bin, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
-    cv.findContours(bin, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_NONE);
-    
-    for (let i = 0; i < contours.size(); i++) {
-      const cnt = contours.get(i);
-      if (cnt.rows < 30) { cnt.delete(); continue; }
-      const area = cv.contourArea(cnt);
-      if (area < 200) { cnt.delete(); continue; }
-      
-      try {
-        const rrect = cv.fitEllipse(cnt);
-        const cx = rrect.center.x;
-        const cy = rrect.center.y;
-        const rx = rrect.size.width / 2;
-        const ry = rrect.size.height / 2;
-        const angleRad = rrect.angle * Math.PI / 180;
-        
-        if (rx < 10 || ry < 5) { cnt.delete(); continue; }
-        const ratio = Math.max(rx,ry) / Math.min(rx,ry);
-        
-        const a = Math.max(rx,ry), b = Math.min(rx,ry);
-        const fullPerim = Math.PI * (3*(a+b) - Math.sqrt((3*a+b)*(a+3*b)));
-        const cntPerim = cv.arcLength(cnt, false);
-        const coverage = cntPerim / fullPerim;
-        
-        if (coverage > 0.7) {
-          if (ratio < 1.2) {
-            shapes.push({
-              type: 'circle',
-              p1: {x: Math.round(cx), y: Math.round(cy)},
-              p2: {x: Math.round(cx + (rx+ry)/2), y: Math.round(cy)},
-              stroke: detColor, strokeWidth: detWidth, fill: null
-            });
-            counts.circle++;
-          } else {
-            shapes.push({
-              type: 'ellipse',
-              cx: Math.round(cx), cy: Math.round(cy),
-              rx: Math.round(rx), ry: Math.round(ry),
-              angle: angleRad,
-              stroke: detColor, strokeWidth: detWidth, fill: null,
-              p1: {x: Math.round(cx-rx), y: Math.round(cy-ry)},
-              p2: {x: Math.round(cx+rx), y: Math.round(cy+ry)}
-            });
-            counts.ellipse++;
-          }
-        } else if (coverage > 0.3 && coverage < 0.7 && ratio < 1.3) {
-          const r = (rx + ry) / 2;
-          const p_start = {x: cnt.data32S[0], y: cnt.data32S[1]};
-          const p_end = {x: cnt.data32S[(cnt.rows-1)*2], y: cnt.data32S[(cnt.rows-1)*2+1]};
-          const startAng = Math.atan2(p_start.y - cy, p_start.x - cx);
-          const endAng = Math.atan2(p_end.y - cy, p_end.x - cx);
-          shapes.push({
-            type: 'arc',
-            cx: Math.round(cx), cy: Math.round(cy), r: Math.round(r),
-            startAngle: startAng, endAngle: endAng,
-            stroke: detColor, strokeWidth: detWidth, fill: null,
-            p1: {x: Math.round(cx-r), y: Math.round(cy-r)},
-            p2: {x: Math.round(cx+r), y: Math.round(cy+r)}
-          });
-          counts.arc++;
-        }
-      } catch(e) { /* fitEllipse 실패 무시 */ }
-      cnt.delete();
-    }
-    contours.delete();
-    hierarchy.delete();
-    bin.delete();
-  }
-  
-  src.delete();
-  gray.delete();
-  edges.delete();
-  blurred.delete();
-  
-  redrawDraw();
-  updateCount();
-  redoStack = [];
-  
-  const total = counts.line + counts.circle + counts.ellipse + counts.arc;
-  alert(`✓ 검출 완료!\n\n` +
-        `직선: ${counts.line}개\n` +
-        `원: ${counts.circle}개\n` +
-        `타원: ${counts.ellipse}개\n` +
-        `반원/호: ${counts.arc}개\n` +
-        `─────────────\n` +
-        `총 ${total}개\n\n` +
-        (total === 0 ? '※ 결과가 없으면 [엣지 민감도]를 낮추거나 [최소 길이/반지름]을 줄여보세요.' :
-                       '※ 결과가 너무 많으면 [임계값]/[최소 길이]를 높이세요.'));
+  src.delete(); gray.delete(); edges.delete(); blurred.delete();
+  redrawDraw(); updateCount(); redoStack = [];
+  alert(`✓ 검출 완료!\n직선: ${counts.line}개\n원: ${counts.circle}개\n총 ${counts.line+counts.circle}개`);
 }
 
-// ===========================================================
 // 저장
-// ===========================================================
 const saveModal = document.getElementById('saveModal');
 document.getElementById('btnSave').addEventListener('click', () => {
-  if (shapes.length === 0) { alert('저장할 도형이 없습니다.'); return; }
+  if (shapes.length === 0 && fills.length === 0) { alert('저장할 내용이 없습니다.'); return; }
   saveModal.classList.add('show');
 });
 document.getElementById('btnCancelSave').addEventListener('click', () => saveModal.classList.remove('show'));
@@ -709,38 +1495,35 @@ function exportImage(name, scale, cropMode) {
   const octx = out.getContext('2d');
   octx.translate(-x0 * scale, -y0 * scale);
   octx.scale(scale, scale);
-  shapes.forEach(s => drawShape(octx, s));
-  
+  // 채움이 먼저(아래), 도형이 위
+  fills.forEach(f => drawFill(octx, f));
+  shapes.forEach(s => drawShape(octx, s, false));
   const url = out.toDataURL('image/png');
   const a = document.createElement('a');
   a.href = url; a.download = name + '.png'; a.click();
 }
 
 function computeBoundingBox() {
-  if (!shapes.length) return null;
+  if (!shapes.length && !fills.length) return null;
   let minX=Infinity, minY=Infinity, maxX=-Infinity, maxY=-Infinity;
   shapes.forEach(s => {
+    const bb = shapeBoundingBox(s);
     const pad = s.strokeWidth/2;
-    if (s.type==='line' || s.type==='rect') {
-      const xs=[s.p1.x,s.p2.x], ys=[s.p1.y,s.p2.y];
-      minX=Math.min(minX,...xs)-pad; maxX=Math.max(maxX,...xs)+pad;
-      minY=Math.min(minY,...ys)-pad; maxY=Math.max(maxY,...ys)+pad;
-    } else if (s.type==='circle') {
-      const r=Math.hypot(s.p2.x-s.p1.x, s.p2.y-s.p1.y)+pad;
-      minX=Math.min(minX, s.p1.x-r); maxX=Math.max(maxX, s.p1.x+r);
-      minY=Math.min(minY, s.p1.y-r); maxY=Math.max(maxY, s.p1.y+r);
-    } else if (s.type==='ellipse') {
-      minX=Math.min(minX, s.cx-s.rx-pad); maxX=Math.max(maxX, s.cx+s.rx+pad);
-      minY=Math.min(minY, s.cy-s.ry-pad); maxY=Math.max(maxY, s.cy+s.ry+pad);
-    } else if (s.type==='arc') {
-      minX=Math.min(minX, s.cx-s.r-pad); maxX=Math.max(maxX, s.cx+s.r+pad);
-      minY=Math.min(minY, s.cy-s.r-pad); maxY=Math.max(maxY, s.cy+s.r+pad);
-    }
+    minX = Math.min(minX, bb.minX - pad); maxX = Math.max(maxX, bb.maxX + pad);
+    minY = Math.min(minY, bb.minY - pad); maxY = Math.max(maxY, bb.maxY + pad);
+  });
+  fills.forEach(f => {
+    f.points.forEach(p => {
+      minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+      minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+    });
   });
   return { minX, minY, maxX, maxY };
 }
 
 updateCount();
+updateSelStat();
+updateToolStatus();
 redrawAll();
 </script>
 </body>
