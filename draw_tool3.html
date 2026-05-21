@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>tool3 v1.9 - 3축 이동/회전 핸들</title>
+<title>tool3 v2.0 - 회전 각도 실시간 표시</title>
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
@@ -94,6 +94,12 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
 .toast{position:fixed;bottom:50px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.85);color:#fff;padding:10px 20px;border-radius:6px;font-size:12px;font-weight:600;z-index:10001;opacity:0;transition:opacity .3s;pointer-events:none;border:1px solid #555}
 .toast.show{opacity:1}
 
+/* v2.0: 회전 각도 실시간 표시 HUD */
+.rot-hud{position:absolute;top:60px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.85);border:2px solid #f39c12;border-radius:8px;padding:10px 20px;font-size:24px;font-weight:bold;color:#f39c12;font-family:Consolas,'Malgun Gothic',monospace;z-index:55;display:none;pointer-events:none;box-shadow:0 4px 16px rgba(0,0,0,.6);min-width:180px;text-align:center}
+.rot-hud.show{display:block}
+.rot-hud .axis-label{font-size:14px;color:#fff;margin-right:8px}
+.rot-hud .delta{font-size:13px;color:#aac8ff;display:block;margin-top:4px;font-weight:normal}
+
 .viewcube{position:absolute;top:10px;right:10px;background:rgba(43,43,43,.9);border:1px solid #555;border-radius:6px;padding:6px;display:grid;grid-template-columns:repeat(3,38px);gap:3px;z-index:50}
 .viewcube button{padding:5px;font-size:10px;background:#3a3a3a}
 .viewcube button:hover{background:#4a6fa5}
@@ -138,7 +144,7 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
 
 <header>
   <h1>📐 tool3 v1.9</h1>
-  <span class="ver">v1.9 - 3축 이동·회전 핸들</span>
+  <span class="ver">v2.0 - 회전 각도 실시간 표시</span>
   <span class="mode-badge" id="modeBadge">스케처 모드</span>
   <span class="stat" id="statText">준비됨</span>
 </header>
@@ -307,6 +313,12 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
         <button onclick="fitView()" title="맞춤">FIT</button>
         <button onclick="resetView()" title="홈">🏠</button>
       </div>
+      <!-- v2.0: 회전 각도 실시간 HUD -->
+      <div class="rot-hud" id="rotHud">
+        <span class="axis-label" id="rotHudAxis">Y축</span>
+        <span id="rotHudAngle">0.0°</span>
+        <span class="delta" id="rotHudDelta">Δ 0.0°</span>
+      </div>
     </div>
     <div class="help-box" id="helpBox">
       <span class="close" onclick="toggleHelp()">✕</span>
@@ -323,6 +335,11 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
       • <span class="kbd">H</span> 구멍 전환 / <span class="kbd">L</span> 정렬<br>
       • <span class="kbd">방향키</span> 미세 이동<br>
       • <span class="kbd">?</span> 전체 단축키 도움말<br>
+      <br>
+      <b>🔄 회전 핸들 (v2.0)</b><br>
+      • 빨강(X)/초록(Y)/파랑(Z) 링 드래그<br>
+      • 드래그 중 상단에 각도 표시<br>
+      • <span class="kbd">Shift</span>+드래그 = 15° 스냅<br>
       <br>
       <b>📐 스케치 모드 (선택)</b><br>
       • 메뉴 → 스케치 또는 📐 버튼<br>
@@ -1491,9 +1508,23 @@ function setupRaycastClick(dom){
 
   dom.addEventListener('pointerup', (e) => {
     if(transformState.draggingHandle){
+      const h = transformState.draggingHandle;
+      const wasRotate = (h && h.type === 'rotate');
+      const p = transformState.activePart;
       transformState.draggingHandle = null;
       transformState._rotStart = null;
       transformState._rotInitial = null;
+      // v2.0: 회전 종료 시 HUD 숨김 및 최종 각도 알림
+      if(wasRotate){
+        hideRotHud();
+        if(p && p.mesh){
+          const deg = (p.mesh.rotation[h.axis] * 180 / Math.PI);
+          const axisName = h.axis.toUpperCase();
+          toast('↻ ' + axisName + '축 회전 = ' + deg.toFixed(1) + '°');
+          setStat('회전 완료: ' + axisName + '축 ' + deg.toFixed(1) + '°');
+          syncRotPropPanel(p);
+        }
+      }
       // 핸들 위치 갱신
       if(transformState.activePart) updateHandlePositions();
       e.stopPropagation();
@@ -1715,7 +1746,7 @@ function handleDrag(e){
     else if(axis === 'z') newScale.z = Math.max(0.05, transformState.dragStartScale.z * Math.max(0.05, f));
     p.mesh.scale.copy(newScale);
   } else if(h.type === 'rotate'){
-    // v1.9: 3축 회전 - 객체 중심을 화면에 투영하고 마우스 각도 차이로 회전
+    // v2.0: 3축 회전 - 객체 중심을 화면에 투영하고 마우스 각도 차이로 회전 + 실시간 각도 표시
     p.mesh.updateMatrixWorld(true);
     const bb = new THREE.Box3().setFromObject(p.mesh);
     const center3D = bb.getCenter(new THREE.Vector3());
@@ -1732,9 +1763,19 @@ function handleDrag(e){
     let delta = angleNow - transformState._rotStart;
     // 화면 좌표는 y가 아래로 +라 마우스 회전 방향과 일치
     // 축에 따른 부호 조정 (시각적으로 자연스럽게)
-    if(h.axis === 'y') p.mesh.rotation.y = transformState._rotInitial.y + delta;
-    else if(h.axis === 'x') p.mesh.rotation.x = transformState._rotInitial.x + delta;
-    else if(h.axis === 'z') p.mesh.rotation.z = transformState._rotInitial.z - delta;
+    let deltaSigned = (h.axis === 'z') ? -delta : delta;
+    // Shift 누르면 15° 단위 스냅
+    if(e.shiftKey){
+      const step = Math.PI / 12; // 15°
+      deltaSigned = Math.round(deltaSigned / step) * step;
+    }
+    if(h.axis === 'y') p.mesh.rotation.y = transformState._rotInitial.y + deltaSigned;
+    else if(h.axis === 'x') p.mesh.rotation.x = transformState._rotInitial.x + deltaSigned;
+    else if(h.axis === 'z') p.mesh.rotation.z = transformState._rotInitial.z + deltaSigned;
+    // v2.0: 실시간 각도 HUD 표시
+    showRotHud(h.axis, p.mesh.rotation[h.axis], deltaSigned, e.shiftKey);
+    // 속성 패널 회전값도 즉시 갱신 (선택된 부품이 동일하면)
+    syncRotPropPanel(p);
   }
   // 변형 후 치수 라벨 갱신
   showDimLabels(p);
@@ -2508,10 +2549,18 @@ function rotate90(axis){
   if(target.length === 0){toast('부품을 선택하세요'); return}
   target.forEach(p => {
     p.mesh.rotation[axis] += Math.PI/2;
+    syncRotPropPanel(p);
   });
   if(transformState.activePart) showTransformHandles(transformState.activePart);
   updateDimLabels();
-  toast('↻ ' + target.length + '개 부품 ' + axis.toUpperCase() + '축 90° 회전');
+  // v2.0: 누적 각도 표시
+  if(target.length === 1){
+    const deg = target[0].mesh.rotation[axis] * 180 / Math.PI;
+    toast('↻ ' + axis.toUpperCase() + '축 +90° → 누적 ' + deg.toFixed(1) + '°');
+    setStat(axis.toUpperCase() + '축 회전 누적: ' + deg.toFixed(1) + '°');
+  } else {
+    toast('↻ ' + target.length + '개 부품 ' + axis.toUpperCase() + '축 90° 회전');
+  }
 }
 
 // 방향키 미세 이동
@@ -3442,6 +3491,41 @@ function updateInfo(){
 }
 
 function setStat(msg){document.getElementById('statText').textContent = msg}
+
+// v2.0: 회전 각도 실시간 HUD
+function showRotHud(axis, currentRad, deltaRad, snapped){
+  const hud = document.getElementById('rotHud');
+  if(!hud) return;
+  const axisName = {x:'X축', y:'Y축', z:'Z축'}[axis] || axis;
+  const axisColor = {x:'#ff6666', y:'#66ff66', z:'#66aaff'}[axis] || '#f39c12';
+  const deg = currentRad * 180 / Math.PI;
+  const dDeg = deltaRad * 180 / Math.PI;
+  document.getElementById('rotHudAxis').textContent = axisName;
+  document.getElementById('rotHudAxis').style.color = axisColor;
+  document.getElementById('rotHudAngle').textContent = deg.toFixed(1) + '°';
+  document.getElementById('rotHudAngle').style.color = axisColor;
+  document.getElementById('rotHudDelta').textContent =
+    'Δ ' + (dDeg >= 0 ? '+' : '') + dDeg.toFixed(1) + '°' + (snapped ? '  [SNAP 15°]' : '  (Shift=15°스냅)');
+  hud.style.borderColor = axisColor;
+  hud.classList.add('show');
+  // footer 상태바에도 표시
+  setStat('🔄 ' + axisName + ' 회전: ' + deg.toFixed(1) + '°  (Δ ' + (dDeg >= 0 ? '+' : '') + dDeg.toFixed(1) + '°)' + (snapped ? '  [15° 스냅]' : ''));
+}
+function hideRotHud(){
+  const hud = document.getElementById('rotHud');
+  if(hud) hud.classList.remove('show');
+}
+// 속성 패널 회전값 동기화 (드래그 중에도)
+function syncRotPropPanel(part){
+  if(!part || !part.mesh) return;
+  if(state.selectedPartId !== part.id) return;
+  const rx = document.getElementById('psRotX');
+  const ry = document.getElementById('psRotY');
+  const rz = document.getElementById('psRotZ');
+  if(rx) rx.value = (part.mesh.rotation.x * 180/Math.PI).toFixed(1);
+  if(ry) ry.value = (part.mesh.rotation.y * 180/Math.PI).toFixed(1);
+  if(rz) rz.value = (part.mesh.rotation.z * 180/Math.PI).toFixed(1);
+}
 
 function toast(msg){
   const t = document.getElementById('toast');
