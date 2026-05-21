@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Catia3D v1.1 - 프레스 금형 부품 3D 모델러</title>
+<title>tool3 v1.9 - 3축 이동/회전 핸들</title>
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
@@ -32,6 +32,9 @@ header .stat{font-size:11px;color:#aac8ff;margin-left:auto}
 .toolbar{background:#3a3a3a;padding:6px 10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-bottom:1px solid #555;flex-shrink:0}
 .group{display:flex;align-items:center;gap:4px;padding:3px 8px;background:#2b2b2b;border-radius:5px;border:1px solid #555}
 .group label{font-size:11px;color:#ccc}
+/* v1.7: 모드별 자동 표시/숨김 */
+body.mode-model .sketch-only{display:none}
+body.mode-sketch .model-only{display:none}
 button{padding:5px 9px;background:#4a6fa5;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:11px;font-weight:bold;font-family:inherit}
 button:hover{background:#5a82bd}
 button:disabled{background:#555;cursor:not-allowed;opacity:.6}
@@ -52,6 +55,7 @@ input[type="color"]{width:26px;height:22px;border:1px solid #666;border-radius:3
 .part-item{padding:6px 8px;margin-bottom:3px;background:#2b2b2b;border:1px solid #444;border-radius:4px;font-size:11px;cursor:pointer;display:flex;align-items:center;gap:6px;transition:background .1s}
 .part-item:hover{background:#3a3a3a}
 .part-item.selected{background:#4a6fa5;border-color:#5a82bd}
+.part-item.multi-selected{background:#5a82bd;border-color:#7aa2dd;box-shadow:inset 0 0 0 2px #f39c12}
 .part-item .vis-btn{background:transparent;border:none;padding:0;font-size:13px;cursor:pointer;width:18px}
 .part-item .pname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .part-item .del-btn{background:transparent;border:none;padding:0;color:#e74c3c;font-size:12px;cursor:pointer}
@@ -93,6 +97,36 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
 .viewcube{position:absolute;top:10px;right:10px;background:rgba(43,43,43,.9);border:1px solid #555;border-radius:6px;padding:6px;display:grid;grid-template-columns:repeat(3,38px);gap:3px;z-index:50}
 .viewcube button{padding:5px;font-size:10px;background:#3a3a3a}
 .viewcube button:hover{background:#4a6fa5}
+/* v1.6: 치수 라벨 (Three.js 좌표 → 화면 좌표 변환) */
+.dim-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  background: rgba(243,156,18,0.95);
+  color: #1a1a1a;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: bold;
+  font-family: 'Segoe UI', monospace;
+  white-space: nowrap;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+  pointer-events: auto;
+  cursor: pointer;
+  user-select: none;
+  border: 1px solid #d35400;
+}
+.dim-label:hover { background: #ffaa33; transform: translate(-50%, -50%) scale(1.1); }
+.dim-label.editing {
+  background: #fff;
+  padding: 0;
+}
+.dim-label input {
+  width: 60px; padding: 4px 6px;
+  border: 2px solid #d35400; border-radius: 4px;
+  font-size: 12px; font-weight: bold; text-align: center;
+  background: #fff; color: #1a1a1a;
+  font-family: inherit;
+}
 
 .help-box{position:absolute;bottom:10px;left:10px;background:rgba(0,0,0,.88);border:1px solid #555;border-radius:6px;padding:10px;font-size:11px;line-height:1.6;color:#ccc;max-width:280px;z-index:40}
 .help-box b{color:#aac8ff}
@@ -103,8 +137,8 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
 <body>
 
 <header>
-  <h1>📐 Catia3D</h1>
-  <span class="ver">v1.1 - 프레스 금형 부품 3D 모델러</span>
+  <h1>📐 tool3 v1.9</h1>
+  <span class="ver">v1.9 - 3축 이동·회전 핸들</span>
   <span class="mode-badge" id="modeBadge">스케처 모드</span>
   <span class="stat" id="statText">준비됨</span>
 </header>
@@ -138,14 +172,51 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
     </div>
   </div>
   <div class="menu">
-    <div class="menu-title">3D 생성<span class="arrow">▼</span></div>
+    <div class="menu-title">기본 도형<span class="arrow">▼</span></div>
+    <div class="menu-dropdown">
+      <div class="menu-item" onclick="openPrimModal('box')"><span class="ico">📦</span>박스</div>
+      <div class="menu-item" onclick="openPrimModal('cylinder')"><span class="ico">🥫</span>원통</div>
+      <div class="menu-item" onclick="openPrimModal('sphere')"><span class="ico">⚪</span>구</div>
+      <div class="menu-item" onclick="openPrimModal('cone')"><span class="ico">🔺</span>원뿔</div>
+      <div class="menu-item" onclick="openPrimModal('pyramid')"><span class="ico">⛰️</span>피라미드</div>
+      <div class="menu-item" onclick="openPrimModal('torus')"><span class="ico">🍩</span>도넛 (Torus)</div>
+      <div class="menu-item" onclick="openPrimModal('wedge')"><span class="ico">📐</span>쐐기 (Wedge)</div>
+      <div class="menu-item" onclick="openPrimModal('tube')"><span class="ico">⭕</span>파이프/튜브</div>
+      <div class="menu-item" onclick="openTextModal()"><span class="ico">🔤</span>텍스트 3D</div>
+    </div>
+  </div>
+  <div class="menu">
+    <div class="menu-title">기계 부품<span class="arrow">▼</span></div>
+    <div class="menu-dropdown">
+      <div class="menu-item" onclick="openBoltModal()"><span class="ico">🔩</span>볼트 (Bolt)</div>
+      <div class="menu-item" onclick="openNutModal()"><span class="ico">⬢</span>너트 (Nut)</div>
+      <div class="menu-item" onclick="openSpringModal()"><span class="ico">🌀</span>스프링 (Spring)</div>
+    </div>
+  </div>
+  <div class="menu">
+    <div class="menu-title">스케치 3D<span class="arrow">▼</span></div>
     <div class="menu-dropdown">
       <div class="menu-item" onclick="openExtrudeModal()"><span class="ico">⬆️</span>돌출 (Extrude)</div>
       <div class="menu-item" onclick="openRevolveModal()"><span class="ico">🔄</span>회전체 (Revolve)</div>
+    </div>
+  </div>
+  <div class="menu">
+    <div class="menu-title">편집<span class="arrow">▼</span></div>
+    <div class="menu-dropdown">
+      <div class="menu-item" onclick="duplicatePart()"><span class="ico">📋</span>복제 (Duplicate)<span class="shortcut">Ctrl+D</span></div>
+      <div class="menu-item" onclick="mirrorPart('x')"><span class="ico">⇆</span>좌우 미러 (X)</div>
+      <div class="menu-item" onclick="mirrorPart('y')"><span class="ico">⇅</span>상하 미러 (Y)</div>
+      <div class="menu-item" onclick="mirrorPart('z')"><span class="ico">⇋</span>앞뒤 미러 (Z)</div>
       <div class="menu-sep"></div>
-      <div class="menu-item" onclick="addPrimitive('box')"><span class="ico">📦</span>박스 (기본도형)</div>
-      <div class="menu-item" onclick="addPrimitive('cylinder')"><span class="ico">🥫</span>원통 (기본도형)</div>
-      <div class="menu-item" onclick="addPrimitive('sphere')"><span class="ico">⚪</span>구 (기본도형)</div>
+      <div class="menu-item" onclick="toggleHole()"><span class="ico">🕳️</span>구멍 전환 (Hole)<span class="shortcut">H</span></div>
+      <div class="menu-item" onclick="openAlignModal()"><span class="ico">📐</span>정렬 (Align)</div>
+      <div class="menu-item" onclick="groupSelectedParts()"><span class="ico">🔗</span>그룹화 (구멍 빼기 포함)<span class="shortcut">Ctrl+G</span></div>
+      <div class="menu-item" onclick="ungroupPart()"><span class="ico">✂️</span>그룹 해제<span class="shortcut">Ctrl+Shift+G</span></div>
+      <div class="menu-sep"></div>
+      <div class="menu-item" onclick="openPosSizeModal()"><span class="ico">📏</span>위치/크기 직접 입력</div>
+      <div class="menu-item" onclick="resetTransform()"><span class="ico">🔄</span>변형 초기화</div>
+      <div class="menu-sep"></div>
+      <div class="menu-item" onclick="deletePart()"><span class="ico">🗑️</span>삭제<span class="shortcut">Del</span></div>
     </div>
   </div>
   <div class="menu">
@@ -166,61 +237,68 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
     <div class="menu-title">도움말<span class="arrow">▼</span></div>
     <div class="menu-dropdown">
       <div class="menu-item" onclick="toggleHelp()"><span class="ico">❓</span>사용법 보기</div>
-      <div class="menu-item" onclick="alert('Catia3D v1.0\n프레스 금형 부품 3D 모델러\n태진다이텍 품질관리팀\n\n태진다이텍 ESG Smart Factory')"><span class="ico">ℹ️</span>정보</div>
+      <div class="menu-item" onclick="showShortcutHelp()"><span class="ico">⌨️</span>단축키 (?)<span class="shortcut">?</span></div>
+      <div class="menu-item" onclick="alert('tool3 v1.3\n3D 모델러\n돌출 · 회전 · 볼트/너트/스프링\n\n태진다이텍 ESG Smart Factory')"><span class="ico">ℹ️</span>정보</div>
     </div>
   </div>
 </div>
 
 <div class="toolbar">
-  <div class="group">
+  <!-- 스케치 모드 전용 도구 (3D 모드에서는 자동 숨김) -->
+  <div class="group sketch-only">
     <label>도구:</label>
-    <button id="btn-line" onclick="setTool('line')">📏 선</button>
-    <button id="btn-rect" onclick="setTool('rect')">⬜ 사각</button>
-    <button id="btn-circle" onclick="setTool('circle')">⭕ 원</button>
-    <button id="btn-arc" onclick="setTool('arc')">⌒ 호</button>
-    <button id="btn-select" onclick="setTool('select')">👆 선택</button>
+    <button id="btn-line" onclick="setTool('line')" title="선 (L)">📏</button>
+    <button id="btn-rect" onclick="setTool('rect')" title="사각형 (R)">⬜</button>
+    <button id="btn-circle" onclick="setTool('circle')" title="원 (C)">⭕</button>
+    <button id="btn-arc" onclick="setTool('arc')" title="호 (A)">⌒</button>
+    <button id="btn-select" onclick="setTool('select')" title="선택 (S)">👆</button>
   </div>
-  <div class="group">
+  <div class="group sketch-only">
     <label>스냅:</label>
-    <button id="btn-gridsnap" class="active" onclick="toggleGridSnap()">⊞ 격자</button>
-    <input type="number" id="gridSize" value="10" min="1" max="100" step="1" style="width:50px" title="격자 크기(mm)">
-    <span style="font-size:10px;color:#888">mm</span>
+    <button id="btn-gridsnap" class="active" onclick="toggleGridSnap()" title="격자 스냅">⊞</button>
+    <input type="number" id="gridSize" value="10" min="1" max="100" step="1" style="width:45px" title="격자 크기(mm)">
   </div>
-  <div class="group">
+  <div class="group sketch-only">
     <label>색상:</label>
     <input type="color" id="sketchColor" value="#000000">
     <label>두께:</label>
-    <input type="number" id="lineWidth" value="2" min="1" max="10" style="width:40px">
+    <input type="number" id="lineWidth" value="2" min="1" max="10" style="width:36px">
+  </div>
+  <div class="group sketch-only">
+    <button class="purple" onclick="openExtrudeModal()" title="돌출 (Extrude)">⬆️ 돌출</button>
+    <button class="purple" onclick="openRevolveModal()" title="회전체 (Revolve)">🔄 회전체</button>
+  </div>
+
+  <!-- 모드 전환 (작게) -->
+  <div class="group">
+    <button onclick="switchMode('sketch')" id="btnSketchMode" title="스케치 모드">📐</button>
+    <button onclick="switchMode('model')" id="btnModelMode" class="active" title="3D 뷰">🎲</button>
   </div>
   <div class="group">
-    <button class="purple" onclick="openExtrudeModal()">⬆️ 돌출</button>
-    <button class="purple" onclick="openRevolveModal()">🔄 회전체</button>
+    <button class="warn" onclick="undo()" title="실행 취소 (Ctrl+Z)">↶</button>
+    <button class="warn" onclick="redo()" title="다시 실행 (Ctrl+Y)">↷</button>
   </div>
-  <div class="group">
-    <button onclick="switchMode('sketch')" id="btnSketchMode" class="active">📐 스케처</button>
-    <button onclick="switchMode('model')" id="btnModelMode">🎲 3D 뷰</button>
-  </div>
-  <div class="group">
-    <button class="warn" onclick="undo()">↶ Undo</button>
-    <button class="warn" onclick="redo()">↷ Redo</button>
+  <!-- 3D 모드 전용 빠른 도구 -->
+  <div class="group model-only">
+    <button onclick="dropToGround()" title="바닥에 떨어뜨리기 (D)">⬇️ D</button>
+    <button onclick="rotate90('y')" title="Y축 90° 회전 (R)">↻ R</button>
+    <button onclick="mirrorPart('x')" title="좌우 미러 (M)">⇆ M</button>
+    <button onclick="duplicatePart()" title="복제 (Ctrl+D)">📋</button>
+    <button onclick="toggleHole()" title="구멍 전환 (H)" style="background:#c0392b">🕳️ H</button>
+    <button onclick="groupSelectedParts()" title="그룹화 (Ctrl+G)">🔗 G</button>
+    <button onclick="openAlignModal()" title="정렬 (L)">📐 L</button>
   </div>
 </div>
 
 <div class="main">
-  <div class="parts-panel">
-    <div class="parts-hdr">
-      <span>📦 부품 트리</span>
-      <button onclick="addPrimitive('box')" style="padding:2px 6px;font-size:10px">＋</button>
-    </div>
-    <div class="parts-list" id="partsList"></div>
-  </div>
-
   <div class="canvas-wrap">
     <div class="sketch-area" id="sketchArea">
       <canvas id="sketchCanvas"></canvas>
     </div>
     <div class="viewer-area" id="viewerArea">
       <div id="viewerCanvas"></div>
+      <!-- v1.6: 치수 라벨 오버레이 -->
+      <div id="dimLabels" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:5"></div>
       <div class="viewcube">
         <button onclick="setView('top')" title="윗면">TOP</button>
         <button onclick="setView('front')" title="앞면">FRT</button>
@@ -232,18 +310,24 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
     </div>
     <div class="help-box" id="helpBox">
       <span class="close" onclick="toggleHelp()">✕</span>
-      <b>📐 스케처 모드</b><br>
-      • 도구 선택 후 캔버스 클릭<br>
-      • <span class="kbd">L</span>/<span class="kbd">R</span>/<span class="kbd">C</span>/<span class="kbd">A</span> 선/사각/원/호<br>
-      • <span class="kbd">Esc</span> 도구 취소<br>
-      • <span class="kbd">Del</span> 선택 삭제<br>
-      • 우클릭 드래그: 패닝, 휠: 줌<br>
-      <br>
-      <b>🎲 3D 뷰</b><br>
+      <b>🎲 3D 모드 (기본)</b><br>
       • 좌클릭 드래그: 회전<br>
       • 우클릭 드래그: 이동<br>
       • 휠: 줌<br>
-      • <span class="kbd">W</span> 와이어프레임 / <span class="kbd">F</span> 맞춤<br>
+      • 객체 클릭: 선택 + 핸들/치수<br>
+      • 치수 라벨 클릭: 직접 입력<br>
+      <br>
+      <b>⌨️ 단축키 (3D)</b><br>
+      • <span class="kbd">D</span> 바닥에 안착<br>
+      • <span class="kbd">R</span> 90° 회전 / <span class="kbd">M</span> 미러<br>
+      • <span class="kbd">H</span> 구멍 전환 / <span class="kbd">L</span> 정렬<br>
+      • <span class="kbd">방향키</span> 미세 이동<br>
+      • <span class="kbd">?</span> 전체 단축키 도움말<br>
+      <br>
+      <b>📐 스케치 모드 (선택)</b><br>
+      • 메뉴 → 스케치 또는 📐 버튼<br>
+      • <span class="kbd">L</span>/<span class="kbd">R</span>/<span class="kbd">C</span>/<span class="kbd">A</span> 도구<br>
+      • 돌출/회전체로 3D 생성<br>
     </div>
   </div>
 
@@ -348,6 +432,18 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
       </select>
     </div>
     <div class="modal-row">
+      <label>축 거리(mm)</label>
+      <input type="number" id="revolveAxisOffset" value="0" step="0.1" title="단면과 회전축 사이 거리. 0이면 단면이 축에 붙음. 양수면 토러스(도넛) 형태가 됨">
+    </div>
+    <div class="modal-row">
+      <label>축 위치 모드</label>
+      <select id="revolveAxisMode" title="auto: 단면 중심이 자동으로 결정 / left: 단면 왼쪽(또는 위쪽)이 축 기준 / right: 단면 오른쪽(또는 아래쪽)이 축 기준">
+        <option value="auto">자동 (단면 중심 기준)</option>
+        <option value="near">가까운 변 기준 (단면 안쪽)</option>
+        <option value="far">먼 변 기준 (단면 바깥쪽)</option>
+      </select>
+    </div>
+    <div class="modal-row">
       <label>회전 각도</label>
       <input type="number" id="revolveAngle" value="360" min="1" max="360" step="1">
     </div>
@@ -365,6 +461,8 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
     </div>
     <div class="info-box">
       ⚠️ 회전 단면이 될 선/호를 그린 후 실행하세요.<br>
+      <b>축 거리</b>: 0=단면이 축에 붙음, 양수=축에서 떨어져 회전 (도넛 형태)<br>
+      <b>축 위치 모드</b>: 축 거리가 적용될 기준점 선택<br>
       축 기준으로 단면을 회전시켜 솔리드를 생성합니다.
     </div>
     <div class="modal-actions">
@@ -374,7 +472,296 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
   </div>
 </div>
 
+<!-- 볼트 모달 -->
+<div class="modal-overlay" id="boltModal">
+  <div class="modal">
+    <h3>🔩 볼트 (Bolt) 생성</h3>
+    <div class="modal-row">
+      <label>규격 프리셋</label>
+      <select id="boltPreset" onchange="applyBoltPreset()">
+        <option value="custom">사용자 정의</option>
+        <option value="M3">M3 (Ø3, 머리Ø5.5, 길이10)</option>
+        <option value="M4">M4 (Ø4, 머리Ø7, 길이12)</option>
+        <option value="M5">M5 (Ø5, 머리Ø8.5, 길이16)</option>
+        <option value="M6" selected>M6 (Ø6, 머리Ø10, 길이20)</option>
+        <option value="M8">M8 (Ø8, 머리Ø13, 길이25)</option>
+        <option value="M10">M10 (Ø10, 머리Ø17, 길이30)</option>
+        <option value="M12">M12 (Ø12, 머리Ø19, 길이40)</option>
+      </select>
+    </div>
+    <div class="modal-row">
+      <label>나사부 지름(mm)</label>
+      <input type="number" id="boltShankD" value="6" min="1" step="0.5">
+    </div>
+    <div class="modal-row">
+      <label>나사부 길이(mm)</label>
+      <input type="number" id="boltShankL" value="20" min="1" step="1">
+    </div>
+    <div class="modal-row">
+      <label>머리 지름(mm)</label>
+      <input type="number" id="boltHeadD" value="10" min="2" step="0.5">
+    </div>
+    <div class="modal-row">
+      <label>머리 높이(mm)</label>
+      <input type="number" id="boltHeadH" value="4" min="1" step="0.5">
+    </div>
+    <div class="modal-row">
+      <label>머리 형태</label>
+      <select id="boltHeadType">
+        <option value="hex" selected>육각 (Hex)</option>
+        <option value="round">둥근머리 (Round)</option>
+        <option value="cap">캡스크류 (Allen)</option>
+      </select>
+    </div>
+    <div class="modal-row">
+      <label>색상</label>
+      <input type="color" id="boltColor" value="#888a8c">
+    </div>
+    <div class="modal-row">
+      <label>부품명</label>
+      <input type="text" id="boltPartName" placeholder="자동 생성">
+    </div>
+    <div class="info-box">
+      🔩 KS B 1002 육각볼트 규격 기반. 나사산은 표현하지 않고 매끈한 원통으로 단순화합니다.
+    </div>
+    <div class="modal-actions">
+      <button onclick="closeModal('boltModal')">취소</button>
+      <button class="success" onclick="doBolt()">생성</button>
+    </div>
+  </div>
+</div>
+
+<!-- 너트 모달 -->
+<div class="modal-overlay" id="nutModal">
+  <div class="modal">
+    <h3>⬢ 너트 (Nut) 생성</h3>
+    <div class="modal-row">
+      <label>규격 프리셋</label>
+      <select id="nutPreset" onchange="applyNutPreset()">
+        <option value="custom">사용자 정의</option>
+        <option value="M3">M3 (구멍Ø3, 외경Ø5.5, 높이2.4)</option>
+        <option value="M4">M4 (구멍Ø4, 외경Ø7, 높이3.2)</option>
+        <option value="M5">M5 (구멍Ø5, 외경Ø8, 높이4)</option>
+        <option value="M6" selected>M6 (구멍Ø6, 외경Ø10, 높이5)</option>
+        <option value="M8">M8 (구멍Ø8, 외경Ø13, 높이6.5)</option>
+        <option value="M10">M10 (구멍Ø10, 외경Ø17, 높이8)</option>
+        <option value="M12">M12 (구멍Ø12, 외경Ø19, 높이10)</option>
+      </select>
+    </div>
+    <div class="modal-row">
+      <label>구멍 지름(mm)</label>
+      <input type="number" id="nutHoleD" value="6" min="1" step="0.5">
+    </div>
+    <div class="modal-row">
+      <label>외경(육각 대변)(mm)</label>
+      <input type="number" id="nutOuterD" value="10" min="2" step="0.5">
+    </div>
+    <div class="modal-row">
+      <label>높이(mm)</label>
+      <input type="number" id="nutHeight" value="5" min="1" step="0.5">
+    </div>
+    <div class="modal-row">
+      <label>색상</label>
+      <input type="color" id="nutColor" value="#888a8c">
+    </div>
+    <div class="modal-row">
+      <label>부품명</label>
+      <input type="text" id="nutPartName" placeholder="자동 생성">
+    </div>
+    <div class="info-box">
+      ⬢ KS B 1012 육각너트. 육각 외형 + 가운데 원형 구멍.
+    </div>
+    <div class="modal-actions">
+      <button onclick="closeModal('nutModal')">취소</button>
+      <button class="success" onclick="doNut()">생성</button>
+    </div>
+  </div>
+</div>
+
+<!-- 스프링 모달 -->
+<div class="modal-overlay" id="springModal">
+  <div class="modal">
+    <h3>🌀 스프링 (Spring) 생성</h3>
+    <div class="modal-row">
+      <label>코일 평균 지름(mm)</label>
+      <input type="number" id="springCoilD" value="20" min="2" step="0.5" title="스프링 중심선의 지름">
+    </div>
+    <div class="modal-row">
+      <label>선재 지름(mm)</label>
+      <input type="number" id="springWireD" value="2" min="0.3" step="0.1" title="스프링 와이어 자체의 굵기">
+    </div>
+    <div class="modal-row">
+      <label>자유 길이(mm)</label>
+      <input type="number" id="springLength" value="40" min="5" step="1">
+    </div>
+    <div class="modal-row">
+      <label>유효 권수</label>
+      <input type="number" id="springTurns" value="6" min="1" step="0.5" title="감기는 횟수">
+    </div>
+    <div class="modal-row">
+      <label>분할 수 (정밀도)</label>
+      <input type="number" id="springSeg" value="64" min="16" max="256" step="8">
+    </div>
+    <div class="modal-row">
+      <label>색상</label>
+      <input type="color" id="springColor" value="#aab0b8">
+    </div>
+    <div class="modal-row">
+      <label>부품명</label>
+      <input type="text" id="springPartName" placeholder="자동 생성">
+    </div>
+    <div class="info-box">
+      🌀 압축 코일 스프링. 자유 길이는 양 끝점 사이 거리, 권수는 감기는 횟수.
+    </div>
+    <div class="modal-actions">
+      <button onclick="closeModal('springModal')">취소</button>
+      <button class="success" onclick="doSpring()">생성</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
+<!-- 통합 도형 생성 모달 (v1.4) -->
+<div class="modal-overlay" id="primitiveModal">
+  <div class="modal">
+    <h3 id="primTitle">📦 박스 생성</h3>
+    <div id="primFields"></div>
+    <div class="modal-row">
+      <label>위치 X (mm)</label>
+      <input type="number" id="primPosX" value="0" step="1">
+    </div>
+    <div class="modal-row">
+      <label>위치 Y (mm)</label>
+      <input type="number" id="primPosY" value="0" step="1">
+    </div>
+    <div class="modal-row">
+      <label>위치 Z (mm)</label>
+      <input type="number" id="primPosZ" value="0" step="1">
+    </div>
+    <div class="modal-row">
+      <label>색상</label>
+      <input type="color" id="primColor" value="#7a8aa0">
+    </div>
+    <div class="modal-row">
+      <label>부품명</label>
+      <input type="text" id="primPartName" placeholder="자동 생성">
+    </div>
+    <div class="info-box" id="primInfo">크기와 위치를 입력하세요.</div>
+    <div class="modal-actions">
+      <button onclick="closeModal('primitiveModal')">취소</button>
+      <button class="success" onclick="doPrimitive()">생성</button>
+    </div>
+  </div>
+</div>
+
+<!-- 텍스트 3D 모달 -->
+<div class="modal-overlay" id="textModal">
+  <div class="modal">
+    <h3>🔤 텍스트 3D</h3>
+    <div class="modal-row">
+      <label>내용</label>
+      <input type="text" id="text3dContent" value="태진" placeholder="텍스트 입력">
+    </div>
+    <div class="modal-row">
+      <label>크기 (mm)</label>
+      <input type="number" id="text3dSize" value="20" min="1" step="1">
+    </div>
+    <div class="modal-row">
+      <label>두께(돌출, mm)</label>
+      <input type="number" id="text3dDepth" value="5" min="0.5" step="0.5">
+    </div>
+    <div class="modal-row">
+      <label>위치 X</label>
+      <input type="number" id="text3dPosX" value="0" step="1">
+    </div>
+    <div class="modal-row">
+      <label>위치 Y</label>
+      <input type="number" id="text3dPosY" value="0" step="1">
+    </div>
+    <div class="modal-row">
+      <label>위치 Z</label>
+      <input type="number" id="text3dPosZ" value="0" step="1">
+    </div>
+    <div class="modal-row">
+      <label>색상</label>
+      <input type="color" id="text3dColor" value="#d35400">
+    </div>
+    <div class="modal-row">
+      <label>부품명</label>
+      <input type="text" id="text3dName" placeholder="자동 생성">
+    </div>
+    <div class="info-box">
+      📌 영문/숫자만 지원합니다 (Three.js 내장 폰트). 한글은 단순 음각 처리.
+    </div>
+    <div class="modal-actions">
+      <button onclick="closeModal('textModal')">취소</button>
+      <button class="success" onclick="doText3D()">생성</button>
+    </div>
+  </div>
+</div>
+
+<!-- 정렬 모달 -->
+<div class="modal-overlay" id="alignModal">
+  <div class="modal">
+    <h3>📐 정렬 (Align)</h3>
+    <div class="info-box">
+      여러 부품을 선택 (부품 패널에서 Ctrl+클릭) 후 정렬 방식을 선택하세요.<br>
+      선택된 부품 수: <b id="alignSelCount">0</b>
+    </div>
+    <div class="modal-row">
+      <label>정렬 기준 축</label>
+      <select id="alignAxis">
+        <option value="x">X축 (좌우)</option>
+        <option value="y">Y축 (위아래)</option>
+        <option value="z">Z축 (앞뒤)</option>
+      </select>
+    </div>
+    <div class="modal-row">
+      <label>정렬 방식</label>
+      <select id="alignMode">
+        <option value="min">최소값 정렬 (왼쪽/아래/앞)</option>
+        <option value="center" selected>중심 정렬</option>
+        <option value="max">최대값 정렬 (오른쪽/위/뒤)</option>
+        <option value="distribute">균등 분배</option>
+      </select>
+    </div>
+    <div class="modal-actions">
+      <button onclick="closeModal('alignModal')">취소</button>
+      <button class="success" onclick="doAlign()">정렬 실행</button>
+    </div>
+  </div>
+</div>
+
+<!-- v1.5: 위치/크기 직접 입력 모달 -->
+<div class="modal-overlay" id="posSizeModal">
+  <div class="modal">
+    <h3>📏 위치 / 크기 / 회전</h3>
+    <div class="info-box">선택된 부품: <b id="posSizePartName">-</b></div>
+    <fieldset style="border:1px solid #444; padding:8px; margin:6px 0;">
+      <legend style="color:#4a6fa5; font-size:11px;">위치 (Position, mm)</legend>
+      <div class="modal-row"><label>X</label><input type="number" id="psPosX" value="0" step="1"></div>
+      <div class="modal-row"><label>Y</label><input type="number" id="psPosY" value="0" step="1"></div>
+      <div class="modal-row"><label>Z</label><input type="number" id="psPosZ" value="0" step="1"></div>
+    </fieldset>
+    <fieldset style="border:1px solid #444; padding:8px; margin:6px 0;">
+      <legend style="color:#4a6fa5; font-size:11px;">크기 배율 (Scale)</legend>
+      <div class="modal-row"><label>X 배율</label><input type="number" id="psSclX" value="1" step="0.1" min="0.05"></div>
+      <div class="modal-row"><label>Y 배율</label><input type="number" id="psSclY" value="1" step="0.1" min="0.05"></div>
+      <div class="modal-row"><label>Z 배율</label><input type="number" id="psSclZ" value="1" step="0.1" min="0.05"></div>
+    </fieldset>
+    <fieldset style="border:1px solid #444; padding:8px; margin:6px 0;">
+      <legend style="color:#4a6fa5; font-size:11px;">회전 (Rotation, 도)</legend>
+      <div class="modal-row"><label>X축</label><input type="number" id="psRotX" value="0" step="5"></div>
+      <div class="modal-row"><label>Y축</label><input type="number" id="psRotY" value="0" step="5"></div>
+      <div class="modal-row"><label>Z축</label><input type="number" id="psRotZ" value="0" step="5"></div>
+    </fieldset>
+    <div class="modal-actions">
+      <button onclick="closeModal('posSizeModal')">취소</button>
+      <button class="success" onclick="applyPosSize()">적용</button>
+    </div>
+  </div>
+</div>
+
 <input type="file" id="fileInput" accept=".json" style="display:none" onchange="loadProject(event)">
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -884,6 +1271,7 @@ function initThree(){
   scene.add(axesHelper);
   
   setupOrbit(renderer.domElement);
+  setupRaycastClick(renderer.domElement);
   animate();
 }
 
@@ -900,7 +1288,456 @@ function onThreeResize(){
 
 function animate(){
   requestAnimationFrame(animate);
-  if(renderer && scene && camera) renderer.render(scene, camera);
+  if(renderer && scene && camera){
+    renderer.render(scene, camera);
+    // 치수 라벨 위치 갱신 (선택된 객체가 있을 때만)
+    if(transformState.activePart && !dimEditingActive){
+      updateDimLabelPositions();
+    }
+  }
+}
+
+// v1.6: 치수 라벨 시스템
+let dimLabels = []; // [{el, axis, getValue, setValue}]
+let dimEditingActive = false;
+
+function showDimLabels(part){
+  hideDimLabels();
+  if(!part || !part.mesh) return;
+  part.mesh.updateMatrixWorld(true);
+  const bb = new THREE.Box3().setFromObject(part.mesh);
+  const size = bb.getSize(new THREE.Vector3());
+  const center = bb.getCenter(new THREE.Vector3());
+  const container = document.getElementById('dimLabels');
+  if(!container) return;
+
+  // 3개 축의 치수 표시 (X=빨강면 중심, Y=초록면 중심, Z=파랑면 중심)
+  const labels = [
+    {axis: 'x', label: 'W', value: size.x, anchor: new THREE.Vector3(center.x, bb.min.y - size.y*0.15, bb.max.z + size.z*0.1)},
+    {axis: 'y', label: 'H', value: size.y, anchor: new THREE.Vector3(bb.max.x + size.x*0.15, center.y, bb.max.z + size.z*0.1)},
+    {axis: 'z', label: 'D', value: size.z, anchor: new THREE.Vector3(bb.max.x + size.x*0.15, bb.min.y - size.y*0.15, center.z)}
+  ];
+
+  labels.forEach(L => {
+    const el = document.createElement('div');
+    el.className = 'dim-label';
+    el.textContent = L.label + ': ' + L.value.toFixed(1);
+    el.title = L.label + ' (' + L.axis + '축) 치수. 클릭하여 직접 입력';
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      startEditDim(el, L.axis, L.value, part);
+    });
+    container.appendChild(el);
+    dimLabels.push({el, axis: L.axis, anchor: L.anchor, label: L.label});
+  });
+  updateDimLabelPositions();
+}
+
+function hideDimLabels(){
+  const container = document.getElementById('dimLabels');
+  if(container) container.innerHTML = '';
+  dimLabels = [];
+}
+
+function updateDimLabels(){
+  if(transformState.activePart && state.mode === 'model'){
+    showDimLabels(transformState.activePart);
+  }
+}
+
+function updateDimLabelPositions(){
+  if(!renderer || !camera || dimLabels.length === 0) return;
+  const rect = renderer.domElement.getBoundingClientRect();
+  const w = rect.width, h = rect.height;
+  dimLabels.forEach(L => {
+    const v = L.anchor.clone().project(camera);
+    const x = (v.x + 1) * 0.5 * w;
+    const y = (-v.y + 1) * 0.5 * h;
+    L.el.style.left = x + 'px';
+    L.el.style.top = y + 'px';
+    // 카메라 뒤쪽이면 숨김
+    L.el.style.display = (v.z > 1) ? 'none' : '';
+  });
+}
+
+function startEditDim(el, axis, currentValue, part){
+  dimEditingActive = true;
+  el.classList.add('editing');
+  const oldText = el.textContent;
+  el.innerHTML = '<input type="number" step="0.1" value="' + currentValue.toFixed(1) + '">';
+  const input = el.querySelector('input');
+  input.focus();
+  input.select();
+  function finish(commit){
+    dimEditingActive = false;
+    el.classList.remove('editing');
+    if(commit){
+      const newVal = parseFloat(input.value);
+      if(!isNaN(newVal) && newVal > 0){
+        // 현재 바운딩박스 크기 대비 비율로 scale 적용
+        part.mesh.updateMatrixWorld(true);
+        const bb = new THREE.Box3().setFromObject(part.mesh);
+        const cur = bb.getSize(new THREE.Vector3())[axis];
+        if(cur > 0){
+          // 중심을 유지하면서 크기 변경
+          const center = bb.getCenter(new THREE.Vector3());
+          const factor = newVal / cur;
+          part.mesh.scale[axis] *= factor;
+          // 위치 보정: scale 후 중심이 바뀌므로 다시 중심으로
+          part.mesh.updateMatrixWorld(true);
+          const bb2 = new THREE.Box3().setFromObject(part.mesh);
+          const newCenter = bb2.getCenter(new THREE.Vector3());
+          part.mesh.position[axis] += (center[axis] - newCenter[axis]);
+          // 핸들 + 라벨 갱신
+          showTransformHandles(part);
+          showDimLabels(part);
+          toast('📏 ' + axis.toUpperCase() + ' 치수 → ' + newVal.toFixed(1) + 'mm');
+          return;
+        }
+      }
+    }
+    el.textContent = oldText;
+  }
+  input.addEventListener('keydown', (ev) => {
+    if(ev.key === 'Enter'){ev.preventDefault(); finish(true);}
+    else if(ev.key === 'Escape'){ev.preventDefault(); finish(false);}
+  });
+  input.addEventListener('blur', () => finish(true));
+}
+
+// ===== v1.5: 3D 뷰 객체 선택 + 변형 핸들 =====
+let transformState = {
+  activePart: null,     // 현재 선택된 part (핸들 표시 대상)
+  handleGroup: null,    // 핸들들이 담긴 Group
+  draggingHandle: null, // 현재 드래그 중인 핸들 정보
+  dragStart: null,
+  dragStartPos: null,
+  dragStartScale: null,
+  _rotStart: null,      // 회전 시작 각도 (마우스 좌표 기준)
+  _rotInitial: null,    // 회전 시작 시 객체의 rotation
+  mode: 'move'          // 'move' | 'scale' | 'rotate'
+};
+
+const raycaster = new THREE.Raycaster();
+const mouseVec = new THREE.Vector2();
+
+function setupRaycastClick(dom){
+  dom.addEventListener('pointerdown', (e) => {
+    if(e.button !== 0) return;
+    // 핸들이 활성화되어 있으면 핸들 클릭 우선 검사
+    if(transformState.handleGroup){
+      const handleHit = pickHandle(e);
+      if(handleHit){
+        transformState.draggingHandle = handleHit;
+        // 시작 위치/크기 저장
+        const p = transformState.activePart;
+        transformState.dragStartPos = p.mesh.position.clone();
+        transformState.dragStartScale = p.mesh.scale.clone();
+        transformState.dragStart = {x: e.clientX, y: e.clientY};
+        transformState._rotStart = null; // 회전 시작 각도 재계산용
+        transformState._rotInitial = null;
+        orbitState.rotating = false;
+        orbitState.panning = false;
+        return;
+      }
+    }
+    // 객체 클릭 검사 (orbit 시작 전에)
+    const partHit = pickPart(e);
+    if(partHit){
+      const ctrl = e.ctrlKey || e.metaKey;
+      if(ctrl){
+        partHit._selected = !partHit._selected;
+      } else {
+        state.parts.forEach(p => p._selected = false);
+        partHit._selected = true;
+      }
+      state.selectedPartId = partHit.id;
+      // 속성 패널 갱신
+      document.getElementById('selectedPartProp').style.display = '';
+      document.getElementById('propPartName').value = partHit.name;
+      document.getElementById('propPartColor').value = partHit.color;
+      document.getElementById('propPartOpacity').value = Math.round(partHit.opacity * 100);
+      renderPartsList();
+      updateMultiSelectHighlight();
+      // 핸들 표시 (단일 선택일 때만)
+      const selCount = state.parts.filter(p => p._selected).length;
+      if(selCount === 1){
+        showTransformHandles(partHit);
+      } else {
+        hideTransformHandles();
+      }
+      // orbit 비활성화
+      orbitState.rotating = false;
+      orbitState.panning = false;
+      // 클릭이 처리됐으니 이벤트 전파 막음 (가능하면)
+      e.stopPropagation();
+      return;
+    }
+    // 빈 공간 클릭 → 선택 해제
+    if(!e.ctrlKey && !e.metaKey){
+      state.parts.forEach(p => p._selected = false);
+      hideTransformHandles();
+      renderPartsList();
+      updateMultiSelectHighlight();
+    }
+  }, true);
+
+  dom.addEventListener('pointermove', (e) => {
+    if(transformState.draggingHandle){
+      handleDrag(e);
+      e.stopPropagation();
+    }
+  }, true);
+
+  dom.addEventListener('pointerup', (e) => {
+    if(transformState.draggingHandle){
+      transformState.draggingHandle = null;
+      transformState._rotStart = null;
+      transformState._rotInitial = null;
+      // 핸들 위치 갱신
+      if(transformState.activePart) updateHandlePositions();
+      e.stopPropagation();
+    }
+  }, true);
+}
+
+function pickPart(e){
+  const rect = renderer.domElement.getBoundingClientRect();
+  mouseVec.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+  mouseVec.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(mouseVec, camera);
+  // 모든 part 메쉬 (visible만)
+  const meshes = [];
+  state.parts.forEach(p => {
+    if(p.visible && p.mesh){
+      p.mesh.traverse(o => {
+        if(o.isMesh){
+          o.userData._partId = p.id;
+          meshes.push(o);
+        }
+      });
+    }
+  });
+  const hits = raycaster.intersectObjects(meshes, false);
+  if(hits.length === 0) return null;
+  const partId = hits[0].object.userData._partId;
+  return state.parts.find(p => p.id === partId);
+}
+
+function pickHandle(e){
+  if(!transformState.handleGroup) return null;
+  const rect = renderer.domElement.getBoundingClientRect();
+  mouseVec.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+  mouseVec.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(mouseVec, camera);
+  const handleMeshes = [];
+  transformState.handleGroup.traverse(o => {
+    if(o.isMesh && o.userData._handle){
+      handleMeshes.push(o);
+    }
+  });
+  const hits = raycaster.intersectObjects(handleMeshes, false);
+  if(hits.length === 0) return null;
+  return hits[0].object.userData._handle;
+}
+
+function showTransformHandles(part){
+  hideTransformHandles();
+  transformState.activePart = part;
+  const group = new THREE.Group();
+  group.name = '_handleGroup';
+  // 바운딩박스 계산
+  part.mesh.updateMatrixWorld(true);
+  const bb = new THREE.Box3().setFromObject(part.mesh);
+  const center = bb.getCenter(new THREE.Vector3());
+  const size = bb.getSize(new THREE.Vector3());
+  const maxSize = Math.max(size.x, size.y, size.z, 10);
+  const handleSize = maxSize * 0.05;
+  const arrowLen = maxSize * 0.7;
+
+  // 바운딩박스 와이어
+  const boxGeom = new THREE.BoxGeometry(size.x, size.y, size.z);
+  const edges = new THREE.EdgesGeometry(boxGeom);
+  const wire = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({color: 0xf39c12, linewidth: 2}));
+  wire.position.copy(center);
+  wire.userData._handle = null;
+  group.add(wire);
+
+  // 이동 핸들 (3축 화살표)
+  function makeArrow(color, label){
+    const arrowGroup = new THREE.Group();
+    const shaftGeom = new THREE.CylinderGeometry(handleSize*0.3, handleSize*0.3, arrowLen*0.8, 12);
+    const shaftMat = new THREE.MeshBasicMaterial({color, depthTest: false, transparent: true, opacity: 0.9});
+    const shaft = new THREE.Mesh(shaftGeom, shaftMat);
+    shaft.position.y = arrowLen*0.4;
+    arrowGroup.add(shaft);
+    const tipGeom = new THREE.ConeGeometry(handleSize*0.8, arrowLen*0.2, 16);
+    const tip = new THREE.Mesh(tipGeom, shaftMat);
+    tip.position.y = arrowLen*0.9;
+    tip.userData._handle = {type: 'move', axis: label};
+    shaft.userData._handle = {type: 'move', axis: label};
+    arrowGroup.add(tip);
+    if(label === 'x') arrowGroup.rotation.z = -Math.PI/2;
+    else if(label === 'z') arrowGroup.rotation.x = Math.PI/2;
+    arrowGroup.position.copy(center);
+    arrowGroup.renderOrder = 999;
+    return arrowGroup;
+  }
+  group.add(makeArrow(0xff4444, 'x'));
+  group.add(makeArrow(0x44ff44, 'y'));
+  group.add(makeArrow(0x4488ff, 'z'));
+
+  // 크기 핸들 (6면에 작은 큐브)
+  const faceHandles = [
+    {axis: '+x', pos: [size.x/2, 0, 0], color: 0xff8888},
+    {axis: '-x', pos: [-size.x/2, 0, 0], color: 0xff8888},
+    {axis: '+y', pos: [0, size.y/2, 0], color: 0x88ff88},
+    {axis: '-y', pos: [0, -size.y/2, 0], color: 0x88ff88},
+    {axis: '+z', pos: [0, 0, size.z/2], color: 0x88aaff},
+    {axis: '-z', pos: [0, 0, -size.z/2], color: 0x88aaff}
+  ];
+  faceHandles.forEach(h => {
+    const cubeGeom = new THREE.BoxGeometry(handleSize*1.8, handleSize*1.8, handleSize*1.8);
+    const cubeMat = new THREE.MeshBasicMaterial({color: h.color, depthTest: false});
+    const cube = new THREE.Mesh(cubeGeom, cubeMat);
+    cube.position.set(center.x + h.pos[0], center.y + h.pos[1], center.z + h.pos[2]);
+    cube.userData._handle = {type: 'scale', axis: h.axis};
+    cube.renderOrder = 999;
+    group.add(cube);
+  });
+
+  // v1.9: 3축 회전 링 (X=빨강, Y=초록(yaw, 세로축), Z=파랑)
+  function makeRotRing(axis, color){
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(maxSize*0.55, handleSize*0.4, 8, 64),
+      new THREE.MeshBasicMaterial({color, depthTest: false, transparent: true, opacity: 0.75})
+    );
+    // 토러스는 기본 XY 평면 → 축에 맞춰 회전
+    if(axis === 'x') ring.rotation.y = Math.PI/2;       // 빨강: YZ 평면 (X축 기준 회전)
+    else if(axis === 'y') ring.rotation.x = Math.PI/2;   // 초록: XZ 평면 (Y축 기준 회전, 세로축)
+    // z 는 기본 XY 평면 (Z축 기준 회전)
+    ring.position.copy(center);
+    ring.userData._handle = {type: 'rotate', axis};
+    ring.renderOrder = 999;
+    return ring;
+  }
+  group.add(makeRotRing('x', 0xff4444));   // 빨강 = X축 회전 (앞뒤 기울이기)
+  group.add(makeRotRing('y', 0x44ff44));   // 초록 = Y축 회전 (세로축 yaw)
+  group.add(makeRotRing('z', 0x4488ff));   // 파랑 = Z축 회전 (좌우 기울이기)
+
+  transformState.handleGroup = group;
+  scene.add(group);
+  // 치수 라벨도 표시
+  showDimLabels(part);
+}
+
+function hideTransformHandles(){
+  if(transformState.handleGroup){
+    scene.remove(transformState.handleGroup);
+    transformState.handleGroup.traverse(o => {
+      if(o.isMesh){
+        if(o.geometry) o.geometry.dispose();
+        if(o.material) o.material.dispose();
+      }
+    });
+    transformState.handleGroup = null;
+  }
+  transformState.activePart = null;
+  transformState.draggingHandle = null;
+  hideDimLabels();
+}
+
+function updateHandlePositions(){
+  if(!transformState.activePart) return;
+  const part = transformState.activePart;
+  showTransformHandles(part);
+}
+
+function handleDrag(e){
+  const h = transformState.draggingHandle;
+  const p = transformState.activePart;
+  if(!h || !p) return;
+
+  if(h.type === 'move'){
+    // v1.9: 정확한 이동 - 해당 축 방향으로 마우스 이동량을 투영
+    // 시작 시점의 객체 위치에서 해당 축 방향으로 광선 평면 교차로 이동량 계산
+    const axisVec = new THREE.Vector3(
+      h.axis === 'x' ? 1 : 0,
+      h.axis === 'y' ? 1 : 0,
+      h.axis === 'z' ? 1 : 0
+    );
+    // 마우스 현재 + 시작 위치를 월드로 변환해 축 방향 투영
+    const rect = renderer.domElement.getBoundingClientRect();
+    const nowNDC = new THREE.Vector2(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1
+    );
+    const startNDC = new THREE.Vector2(
+      ((transformState.dragStart.x - rect.left) / rect.width) * 2 - 1,
+      -((transformState.dragStart.y - rect.top) / rect.height) * 2 + 1
+    );
+    // 시작 위치를 지나면서 axisVec 방향과 카메라 시점에 수직인 평면을 정의
+    // 더 단순한 방법: 시작점에서 axisVec과 수직이면서 카메라를 향한 평면을 만들고
+    // 두 ray와의 교차점 차이를 축 방향으로 투영
+    const camDir = new THREE.Vector3().subVectors(camera.position, transformState.dragStartPos).normalize();
+    // 평면 법선: axisVec과 가장 가까운 camDir 성분을 제거한 것
+    // 사실은 axisVec과 직각이고 카메라 방향을 포함하는 평면을 원함
+    const planeNormal = camDir.clone().sub(axisVec.clone().multiplyScalar(axisVec.dot(camDir))).normalize();
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(planeNormal, transformState.dragStartPos);
+
+    const rayNow = new THREE.Raycaster();
+    rayNow.setFromCamera(nowNDC, camera);
+    const rayStart = new THREE.Raycaster();
+    rayStart.setFromCamera(startNDC, camera);
+    const hitNow = new THREE.Vector3();
+    const hitStart = new THREE.Vector3();
+    rayNow.ray.intersectPlane(plane, hitNow);
+    rayStart.ray.intersectPlane(plane, hitStart);
+    if(hitNow && hitStart){
+      const moveVec = hitNow.clone().sub(hitStart);
+      const moveAmt = moveVec.dot(axisVec); // 축 방향 투영
+      p.mesh.position.copy(transformState.dragStartPos.clone().add(axisVec.clone().multiplyScalar(moveAmt)));
+    }
+    // 핸들도 따라가도록 갱신
+    if(transformState.handleGroup){
+      const delta = p.mesh.position.clone().sub(transformState.dragStartPos);
+      transformState.handleGroup.position.copy(delta);
+    }
+  } else if(h.type === 'scale'){
+    // 크기 변경
+    const dx = e.clientX - transformState.dragStart.x;
+    const dy = e.clientY - transformState.dragStart.y;
+    const f = 1 + (dx + (-dy)) * 0.005;
+    const axis = h.axis.slice(1);
+    const newScale = transformState.dragStartScale.clone();
+    if(axis === 'x') newScale.x = Math.max(0.05, transformState.dragStartScale.x * Math.max(0.05, f));
+    else if(axis === 'y') newScale.y = Math.max(0.05, transformState.dragStartScale.y * Math.max(0.05, f));
+    else if(axis === 'z') newScale.z = Math.max(0.05, transformState.dragStartScale.z * Math.max(0.05, f));
+    p.mesh.scale.copy(newScale);
+  } else if(h.type === 'rotate'){
+    // v1.9: 3축 회전 - 객체 중심을 화면에 투영하고 마우스 각도 차이로 회전
+    p.mesh.updateMatrixWorld(true);
+    const bb = new THREE.Box3().setFromObject(p.mesh);
+    const center3D = bb.getCenter(new THREE.Vector3());
+    const rect = renderer.domElement.getBoundingClientRect();
+    const projCenter = center3D.clone().project(camera);
+    const cx = (projCenter.x + 1) * 0.5 * rect.width + rect.left;
+    const cy = (-projCenter.y + 1) * 0.5 * rect.height + rect.top;
+    // 시작 각도 (초기 한 번 계산)
+    if(transformState._rotStart === null || transformState._rotStart === undefined){
+      transformState._rotStart = Math.atan2(transformState.dragStart.y - cy, transformState.dragStart.x - cx);
+      transformState._rotInitial = {x: p.mesh.rotation.x, y: p.mesh.rotation.y, z: p.mesh.rotation.z};
+    }
+    const angleNow = Math.atan2(e.clientY - cy, e.clientX - cx);
+    let delta = angleNow - transformState._rotStart;
+    // 화면 좌표는 y가 아래로 +라 마우스 회전 방향과 일치
+    // 축에 따른 부호 조정 (시각적으로 자연스럽게)
+    if(h.axis === 'y') p.mesh.rotation.y = transformState._rotInitial.y + delta;
+    else if(h.axis === 'x') p.mesh.rotation.x = transformState._rotInitial.x + delta;
+    else if(h.axis === 'z') p.mesh.rotation.z = transformState._rotInitial.z - delta;
+  }
+  // 변형 후 치수 라벨 갱신
+  showDimLabels(p);
 }
 
 let orbitState = {
@@ -917,7 +1754,15 @@ function setupOrbit(dom){
   orbitState.phi = Math.acos(Math.max(-1, Math.min(1, offset.y / orbitState.radius)));
   
   dom.addEventListener('mousedown', (e)=>{
-    if(e.button === 0) orbitState.rotating = true;
+    // 핸들 드래그 중이면 orbit 시작하지 않음
+    if(transformState.draggingHandle) return;
+    // 좌클릭으로 객체 클릭 가능성이 있으니, 객체 위라면 orbit 시작하지 않음
+    if(e.button === 0){
+      const onPart = pickPart(e);
+      const onHandle = transformState.handleGroup ? pickHandle(e) : null;
+      if(onPart || onHandle) return;
+      orbitState.rotating = true;
+    }
     else if(e.button === 2) orbitState.panning = true;
     orbitState.startX = e.clientX;
     orbitState.startY = e.clientY;
@@ -1071,6 +1916,8 @@ function doRevolve(){
   const angleDeg = parseFloat(document.getElementById('revolveAngle').value);
   const seg = parseInt(document.getElementById('revolveSeg').value);
   const color = document.getElementById('revolveColor').value;
+  const axisOffset = parseFloat(document.getElementById('revolveAxisOffset').value) || 0;
+  const axisMode = document.getElementById('revolveAxisMode').value;
   let name = document.getElementById('revolvePartName').value.trim();
   if(!name) name = '회전체_' + state.partIdCounter;
   if(isNaN(angleDeg) || angleDeg <= 0){toast('각도를 입력하세요'); return}
@@ -1101,12 +1948,54 @@ function doRevolve(){
   });
   
   if(points.length < 2){toast('회전할 단면이 부족합니다'); closeModal('revolveModal'); return}
-  
+
+  // 축 거리 적용: 단면의 축 방향(Y축이면 X좌표) 범위를 구해서 모드에 따라 평행이동
+  // Y축 회전: x좌표가 회전 반경. axisMode에 따라 단면 전체를 이동
+  // X축 회전: y좌표가 회전 반경. (코드에서는 변환 시 swap)
+  // Rev.1.2: 축 거리(offset)는 "축~단면 사이 최소 거리"로 해석
   let lathePts;
   if(axis === 'y'){
-    lathePts = points.map(p => new THREE.Vector2(Math.abs(p.x), p.y));
+    // x좌표 범위
+    const xs = points.map(p=>p.x);
+    const minX = Math.min(...xs), maxX = Math.max(...xs);
+    // 모드별 단면 이동량 결정
+    // - auto: 단면이 그려진 위치 그대로 (Math.abs로 양수화) + offset 추가
+    // - near: 축에서 가장 가까운 변(=|x| 최소)이 offset 만큼 떨어지도록
+    // - far: 축에서 가장 먼 변(=|x| 최대)이 offset 만큼 떨어지도록
+    let baseShift = 0;
+    if(axisMode === 'near'){
+      // |x| 최소값을 offset에 맞춤 → 가까운 변이 |x| = offset
+      const minAbsX = Math.min(Math.abs(minX), Math.abs(maxX), minX <= 0 && maxX >= 0 ? 0 : Infinity);
+      baseShift = axisOffset - minAbsX;
+    } else if(axisMode === 'far'){
+      const maxAbsX = Math.max(Math.abs(minX), Math.abs(maxX));
+      baseShift = axisOffset - maxAbsX;
+    } else {
+      // auto: 그냥 offset만 추가
+      baseShift = axisOffset;
+    }
+    lathePts = points.map(p => {
+      const newX = Math.abs(p.x) + baseShift;
+      return new THREE.Vector2(Math.max(0, newX), p.y);
+    });
   } else {
-    lathePts = points.map(p => new THREE.Vector2(Math.abs(p.y), p.x));
+    // X축 회전: y좌표가 반경
+    const ys = points.map(p=>p.y);
+    const minY = Math.min(...ys), maxY = Math.max(...ys);
+    let baseShift = 0;
+    if(axisMode === 'near'){
+      const minAbsY = Math.min(Math.abs(minY), Math.abs(maxY), minY <= 0 && maxY >= 0 ? 0 : Infinity);
+      baseShift = axisOffset - minAbsY;
+    } else if(axisMode === 'far'){
+      const maxAbsY = Math.max(Math.abs(minY), Math.abs(maxY));
+      baseShift = axisOffset - maxAbsY;
+    } else {
+      baseShift = axisOffset;
+    }
+    lathePts = points.map(p => {
+      const newR = Math.abs(p.y) + baseShift;
+      return new THREE.Vector2(Math.max(0, newR), p.x);
+    });
   }
   lathePts.sort((a,b)=>a.y - b.y);
   
@@ -1120,7 +2009,7 @@ function doRevolve(){
     id: state.partIdCounter++, name: name, type: 'revolve',
     color: color, opacity: 1, visible: true,
     mesh: mesh, sourceShapes: JSON.parse(JSON.stringify(targets)),
-    params: {axis, angle: angleDeg, seg}
+    params: {axis, angle: angleDeg, seg, axisOffset, axisMode}
   };
   state.parts.push(part);
   addPartToScene(part);
@@ -1129,7 +2018,7 @@ function doRevolve(){
   closeModal('revolveModal');
   switchMode('model');
   fitView();
-  toast('✅ 회전체 완료: ' + name);
+  toast('✅ 회전체 완료: ' + name + (axisOffset !== 0 ? ' (축거리 '+axisOffset+'mm)' : ''));
 }
 
 function addPrimitive(kind){
@@ -1156,17 +2045,805 @@ function addPrimitive(kind){
   toast('✅ ' + names[kind] + ' 추가됨');
 }
 
+// ===== v1.4: 통합 도형 모달 (위치/크기 입력) =====
+const PRIM_INFO = {
+  box:      {name:'박스',    icon:'📦', color:'#7a8aa0', fields:[
+    {id:'w', label:'가로(X, mm)', val:30}, {id:'h', label:'세로(Y, mm)', val:30}, {id:'d', label:'폭(Z, mm)', val:30}
+  ]},
+  cylinder: {name:'원통',    icon:'🥫', color:'#a08070', fields:[
+    {id:'r', label:'반지름(mm)', val:15}, {id:'h', label:'높이(mm)', val:30}
+  ]},
+  sphere:   {name:'구',      icon:'⚪', color:'#80a070', fields:[
+    {id:'r', label:'반지름(mm)', val:15}
+  ]},
+  cone:     {name:'원뿔',    icon:'🔺', color:'#a070b0', fields:[
+    {id:'r', label:'밑면 반지름(mm)', val:15}, {id:'h', label:'높이(mm)', val:30}
+  ]},
+  pyramid:  {name:'피라미드', icon:'⛰️', color:'#b07050', fields:[
+    {id:'w', label:'밑변 폭(mm)', val:30}, {id:'h', label:'높이(mm)', val:30}, {id:'sides', label:'밑면 변 수', val:4}
+  ]},
+  torus:    {name:'도넛',    icon:'🍩', color:'#d0a060', fields:[
+    {id:'R', label:'코일 반지름(mm)', val:20}, {id:'r', label:'두께 반지름(mm)', val:5}
+  ]},
+  wedge:    {name:'쐐기',    icon:'📐', color:'#7090b0', fields:[
+    {id:'w', label:'밑변 X(mm)', val:30}, {id:'h', label:'높이 Y(mm)', val:20}, {id:'d', label:'폭 Z(mm)', val:30}
+  ]},
+  tube:     {name:'파이프',  icon:'⭕', color:'#909090', fields:[
+    {id:'rOut', label:'외경 반지름(mm)', val:15}, {id:'rIn', label:'내경 반지름(mm)', val:10}, {id:'h', label:'높이(mm)', val:30}
+  ]}
+};
+
+let currentPrimKind = null;
+
+function openPrimModal(kind){
+  const info = PRIM_INFO[kind];
+  if(!info) return;
+  currentPrimKind = kind;
+  document.getElementById('primTitle').textContent = info.icon + ' ' + info.name + ' 생성';
+  // 동적 필드 생성
+  const fieldsDiv = document.getElementById('primFields');
+  fieldsDiv.innerHTML = info.fields.map(f =>
+    `<div class="modal-row"><label>${f.label}</label><input type="number" id="primF_${f.id}" value="${f.val}" step="0.5"></div>`
+  ).join('');
+  document.getElementById('primColor').value = info.color;
+  document.getElementById('primPartName').value = info.name + '_' + state.partIdCounter;
+  document.getElementById('primPosX').value = 0;
+  document.getElementById('primPosY').value = 0;
+  document.getElementById('primPosZ').value = 0;
+  document.getElementById('primitiveModal').classList.add('show');
+}
+
+function doPrimitive(){
+  const kind = currentPrimKind;
+  const info = PRIM_INFO[kind];
+  if(!info) return;
+  // 필드 값 읽기
+  const f = {};
+  for(const ff of info.fields){
+    f[ff.id] = parseFloat(document.getElementById('primF_' + ff.id).value);
+    if(isNaN(f[ff.id])){toast(ff.label + ' 값이 잘못됨'); return}
+  }
+  const posX = parseFloat(document.getElementById('primPosX').value) || 0;
+  const posY = parseFloat(document.getElementById('primPosY').value) || 0;
+  const posZ = parseFloat(document.getElementById('primPosZ').value) || 0;
+  const color = document.getElementById('primColor').value;
+  let name = document.getElementById('primPartName').value.trim() || (info.name + '_' + state.partIdCounter);
+
+  const geom = createGeometryForKind(kind, f);
+  if(!geom){toast('도형 생성 실패'); return}
+  const mat = makeMaterial(color, 1);
+  const mesh = new THREE.Mesh(geom, mat);
+  mesh.position.set(posX, posY, posZ);
+
+  const part = {
+    id: state.partIdCounter++, name, type: 'primitive_' + kind,
+    color, opacity: 1, visible: true, mesh,
+    params: {...f, posX, posY, posZ}
+  };
+  state.parts.push(part);
+  addPartToScene(part);
+  renderPartsList(); updateInfo();
+  closeModal('primitiveModal'); switchMode('model'); fitView();
+  toast('✅ ' + info.name + ' 생성: ' + name);
+}
+
+function createGeometryForKind(kind, f){
+  if(kind === 'box') return new THREE.BoxGeometry(f.w, f.h, f.d);
+  if(kind === 'cylinder') return new THREE.CylinderGeometry(f.r, f.r, f.h, 32);
+  if(kind === 'sphere') return new THREE.SphereGeometry(f.r, 32, 24);
+  if(kind === 'cone') return new THREE.ConeGeometry(f.r, f.h, 32);
+  if(kind === 'pyramid'){
+    const sides = Math.max(3, Math.round(f.sides || 4));
+    // ConeGeometry로 N각뿔
+    const g = new THREE.ConeGeometry(f.w/2, f.h, sides);
+    return g;
+  }
+  if(kind === 'torus') return new THREE.TorusGeometry(f.R, f.r, 16, 48);
+  if(kind === 'wedge'){
+    // 직각삼각기둥: ExtrudeGeometry 사용
+    const shape = new THREE.Shape();
+    shape.moveTo(0, 0);
+    shape.lineTo(f.w, 0);
+    shape.lineTo(0, f.h);
+    shape.closePath();
+    const g = new THREE.ExtrudeGeometry(shape, {depth: f.d, bevelEnabled: false});
+    // 중심 정렬: ExtrudeGeometry는 Z+로 돌출 → 중앙으로 이동
+    g.translate(-f.w/2, -f.h/2, -f.d/2);
+    return g;
+  }
+  if(kind === 'tube'){
+    // 파이프: 외경 원 - 내경 원 ExtrudeGeometry
+    if(f.rIn >= f.rOut){toast('내경은 외경보다 작아야 합니다'); return null}
+    const shape = new THREE.Shape();
+    shape.absarc(0, 0, f.rOut, 0, Math.PI*2, false);
+    const hole = new THREE.Path();
+    hole.absarc(0, 0, f.rIn, 0, Math.PI*2, true);
+    shape.holes.push(hole);
+    const g = new THREE.ExtrudeGeometry(shape, {depth: f.h, bevelEnabled: false, curveSegments: 48});
+    g.rotateX(-Math.PI/2);
+    g.translate(0, f.h/2, 0);
+    return g;
+  }
+  return null;
+}
+
+// 텍스트 3D
+function openTextModal(){
+  document.getElementById('text3dName').value = '텍스트_' + state.partIdCounter;
+  document.getElementById('textModal').classList.add('show');
+}
+
+function doText3D(){
+  const content = document.getElementById('text3dContent').value || '태진';
+  const size = parseFloat(document.getElementById('text3dSize').value);
+  const depth = parseFloat(document.getElementById('text3dDepth').value);
+  const posX = parseFloat(document.getElementById('text3dPosX').value) || 0;
+  const posY = parseFloat(document.getElementById('text3dPosY').value) || 0;
+  const posZ = parseFloat(document.getElementById('text3dPosZ').value) || 0;
+  const color = document.getElementById('text3dColor').value;
+  let name = document.getElementById('text3dName').value.trim() || ('텍스트_' + state.partIdCounter);
+  if(isNaN(size) || size <= 0 || isNaN(depth) || depth <= 0){toast('크기/두께 입력값을 확인하세요'); return}
+
+  // Three.js r128에는 TextGeometry가 기본 포함되지 않음 → Canvas로 그린 후 ExtrudeGeometry로 변환
+  // 간단한 방법: Canvas에 텍스트 그리고 그 SVG path를 Shape로 변환은 복잡
+  // 대안: 박스를 여러 개 묶어 평면 텍스처 + 얇은 박스(plate)에 텍스처
+  // 더 간단: 박스 형태로 만들고 표면에 캔버스 텍스처
+  const cw = 256, ch = 128;
+  const canvas = document.createElement('canvas');
+  canvas.width = cw; canvas.height = ch;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = color;
+  ctx.fillRect(0, 0, cw, ch);
+  ctx.fillStyle = '#000';
+  ctx.font = 'bold 80px Arial, sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(content, cw/2, ch/2);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  const ratio = content.length > 2 ? content.length * 0.5 : 1.5;
+  const w = size * ratio, h = size;
+  const geom = new THREE.BoxGeometry(w, h, depth);
+  // 6면 중 앞면(+Z)에만 텍스트 텍스처, 나머지는 색상
+  const materials = [
+    makeMaterial(color, 1), makeMaterial(color, 1),
+    makeMaterial(color, 1), makeMaterial(color, 1),
+    new THREE.MeshStandardMaterial({map: texture, color: 0xffffff, roughness: 0.5, metalness: 0.1}),
+    makeMaterial(color, 1)
+  ];
+  const mesh = new THREE.Mesh(geom, materials);
+  mesh.position.set(posX, posY, posZ);
+
+  const part = {
+    id: state.partIdCounter++, name, type: 'text3d',
+    color, opacity: 1, visible: true, mesh,
+    params: {content, size, depth, posX, posY, posZ}
+  };
+  state.parts.push(part);
+  addPartToScene(part);
+  renderPartsList(); updateInfo();
+  closeModal('textModal'); switchMode('model'); fitView();
+  toast('✅ 텍스트 3D 생성: ' + name);
+}
+
+// ===== v1.4: 편집 기능 =====
+function getSelectedParts(){
+  // partsList에서 highlighted 표시된 부품들
+  return state.parts.filter(p => p._selected);
+}
+
+function duplicatePart(){
+  const sel = getSelectedParts();
+  const target = sel.length > 0 ? sel : (state.parts.length > 0 ? [state.parts[state.parts.length-1]] : []);
+  if(target.length === 0){toast('복제할 부품이 없습니다'); return}
+  target.forEach(p => {
+    // mesh.clone() + 위치 오프셋
+    const newMesh = p.mesh.clone(true);
+    // material도 새로 만들어서 색상 변경 시 원본 영향 없게
+    newMesh.traverse(o => {
+      if(o.isMesh && o.material){
+        if(Array.isArray(o.material)) o.material = o.material.map(m => m.clone());
+        else o.material = o.material.clone();
+      }
+    });
+    newMesh.position.x += 20;
+    newMesh.position.z += 20;
+    const newPart = {
+      id: state.partIdCounter++,
+      name: p.name + '_복사',
+      type: p.type,
+      color: p.color, opacity: p.opacity, visible: true,
+      mesh: newMesh,
+      params: JSON.parse(JSON.stringify(p.params || {})),
+      sourceShapes: p.sourceShapes ? JSON.parse(JSON.stringify(p.sourceShapes)) : undefined
+    };
+    state.parts.push(newPart);
+    addPartToScene(newPart);
+  });
+  renderPartsList(); updateInfo();
+  toast('✅ ' + target.length + '개 부품 복제됨');
+}
+
+function mirrorPart(axis){
+  const sel = getSelectedParts();
+  const target = sel.length > 0 ? sel : (state.parts.length > 0 ? [state.parts[state.parts.length-1]] : []);
+  if(target.length === 0){toast('미러할 부품이 없습니다'); return}
+  target.forEach(p => {
+    if(axis === 'x') p.mesh.scale.x *= -1;
+    else if(axis === 'y') p.mesh.scale.y *= -1;
+    else if(axis === 'z') p.mesh.scale.z *= -1;
+    // normal이 뒤집혀서 어두워지는 문제를 피하려면 geometry를 재계산해야 하지만 시각적으로는 OK
+  });
+  toast('🪞 ' + target.length + '개 부품 ' + axis.toUpperCase() + '축 미러');
+}
+
+function deletePart(){
+  const sel = getSelectedParts();
+  const target = sel.length > 0 ? sel : (state.parts.length > 0 ? [state.parts[state.parts.length-1]] : []);
+  if(target.length === 0){toast('삭제할 부품이 없습니다'); return}
+  target.forEach(p => {
+    if(transformState.activePart === p) hideTransformHandles();
+    state.scene.remove(p.mesh);
+    const idx = state.parts.indexOf(p);
+    if(idx >= 0) state.parts.splice(idx, 1);
+  });
+  renderPartsList(); updateInfo();
+  toast('🗑️ ' + target.length + '개 부품 삭제됨');
+}
+
+// ===== 정렬 =====
+function openAlignModal(){
+  const sel = getSelectedParts();
+  document.getElementById('alignSelCount').textContent = sel.length;
+  if(sel.length < 2){
+    toast('정렬할 부품을 2개 이상 선택하세요 (부품 패널에서 Ctrl+클릭)');
+    return;
+  }
+  document.getElementById('alignModal').classList.add('show');
+}
+
+function doAlign(){
+  const sel = getSelectedParts();
+  if(sel.length < 2){toast('2개 이상 선택해주세요'); return}
+  const axis = document.getElementById('alignAxis').value;
+  const mode = document.getElementById('alignMode').value;
+  // 각 부품의 바운딩박스 + 위치 정보
+  const info = sel.map(p => {
+    p.mesh.updateMatrixWorld(true);
+    const bb = new THREE.Box3().setFromObject(p.mesh);
+    return {
+      part: p,
+      min: bb.min[axis],
+      max: bb.max[axis],
+      center: (bb.min[axis] + bb.max[axis]) / 2
+    };
+  });
+  let target;
+  if(mode === 'min'){
+    target = Math.min(...info.map(i => i.min));
+    info.forEach(i => { i.part.mesh.position[axis] += (target - i.min); });
+  } else if(mode === 'max'){
+    target = Math.max(...info.map(i => i.max));
+    info.forEach(i => { i.part.mesh.position[axis] += (target - i.max); });
+  } else if(mode === 'center'){
+    const min = Math.min(...info.map(i => i.min));
+    const max = Math.max(...info.map(i => i.max));
+    target = (min + max) / 2;
+    info.forEach(i => { i.part.mesh.position[axis] += (target - i.center); });
+  } else if(mode === 'distribute'){
+    // 균등 분배: 정렬 후 중심 위치를 균등 간격으로
+    info.sort((a, b) => a.center - b.center);
+    const first = info[0].center, last = info[info.length-1].center;
+    const step = (last - first) / (info.length - 1);
+    info.forEach((i, idx) => {
+      const newCenter = first + step * idx;
+      i.part.mesh.position[axis] += (newCenter - i.center);
+    });
+  }
+  closeModal('alignModal');
+  toast('📐 ' + sel.length + '개 부품 ' + axis.toUpperCase() + '축 정렬 완료');
+}
+
+// ===== 그룹화 =====
+function groupSelectedParts(){
+  const sel = getSelectedParts();
+  if(sel.length < 2){toast('2개 이상의 부품을 선택해주세요 (Ctrl+클릭)'); return}
+  // 새 그룹 생성
+  const group = new THREE.Group();
+  const childInfo = []; // 그룹 해제 시 복원용
+  const holes = sel.filter(p => p._isHole);
+  const solids = sel.filter(p => !p._isHole);
+  sel.forEach(p => {
+    // 월드 매트릭스 적용 후 그룹에 추가
+    state.scene.remove(p.mesh);
+    p.mesh.updateMatrixWorld(true);
+    childInfo.push({
+      type: p.type, name: p.name, color: p.color, opacity: p.opacity,
+      params: p.params, sourceShapes: p.sourceShapes, isHole: p._isHole
+    });
+    // 구멍 객체는 그룹화하면서 비가시 처리 (CSG 미지원이므로 시각적 빼기만)
+    if(p._isHole){
+      p.mesh.visible = false;
+    }
+    group.add(p.mesh);
+    const idx = state.parts.indexOf(p);
+    if(idx >= 0) state.parts.splice(idx, 1);
+  });
+  const newPart = {
+    id: state.partIdCounter++,
+    name: '그룹_' + state.partIdCounter,
+    type: 'group',
+    color: '#888', opacity: 1, visible: true,
+    mesh: group,
+    params: { childCount: sel.length, holeCount: holes.length, solidCount: solids.length },
+    _children: childInfo
+  };
+  state.parts.push(newPart);
+  state.scene.add(group);
+  renderPartsList(); updateInfo();
+  hideTransformHandles();
+  const msg = holes.length > 0
+    ? `🔗 그룹화 완료: 솔리드 ${solids.length}개 + 구멍 ${holes.length}개 (시각적 빼기)`
+    : `🔗 ${sel.length}개 부품 그룹화`;
+  toast(msg);
+}
+
+// v1.5: 구멍(빼기) 토글
+function toggleHole(){
+  const sel = getSelectedParts();
+  const target = sel.length > 0 ? sel : (state.parts.length > 0 ? [state.parts[state.parts.length-1]] : []);
+  if(target.length === 0){toast('부품을 선택하세요'); return}
+  target.forEach(p => {
+    p._isHole = !p._isHole;
+    // 시각적 표시: 반투명 빨간색 줄무늬
+    p.mesh.traverse(o => {
+      if(o.isMesh && o.material){
+        if(p._isHole){
+          // 원래 색 백업
+          if(!o.userData._origMat){
+            o.userData._origMat = Array.isArray(o.material)
+              ? o.material.map(m => m.clone())
+              : o.material.clone();
+          }
+          // 빨간 반투명으로
+          const setHoleMat = (m) => {
+            m.color = new THREE.Color(0xff3333);
+            m.transparent = true;
+            m.opacity = 0.4;
+            if(m.emissive) m.emissive.setHex(0x550000);
+          };
+          if(Array.isArray(o.material)) o.material.forEach(setHoleMat);
+          else setHoleMat(o.material);
+        } else {
+          // 원래 색 복원
+          if(o.userData._origMat){
+            o.material = o.userData._origMat;
+            delete o.userData._origMat;
+          }
+        }
+      }
+    });
+  });
+  renderPartsList();
+  toast(target[0]._isHole ? '🕳️ ' + target.length + '개 부품을 구멍으로 지정 (그룹화 시 빼기)' : '◯ ' + target.length + '개 부품 구멍 해제');
+}
+
+// v1.5: 위치/크기/회전 직접 입력
+function openPosSizeModal(){
+  const sel = getSelectedParts();
+  const target = sel.length === 1 ? sel[0] : null;
+  if(!target){toast('단일 부품을 선택하세요'); return}
+  document.getElementById('posSizePartName').textContent = target.name;
+  document.getElementById('psPosX').value = target.mesh.position.x.toFixed(1);
+  document.getElementById('psPosY').value = target.mesh.position.y.toFixed(1);
+  document.getElementById('psPosZ').value = target.mesh.position.z.toFixed(1);
+  document.getElementById('psSclX').value = target.mesh.scale.x.toFixed(2);
+  document.getElementById('psSclY').value = target.mesh.scale.y.toFixed(2);
+  document.getElementById('psSclZ').value = target.mesh.scale.z.toFixed(2);
+  document.getElementById('psRotX').value = (target.mesh.rotation.x * 180/Math.PI).toFixed(1);
+  document.getElementById('psRotY').value = (target.mesh.rotation.y * 180/Math.PI).toFixed(1);
+  document.getElementById('psRotZ').value = (target.mesh.rotation.z * 180/Math.PI).toFixed(1);
+  document.getElementById('posSizeModal').classList.add('show');
+}
+
+function applyPosSize(){
+  const sel = getSelectedParts();
+  const target = sel.length === 1 ? sel[0] : null;
+  if(!target){toast('단일 부품을 선택하세요'); return}
+  target.mesh.position.set(
+    parseFloat(document.getElementById('psPosX').value) || 0,
+    parseFloat(document.getElementById('psPosY').value) || 0,
+    parseFloat(document.getElementById('psPosZ').value) || 0
+  );
+  target.mesh.scale.set(
+    Math.max(0.05, parseFloat(document.getElementById('psSclX').value) || 1),
+    Math.max(0.05, parseFloat(document.getElementById('psSclY').value) || 1),
+    Math.max(0.05, parseFloat(document.getElementById('psSclZ').value) || 1)
+  );
+  target.mesh.rotation.set(
+    (parseFloat(document.getElementById('psRotX').value) || 0) * Math.PI/180,
+    (parseFloat(document.getElementById('psRotY').value) || 0) * Math.PI/180,
+    (parseFloat(document.getElementById('psRotZ').value) || 0) * Math.PI/180
+  );
+  closeModal('posSizeModal');
+  if(transformState.activePart === target) showTransformHandles(target);
+  toast('✅ 위치/크기/회전 적용됨');
+}
+
+function resetTransform(){
+  const sel = getSelectedParts();
+  const target = sel.length > 0 ? sel : (state.parts.length > 0 ? [state.parts[state.parts.length-1]] : []);
+  if(target.length === 0){toast('부품을 선택하세요'); return}
+  target.forEach(p => {
+    p.mesh.position.set(0, 0, 0);
+    p.mesh.rotation.set(0, 0, 0);
+    p.mesh.scale.set(1, 1, 1);
+  });
+  if(transformState.activePart) showTransformHandles(transformState.activePart);
+  toast('🔄 ' + target.length + '개 부품 변형 초기화');
+}
+
+// ===== v1.6: 팅커캐드 단축키 함수들 =====
+
+// D = 바닥(Y=0)에 떨어뜨리기
+function dropToGround(){
+  const sel = getSelectedParts();
+  const target = sel.length > 0 ? sel : (state.parts.length > 0 ? [state.parts[state.parts.length-1]] : []);
+  if(target.length === 0){toast('부품을 선택하세요'); return}
+  target.forEach(p => {
+    p.mesh.updateMatrixWorld(true);
+    const bb = new THREE.Box3().setFromObject(p.mesh);
+    // 객체의 가장 낮은 점이 Y=0이 되도록
+    p.mesh.position.y -= bb.min.y;
+  });
+  // 핸들 갱신
+  if(transformState.activePart) showTransformHandles(transformState.activePart);
+  updateDimLabels();
+  toast('⬇️ ' + target.length + '개 부품 바닥 안착 (Y=0)');
+}
+
+// R = 90도 회전 (지정 축 기준)
+function rotate90(axis){
+  const sel = getSelectedParts();
+  const target = sel.length > 0 ? sel : (state.parts.length > 0 ? [state.parts[state.parts.length-1]] : []);
+  if(target.length === 0){toast('부품을 선택하세요'); return}
+  target.forEach(p => {
+    p.mesh.rotation[axis] += Math.PI/2;
+  });
+  if(transformState.activePart) showTransformHandles(transformState.activePart);
+  updateDimLabels();
+  toast('↻ ' + target.length + '개 부품 ' + axis.toUpperCase() + '축 90° 회전');
+}
+
+// 방향키 미세 이동
+function nudgeSelected(dx, dy, dz){
+  const sel = getSelectedParts();
+  const target = sel.length > 0 ? sel : (state.parts.length > 0 ? [state.parts[state.parts.length-1]] : []);
+  if(target.length === 0) return;
+  target.forEach(p => {
+    p.mesh.position.x += dx;
+    p.mesh.position.y += dy;
+    p.mesh.position.z += dz;
+  });
+  if(transformState.activePart) showTransformHandles(transformState.activePart);
+  updateDimLabels();
+}
+
+// 단축키 도움말 표시
+function showShortcutHelp(){
+  const msg = `📋 tool3 팅커캐드 단축키
+
+[3D 모드]
+  D        - 바닥에 떨어뜨리기 (Y=0 안착)
+  R        - Y축 90도 회전
+  M        - 좌우 미러 (X축)
+  H        - 구멍 전환 (Hole)
+  L        - 정렬 (Align)
+  G        - 그리드 토글
+  W        - 와이어프레임
+  F        - 전체 맞춤 (Fit)
+  T        - 텍스트 3D
+  
+  Ctrl+D   - 복제 (Duplicate)
+  Ctrl+G   - 그룹화
+  Ctrl+Shift+G - 그룹 해제
+  Ctrl+Z/Y - Undo/Redo
+
+  방향키   - 미세 이동 (1mm)
+  Shift+방향키 - 큰 이동 (10mm)
+  PgUp/PgDn - Y축 위/아래 이동
+  Del      - 삭제
+  Esc      - 선택 해제
+  ?        - 이 도움말
+
+[스케치 모드]
+  L/R/C/A  - 선/사각형/원/호 도구
+  S        - 선택
+  G        - 그리드 토글
+`;
+  alert(msg);
+}
+
+// 색상 빠른 선택 - 추후 활성화용 placeholder
+function applyQuickColor(n){
+  const palette = ['#7a8aa0', '#a08070', '#80a070', '#a070b0', '#b07050', '#d0a060', '#7090b0', '#909090', '#d35400'];
+  const c = palette[n-1] || '#888';
+  const sel = getSelectedParts();
+  const target = sel.length > 0 ? sel : [];
+  if(target.length === 0) return;
+  target.forEach(p => {
+    p.color = c;
+    p.mesh.traverse(o => {
+      if(o.isMesh && o.material){
+        const setColor = (m) => { if(m.color) m.color = new THREE.Color(c); };
+        if(Array.isArray(o.material)) o.material.forEach(setColor);
+        else setColor(o.material);
+      }
+    });
+  });
+  renderPartsList();
+  toast('🎨 색상 #' + n + ' 적용');
+}
+
+function ungroupPart(){
+  const sel = getSelectedParts();
+  const target = sel.find(p => p.type === 'group') || (state.parts.length > 0 ? state.parts.find(p => p.type === 'group') : null);
+  if(!target){toast('해제할 그룹이 없습니다'); return}
+  // 그룹의 자식들을 개별 부품으로 분리
+  const children = [];
+  target.mesh.children.slice().forEach(child => {
+    target.mesh.remove(child);
+    // 월드 매트릭스 적용해서 위치 보존
+    child.applyMatrix4(target.mesh.matrixWorld);
+    children.push(child);
+  });
+  // 그룹 제거
+  state.scene.remove(target.mesh);
+  const idx = state.parts.indexOf(target);
+  if(idx >= 0) state.parts.splice(idx, 1);
+  // 자식들을 부품으로 재등록
+  children.forEach((mesh, i) => {
+    const childInfo = (target._children && target._children[i]) || {};
+    const part = {
+      id: state.partIdCounter++,
+      name: childInfo.name || ('부품_' + state.partIdCounter),
+      type: childInfo.type || 'primitive_box',
+      color: childInfo.color || '#888',
+      opacity: childInfo.opacity || 1,
+      visible: true,
+      mesh,
+      params: childInfo.params || {},
+      sourceShapes: childInfo.sourceShapes
+    };
+    state.parts.push(part);
+    state.scene.add(mesh);
+  });
+  renderPartsList(); updateInfo();
+  toast('✂️ 그룹 해제 완료 (' + children.length + '개 부품)');
+}
+
+// ===== 볼트/너트/스프링 (v1.3) =====
+const BOLT_PRESETS = {
+  M3:  {shankD:3,  shankL:10, headD:5.5,  headH:2,   key:2.5},
+  M4:  {shankD:4,  shankL:12, headD:7,    headH:2.8, key:3},
+  M5:  {shankD:5,  shankL:16, headD:8.5,  headH:3.5, key:4},
+  M6:  {shankD:6,  shankL:20, headD:10,   headH:4,   key:5},
+  M8:  {shankD:8,  shankL:25, headD:13,   headH:5.3, key:6},
+  M10: {shankD:10, shankL:30, headD:17,   headH:6.4, key:8},
+  M12: {shankD:12, shankL:40, headD:19,   headH:7.5, key:10}
+};
+const NUT_PRESETS = {
+  M3:  {holeD:3,  outerD:5.5,  height:2.4},
+  M4:  {holeD:4,  outerD:7,    height:3.2},
+  M5:  {holeD:5,  outerD:8,    height:4},
+  M6:  {holeD:6,  outerD:10,   height:5},
+  M8:  {holeD:8,  outerD:13,   height:6.5},
+  M10: {holeD:10, outerD:17,   height:8},
+  M12: {holeD:12, outerD:19,   height:10}
+};
+
+function openBoltModal(){
+  document.getElementById('boltPartName').value = '볼트_' + state.partIdCounter;
+  document.getElementById('boltModal').classList.add('show');
+}
+function openNutModal(){
+  document.getElementById('nutPartName').value = '너트_' + state.partIdCounter;
+  document.getElementById('nutModal').classList.add('show');
+}
+function openSpringModal(){
+  document.getElementById('springPartName').value = '스프링_' + state.partIdCounter;
+  document.getElementById('springModal').classList.add('show');
+}
+
+function applyBoltPreset(){
+  const k = document.getElementById('boltPreset').value;
+  if(k === 'custom') return;
+  const p = BOLT_PRESETS[k]; if(!p) return;
+  document.getElementById('boltShankD').value = p.shankD;
+  document.getElementById('boltShankL').value = p.shankL;
+  document.getElementById('boltHeadD').value = p.headD;
+  document.getElementById('boltHeadH').value = p.headH;
+}
+function applyNutPreset(){
+  const k = document.getElementById('nutPreset').value;
+  if(k === 'custom') return;
+  const p = NUT_PRESETS[k]; if(!p) return;
+  document.getElementById('nutHoleD').value = p.holeD;
+  document.getElementById('nutOuterD').value = p.outerD;
+  document.getElementById('nutHeight').value = p.height;
+}
+
+function doBolt(){
+  const shankD = parseFloat(document.getElementById('boltShankD').value);
+  const shankL = parseFloat(document.getElementById('boltShankL').value);
+  const headD = parseFloat(document.getElementById('boltHeadD').value);
+  const headH = parseFloat(document.getElementById('boltHeadH').value);
+  const headType = document.getElementById('boltHeadType').value;
+  const color = document.getElementById('boltColor').value;
+  let name = document.getElementById('boltPartName').value.trim() || ('볼트_' + state.partIdCounter);
+  if(isNaN(shankD) || isNaN(shankL) || isNaN(headD) || isNaN(headH)){toast('수치를 확인하세요'); return}
+
+  const group = new THREE.Group();
+  const mat = makeMaterial(color, 1);
+
+  // 머리: Y축 위쪽에 배치, 나사부는 아래쪽
+  let headGeom;
+  if(headType === 'hex'){
+    // 육각 머리: 6각형 단면 (Cylinder의 segments=6)
+    headGeom = new THREE.CylinderGeometry(headD/2, headD/2, headH, 6);
+  } else if(headType === 'round'){
+    // 둥근머리: 반구 위에 짧은 원통
+    const dome = new THREE.SphereGeometry(headD/2, 32, 16, 0, Math.PI*2, 0, Math.PI/2);
+    const domeMesh = new THREE.Mesh(dome, mat);
+    domeMesh.position.y = headH/2;
+    group.add(domeMesh);
+    headGeom = new THREE.CylinderGeometry(headD/2, headD/2, headH, 32);
+  } else {
+    // cap (Allen): 원통 머리
+    headGeom = new THREE.CylinderGeometry(headD/2, headD/2, headH, 32);
+  }
+  const headMesh = new THREE.Mesh(headGeom, mat);
+  headMesh.position.y = headH/2;
+  group.add(headMesh);
+
+  // 나사부 (단순한 원통)
+  const shankGeom = new THREE.CylinderGeometry(shankD/2, shankD/2, shankL, 32);
+  const shankMesh = new THREE.Mesh(shankGeom, mat);
+  shankMesh.position.y = -shankL/2;
+  group.add(shankMesh);
+
+  // 캡스크류: 머리 위에 육각 키 구멍 (오목한 표시)
+  if(headType === 'cap'){
+    // 작은 음각 원통(시각적으로만 표시)
+    const keyD = shankD * 0.7;
+    const keyGeom = new THREE.CylinderGeometry(keyD/2, keyD/2, headH*0.6, 6);
+    const keyMat = makeMaterial('#222', 1);
+    const keyMesh = new THREE.Mesh(keyGeom, keyMat);
+    keyMesh.position.y = headH * 0.8;
+    group.add(keyMesh);
+  }
+
+  const part = {
+    id: state.partIdCounter++, name, type: 'bolt',
+    color, opacity: 1, visible: true, mesh: group,
+    params: {shankD, shankL, headD, headH, headType}
+  };
+  state.parts.push(part);
+  addPartToScene(part);
+  renderPartsList(); updateInfo();
+  closeModal('boltModal'); switchMode('model'); fitView();
+  toast('✅ 볼트 생성: ' + name);
+}
+
+function doNut(){
+  const holeD = parseFloat(document.getElementById('nutHoleD').value);
+  const outerD = parseFloat(document.getElementById('nutOuterD').value);
+  const height = parseFloat(document.getElementById('nutHeight').value);
+  const color = document.getElementById('nutColor').value;
+  let name = document.getElementById('nutPartName').value.trim() || ('너트_' + state.partIdCounter);
+  if(isNaN(holeD) || isNaN(outerD) || isNaN(height)){toast('수치를 확인하세요'); return}
+  if(holeD >= outerD){toast('구멍은 외경보다 작아야 합니다'); return}
+
+  // 육각 외형 - 구멍을 위해 ExtrudeGeometry with hole 사용
+  const outerR = outerD / 2;
+  const holeR = holeD / 2;
+
+  const hexShape = new THREE.Shape();
+  for(let i = 0; i < 6; i++){
+    const a = i * Math.PI / 3 + Math.PI/6; // 평평한 면이 위/아래 향하도록 +30°
+    const x = outerR * Math.cos(a);
+    const y = outerR * Math.sin(a);
+    if(i === 0) hexShape.moveTo(x, y);
+    else hexShape.lineTo(x, y);
+  }
+  hexShape.closePath();
+  const holePath = new THREE.Path();
+  holePath.absarc(0, 0, holeR, 0, Math.PI*2, false);
+  hexShape.holes.push(holePath);
+
+  const geom = new THREE.ExtrudeGeometry(hexShape, {
+    depth: height, bevelEnabled: false, curveSegments: 32
+  });
+  // ExtrudeGeometry는 Z방향으로 돌출 → Y 위로 향하도록 -90°
+  geom.rotateX(-Math.PI/2);
+  // 가운데에 위치하도록 이동
+  geom.translate(0, height/2, 0);
+
+  const mat = makeMaterial(color, 1);
+  const mesh = new THREE.Mesh(geom, mat);
+
+  const part = {
+    id: state.partIdCounter++, name, type: 'nut',
+    color, opacity: 1, visible: true, mesh,
+    params: {holeD, outerD, height}
+  };
+  state.parts.push(part);
+  addPartToScene(part);
+  renderPartsList(); updateInfo();
+  closeModal('nutModal'); switchMode('model'); fitView();
+  toast('✅ 너트 생성: ' + name);
+}
+
+function doSpring(){
+  const coilD = parseFloat(document.getElementById('springCoilD').value);
+  const wireD = parseFloat(document.getElementById('springWireD').value);
+  const length = parseFloat(document.getElementById('springLength').value);
+  const turns = parseFloat(document.getElementById('springTurns').value);
+  const seg = parseInt(document.getElementById('springSeg').value);
+  const color = document.getElementById('springColor').value;
+  let name = document.getElementById('springPartName').value.trim() || ('스프링_' + state.partIdCounter);
+  if(isNaN(coilD) || isNaN(wireD) || isNaN(length) || isNaN(turns)){toast('수치를 확인하세요'); return}
+  if(wireD >= coilD/2){toast('선재가 너무 굵습니다 (코일 지름보다 작아야)'); return}
+
+  // 헬릭스(나선) 경로 생성
+  const coilR = coilD / 2;
+  // 총 점 개수: turns * seg
+  const totalSeg = Math.max(16, Math.round(turns * seg));
+  // CatmullRomCurve3 또는 직접 TubeGeometry용 CurvePath
+  class HelixCurve extends THREE.Curve {
+    constructor(R, L, T){
+      super();
+      this.R = R; this.L = L; this.T = T;
+    }
+    getPoint(t, target){
+      target = target || new THREE.Vector3();
+      const angle = t * this.T * Math.PI * 2;
+      const x = this.R * Math.cos(angle);
+      const z = this.R * Math.sin(angle);
+      const y = t * this.L - this.L/2; // 가운데 정렬
+      return target.set(x, y, z);
+    }
+  }
+  const curve = new HelixCurve(coilR, length, turns);
+  // TubeGeometry로 헬릭스를 따라 원형 단면 sweep
+  const geom = new THREE.TubeGeometry(curve, totalSeg, wireD/2, 12, false);
+
+  const mat = makeMaterial(color, 1);
+  const mesh = new THREE.Mesh(geom, mat);
+
+  const part = {
+    id: state.partIdCounter++, name, type: 'spring',
+    color, opacity: 1, visible: true, mesh,
+    params: {coilD, wireD, length, turns, seg}
+  };
+  state.parts.push(part);
+  addPartToScene(part);
+  renderPartsList(); updateInfo();
+  closeModal('springModal'); switchMode('model'); fitView();
+  toast('✅ 스프링 생성: ' + name);
+}
+
 function renderPartsList(){
   const list = document.getElementById('partsList');
+  if(!list) return; // v1.8: 부품트리 패널 제거됨 - 안전 처리
   if(state.parts.length === 0){
-    list.innerHTML = '<div style="padding:10px;font-size:10px;color:#666;text-align:center;line-height:1.6">부품이 없습니다.<br>스케치를 그리고<br>돌출/회전으로<br>3D를 생성하세요.</div>';
+    list.innerHTML = '<div style="padding:10px;font-size:10px;color:#666;text-align:center;line-height:1.6">부품이 없습니다.<br>돌출 / 회전체 또는<br>볼트 / 너트 / 스프링을<br>생성하세요.</div>';
     return;
   }
   list.innerHTML = state.parts.map(p=>`
-    <div class="part-item ${state.selectedPartId === p.id ? 'selected' : ''}" onclick="selectPart(${p.id})">
+    <div class="part-item ${state.selectedPartId === p.id ? 'selected' : ''} ${p._selected ? 'multi-selected' : ''}" onclick="selectPart(${p.id}, event)">
       <button class="vis-btn" onclick="event.stopPropagation();togglePartVis(${p.id})" title="표시/숨김">${p.visible ? '👁️' : '🚫'}</button>
       <span style="display:inline-block;width:10px;height:10px;background:${p.color};border-radius:2px;border:1px solid #555"></span>
-      <span class="pname" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</span>
+      <span class="pname" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}${p._selected ? ' ✓' : ''}</span>
       <button class="del-btn" onclick="event.stopPropagation();deletePartById(${p.id})" title="삭제">✕</button>
     </div>
   `).join('');
@@ -1176,20 +2853,45 @@ function escapeHtml(s){
   return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
-function selectPart(id){
-  state.selectedPartId = id;
+function selectPart(id, event){
   const part = state.parts.find(p => p.id === id);
   if(!part) return;
+  // Ctrl+클릭 = 다중 선택 토글
+  if(event && (event.ctrlKey || event.metaKey)){
+    part._selected = !part._selected;
+    renderPartsList();
+    updateMultiSelectHighlight();
+    // 다중 선택 모드에서는 핸들 숨김
+    const selCount = state.parts.filter(p => p._selected).length;
+    if(selCount !== 1) hideTransformHandles();
+    else if(selCount === 1) {
+      const onlySel = state.parts.find(p => p._selected);
+      if(onlySel) showTransformHandles(onlySel);
+    }
+    return;
+  }
+  // 일반 클릭 = 단독 선택 (다른 선택 모두 해제)
+  state.parts.forEach(p => { p._selected = false; });
+  part._selected = true;
+  state.selectedPartId = id;
   document.getElementById('selectedPartProp').style.display = '';
   document.getElementById('propPartName').value = part.name;
   document.getElementById('propPartColor').value = part.color;
   document.getElementById('propPartOpacity').value = Math.round(part.opacity * 100);
   renderPartsList();
+  updateMultiSelectHighlight();
+  // 3D 핸들 표시 (3D 모드일 때만)
+  if(state.mode === 'model'){
+    showTransformHandles(part);
+  }
+}
+
+function updateMultiSelectHighlight(){
   state.parts.forEach(p=>{
     if(p.mesh){
       p.mesh.traverse(o=>{
         if(o.isMesh && o.material && o.material.emissive){
-          o.material.emissive.setHex(p.id === id ? 0x553300 : 0x000000);
+          o.material.emissive.setHex(p._selected ? 0x553300 : 0x000000);
         }
       });
     }
@@ -1276,6 +2978,9 @@ function updatePartOpacity(){
 function switchMode(m){
   state.mode = m;
   const modeBadge = document.getElementById('modeBadge');
+  // v1.7: body class로 모드별 도구바 자동 표시
+  document.body.classList.remove('mode-sketch', 'mode-model');
+  document.body.classList.add('mode-' + m);
   if(m === 'sketch'){
     document.getElementById('sketchArea').classList.remove('hidden');
     document.getElementById('viewerArea').classList.remove('show');
@@ -1284,6 +2989,8 @@ function switchMode(m){
     document.getElementById('footMode').textContent = '스케처';
     document.getElementById('btnSketchMode').classList.add('active');
     document.getElementById('btnModelMode').classList.remove('active');
+    // 스케치 모드 → 3D 핸들/치수 숨김
+    hideTransformHandles();
     setTimeout(resizeSkCanvas, 50);
   } else {
     document.getElementById('sketchArea').classList.add('hidden');
@@ -1422,6 +3129,11 @@ function loadProject(e){
         if(pdata.type === 'extrude') part = rebuildExtrude(pdata);
         else if(pdata.type === 'revolve') part = rebuildRevolve(pdata);
         else if(pdata.type && pdata.type.startsWith('primitive_')) part = rebuildPrimitive(pdata);
+        else if(pdata.type === 'bolt') part = rebuildBolt(pdata);
+        else if(pdata.type === 'nut') part = rebuildNut(pdata);
+        else if(pdata.type === 'spring') part = rebuildSpring(pdata);
+        else if(pdata.type === 'text3d') part = rebuildText3D(pdata);
+        // group은 직렬화가 복잡하므로 일단 미지원 (저장은 가능, 로드 시 그룹 해체된 형태로)
         if(part && part.mesh){
           state.parts.push(part);
           addPartToScene(part);
@@ -1473,14 +3185,45 @@ function rebuildRevolve(pdata){
         const t = a1 + (a2-a1) * i/steps;
         points.push({x: s.cx + s.r*Math.cos(t), y: s.cy + s.r*Math.sin(t)});
       }
+    } else if(s.type === 'rect'){
+      points.push({x: s.x1, y: s.y1});
+      points.push({x: s.x2, y: s.y1});
+      points.push({x: s.x2, y: s.y2});
+      points.push({x: s.x1, y: s.y2});
     }
   });
   if(points.length < 2) return null;
+  const axisOffset = pdata.params.axisOffset || 0;
+  const axisMode = pdata.params.axisMode || 'auto';
   let lathePts;
   if(pdata.params.axis === 'y'){
-    lathePts = points.map(p => new THREE.Vector2(Math.abs(p.x), p.y));
+    const xs = points.map(p=>p.x);
+    const minX = Math.min(...xs), maxX = Math.max(...xs);
+    let baseShift = 0;
+    if(axisMode === 'near'){
+      const minAbsX = Math.min(Math.abs(minX), Math.abs(maxX), minX <= 0 && maxX >= 0 ? 0 : Infinity);
+      baseShift = axisOffset - minAbsX;
+    } else if(axisMode === 'far'){
+      const maxAbsX = Math.max(Math.abs(minX), Math.abs(maxX));
+      baseShift = axisOffset - maxAbsX;
+    } else {
+      baseShift = axisOffset;
+    }
+    lathePts = points.map(p => new THREE.Vector2(Math.max(0, Math.abs(p.x) + baseShift), p.y));
   } else {
-    lathePts = points.map(p => new THREE.Vector2(Math.abs(p.y), p.x));
+    const ys = points.map(p=>p.y);
+    const minY = Math.min(...ys), maxY = Math.max(...ys);
+    let baseShift = 0;
+    if(axisMode === 'near'){
+      const minAbsY = Math.min(Math.abs(minY), Math.abs(maxY), minY <= 0 && maxY >= 0 ? 0 : Infinity);
+      baseShift = axisOffset - minAbsY;
+    } else if(axisMode === 'far'){
+      const maxAbsY = Math.max(Math.abs(minY), Math.abs(maxY));
+      baseShift = axisOffset - maxAbsY;
+    } else {
+      baseShift = axisOffset;
+    }
+    lathePts = points.map(p => new THREE.Vector2(Math.max(0, Math.abs(p.y) + baseShift), p.x));
   }
   lathePts.sort((a,b)=>a.y - b.y);
   const angleRad = pdata.params.angle * Math.PI / 180;
@@ -1495,10 +3238,120 @@ function rebuildRevolve(pdata){
 function rebuildPrimitive(pdata){
   const kind = pdata.type.replace('primitive_', '');
   let geom;
-  if(kind === 'box') geom = new THREE.BoxGeometry(30, 30, 30);
-  else if(kind === 'cylinder') geom = new THREE.CylinderGeometry(15, 15, 30, 32);
-  else if(kind === 'sphere') geom = new THREE.SphereGeometry(15, 32, 24);
-  else return null;
+  const p = pdata.params || {};
+  if(PRIM_INFO[kind]){
+    geom = createGeometryForKind(kind, p);
+  } else {
+    // 호환: 옛 저장 (params 없는 경우)
+    if(kind === 'box') geom = new THREE.BoxGeometry(30, 30, 30);
+    else if(kind === 'cylinder') geom = new THREE.CylinderGeometry(15, 15, 30, 32);
+    else if(kind === 'sphere') geom = new THREE.SphereGeometry(15, 32, 24);
+  }
+  if(!geom) return null;
+  const mat = makeMaterial(pdata.color, pdata.opacity);
+  const mesh = new THREE.Mesh(geom, mat);
+  if(p.posX !== undefined) mesh.position.set(p.posX || 0, p.posY || 0, p.posZ || 0);
+  mesh.visible = pdata.visible;
+  return {...pdata, mesh};
+}
+
+function rebuildText3D(pdata){
+  const {content, size, depth, posX, posY, posZ} = pdata.params;
+  const cw = 256, ch = 128;
+  const canvas = document.createElement('canvas');
+  canvas.width = cw; canvas.height = ch;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = pdata.color;
+  ctx.fillRect(0, 0, cw, ch);
+  ctx.fillStyle = '#000';
+  ctx.font = 'bold 80px Arial, sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(content, cw/2, ch/2);
+  const texture = new THREE.CanvasTexture(canvas);
+  const ratio = content.length > 2 ? content.length * 0.5 : 1.5;
+  const w = size * ratio, h = size;
+  const geom = new THREE.BoxGeometry(w, h, depth);
+  const materials = [
+    makeMaterial(pdata.color, pdata.opacity), makeMaterial(pdata.color, pdata.opacity),
+    makeMaterial(pdata.color, pdata.opacity), makeMaterial(pdata.color, pdata.opacity),
+    new THREE.MeshStandardMaterial({map: texture, color: 0xffffff, roughness: 0.5, metalness: 0.1}),
+    makeMaterial(pdata.color, pdata.opacity)
+  ];
+  const mesh = new THREE.Mesh(geom, materials);
+  mesh.position.set(posX || 0, posY || 0, posZ || 0);
+  mesh.visible = pdata.visible;
+  return {...pdata, mesh};
+}
+
+function rebuildBolt(pdata){
+  const {shankD, shankL, headD, headH, headType} = pdata.params;
+  const group = new THREE.Group();
+  const mat = makeMaterial(pdata.color, pdata.opacity);
+  let headGeom;
+  if(headType === 'hex') headGeom = new THREE.CylinderGeometry(headD/2, headD/2, headH, 6);
+  else if(headType === 'round'){
+    const dome = new THREE.SphereGeometry(headD/2, 32, 16, 0, Math.PI*2, 0, Math.PI/2);
+    const domeMesh = new THREE.Mesh(dome, mat);
+    domeMesh.position.y = headH/2;
+    group.add(domeMesh);
+    headGeom = new THREE.CylinderGeometry(headD/2, headD/2, headH, 32);
+  } else headGeom = new THREE.CylinderGeometry(headD/2, headD/2, headH, 32);
+  const headMesh = new THREE.Mesh(headGeom, mat);
+  headMesh.position.y = headH/2;
+  group.add(headMesh);
+  const shankGeom = new THREE.CylinderGeometry(shankD/2, shankD/2, shankL, 32);
+  const shankMesh = new THREE.Mesh(shankGeom, mat);
+  shankMesh.position.y = -shankL/2;
+  group.add(shankMesh);
+  if(headType === 'cap'){
+    const keyD = shankD * 0.7;
+    const keyGeom = new THREE.CylinderGeometry(keyD/2, keyD/2, headH*0.6, 6);
+    const keyMat = makeMaterial('#222', 1);
+    const keyMesh = new THREE.Mesh(keyGeom, keyMat);
+    keyMesh.position.y = headH * 0.8;
+    group.add(keyMesh);
+  }
+  group.visible = pdata.visible;
+  return {...pdata, mesh: group};
+}
+
+function rebuildNut(pdata){
+  const {holeD, outerD, height} = pdata.params;
+  const outerR = outerD / 2, holeR = holeD / 2;
+  const hexShape = new THREE.Shape();
+  for(let i = 0; i < 6; i++){
+    const a = i * Math.PI / 3 + Math.PI/6;
+    const x = outerR * Math.cos(a), y = outerR * Math.sin(a);
+    if(i === 0) hexShape.moveTo(x, y);
+    else hexShape.lineTo(x, y);
+  }
+  hexShape.closePath();
+  const holePath = new THREE.Path();
+  holePath.absarc(0, 0, holeR, 0, Math.PI*2, false);
+  hexShape.holes.push(holePath);
+  const geom = new THREE.ExtrudeGeometry(hexShape, {depth: height, bevelEnabled: false, curveSegments: 32});
+  geom.rotateX(-Math.PI/2);
+  geom.translate(0, height/2, 0);
+  const mat = makeMaterial(pdata.color, pdata.opacity);
+  const mesh = new THREE.Mesh(geom, mat);
+  mesh.visible = pdata.visible;
+  return {...pdata, mesh};
+}
+
+function rebuildSpring(pdata){
+  const {coilD, wireD, length, turns, seg} = pdata.params;
+  const coilR = coilD / 2;
+  const totalSeg = Math.max(16, Math.round(turns * seg));
+  class HelixCurve extends THREE.Curve {
+    constructor(R, L, T){super(); this.R=R; this.L=L; this.T=T;}
+    getPoint(t, target){
+      target = target || new THREE.Vector3();
+      const angle = t * this.T * Math.PI * 2;
+      return target.set(this.R*Math.cos(angle), t*this.L - this.L/2, this.R*Math.sin(angle));
+    }
+  }
+  const curve = new HelixCurve(coilR, length, turns);
+  const geom = new THREE.TubeGeometry(curve, totalSeg, wireD/2, 12, false);
   const mat = makeMaterial(pdata.color, pdata.opacity);
   const mesh = new THREE.Mesh(geom, mat);
   mesh.visible = pdata.visible;
@@ -1626,19 +3479,52 @@ document.addEventListener('keydown', (e)=>{
     if(e.key === 's'){e.preventDefault(); saveProject(); return}
     if(e.key === 'o'){e.preventDefault(); document.getElementById('fileInput').click(); return}
     if(e.key === 'n'){e.preventDefault(); newProject(); return}
+    if(e.key === 'd'){e.preventDefault(); duplicatePart(); return}
+    if(e.key === 'g'){
+      e.preventDefault();
+      if(e.shiftKey) ungroupPart();
+      else groupSelectedParts();
+      return;
+    }
   }
-  if(e.key === 'Escape'){state.drawing = null; setTool('select'); return}
-  if(e.key === 'Delete' || e.key === 'Backspace'){deleteSelected(); return}
+  if(e.key === 'Escape'){state.drawing = null; setTool('select'); hideTransformHandles(); state.parts.forEach(p => p._selected = false); renderPartsList(); updateMultiSelectHighlight(); return}
+  if(e.key === 'Delete' || e.key === 'Backspace'){
+    // 3D 모드에서 부품 선택된 상태면 부품 삭제, sketch 모드면 스케치 삭제
+    if(state.mode === 'model' && state.parts.some(p => p._selected)){
+      deletePart();
+    } else {
+      deleteSelected();
+    }
+    return;
+  }
+  // 3D 모드 단축키 (팅커캐드 스타일)
+  if(state.mode === 'model'){
+    if(e.key === 'h' || e.key === 'H'){toggleHole(); return}
+    if(e.key === 'd' || e.key === 'D'){e.preventDefault(); dropToGround(); return}     // D = 바닥 안착
+    if(e.key === 'l' || e.key === 'L'){openAlignModal(); return}                        // L = 정렬
+    if(e.key === 'r' || e.key === 'R'){rotate90('y'); return}                           // R = 90도 Y회전
+    if(e.key === 'm' || e.key === 'M'){mirrorPart('x'); return}                          // M = 좌우 미러
+    if(e.key === 'f' || e.key === 'F'){fitView(); return}                                // F = 전체맞춤
+    if(e.key === 't' || e.key === 'T'){openTextModal(); return}                          // T = 텍스트 3D
+    if(e.key === 'w' || e.key === 'W'){toggleWireframe(); return}                        // W = 와이어프레임
+    if(e.key === 'g' || e.key === 'G'){toggleGrid(); return}                             // G = 그리드
+    // 방향키 = 미세 이동 (Shift = 큰 이동)
+    const moveStep = e.shiftKey ? 10 : 1;
+    if(e.key === 'ArrowLeft'){e.preventDefault(); nudgeSelected(-moveStep, 0, 0); return}
+    if(e.key === 'ArrowRight'){e.preventDefault(); nudgeSelected(moveStep, 0, 0); return}
+    if(e.key === 'ArrowUp'){e.preventDefault(); nudgeSelected(0, 0, -moveStep); return}
+    if(e.key === 'ArrowDown'){e.preventDefault(); nudgeSelected(0, 0, moveStep); return}
+    if(e.key === 'PageUp'){e.preventDefault(); nudgeSelected(0, moveStep, 0); return}
+    if(e.key === 'PageDown'){e.preventDefault(); nudgeSelected(0, -moveStep, 0); return}
+    if(e.key === '?'){showShortcutHelp(); return}
+    return;
+  }
   if(state.mode === 'sketch'){
     if(e.key === 'l' || e.key === 'L') setTool('line');
     else if(e.key === 'r' || e.key === 'R') setTool('rect');
     else if(e.key === 'c' || e.key === 'C') setTool('circle');
     else if(e.key === 'a' || e.key === 'A') setTool('arc');
     else if(e.key === 's' || e.key === 'S') setTool('select');
-    else if(e.key === 'g' || e.key === 'G') toggleGrid();
-  } else {
-    if(e.key === 'w' || e.key === 'W') toggleWireframe();
-    else if(e.key === 'f' || e.key === 'F') fitView();
     else if(e.key === 'g' || e.key === 'G') toggleGrid();
   }
 });
@@ -1655,8 +3541,10 @@ function init(){
   renderPartsList();
   updateInfo();
   redrawSketch();
-  setStat('Catia3D v1.1 준비됨 - 스케치를 시작하세요');
-  // draw_tool에서 전송된 도형 자동 import
+  setStat('tool3 v1.7 준비됨 - 메뉴에서 도형을 추가하세요');
+  // v1.7: 기본 3D 모드로 시작
+  switchMode('model');
+  // draw_tool에서 전송된 도형 자동 import (있을 때만)
   importFromDrawTool();
 }
 
