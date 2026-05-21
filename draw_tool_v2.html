@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<title>도면 작도기 Rev.10.0 - 전체 캐드 기능</title>
+<title>도면 작도기 Rev.10.2 - 기본 흰색/두께1</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Malgun Gothic', sans-serif; background: #2b2b2b; color: #eee; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
@@ -124,8 +124,8 @@
 <body>
 
 <header>
-  <h1>📐 도면 작도기 Rev.10.0</h1>
-  <span class="ver">v10.0 (E+F+G 통합)</span>
+  <h1>📐 도면 작도기 Rev.10.2</h1>
+  <span class="ver">v10.2 (기본 흰색/두께1)</span>
   <button id="headerBtnHelp" style="padding:5px 12px; background:#27ae60; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:12px; font-weight:bold;" title="도움말 (F1)">❓ 도움말</button>
   <button id="headerBtnSelect" style="padding:5px 12px; background:#9b59b6; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:12px; font-weight:bold;" title="선택 도구로 전환 (V)">🔲 선택</button>
   <button id="headerBtnLiveSnap" style="padding:5px 10px; background:#555; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:11px; font-weight:bold;" title="마우스가 도형 근처에 갈 때 자동 흡착 (점/선/면)">🧲 라이브스냅 OFF</button>
@@ -265,12 +265,20 @@
   <!-- 우측 인라인 컨트롤 (현재 도구의 색상/두께) -->
   <div class="inline-controls">
     <label>선:</label>
-    <input type="color" id="strokeColor" value="#000000" title="선 색상">
-    <input type="number" id="strokeWidth" value="2" min="1" max="30" title="선 두께">
+    <input type="color" id="strokeColor" value="#ffffff" title="선 색상">
+    <input type="number" id="strokeWidth" value="1" min="1" max="30" title="선 두께">
     <label>채움:</label>
     <input type="color" id="fillColor" value="#ffaa00" title="채움 색상">
     <input type="range" id="fillAlpha" min="0" max="100" value="50" title="채움 투명도">
     <span id="fillAlphaVal" style="font-size:10px; min-width:26px;">50%</span>
+    <select id="hatchPattern" title="해치 패턴" style="font-size:11px; padding:2px;">
+      <option value="solid">■ 단색</option>
+      <option value="lines45">／ 빗금45°</option>
+      <option value="lines135">＼ 빗금135°</option>
+      <option value="cross">＃ 격자</option>
+      <option value="dots">⋮⋮ 도트</option>
+      <option value="ansi31">≡ ANSI31</option>
+    </select>
     <span class="badge snap" id="badgeSnap" title="스냅 토글">🧲 OFF</span>
     <span class="badge on" id="badgeCont" style="background:#555;" title="연속선 토글">⛓ OFF</span>
     <span class="badge" id="badgeTool">선</span>
@@ -942,6 +950,87 @@ document.getElementById('fillAlpha').addEventListener('input', e => {
   document.getElementById('fillAlphaVal').textContent = e.target.value + '%';
 });
 
+// Rev.10.1: 해치 패턴
+let currentHatchPattern = 'solid';
+let selectedFillIds = new Set();  // 선택된 채움 (편집용)
+
+document.getElementById('hatchPattern').addEventListener('change', e => {
+  currentHatchPattern = e.target.value;
+  cmdLog(`  HATCH 패턴 = ${e.target.options[e.target.selectedIndex].text}`, 'system');
+});
+
+// 채움 편집 모달 생성 (런타임)
+function openFillEditor(fill) {
+  // 동적 모달
+  let modal = document.getElementById('fillEditModal');
+  if (!modal) {
+    const html = `
+      <div class="modal-overlay" id="fillEditModal">
+        <div class="modal" style="max-width:400px;">
+          <h3>🎨 채움 편집</h3>
+          <div class="row"><label>색상:</label><input type="color" id="feColor" style="flex:1;"></div>
+          <div class="row"><label>투명도:</label>
+            <input type="range" id="feAlpha" min="0" max="100" style="flex:1;">
+            <span id="feAlphaVal" style="min-width:36px;">50%</span>
+          </div>
+          <div class="row"><label>패턴:</label>
+            <select id="fePattern" style="flex:1;">
+              <option value="solid">■ 단색</option>
+              <option value="lines45">／ 빗금45°</option>
+              <option value="lines135">＼ 빗금135°</option>
+              <option value="cross">＃ 격자</option>
+              <option value="dots">⋮⋮ 도트</option>
+              <option value="ansi31">≡ ANSI31</option>
+            </select>
+          </div>
+          <div class="actions">
+            <button id="feDelete" style="background:#c9302c;">🗑 삭제</button>
+            <button id="feCancel">취소</button>
+            <button class="success" id="feApply">적용</button>
+          </div>
+        </div>
+      </div>`;
+    document.body.insertAdjacentHTML('beforeend', html);
+    
+    // 핸들러 (한 번만)
+    document.getElementById('feAlpha').addEventListener('input', e => {
+      document.getElementById('feAlphaVal').textContent = e.target.value + '%';
+    });
+    document.getElementById('feCancel').addEventListener('click', () => {
+      document.getElementById('fillEditModal').classList.remove('show');
+    });
+    document.getElementById('feApply').addEventListener('click', () => {
+      const f = window._editingFill;
+      if (f) {
+        f.color = document.getElementById('feColor').value;
+        f.alpha = parseInt(document.getElementById('feAlpha').value) / 100;
+        f.pattern = document.getElementById('fePattern').value;
+        redrawFills();
+        redrawDraw();
+        cmdLog(`  채움 #${f.id} 편집 완료.`, 'system');
+      }
+      document.getElementById('fillEditModal').classList.remove('show');
+    });
+    document.getElementById('feDelete').addEventListener('click', () => {
+      const f = window._editingFill;
+      if (f && confirm('이 채움을 삭제할까요?')) {
+        fills = fills.filter(x => x.id !== f.id);
+        redrawFills(); redrawDraw(); updateCount();
+        cmdLog(`  채움 #${f.id} 삭제됨.`, 'system');
+      }
+      document.getElementById('fillEditModal').classList.remove('show');
+    });
+  }
+  
+  // 값 채우기
+  window._editingFill = fill;
+  document.getElementById('feColor').value = fill.color || '#ffaa00';
+  document.getElementById('feAlpha').value = Math.round((fill.alpha || 0.5) * 100);
+  document.getElementById('feAlphaVal').textContent = Math.round((fill.alpha || 0.5) * 100) + '%';
+  document.getElementById('fePattern').value = fill.pattern || 'solid';
+  document.getElementById('fillEditModal').classList.add('show');
+}
+
 // ====== 도구 선택 ======
 document.querySelectorAll('.tool-menu-item').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -983,7 +1072,7 @@ function updateToolStatus() {
     rect: '첫 클릭→두 번째 클릭으로 사각형',
     circle: '첫 클릭(중심)→두 번째 클릭으로 반지름',
     arc: '⌒ 1차 클릭 → 라운드를 따라 마우스 이동 → 2차 클릭 시 가장 가까운 배경 라운드 자동 피팅!',
-    fill: '🎨 닫힌 영역(도형 안쪽) 클릭 → 자동 채움 / 도형 따라 정확히 색칠',
+    fill: '🎨 닫힌 영역 안 클릭 → 채움 (연속 클릭 가능) / 더블클릭=편집 / 패턴 셀렉트로 빗금/격자 선택 / BPOLY=모두 자동',
     calib: '📏 알고 있는 치수의 양 끝점 2개를 클릭 (스냅 권장) → 실제 mm 입력 → 이미지 자동 스케일',
     axis: '🔄 회전축의 양 끝 2개 클릭 → 보라색 점선 표시됨. 이 축 기준으로 윤곽선이 회전체가 됨',
     trim: '✂ 트리밍: 자르고 싶은 선의 자를 부분을 클릭 (다른 선/도형과 교차하는 부분 기준으로 자름)',
@@ -1806,11 +1895,22 @@ drawCanvas.addEventListener('click', e => {
   }
 });
 
-drawCanvas.addEventListener('dblclick', () => {
+drawCanvas.addEventListener('dblclick', e => {
   if (tool === 'polyline' && polylineState) {
     finishPolyline(false);
     return;
   }
+  
+  // 채움 영역 더블클릭 시 편집 모달 (선택/채움 도구에서)
+  if (tool === 'select' || tool === 'fill') {
+    const p = getCanvasPoint(e);
+    const f = hitTestFill(p);
+    if (f) {
+      openFillEditor(f);
+      return;
+    }
+  }
+  
   if (continuousMode && firstClick) {
     firstClick = null;
     preCtx.clearRect(0,0,baseW,baseH);
@@ -3869,6 +3969,121 @@ document.getElementById('btnPrev3DSave').addEventListener('click', () => {
 });
 
 // ====== 영역 채움 (페인트버킷) ======
+
+// Rev.10.1: BPOLY - 모든 닫힌 영역 자동 검출 후 채움
+function handleBpolyCommand() {
+  if (shapes.length === 0) {
+    cmdLog('  BPOLY: 도형이 없습니다.', 'error');
+    return;
+  }
+  if (typeof cv === 'undefined' || !cv.Mat) {
+    cmdLog('  BPOLY: OpenCV 로딩 중. 잠시 후 다시 시도.', 'error');
+    return;
+  }
+  
+  if (!confirm('현재 화면의 모든 닫힌 영역을 자동으로 채울까요?\n현재 채움 패턴/색상이 적용됩니다.')) return;
+  
+  showLoading('자동 경계 검출 중...');
+  setTimeout(() => {
+    try {
+      // 도형 외곽선만 흑백 마스크에 그림 (텍스트/치수 제외)
+      const maskCanvas = document.createElement('canvas');
+      maskCanvas.width = baseW; maskCanvas.height = baseH;
+      const mctx = maskCanvas.getContext('2d');
+      mctx.fillStyle = '#ffffff';
+      mctx.fillRect(0, 0, baseW, baseH);
+      mctx.strokeStyle = '#000000';
+      mctx.lineWidth = 2;
+      mctx.lineCap = 'round'; mctx.lineJoin = 'round';
+      
+      shapes.forEach(s => {
+        if (s.type === 'text' || (s.type && s.type.startsWith('dim-'))) return;
+        mctx.beginPath();
+        if (s.type === 'line') { mctx.moveTo(s.p1.x, s.p1.y); mctx.lineTo(s.p2.x, s.p2.y); mctx.stroke(); }
+        else if (s.type === 'rect') {
+          const x=Math.min(s.p1.x,s.p2.x), y=Math.min(s.p1.y,s.p2.y);
+          const w=Math.abs(s.p2.x-s.p1.x), h=Math.abs(s.p2.y-s.p1.y);
+          mctx.strokeRect(x,y,w,h);
+        } else if (s.type === 'circle') {
+          const r=Math.hypot(s.p2.x-s.p1.x, s.p2.y-s.p1.y);
+          mctx.arc(s.p1.x, s.p1.y, r, 0, Math.PI*2); mctx.stroke();
+        } else if (s.type === 'arc') {
+          mctx.arc(s.cx, s.cy, s.r, s.startAngle, s.endAngle, s.ccw); mctx.stroke();
+        } else if (s.type === 'ellipse') {
+          const rot = s.rotation !== undefined ? s.rotation : (s.angle || 0);
+          mctx.ellipse(s.cx, s.cy, s.rx, s.ry, rot, 0, Math.PI*2); mctx.stroke();
+        } else if (s.type === 'polyline' && s.points && s.points.length >= 2) {
+          mctx.moveTo(s.points[0].x, s.points[0].y);
+          for (let i = 1; i < s.points.length; i++) mctx.lineTo(s.points[i].x, s.points[i].y);
+          if (s.closed) mctx.closePath();
+          mctx.stroke();
+        }
+      });
+      
+      const src = cv.imread(maskCanvas);
+      const gray = new cv.Mat();
+      cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+      const bin = new cv.Mat();
+      cv.threshold(gray, bin, 128, 255, cv.THRESH_BINARY);
+      
+      // RETR_CCOMP: 외곽 + 안쪽 모두
+      // 또는 RETR_LIST: 모든 윤곽선 (계층 무관)
+      const contours = new cv.MatVector();
+      const hierarchy = new cv.Mat();
+      // 흑백 반전 (도형 선이 흰색이 되도록)
+      cv.bitwise_not(bin, bin);
+      cv.findContours(bin, contours, hierarchy, cv.RETR_CCOMP, cv.CHAIN_APPROX_SIMPLE);
+      
+      const totalPixels = baseW * baseH;
+      const newFills = [];
+      const alpha = parseInt(document.getElementById('fillAlpha').value) / 100;
+      const color = document.getElementById('fillColor').value;
+      const pattern = currentHatchPattern || 'solid';
+      
+      for (let i = 0; i < contours.size(); i++) {
+        const cnt = contours.get(i);
+        const area = cv.contourArea(cnt);
+        // 너무 작거나 너무 큰 영역 (전체 화면) 제외
+        if (area < 100 || area > totalPixels * 0.7) continue;
+        
+        const approx = new cv.Mat();
+        cv.approxPolyDP(cnt, approx, 2, true);
+        const pts = [];
+        for (let j = 0; j < approx.rows; j++) {
+          pts.push({x: approx.data32S[j*2], y: approx.data32S[j*2+1]});
+        }
+        approx.delete();
+        if (pts.length < 3) continue;
+        
+        newFills.push({
+          id: ++shapeIdSeq,
+          type: 'fill',
+          points: pts,
+          color,
+          alpha,
+          pattern,
+          layer: currentLayer || 'default'
+        });
+      }
+      
+      newFills.forEach(f => fills.push(f));
+      redoStack = [];
+      redrawFills();
+      redrawDraw();
+      updateCount();
+      
+      cmdLog(`  BPOLY: ${newFills.length}개 영역 자동 채움 완료.`, 'system');
+      
+      src.delete(); gray.delete(); bin.delete();
+      contours.delete(); hierarchy.delete();
+    } catch(e) {
+      console.error(e);
+      cmdLog('  BPOLY 오류: ' + e.message, 'error');
+    }
+    hideLoading();
+  }, 50);
+}
+
 function doFillAtPoint(p) {
   // 채움 캔버스에 그릴 임시 캔버스 만들고 flood fill
   // 알고리즘: 모든 도형(외곽선만)을 흰 배경의 검은 선으로 임시 그리고,
@@ -3899,8 +4114,14 @@ function doFillAtPoint(p) {
       mctx.lineCap = 'round'; mctx.lineJoin = 'round';
       
       shapes.forEach(s => {
+        // 텍스트/치수는 경계 아님 - 제외
+        if (s.type === 'text' || (s.type && s.type.startsWith('dim-'))) return;
+        // 잠긴 레이어 도형도 경계로는 사용 (시각적이라서)
+        
         mctx.beginPath();
-        if (s.type === 'line') { mctx.moveTo(s.p1.x, s.p1.y); mctx.lineTo(s.p2.x, s.p2.y); mctx.stroke(); }
+        if (s.type === 'line') { 
+          mctx.moveTo(s.p1.x, s.p1.y); mctx.lineTo(s.p2.x, s.p2.y); mctx.stroke(); 
+        }
         else if (s.type === 'rect') {
           const x=Math.min(s.p1.x,s.p2.x), y=Math.min(s.p1.y,s.p2.y);
           const w=Math.abs(s.p2.x-s.p1.x), h=Math.abs(s.p2.y-s.p1.y);
@@ -3911,7 +4132,18 @@ function doFillAtPoint(p) {
         } else if (s.type === 'arc') {
           mctx.arc(s.cx, s.cy, s.r, s.startAngle, s.endAngle, s.ccw); mctx.stroke();
         } else if (s.type === 'ellipse') {
-          mctx.ellipse(s.cx, s.cy, s.rx, s.ry, s.angle||0, 0, Math.PI*2); mctx.stroke();
+          // 회전 타원 (rx, ry, rotation) 또는 옛 형식 (angle)
+          const rot = s.rotation !== undefined ? s.rotation : (s.angle || 0);
+          mctx.ellipse(s.cx, s.cy, s.rx, s.ry, rot, 0, Math.PI*2); mctx.stroke();
+        } else if (s.type === 'polyline') {
+          // 폴리라인 (Rev.10.0 추가)
+          if (!s.points || s.points.length < 2) return;
+          mctx.moveTo(s.points[0].x, s.points[0].y);
+          for (let i = 1; i < s.points.length; i++) {
+            mctx.lineTo(s.points[i].x, s.points[i].y);
+          }
+          if (s.closed) mctx.closePath();
+          mctx.stroke();
         }
       });
       
@@ -3966,7 +4198,7 @@ function doFillAtPoint(p) {
       cv.findContours(fillRegion, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
       
       if (contours.size() === 0) {
-        alert('채울 영역을 찾지 못했습니다. 도형이 완전히 닫혀있는지 확인하세요.');
+        cmdLog('  HATCH: 채울 영역을 찾지 못했습니다.', 'error');
       } else {
         // 가장 큰 윤곽선만 사용 (보통 클릭한 영역)
         let maxArea = 0, maxIdx = 0;
@@ -3975,13 +4207,17 @@ function doFillAtPoint(p) {
           if (a > maxArea) { maxArea = a; maxIdx = i; }
         }
         
-        if (maxArea < 20) {
-          alert('영역이 너무 작습니다.');
+        // ★ 닫힘 검증: 전체 화면의 80% 이상이면 닫히지 않은 것
+        const totalPixels = baseW * baseH;
+        if (maxArea > totalPixels * 0.8) {
+          cmdLog('  HATCH: ❌ 닫힌 영역이 아닙니다 (전체가 채워졌음). 선들 사이에 틈이 있는지 확인하세요.', 'error');
+          cmdLog('  팁: 라이브스냅 ON 상태에서 선의 끝점이 정확히 만나도록 그리세요.', 'prompt');
+        } else if (maxArea < 20) {
+          cmdLog('  HATCH: 영역이 너무 작습니다.', 'error');
         } else {
           const cnt = contours.get(maxIdx);
-          // 윤곽선 점들 추출 (단순화)
           const approx = new cv.Mat();
-          const epsilon = 1.5;  // 단순화 정도
+          const epsilon = 1.5;
           cv.approxPolyDP(cnt, approx, epsilon, true);
           
           const points = [];
@@ -3991,16 +4227,22 @@ function doFillAtPoint(p) {
           
           if (points.length >= 3) {
             const alpha = parseInt(document.getElementById('fillAlpha').value) / 100;
-            fills.push({
+            const pattern = (typeof currentHatchPattern !== 'undefined') ? currentHatchPattern : 'solid';
+            const fill = {
               id: ++shapeIdSeq,
               type: 'fill',
               points,
               color: document.getElementById('fillColor').value,
-              alpha
-            });
+              alpha,
+              pattern,
+              layer: currentLayer || 'default'
+            };
+            fills.push(fill);
             redoStack = [];
             redrawFills();
             updateCount();
+            const areaMm = (maxArea * mmPerPixel * mmPerPixel).toFixed(2);
+            cmdLog(`  HATCH: 채움 완료 (${pattern}, 면적 ${areaMm}㎟). 계속 클릭=다중채움, ESC=종료.`, 'system');
           }
           approx.delete();
         }
@@ -4079,15 +4321,113 @@ function drawShape(ctx, s, selected) {
 
 function drawFill(ctx, f) {
   if (!f.points || f.points.length < 3) return;
-  ctx.save();
-  ctx.fillStyle = hexToRgba(f.color, f.alpha);
-  ctx.beginPath();
-  ctx.moveTo(f.points[0].x, f.points[0].y);
-  for (let i = 1; i < f.points.length; i++) {
-    ctx.lineTo(f.points[i].x, f.points[i].y);
+  
+  // 레이어 visibility 체크
+  if (f.layer && typeof getLayer === 'function') {
+    const layer = getLayer(f.layer);
+    if (layer && !layer.visible) return;
   }
+  
+  ctx.save();
+  
+  // 패턴 지원
+  const pattern = f.pattern || 'solid';
+  if (pattern === 'solid' || !pattern) {
+    ctx.fillStyle = hexToRgba(f.color, f.alpha);
+    ctx.beginPath();
+    ctx.moveTo(f.points[0].x, f.points[0].y);
+    for (let i = 1; i < f.points.length; i++) {
+      ctx.lineTo(f.points[i].x, f.points[i].y);
+    }
+    ctx.closePath();
+    ctx.fill();
+  } else {
+    // 해치 패턴 그리기 (clip + lines)
+    drawHatchFill(ctx, f);
+  }
+  
+  // 선택된 채움 표시 (테두리 강조)
+  if (selectedFillIds && selectedFillIds.has(f.id)) {
+    ctx.strokeStyle = '#3498db';
+    ctx.lineWidth = 3;
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    ctx.moveTo(f.points[0].x, f.points[0].y);
+    for (let i = 1; i < f.points.length; i++) {
+      ctx.lineTo(f.points[i].x, f.points[i].y);
+    }
+    ctx.closePath();
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  
+  ctx.restore();
+}
+
+// 해치 패턴 그리기 (clip 영역 안에 라인/그리드/점 패턴)
+function drawHatchFill(ctx, f) {
+  const pts = f.points;
+  const color = f.color || '#000000';
+  const alpha = f.alpha != null ? f.alpha : 0.5;
+  
+  // 클립 영역 설정
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
   ctx.closePath();
-  ctx.fill();
+  ctx.save();
+  ctx.clip();
+  
+  // bounding box
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  pts.forEach(p => {
+    minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
+  });
+  
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.globalAlpha = alpha;
+  ctx.lineWidth = 1;
+  
+  const patternDef = (typeof HATCH_PATTERNS !== 'undefined' && HATCH_PATTERNS[f.pattern]) 
+    ? HATCH_PATTERNS[f.pattern] : null;
+  
+  if (patternDef && patternDef.type === 'lines') {
+    const ang = (patternDef.angle || 45) * Math.PI / 180;
+    const sp = patternDef.spacing || 8;
+    const diag = Math.hypot(maxX-minX, maxY-minY) + 50;
+    const cx = (minX+maxX)/2, cy = (minY+maxY)/2;
+    const dx = Math.cos(ang), dy = Math.sin(ang);
+    const nx = -dy, ny = dx;
+    const steps = Math.ceil(diag / sp) + 5;
+    ctx.beginPath();
+    for (let i = -steps; i <= steps; i++) {
+      const px = cx + nx * i * sp, py = cy + ny * i * sp;
+      ctx.moveTo(px - dx*diag, py - dy*diag);
+      ctx.lineTo(px + dx*diag, py + dy*diag);
+    }
+    ctx.stroke();
+  } else if (patternDef && patternDef.type === 'cross') {
+    const sp = patternDef.spacing || 10;
+    ctx.beginPath();
+    for (let x = Math.floor(minX/sp)*sp; x <= maxX+sp; x += sp) {
+      ctx.moveTo(x, minY-5); ctx.lineTo(x, maxY+5);
+    }
+    for (let y = Math.floor(minY/sp)*sp; y <= maxY+sp; y += sp) {
+      ctx.moveTo(minX-5, y); ctx.lineTo(maxX+5, y);
+    }
+    ctx.stroke();
+  } else if (patternDef && patternDef.type === 'dots') {
+    const sp = patternDef.spacing || 6;
+    for (let x = Math.floor(minX/sp)*sp; x <= maxX+sp; x += sp) {
+      for (let y = Math.floor(minY/sp)*sp; y <= maxY+sp; y += sp) {
+        ctx.beginPath();
+        ctx.arc(x, y, 1.5, 0, Math.PI*2);
+        ctx.fill();
+      }
+    }
+  }
   ctx.restore();
 }
 
@@ -4156,6 +4496,28 @@ function hitTest(p) {
     if (isPointOnShape(p, s)) return s;
   }
   return null;
+}
+
+// 채움 영역 안 점 hit 검사 (Rev.10.1)
+function hitTestFill(p) {
+  for (let i = fills.length - 1; i >= 0; i--) {
+    const f = fills[i];
+    if (pointInPolygon(p, f.points)) return f;
+  }
+  return null;
+}
+
+function pointInPolygon(p, vertices) {
+  // ray casting algorithm
+  let inside = false;
+  for (let i = 0, j = vertices.length - 1; i < vertices.length; j = i++) {
+    const xi = vertices[i].x, yi = vertices[i].y;
+    const xj = vertices[j].x, yj = vertices[j].y;
+    const intersect = ((yi > p.y) !== (yj > p.y)) &&
+      (p.x < (xj - xi) * (p.y - yi) / (yj - yi + 1e-9) + xi);
+    if (intersect) inside = !inside;
+  }
+  return inside;
 }
 
 function isPointOnShape(p, s) {
@@ -5662,6 +6024,11 @@ const CMD_DICT = {
   'CO':        { tool: 'copy',     name: 'COPY (복사)' },
   'COPY':      { tool: 'copy',     name: 'COPY (복사)' },
   'CP':        { tool: 'copy',     name: 'COPY (복사)' },
+  
+  // Rev.10.1: 채움 자동 검출
+  'BPOLY':     { action: 'bpoly',   name: 'BPOLY (모든 영역 자동 채움)' },
+  'BH':        { tool: 'fill',      name: 'BHATCH (채움)' },
+  'BHATCH':    { tool: 'fill',      name: 'BHATCH (채움)' },
   'M':         { tool: 'movetool', name: 'MOVE (이동)' },
   'MOVE':      { tool: 'movetool', name: 'MOVE (이동)' },
   'RO':        { tool: 'rotate',   name: 'ROTATE (회전)' },
@@ -5861,6 +6228,9 @@ function handleAction(action) {
     case 'dxf':
       handleDxfCommand();
       break;
+    case 'bpoly':
+      handleBpolyCommand();
+      break;
   }
 }
 
@@ -5871,7 +6241,7 @@ function showHelpInCmd() {
   cmdLog('  편집:    TR(TRIM)  EX(EXTEND)  F(FILLET)  O(OFFSET)', 'prompt');
   cmdLog('  변환:    CO(COPY)  M(MOVE)  RO(ROTATE)  MI(MIRROR)  SC(SCALE)  AR(ARRAY)', 'prompt');
   cmdLog('  치수:    DLI(선형) DAL(평행) DRA(반지름) DDI(직경) DAN(각도)', 'prompt');
-  cmdLog('  기타:    S(SELECT) H(HATCH채움) DI(캘리브) AX(회전축) LA(LAYER) Z(ZOOM)', 'prompt');
+  cmdLog('  기타:    S(SELECT) H(HATCH채움) BPOLY(자동채움) DI(캘리브) AX(회전축) LA(LAYER) Z(ZOOM)', 'prompt');
   cmdLog('  측정:    LI(LIST) AA(AREA) ID(좌표)', 'prompt');
   cmdLog('  파일:    SAVE  DXF  ?(HELP)', 'prompt');
   cmdLog('  액션:    U(UNDO)  REDO  E(ERASE)  OS(OSNAP) LSNAP', 'prompt');
