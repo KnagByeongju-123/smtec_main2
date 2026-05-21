@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>tool3 v2.8 - draw_tool 도면 세로 정렬(XY평면, 바닥=Y0)</title>
+<title>tool3 v2.9 - 워크플레인 활성 시 D 키는 그 평면에 안착</title>
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
@@ -192,8 +192,8 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
 <body>
 
 <header>
-  <h1>📐 tool3 v2.8</h1>
-  <span class="ver">v2.8 - draw_tool 도면 세로 정렬(XY 평면, 바닥=Y0)</span>
+  <h1>📐 tool3 v2.9</h1>
+  <span class="ver">v2.9 - 워크플레인 활성 시 D는 그 평면에 안착</span>
   <span class="mode-badge" id="modeBadge">스케처 모드</span>
   <span class="stat" id="statText">준비됨</span>
 </header>
@@ -414,6 +414,7 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
       • <span class="kbd">W</span> 또는 [🟡 W] 버튼 → 면 클릭 모드<br>
       • 부품 면을 클릭 = 그 면이 새 작업평면<br>
       • 다음 도형이 그 위에 생성<br>
+      • <span class="kbd">D</span> = 워크플레인에 안착 (v2.9)<br>
       • <span class="kbd">ESC</span> 또는 <span class="kbd">W</span> 다시 = 글로벌 바닥<br>
       • <span class="kbd">Shift+W</span> = 와이어프레임 (기존 W 기능)<br>
       <br>
@@ -3469,13 +3470,49 @@ function dropToGround(){
   const sel = getSelectedParts();
   const target = sel.length > 0 ? sel : (state.parts.length > 0 ? [state.parts[state.parts.length-1]] : []);
   if(target.length === 0){toast('부품을 선택하세요'); return}
+
+  // v2.9: 워크플레인이 활성화되어 있으면 그 평면 위로 안착, 아니면 글로벌 Y=0
+  const wp = state.workPlane;
+  if(wp){
+    // 평면 정의: 점 wp.origin, 법선 wp.normal
+    // 부품의 8개 바운딩박스 모서리 중 평면 아래쪽(노멀 반대편)으로 가장 멀리 있는 점을 찾아
+    // 그 점이 평면에 닿도록 부품을 노멀 방향으로 평행이동
+    target.forEach(p => {
+      p.mesh.updateMatrixWorld(true);
+      const bb = new THREE.Box3().setFromObject(p.mesh);
+      // 8개 모서리
+      const corners = [
+        new THREE.Vector3(bb.min.x, bb.min.y, bb.min.z),
+        new THREE.Vector3(bb.max.x, bb.min.y, bb.min.z),
+        new THREE.Vector3(bb.min.x, bb.max.y, bb.min.z),
+        new THREE.Vector3(bb.max.x, bb.max.y, bb.min.z),
+        new THREE.Vector3(bb.min.x, bb.min.y, bb.max.z),
+        new THREE.Vector3(bb.max.x, bb.min.y, bb.max.z),
+        new THREE.Vector3(bb.min.x, bb.max.y, bb.max.z),
+        new THREE.Vector3(bb.max.x, bb.max.y, bb.max.z),
+      ];
+      // 각 모서리의 평면 부호거리 = (corner - origin) · normal
+      // 가장 작은 값(가장 평면 아래쪽 = 노멀 반대편으로 가장 멀리)을 0으로 만들도록 노멀 방향으로 이동
+      let minDist = Infinity;
+      corners.forEach(c => {
+        const d = c.clone().sub(wp.origin).dot(wp.normal);
+        if(d < minDist) minDist = d;
+      });
+      // 부품을 노멀 방향으로 -minDist만큼 이동 → 최저 모서리가 평면에 닿음
+      p.mesh.position.addScaledVector(wp.normal, -minDist);
+    });
+    if(transformState.activePart) showTransformHandles(transformState.activePart);
+    updateDimLabels();
+    toast('⬇️ ' + target.length + '개 부품 워크플레인에 안착');
+    return;
+  }
+
+  // 기본: 글로벌 바닥(Y=0)
   target.forEach(p => {
     p.mesh.updateMatrixWorld(true);
     const bb = new THREE.Box3().setFromObject(p.mesh);
-    // 객체의 가장 낮은 점이 Y=0이 되도록
     p.mesh.position.y -= bb.min.y;
   });
-  // 핸들 갱신
   if(transformState.activePart) showTransformHandles(transformState.activePart);
   updateDimLabels();
   toast('⬇️ ' + target.length + '개 부품 바닥 안착 (Y=0)');
@@ -4630,7 +4667,7 @@ function init(){
   renderPartsList();
   updateInfo();
   redrawSketch();
-  setStat('tool3 v2.8 준비됨');
+  setStat('tool3 v2.9 준비됨');
   // v2.2: 항상 3D 모드로 시작 (draw_tool import도 3D 바닥에 표시)
   switchMode('model');
   try {
