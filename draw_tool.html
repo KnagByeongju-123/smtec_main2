@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<title>도면 작도기 Rev.10.21 - ccw 부호 정정</title>
+<title>도면 작도기 Rev.11.1 - 교차점 일괄 분할 추가</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Malgun Gothic', sans-serif; background: #2b2b2b; color: #eee; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
@@ -202,8 +202,8 @@
 <body>
 
 <header>
-  <h1>📐 도면 작도기 Rev.10.21</h1>
-  <span class="ver">v10.21 (ccw 부호 정정)</span>
+  <h1>📐 도면 작도기 Rev.11.1</h1>
+  <span class="ver">v11.1 (교차점 일괄분할)</span>
   <button id="headerBtnHelp" style="padding:5px 12px; background:#27ae60; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:12px; font-weight:bold;" title="도움말 (F1)">❓ 도움말</button>
   <button id="headerBtnFill" style="padding:5px 12px; background:#e67e22; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:12px; font-weight:bold;" title="채우기 도구 (H)">🎨 채움</button>
   <button id="headerBtnBpoly" style="padding:5px 12px; background:#d35400; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:12px; font-weight:bold;" title="모든 닫힌 영역 자동 채움 (BPOLY)">🎨🎨 전체채움</button>
@@ -270,6 +270,9 @@
       <div class="menu-item tool-menu-item" data-tool="extend"><span class="ico">↔</span> 연장 (Extend)<span class="shortcut">E</span></div>
       <div class="menu-item tool-menu-item" data-tool="fillet"><span class="ico">◜</span> 모서리 라운드 (Fillet)</div>
       <div class="menu-item tool-menu-item" data-tool="offset"><span class="ico">∥</span> 오프셋 (Offset)<span class="shortcut">O</span></div>
+      <div class="menu-item tool-menu-item" data-tool="break"><span class="ico">✄</span> 분할 (Break)<span class="shortcut">BR</span></div>
+      <div class="menu-item tool-menu-item" data-tool="breakAtPoint"><span class="ico">⋮</span> 점에서 분할 (Break at Point)<span class="shortcut">BAT</span></div>
+      <div class="menu-item" id="menuBreakAll"><span class="ico">⊞</span> 교차점 일괄 분할 (Break All)<span class="shortcut">BRA</span></div>
       <div class="menu-sep"></div>
       <div class="menu-section">치수 (D안)</div>
       <div class="menu-item tool-menu-item" data-tool="dimLinear"><span class="ico">↦</span> 선형 치수 (수평/수직)</div>
@@ -1163,7 +1166,7 @@ document.querySelectorAll('.tool-menu-item').forEach(btn => {
     tool = btn.dataset.tool;
     firstClick = null;
     arcPath = [];
-    filletState = null; offsetState = null; dimState = null;
+    filletState = null; offsetState = null; dimState = null; breakState = null;
     preCtx.clearRect(0,0,baseW,baseH);
     redrawDraw();
     updateToolStatus();
@@ -1183,7 +1186,7 @@ document.querySelectorAll('.tool-menu-item').forEach(btn => {
 
 function updateToolStatus() {
   const names = {select:'선택', line:'선', rect:'사각형', circle:'원', arc:'라운드', fill:'영역채움', calib:'캘리브', axis:'회전축',
-    trim:'트리밍', extend:'연장', fillet:'모서리R', offset:'오프셋',
+    trim:'트리밍', extend:'연장', fillet:'모서리R', offset:'오프셋', break:'분할', breakAtPoint:'점분할',
     dimLinear:'선형치수', dimAligned:'평행치수', dimRadius:'반지름치수', dimDiameter:'직경치수', dimAngle:'각도치수',
     copy:'복사', movetool:'이동', rotate:'회전', mirror:'대칭', scale:'스케일',
     polyline:'폴리라인', ellipse:'타원', text:'텍스트'};
@@ -1203,6 +1206,8 @@ function updateToolStatus() {
     extend: '↔ 연장: 연장할 선의 늘릴 쪽 끝점 가까이 클릭 → 가장 가까운 다른 선까지 자동 연장',
     fillet: '◜ 모서리 R: ① 사각형/두 선의 꼭지점 클릭→자동 라운드 ② 또는 두 직선 차례 클릭',
     offset: '∥ 오프셋: 원본 선/도형 클릭 → 오프셋할 방향 클릭 → 거리 입력으로 평행 복사',
+    break: '✄ 분할: 선 클릭 → 첫 분할점 → 두 번째 분할점 클릭 (두 점 사이를 잘라내고 두 선으로 분할). 같은 점 두 번 클릭하면 그 점에서만 분할',
+    breakAtPoint: '⋮ 점에서 분할: 선 클릭 → 한 점 클릭 → 그 점에서 두 선으로 분할 (중간 제거 없음)',
     dimLinear: '↦ 선형 치수: 두 점 클릭 (또는 선 1개 클릭) → 치수선 위치 클릭',
     dimAligned: '⤡ 평행 치수: 두 점을 잇는 방향에 평행한 치수 / 점1 → 점2 → 위치',
     dimRadius: 'R 반지름: 원/호 클릭 → 라벨 위치 클릭',
@@ -2054,6 +2059,8 @@ drawCanvas.addEventListener('click', e => {
   if (tool === 'extend') { handleExtendClick(p); return; }
   if (tool === 'fillet') { handleFilletClick(p); return; }
   if (tool === 'offset') { handleOffsetClick(p); return; }
+  if (tool === 'break') { handleBreakClick(p); return; }
+  if (tool === 'breakAtPoint') { handleBreakAtPointClick(p); return; }
   
   // E안 복사/변환
   if (tool === 'copy') { handleCopyClick(p); return; }
@@ -2179,7 +2186,7 @@ window.addEventListener('keydown', e => {
     axisDistanceOverride = null; axisDistanceBuf = '';
     endpointPickState = null;
     arcHandleDrag = null;
-    filletState = null; offsetState = null; dimState = null;
+    filletState = null; offsetState = null; dimState = null; breakState = null;
     try { resetCopyTransformStates(); } catch(e) {}
     try { resetDrawingStates(); } catch(e) {}
     idPickActive = false;
@@ -3439,6 +3446,364 @@ function applyFilletNoPrompt(L1, L2, click1, click2, r, rMm) {
 }
 
 // 오프셋 (Offset)
+
+// ===== 분할 (Break) =====
+// 선의 두 점 사이를 잘라내고 두 개의 선으로 분할
+// 1차 클릭: 선 선택
+// 2차 클릭: 첫 분할점
+// 3차 클릭: 둘째 분할점 (같은 점이면 단순 분할)
+let breakState = null;
+
+function handleBreakClick(p) {
+  // 1차: 선 선택
+  if (!breakState) {
+    const target = findShapeAtPoint(p, 15);
+    if (!target) {
+      document.getElementById('statusHint').textContent = '✄ 분할할 선/원/호를 클릭하세요.';
+      return;
+    }
+    if (target.type !== 'line' && target.type !== 'circle' && target.type !== 'arc') {
+      alert('분할은 선/원/호만 지원합니다.');
+      return;
+    }
+    breakState = { target, points: [] };
+    document.getElementById('statusHint').textContent = '✄ 첫 분할점 클릭 (도형 위)';
+    redrawDraw();
+    drawCtx.save();
+    drawCtx.strokeStyle = '#f39c12'; drawCtx.lineWidth = 4;
+    drawCtx.beginPath();
+    if (target.type === 'line') {
+      drawCtx.moveTo(target.p1.x, target.p1.y);
+      drawCtx.lineTo(target.p2.x, target.p2.y);
+    } else if (target.type === 'circle') {
+      const r = Math.hypot(target.p2.x-target.p1.x, target.p2.y-target.p1.y);
+      drawCtx.arc(target.p1.x, target.p1.y, r, 0, Math.PI*2);
+    } else if (target.type === 'arc') {
+      drawCtx.arc(target.cx, target.cy, target.r, target.startAngle, target.endAngle, target.ccw);
+    }
+    drawCtx.stroke();
+    drawCtx.restore();
+    return;
+  }
+
+  // 2차/3차 클릭: 분할점
+  const proj = projectPointToShape(p, breakState.target);
+  if (!proj) {
+    alert('도형 위의 점을 클릭하세요.');
+    return;
+  }
+  breakState.points.push(proj);
+
+  if (breakState.points.length === 1) {
+    document.getElementById('statusHint').textContent = '✄ 두 번째 분할점 클릭 (같은 점이면 1점 분할)';
+    // 마커 표시
+    drawCtx.save();
+    drawCtx.fillStyle = '#ff5722';
+    drawCtx.beginPath();
+    drawCtx.arc(proj.x, proj.y, 4, 0, Math.PI*2);
+    drawCtx.fill();
+    drawCtx.restore();
+    return;
+  }
+
+  // 두 점 모두 모임 - 실행
+  const p1 = breakState.points[0], p2 = breakState.points[1];
+  const target = breakState.target;
+  breakState = null;
+
+  applyBreak(target, p1, p2);
+}
+
+// ===== 점에서 분할 (Break at Point) =====
+// 한 점에서 선을 두 개로 나눔 (중간 제거 없음)
+function handleBreakAtPointClick(p) {
+  if (!breakState) {
+    const target = findShapeAtPoint(p, 15);
+    if (!target) {
+      document.getElementById('statusHint').textContent = '⋮ 분할할 선/원/호를 클릭하세요.';
+      return;
+    }
+    if (target.type !== 'line' && target.type !== 'circle' && target.type !== 'arc') {
+      alert('분할은 선/원/호만 지원합니다.');
+      return;
+    }
+    breakState = { target, points: [] };
+    document.getElementById('statusHint').textContent = '⋮ 분할할 점 클릭';
+    redrawDraw();
+    drawCtx.save();
+    drawCtx.strokeStyle = '#f39c12'; drawCtx.lineWidth = 4;
+    drawCtx.beginPath();
+    if (target.type === 'line') {
+      drawCtx.moveTo(target.p1.x, target.p1.y);
+      drawCtx.lineTo(target.p2.x, target.p2.y);
+    } else if (target.type === 'circle') {
+      const r = Math.hypot(target.p2.x-target.p1.x, target.p2.y-target.p1.y);
+      drawCtx.arc(target.p1.x, target.p1.y, r, 0, Math.PI*2);
+    } else if (target.type === 'arc') {
+      drawCtx.arc(target.cx, target.cy, target.r, target.startAngle, target.endAngle, target.ccw);
+    }
+    drawCtx.stroke();
+    drawCtx.restore();
+    return;
+  }
+
+  // 분할점
+  const proj = projectPointToShape(p, breakState.target);
+  if (!proj) { alert('도형 위의 점을 클릭하세요.'); return; }
+  const target = breakState.target;
+  breakState = null;
+  // 같은 점 두 번 = 단순 1점 분할
+  applyBreak(target, proj, proj);
+}
+
+// 임의 점 p를 도형 위로 투영 (가장 가까운 점)
+function projectPointToShape(p, s) {
+  if (s.type === 'line') {
+    // 선분상 가장 가까운 점
+    const vx = s.p2.x - s.p1.x, vy = s.p2.y - s.p1.y;
+    const len2 = vx*vx + vy*vy;
+    if (len2 < 1e-9) return {x:s.p1.x, y:s.p1.y};
+    let t = ((p.x-s.p1.x)*vx + (p.y-s.p1.y)*vy) / len2;
+    t = Math.max(0, Math.min(1, t));
+    return {x: s.p1.x + vx*t, y: s.p1.y + vy*t, t};
+  } else if (s.type === 'circle') {
+    const r = Math.hypot(s.p2.x-s.p1.x, s.p2.y-s.p1.y);
+    const dx = p.x - s.p1.x, dy = p.y - s.p1.y;
+    const d = Math.hypot(dx, dy);
+    if (d < 1e-9) return null;
+    return {x: s.p1.x + dx/d*r, y: s.p1.y + dy/d*r, angle: Math.atan2(dy, dx)};
+  } else if (s.type === 'arc') {
+    const dx = p.x - s.cx, dy = p.y - s.cy;
+    const d = Math.hypot(dx, dy);
+    if (d < 1e-9) return null;
+    const ang = Math.atan2(dy, dx);
+    // 호 범위 안에 있는지 검사
+    if (!isAngleInArcRange(ang, s.startAngle, s.endAngle, s.ccw)) return null;
+    return {x: s.cx + dx/d*s.r, y: s.cy + dy/d*s.r, angle: ang};
+  }
+  return null;
+}
+
+// 도형 분할 실행
+function applyBreak(target, brk1, brk2) {
+  const stroke = target.stroke || '#fff';
+  const strokeWidth = target.strokeWidth || 1;
+  const layer = target.layer;
+
+  if (target.type === 'line') {
+    // 선분의 t 값을 구해 정렬
+    const t1 = (brk1.t !== undefined) ? brk1.t : projectPointToShape(brk1, target).t;
+    const t2 = (brk2.t !== undefined) ? brk2.t : projectPointToShape(brk2, target).t;
+    const tA = Math.min(t1, t2), tB = Math.max(t1, t2);
+    // 두 점이 같으면 → 1점 분할 (양쪽이 다른 선)
+    // 두 점이 다르면 → 두 점 사이 제거, 양쪽 선만 남김
+    const pA = {x: target.p1.x + (target.p2.x-target.p1.x)*tA, y: target.p1.y + (target.p2.y-target.p1.y)*tA};
+    const pB = {x: target.p1.x + (target.p2.x-target.p1.x)*tB, y: target.p1.y + (target.p2.y-target.p1.y)*tB};
+    const idx = shapes.findIndex(s => s.id === target.id);
+    if (idx < 0) return;
+    shapes.splice(idx, 1);
+    // 첫 조각: p1 → pA (tA > 0.001 인 경우만)
+    if (tA > 0.001) {
+      shapes.push({
+        id: ++shapeIdSeq, type:'line',
+        p1: {x: Math.round(target.p1.x), y: Math.round(target.p1.y)},
+        p2: {x: Math.round(pA.x), y: Math.round(pA.y)},
+        stroke, strokeWidth, layer
+      });
+    }
+    // 둘째 조각: pB → p2 (tB < 0.999 인 경우만)
+    if (tB < 0.999) {
+      shapes.push({
+        id: ++shapeIdSeq, type:'line',
+        p1: {x: Math.round(pB.x), y: Math.round(pB.y)},
+        p2: {x: Math.round(target.p2.x), y: Math.round(target.p2.y)},
+        stroke, strokeWidth, layer
+      });
+    }
+    document.getElementById('statusHint').textContent = '✄ 선 분할 완료';
+  } else if (target.type === 'circle') {
+    // 원 분할: 두 각도 사이를 제거하고 두 호로 변환
+    const a1 = brk1.angle !== undefined ? brk1.angle : Math.atan2(brk1.y - target.p1.y, brk1.x - target.p1.x);
+    const a2 = brk2.angle !== undefined ? brk2.angle : Math.atan2(brk2.y - target.p1.y, brk2.x - target.p1.x);
+    const r = Math.hypot(target.p2.x-target.p1.x, target.p2.y-target.p1.y);
+    const idx = shapes.findIndex(s => s.id === target.id);
+    if (idx < 0) return;
+    shapes.splice(idx, 1);
+    // 같은 각도면 분할 불가 (원에서 한 점은 분할 의미 없음 → 호 하나로 변환)
+    if (Math.abs(a1 - a2) < 0.001) {
+      // 원 → 호 (시작각=끝각이지만 거의 완전한 원)
+      shapes.push({
+        id: ++shapeIdSeq, type:'arc',
+        cx: target.p1.x, cy: target.p1.y, r,
+        startAngle: a1, endAngle: a1 - 0.001, ccw: false,
+        p1: {x: Math.round(target.p1.x + Math.cos(a1)*r), y: Math.round(target.p1.y + Math.sin(a1)*r)},
+        p2: {x: Math.round(target.p1.x + Math.cos(a1-0.001)*r), y: Math.round(target.p1.y + Math.sin(a1-0.001)*r)},
+        stroke, strokeWidth, layer
+      });
+    } else {
+      // 두 호로 분할 (각도 사이 + 반대 사이)
+      shapes.push({
+        id: ++shapeIdSeq, type:'arc',
+        cx: target.p1.x, cy: target.p1.y, r,
+        startAngle: a2, endAngle: a1, ccw: false,
+        p1: {x: Math.round(target.p1.x + Math.cos(a2)*r), y: Math.round(target.p1.y + Math.sin(a2)*r)},
+        p2: {x: Math.round(target.p1.x + Math.cos(a1)*r), y: Math.round(target.p1.y + Math.sin(a1)*r)},
+        stroke, strokeWidth, layer
+      });
+    }
+    document.getElementById('statusHint').textContent = '✄ 원 분할 완료 (호로 변환)';
+  } else if (target.type === 'arc') {
+    // 호 분할: 두 각도 사이 제거, 양쪽 호 남김
+    const a1 = brk1.angle, a2 = brk2.angle;
+    if (a1 === undefined || a2 === undefined) return;
+    const idx = shapes.findIndex(s => s.id === target.id);
+    if (idx < 0) return;
+    shapes.splice(idx, 1);
+    // 두 분할점 사이를 제거. 호의 진행 방향 기준으로 정렬
+    // startAngle → a1/a2 → endAngle 순서
+    // 단순화: 두 호 (start→smaller, larger→end)
+    const aSmall = Math.min(a1, a2), aLarge = Math.max(a1, a2);
+    if (Math.abs(a1 - a2) < 0.001) {
+      // 1점 분할
+      shapes.push({
+        id: ++shapeIdSeq, type:'arc',
+        cx: target.cx, cy: target.cy, r: target.r,
+        startAngle: target.startAngle, endAngle: a1, ccw: target.ccw,
+        p1: target.p1, p2: {x: Math.round(target.cx + Math.cos(a1)*target.r), y: Math.round(target.cy + Math.sin(a1)*target.r)},
+        stroke, strokeWidth, layer
+      });
+      shapes.push({
+        id: ++shapeIdSeq, type:'arc',
+        cx: target.cx, cy: target.cy, r: target.r,
+        startAngle: a1, endAngle: target.endAngle, ccw: target.ccw,
+        p1: {x: Math.round(target.cx + Math.cos(a1)*target.r), y: Math.round(target.cy + Math.sin(a1)*target.r)}, p2: target.p2,
+        stroke, strokeWidth, layer
+      });
+    } else {
+      shapes.push({
+        id: ++shapeIdSeq, type:'arc',
+        cx: target.cx, cy: target.cy, r: target.r,
+        startAngle: target.startAngle, endAngle: aSmall, ccw: target.ccw,
+        p1: target.p1, p2: {x: Math.round(target.cx + Math.cos(aSmall)*target.r), y: Math.round(target.cy + Math.sin(aSmall)*target.r)},
+        stroke, strokeWidth, layer
+      });
+      shapes.push({
+        id: ++shapeIdSeq, type:'arc',
+        cx: target.cx, cy: target.cy, r: target.r,
+        startAngle: aLarge, endAngle: target.endAngle, ccw: target.ccw,
+        p1: {x: Math.round(target.cx + Math.cos(aLarge)*target.r), y: Math.round(target.cy + Math.sin(aLarge)*target.r)}, p2: target.p2,
+        stroke, strokeWidth, layer
+      });
+    }
+    document.getElementById('statusHint').textContent = '✄ 호 분할 완료';
+  }
+
+  redoStack = [];
+  redrawDraw();
+  updateCount();
+}
+
+// ===== 교차점 일괄 분할 (Break All) =====
+// 선택된 선들의 모든 교차점을 찾아 한꺼번에 분할
+// 선택이 없으면 → 전체 line 대상
+function runBreakAllIntersections() {
+  // 대상: 선택된 line만, 없으면 전체 line
+  let targets;
+  if (selectedIds.size > 0) {
+    targets = shapes.filter(s => s.type === 'line' && selectedIds.has(s.id));
+  } else {
+    targets = shapes.filter(s => s.type === 'line');
+  }
+  if (targets.length < 2) {
+    alert('교차점 분할은 2개 이상의 선이 필요합니다.\n선들을 선택한 후 다시 실행하세요.\n(선택이 없으면 전체 선 대상)');
+    return;
+  }
+
+  // 각 line에 대해 다른 line과의 교차점 t 값을 수집
+  // t는 0~1 사이 (선분 내부)
+  const cutMap = new Map(); // line.id → [t1, t2, ...] (정렬 전)
+  for (const L of targets) cutMap.set(L.id, []);
+
+  let intersectionCount = 0;
+  for (let i = 0; i < targets.length; i++) {
+    for (let j = i+1; j < targets.length; j++) {
+      const A = targets[i], B = targets[j];
+      const ix = segmentSegmentIntersection(A.p1, A.p2, B.p1, B.p2);
+      if (!ix) continue;
+      // t 계산
+      const tA = paramOnSegment(ix, A.p1, A.p2);
+      const tB = paramOnSegment(ix, B.p1, B.p2);
+      // 끝점 너무 가까우면 제외 (이미 끝나는 점)
+      if (tA > 0.001 && tA < 0.999) cutMap.get(A.id).push(tA);
+      if (tB > 0.001 && tB < 0.999) cutMap.get(B.id).push(tB);
+      intersectionCount++;
+    }
+  }
+
+  if (intersectionCount === 0) {
+    alert('교차점이 발견되지 않았습니다.');
+    return;
+  }
+
+  // 각 line을 분할
+  let totalSegments = 0;
+  for (const L of targets) {
+    const ts = cutMap.get(L.id);
+    if (!ts.length) continue;
+    // 정렬 + 중복 제거
+    const sortedT = Array.from(new Set(ts.map(t => Math.round(t * 10000) / 10000))).sort((a,b) => a - b);
+    // 분할 점들 + 양끝 추가
+    const allT = [0, ...sortedT, 1];
+    // 원본 line 제거
+    const idx = shapes.findIndex(s => s.id === L.id);
+    if (idx < 0) continue;
+    shapes.splice(idx, 1);
+    // 조각 추가
+    const dx = L.p2.x - L.p1.x, dy = L.p2.y - L.p1.y;
+    for (let k = 0; k < allT.length - 1; k++) {
+      const t1 = allT[k], t2 = allT[k+1];
+      if (t2 - t1 < 0.0001) continue; // 너무 작으면 스킵
+      const x1n = L.p1.x + dx * t1, y1n = L.p1.y + dy * t1;
+      const x2n = L.p1.x + dx * t2, y2n = L.p1.y + dy * t2;
+      shapes.push({
+        id: ++shapeIdSeq, type:'line',
+        p1: {x: Math.round(x1n), y: Math.round(y1n)},
+        p2: {x: Math.round(x2n), y: Math.round(y2n)},
+        stroke: L.stroke || '#fff',
+        strokeWidth: L.strokeWidth || 1,
+        layer: L.layer
+      });
+      totalSegments++;
+    }
+  }
+
+  selectedIds.clear();
+  redoStack = [];
+  redrawDraw();
+  updateCount();
+  updateSelStat();
+  document.getElementById('statusHint').textContent = `⊞ 교차점 ${intersectionCount}개에서 ${totalSegments}개 조각으로 분할됨`;
+  try { cmdLog(`  ✓ ${targets.length}개 선 → 교차점 ${intersectionCount}개에서 ${totalSegments}개 조각으로 분할`, 'system'); } catch(e) {}
+}
+
+// 선분-선분 교차점 (양쪽 모두 0~1 범위 내일 때만)
+function segmentSegmentIntersection(p1, p2, p3, p4) {
+  const x1=p1.x, y1=p1.y, x2=p2.x, y2=p2.y;
+  const x3=p3.x, y3=p3.y, x4=p4.x, y4=p4.y;
+  const denom = (x1-x2)*(y3-y4) - (y1-y2)*(x3-x4);
+  if (Math.abs(denom) < 1e-9) return null;
+  const t = ((x1-x3)*(y3-y4) - (y1-y3)*(x3-x4)) / denom;
+  const u = -((x1-x2)*(y1-y3) - (y1-y2)*(x1-x3)) / denom;
+  if (t < -0.001 || t > 1.001 || u < -0.001 || u > 1.001) return null;
+  return {x: x1 + t*(x2-x1), y: y1 + t*(y2-y1)};
+}
+
+function paramOnSegment(p, a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const len2 = dx*dx + dy*dy;
+  if (len2 < 1e-9) return 0;
+  return ((p.x-a.x)*dx + (p.y-a.y)*dy) / len2;
+}
 
 function handleOffsetClick(p) {
   if (!offsetState) {
@@ -6753,6 +7118,13 @@ document.getElementById('menuConnectSel').addEventListener('click', () => {
 document.getElementById('menuResetAxis').addEventListener('click', () => {
   document.getElementById('btnResetAxis').click();
 });
+// 교차점 일괄 분할
+(function(){
+  const m = document.getElementById('menuBreakAll');
+  if (m) m.addEventListener('click', () => {
+    runBreakAllIntersections();
+  });
+})();
 document.getElementById('menuSave3D').addEventListener('click', () => {
   if (!lastGeneratedMesh) {
     alert('아직 3D 모델이 없습니다.\n[3D] 메뉴 → [3D 모델 생성]에서 만들어 주세요.');
@@ -6901,6 +7273,12 @@ const CMD_DICT = {
   'FILLET':    { tool: 'fillet', name: 'FILLET (모서리R)' },
   'O':         { tool: 'offset', name: 'OFFSET (오프셋)' },
   'OFFSET':    { tool: 'offset', name: 'OFFSET (오프셋)' },
+  'BR':        { tool: 'break',  name: 'BREAK (분할)' },
+  'BREAK':     { tool: 'break',  name: 'BREAK (분할)' },
+  'BAT':       { tool: 'breakAtPoint', name: 'BREAK at POINT (점에서 분할)' },
+  'BREAKATPOINT': { tool: 'breakAtPoint', name: 'BREAK at POINT (점에서 분할)' },
+  'BRA':       { action: 'breakAll', name: 'BREAK ALL (교차점 일괄 분할)' },
+  'BREAKALL':  { action: 'breakAll', name: 'BREAK ALL (교차점 일괄 분할)' },
   
   // D안 치수 (AutoCAD DIM 명령군)
   'DLI':       { tool: 'dimLinear',   name: 'DIMLINEAR (선형치수)' },
@@ -7090,6 +7468,9 @@ function handleAction(action) {
         cmdLog(`  ${n}개 도형 삭제됨.`, 'system');
       }
       break;
+    case 'breakAll':
+      runBreakAllIntersections();
+      break;
     case 'save':
       document.getElementById('btnSave').click();
       cmdLog('  💾 저장 대화상자 표시', 'system');
@@ -7197,7 +7578,7 @@ function cancelActiveTool() {
   firstClick = null; arcPath = []; dragState = null;
   calibFirstPoint = null; axisFirstPoint = null;
   endpointPickState = null; arcHandleDrag = null;
-  filletState = null; offsetState = null; dimState = null;
+  filletState = null; offsetState = null; dimState = null; breakState = null;
   preCtx.clearRect(0,0,baseW,baseH);
   redrawDraw();
   cmdLog('  ESC: 현재 작업 취소.', 'system');
@@ -7930,6 +8311,7 @@ function simulateClick(pt) {
   if (tool === 'line' || tool === 'rect' || tool === 'circle' || tool === 'arc' ||
       tool === 'fill' || tool === 'calib' || tool === 'axis' ||
       tool === 'trim' || tool === 'extend' || tool === 'fillet' || tool === 'offset' ||
+      tool === 'break' || tool === 'breakAtPoint' ||
       tool === 'dimLinear' || tool === 'dimAligned' || tool === 'dimRadius' || 
       tool === 'dimDiameter' || tool === 'dimAngle' ||
       tool === 'copy' || tool === 'movetool' || tool === 'rotate' || 
