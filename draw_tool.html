@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<title>도면 작도기 Rev.11.1 - 교차점 일괄 분할 추가</title>
+<title>도면 작도기 Rev.11.2 - 채움 OpenCV 의존 제거</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Malgun Gothic', sans-serif; background: #2b2b2b; color: #eee; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
@@ -202,8 +202,8 @@
 <body>
 
 <header>
-  <h1>📐 도면 작도기 Rev.11.1</h1>
-  <span class="ver">v11.1 (교차점 일괄분할)</span>
+  <h1>📐 도면 작도기 Rev.11.2</h1>
+  <span class="ver">v11.2 (채움 순수JS)</span>
   <button id="headerBtnHelp" style="padding:5px 12px; background:#27ae60; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:12px; font-weight:bold;" title="도움말 (F1)">❓ 도움말</button>
   <button id="headerBtnFill" style="padding:5px 12px; background:#e67e22; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:12px; font-weight:bold;" title="채우기 도구 (H)">🎨 채움</button>
   <button id="headerBtnBpoly" style="padding:5px 12px; background:#d35400; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:12px; font-weight:bold;" title="모든 닫힌 영역 자동 채움 (BPOLY)">🎨🎨 전체채움</button>
@@ -5085,33 +5085,28 @@ function handleBpolyCommand() {
 }
 
 function doFillAtPoint(p) {
-  // 채움 캔버스에 그릴 임시 캔버스 만들고 flood fill
-  
+  // Rev.11.2: OpenCV 의존 제거 - 순수 JS floodFill로 대체
+
   if (shapes.length === 0) {
     cmdLog('  🎨 채움 실패: 도형이 없습니다. 먼저 도형을 그려주세요.', 'error');
     return;
   }
-  
-  if (typeof cv === 'undefined' || !cv.Mat) {
-    cmdLog('  🎨 채움 실패: OpenCV가 아직 로딩 중입니다. 잠시 후 다시 시도하세요.', 'error');
-    return;
-  }
-  
+
   // 경계로 사용 가능한 도형만 카운트 (텍스트/치수 제외)
-  const boundaryShapes = shapes.filter(s => 
+  const boundaryShapes = shapes.filter(s =>
     s.type !== 'text' && !(s.type && s.type.startsWith('dim-'))
   );
   if (boundaryShapes.length === 0) {
     cmdLog('  🎨 채움 실패: 경계가 될 도형이 없습니다 (텍스트/치수만 있음).', 'error');
     return;
   }
-  
+
   cmdLog(`  🎨 채움 시작: 클릭 (${Math.round(p.x)}, ${Math.round(p.y)}), 경계 ${boundaryShapes.length}개`, 'prompt');
-  
+
   showLoading('영역 채움 계산 중...');
   setTimeout(() => {
     try {
-      // 1) 도형 외곽선만 그린 임시 캔버스
+      // 1) 도형 외곽선만 그린 임시 캔버스 (흰 배경, 검은 선)
       const maskCanvas = document.createElement('canvas');
       maskCanvas.width = baseW; maskCanvas.height = baseH;
       const mctx = maskCanvas.getContext('2d');
@@ -5121,17 +5116,13 @@ function doFillAtPoint(p) {
       mctx.fillStyle = '#000000';
       mctx.lineWidth = 2;
       mctx.lineCap = 'round'; mctx.lineJoin = 'round';
-      
+
       shapes.forEach(s => {
-        // 텍스트/치수는 경계 아님 - 제외
         if (s.type === 'text' || (s.type && s.type.startsWith('dim-'))) return;
-        // 잠긴 레이어 도형도 경계로는 사용 (시각적이라서)
-        
         mctx.beginPath();
-        if (s.type === 'line') { 
-          mctx.moveTo(s.p1.x, s.p1.y); mctx.lineTo(s.p2.x, s.p2.y); mctx.stroke(); 
-        }
-        else if (s.type === 'rect') {
+        if (s.type === 'line') {
+          mctx.moveTo(s.p1.x, s.p1.y); mctx.lineTo(s.p2.x, s.p2.y); mctx.stroke();
+        } else if (s.type === 'rect') {
           const x=Math.min(s.p1.x,s.p2.x), y=Math.min(s.p1.y,s.p2.y);
           const w=Math.abs(s.p2.x-s.p1.x), h=Math.abs(s.p2.y-s.p1.y);
           mctx.strokeRect(x,y,w,h);
@@ -5141,11 +5132,9 @@ function doFillAtPoint(p) {
         } else if (s.type === 'arc') {
           mctx.arc(s.cx, s.cy, s.r, s.startAngle, s.endAngle, s.ccw); mctx.stroke();
         } else if (s.type === 'ellipse') {
-          // 회전 타원 (rx, ry, rotation) 또는 옛 형식 (angle)
           const rot = s.rotation !== undefined ? s.rotation : (s.angle || 0);
           mctx.ellipse(s.cx, s.cy, s.rx, s.ry, rot, 0, Math.PI*2); mctx.stroke();
         } else if (s.type === 'polyline') {
-          // 폴리라인 (Rev.10.0 추가)
           if (!s.points || s.points.length < 2) return;
           mctx.moveTo(s.points[0].x, s.points[0].y);
           for (let i = 1; i < s.points.length; i++) {
@@ -5155,150 +5144,208 @@ function doFillAtPoint(p) {
           mctx.stroke();
         }
       });
-      
-      // 2) OpenCV로 floodFill
-      const src = cv.imread(maskCanvas);
-      const gray = new cv.Mat();
-      cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-      
-      // 이진화 (선은 검은색, 배경은 흰색)
-      const bin = new cv.Mat();
-      cv.threshold(gray, bin, 200, 255, cv.THRESH_BINARY);
-      
-      // 클릭 지점이 선 위인지 확인
-      const clickPixel = bin.ucharPtr(p.y, p.x)[0];
-      if (clickPixel < 100) {
-        alert('선 위가 아닌 빈 영역을 클릭하세요.');
-        src.delete(); gray.delete(); bin.delete();
-        hideLoading();
-        return;
+
+      // 2) ImageData 읽어서 순수 JS floodFill
+      const imgData = mctx.getImageData(0, 0, baseW, baseH);
+      const data = imgData.data; // RGBA Uint8ClampedArray
+      const W = baseW, H = baseH;
+
+      // 픽셀이 흰색(빈 영역)인지 검사 - R/G/B 모두 200 이상
+      function isEmpty(idx) {
+        return data[idx] > 200 && data[idx+1] > 200 && data[idx+2] > 200;
       }
-      
-      // floodFill 마스크 (cv.floodFill은 +2px 큰 마스크 요구)
-      const ffMask = new cv.Mat.zeros(bin.rows + 2, bin.cols + 2, cv.CV_8UC1);
-      
-      // 시드 검증: 클릭 위치의 픽셀 값 확인 (선 위인지)
-      const sx = Math.round(Math.max(0, Math.min(baseW-1, p.x)));
-      const sy = Math.round(Math.max(0, Math.min(baseH-1, p.y)));
-      const seedPixel = bin.ucharAt(sy, sx);
-      
-      if (seedPixel < 128) {
-        // 검은 선 위 클릭 → 선에서 살짝 떨어진 위치 시도
-        let foundWhite = false;
-        for (let radius = 3; radius <= 20 && !foundWhite; radius += 2) {
-          for (let dx = -radius; dx <= radius; dx += 2) {
-            for (let dy = -radius; dy <= radius; dy += 2) {
-              const nx = Math.max(0, Math.min(baseW-1, sx+dx));
-              const ny = Math.max(0, Math.min(baseH-1, sy+dy));
-              if (bin.ucharAt(ny, nx) >= 128) {
-                p.x = nx; p.y = ny;
-                foundWhite = true;
-                cmdLog(`  ⚠ 클릭한 곳이 선 위였습니다. 근처 빈 영역(${nx}, ${ny})으로 자동 이동.`, 'system');
-                break;
+      function pixelIdx(x, y) { return (y * W + x) * 4; }
+
+      // 시드 좌표 검증/이동 - 선 위면 근처 빈곳으로 이동
+      let sx = Math.round(Math.max(0, Math.min(W-1, p.x)));
+      let sy = Math.round(Math.max(0, Math.min(H-1, p.y)));
+      if (!isEmpty(pixelIdx(sx, sy))) {
+        let found = false;
+        for (let radius = 3; radius <= 20 && !found; radius += 2) {
+          for (let dx = -radius; dx <= radius && !found; dx += 2) {
+            for (let dy = -radius; dy <= radius && !found; dy += 2) {
+              const nx = Math.max(0, Math.min(W-1, sx+dx));
+              const ny = Math.max(0, Math.min(H-1, sy+dy));
+              if (isEmpty(pixelIdx(nx, ny))) {
+                sx = nx; sy = ny; found = true;
+                cmdLog(`  ⚠ 클릭한 곳이 선 위였습니다. 근처(${nx}, ${ny})로 자동 이동.`, 'system');
               }
             }
-            if (foundWhite) break;
           }
         }
-        if (!foundWhite) {
-          cmdLog('  🎨 채움 실패: 클릭한 위치가 선 위입니다. 닫힌 영역 안쪽을 클릭하세요.', 'error');
-          src.delete(); gray.delete(); bin.delete(); ffMask.delete();
+        if (!found) {
+          cmdLog('  🎨 채움 실패: 클릭한 위치 근처에 빈 영역이 없습니다.', 'error');
           hideLoading();
           return;
         }
       }
-      
-      // floodFill: 클릭점에서 같은 값(흰색) 영역을 회색(128)으로 채움
-      const seedPoint = new cv.Point(Math.round(p.x), Math.round(p.y));
-      const newVal = new cv.Scalar(128);
-      const loDiff = new cv.Scalar(10);
-      const upDiff = new cv.Scalar(10);
-      
-      cv.floodFill(bin, ffMask, seedPoint, newVal, null, loDiff, upDiff, 4);
-      
-      // 채워진 영역(128)의 윤곽선 추출
-      const filled = new cv.Mat();
-      cv.inRange(bin, new cv.Mat(bin.rows, bin.cols, bin.type(), new cv.Scalar(127)), 
-                       new cv.Mat(bin.rows, bin.cols, bin.type(), new cv.Scalar(129)), filled);
-      
-      // 더 간단하게: bin에서 128인 픽셀만 골라냄
-      const mask128 = new cv.Mat();
-      cv.threshold(bin, mask128, 127, 255, cv.THRESH_BINARY);
-      cv.bitwise_not(mask128, mask128);  // 128보다 작은 부분만 → 도형 외곽선과 채워진 영역
-      
-      // 간단한 방법: bin 자체에서 128 값을 가진 영역만 마스킹
-      const fillRegion = new cv.Mat();
-      const lower = new cv.Mat(bin.rows, bin.cols, bin.type(), new cv.Scalar(120));
-      const upper = new cv.Mat(bin.rows, bin.cols, bin.type(), new cv.Scalar(135));
-      cv.inRange(bin, lower, upper, fillRegion);
-      
-      // 윤곽선 찾기
-      const contours = new cv.MatVector();
-      const hierarchy = new cv.Mat();
-      cv.findContours(fillRegion, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-      
-      if (contours.size() === 0) {
-        cmdLog('  HATCH: 채울 영역을 찾지 못했습니다.', 'error');
-      } else {
-        // 가장 큰 윤곽선만 사용 (보통 클릭한 영역)
-        let maxArea = 0, maxIdx = 0;
-        for (let i = 0; i < contours.size(); i++) {
-          const a = cv.contourArea(contours.get(i));
-          if (a > maxArea) { maxArea = a; maxIdx = i; }
+
+      // 3) Scanline floodFill - 클릭 영역을 mark
+      // visited는 Uint8Array (메모리 효율)
+      const visited = new Uint8Array(W * H);
+      const stack = [[sx, sy]];
+      let pixelCount = 0;
+      // 바운딩박스도 같이 측정
+      let minX = sx, minY = sy, maxX = sx, maxY = sy;
+
+      while (stack.length) {
+        const [x, y] = stack.pop();
+        if (x < 0 || x >= W || y < 0 || y >= H) continue;
+        let idx = pixelIdx(x, y);
+        if (visited[y*W + x] || !isEmpty(idx)) continue;
+
+        // scanline 왼쪽 끝
+        let lx = x;
+        while (lx >= 0 && !visited[y*W + lx] && isEmpty(pixelIdx(lx, y))) lx--;
+        lx++;
+        // scanline 오른쪽 끝
+        let rx = x;
+        while (rx < W && !visited[y*W + rx] && isEmpty(pixelIdx(rx, y))) rx++;
+        rx--;
+
+        // 이 row 채우기 + 위/아래 row에서 빈 픽셀 stack 추가
+        for (let i = lx; i <= rx; i++) {
+          visited[y*W + i] = 1;
+          pixelCount++;
         }
-        
-        // ★ 닫힘 검증: 전체 화면의 80% 이상이면 닫히지 않은 것
-        const totalPixels = baseW * baseH;
-        if (maxArea > totalPixels * 0.8) {
-          cmdLog('  HATCH: ❌ 닫힌 영역이 아닙니다 (전체가 채워졌음). 선들 사이에 틈이 있는지 확인하세요.', 'error');
-          cmdLog('  팁: 라이브스냅 ON 상태에서 선의 끝점이 정확히 만나도록 그리세요.', 'prompt');
-        } else if (maxArea < 20) {
-          cmdLog('  HATCH: 영역이 너무 작습니다.', 'error');
-        } else {
-          const cnt = contours.get(maxIdx);
-          const approx = new cv.Mat();
-          const epsilon = 1.5;
-          cv.approxPolyDP(cnt, approx, epsilon, true);
-          
-          const points = [];
-          for (let i = 0; i < approx.rows; i++) {
-            points.push({x: approx.data32S[i*2], y: approx.data32S[i*2+1]});
+        if (lx < minX) minX = lx;
+        if (rx > maxX) maxX = rx;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+
+        // 위/아래 row 검사
+        for (let yi = -1; yi <= 1; yi += 2) {
+          const ny = y + yi;
+          if (ny < 0 || ny >= H) continue;
+          let inRun = false;
+          for (let i = lx; i <= rx; i++) {
+            const idx2 = pixelIdx(i, ny);
+            const empty = !visited[ny*W + i] && isEmpty(idx2);
+            if (empty && !inRun) {
+              stack.push([i, ny]);
+              inRun = true;
+            } else if (!empty) {
+              inRun = false;
+            }
           }
-          
-          if (points.length >= 3) {
-            const alpha = parseInt(document.getElementById('fillAlpha').value) / 100;
-            const pattern = (typeof currentHatchPattern !== 'undefined') ? currentHatchPattern : 'solid';
-            const fill = {
-              id: ++shapeIdSeq,
-              type: 'fill',
-              points,
-              color: document.getElementById('fillColor').value,
-              alpha,
-              pattern,
-              layer: currentLayer || 'default'
-            };
-            fills.push(fill);
-            redoStack = [];
-            redrawFills();
-            updateCount();
-            const areaMm = (maxArea * mmPerPixel * mmPerPixel).toFixed(2);
-            cmdLog(`  HATCH: 채움 완료 (${pattern}, 면적 ${areaMm}㎟). 계속 클릭=다중채움, ESC=종료.`, 'system');
-          }
-          approx.delete();
         }
       }
-      
-      src.delete(); gray.delete(); bin.delete();
-      ffMask.delete(); filled.delete(); mask128.delete();
-      fillRegion.delete(); lower.delete(); upper.delete();
-      contours.delete(); hierarchy.delete();
-      
+
+      // 4) 닫힘 검증
+      const totalPixels = W * H;
+      if (pixelCount > totalPixels * 0.8) {
+        cmdLog('  HATCH: ❌ 닫힌 영역이 아닙니다 (화면 80% 이상이 채워짐). 선들 사이 틈을 확인하세요.', 'error');
+        cmdLog('  팁: 라이브스냅 ON 상태로 선 끝점이 정확히 만나게 그리세요.', 'prompt');
+        hideLoading();
+        return;
+      }
+      if (pixelCount < 20) {
+        cmdLog('  HATCH: 영역이 너무 작습니다.', 'error');
+        hideLoading();
+        return;
+      }
+
+      // 5) 경계 추출 (visited 마스크의 외곽 픽셀들)
+      // 간단한 방법: visited[y][x]=1이고 인접 4방향 중 1개라도 0이면 경계
+      // Marching squares 대신 단순 contour tracing
+      const boundary = traceBoundary(visited, W, H, minX, minY, maxX, maxY);
+
+      if (!boundary || boundary.length < 3) {
+        cmdLog('  HATCH: 경계 추출 실패.', 'error');
+        hideLoading();
+        return;
+      }
+
+      // 6) 단순화 (Douglas-Peucker 간단 버전 - 거리 기반 점 솎아내기)
+      const simplified = simplifyPath(boundary, 2.0);
+
+      // 7) fill 객체 생성
+      const alpha = parseInt(document.getElementById('fillAlpha').value) / 100;
+      const pattern = (typeof currentHatchPattern !== 'undefined') ? currentHatchPattern : 'solid';
+      const fill = {
+        id: ++shapeIdSeq,
+        type: 'fill',
+        points: simplified,
+        color: document.getElementById('fillColor').value,
+        alpha,
+        pattern,
+        layer: currentLayer || 'default'
+      };
+      fills.push(fill);
+      redoStack = [];
+      redrawFills();
+      updateCount();
+      const areaMm = (pixelCount * mmPerPixel * mmPerPixel).toFixed(2);
+      cmdLog(`  HATCH: 채움 완료 (${pattern}, 면적 ${areaMm}㎟, ${pixelCount}px). 계속 클릭=다중채움, ESC=종료.`, 'system');
+
     } catch(e) {
       console.error(e);
       alert('채움 오류: ' + e.message);
     }
     hideLoading();
   }, 50);
+}
+
+// Moore-neighbor contour tracing (visited 마스크의 외곽 경로 추출)
+function traceBoundary(visited, W, H, minX, minY, maxX, maxY) {
+  // 시작점: 좌상단 첫 번째 visited 픽셀
+  let startX = -1, startY = -1;
+  for (let y = minY; y <= maxY && startX < 0; y++) {
+    for (let x = minX; x <= maxX; x++) {
+      if (visited[y*W + x]) { startX = x; startY = y; break; }
+    }
+  }
+  if (startX < 0) return null;
+
+  // 8방향 (시계방향): E, SE, S, SW, W, NW, N, NE
+  const dx8 = [1, 1, 0, -1, -1, -1, 0, 1];
+  const dy8 = [0, 1, 1, 1, 0, -1, -1, -1];
+
+  function isInside(x, y) {
+    return x >= 0 && x < W && y >= 0 && y < H && visited[y*W + x];
+  }
+
+  const boundary = [];
+  let cx = startX, cy = startY;
+  let prevDir = 6; // N (위쪽에서 들어왔다고 가정)
+  const maxIter = (maxX - minX + 1) * (maxY - minY + 1) * 8;
+  let iter = 0;
+
+  do {
+    boundary.push({x: cx, y: cy});
+    // 이전 방향 + 6 (반시계 2칸) 부터 시작해서 시계방향으로 8방향 검사
+    let startDir = (prevDir + 6) % 8;
+    let found = false;
+    for (let i = 0; i < 8; i++) {
+      const d = (startDir + i) % 8;
+      const nx = cx + dx8[d], ny = cy + dy8[d];
+      if (isInside(nx, ny)) {
+        cx = nx; cy = ny;
+        prevDir = d;
+        found = true;
+        break;
+      }
+    }
+    if (!found) break; // 고립된 점
+    iter++;
+    if (iter > maxIter) break;
+  } while (!(cx === startX && cy === startY));
+
+  return boundary;
+}
+
+// 경로 단순화 (거리 기반 - 두 인접 점 간 거리가 epsilon 이하면 제거)
+function simplifyPath(pts, epsilon) {
+  if (pts.length < 3) return pts;
+  const out = [pts[0]];
+  for (let i = 1; i < pts.length - 1; i++) {
+    const prev = out[out.length-1];
+    const cur = pts[i];
+    const d = Math.hypot(cur.x - prev.x, cur.y - prev.y);
+    if (d >= epsilon) out.push(cur);
+  }
+  out.push(pts[pts.length-1]);
+  return out;
 }
 
 // ====== 도형 렌더 ======
