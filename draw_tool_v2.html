@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<title>도면 작도기 Rev.7 - 치수 입력 작도</title>
+<title>도면 작도기 Rev.7.1 - 치수 입력 + 호 방향 수정 + Shift 직선이동</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Malgun Gothic', sans-serif; background: #2b2b2b; color: #eee; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
@@ -81,8 +81,8 @@
 <body>
 
 <header>
-  <h1>📐 도면 작도기 Rev.7</h1>
-  <span class="ver">v7.0 (치수 직접 입력 작도)</span>
+  <h1>📐 도면 작도기 Rev.7.1</h1>
+  <span class="ver">v7.1 (치수입력 + 호방향 수정 + Shift 직선이동)</span>
   <span class="cvstat" id="cvStat">OpenCV 로딩 중...</span>
   <span class="snapstat" id="snapStat">스냅: 비활성 (배경 없음)</span>
   <span class="snapstat" id="calibStat" style="background:#e67e22;">📏 캘리브: 미설정 (1px = 1mm)</span>
@@ -553,7 +553,7 @@ function updateToolStatus() {
   el.className = 'badge tool-' + tool;
   const dimSuffix = dimInputMode ? ' / 📏 치수입력 ON (첫점 클릭 후 키보드 입력)' : '';
   const hints = {
-    select: '클릭=선택 / Shift+클릭=추가 / 빈곳드래그=박스 / 드래그=이동 / Del=삭제',
+    select: '클릭=선택 / Shift+클릭=추가 / 빈곳드래그=박스 / 드래그=이동 / Shift+드래그=수평수직만 / Del=삭제',
     line: (continuousMode ? '⛓ 연속선: 매 클릭마다 선 추가 / 더블클릭/ESC=종료' : '첫 클릭→두 번째 클릭 / Shift=직각') + dimSuffix,
     rect: '첫 클릭→두 번째 클릭으로 사각형' + dimSuffix,
     circle: '첫 클릭(중심)→두 번째 클릭으로 반지름' + dimSuffix,
@@ -852,12 +852,23 @@ drawCanvas.addEventListener('mousemove', e => {
   
   if (tool === 'select') {
     if (dragState && dragState.type === 'move') {
-      const dx = p.x - dragState.startX, dy = p.y - dragState.startY;
+      let dx = p.x - dragState.startX, dy = p.y - dragState.startY;
+      // Shift 누르면 수평/수직만 (큰 변위 방향만 적용)
+      if (shiftDown) {
+        if (Math.abs(dx) > Math.abs(dy)) dy = 0;
+        else dx = 0;
+      }
       for (const off of dragState.offsets) {
         const s = shapes.find(x => x.id === off.id);
         if (s) moveShapeTo(s, off, dx, dy);
       }
       redrawDraw(); drawSnapIndicator();
+      
+      // 이동 거리 표시 (mm)
+      const dxMm = (dx * mmPerPixel).toFixed(1);
+      const dyMm = (dy * mmPerPixel).toFixed(1);
+      document.getElementById('statusHint').textContent = 
+        `🔲 이동 중: ΔX=${dxMm}mm, ΔY=${dyMm}mm` + (shiftDown ? ' [Shift: 직선이동]' : '');
       return;
     } else if (dragState && dragState.type === 'box') {
       drawBoxSelectPreview(dragState.boxStart, p);
@@ -906,6 +917,9 @@ drawCanvas.addEventListener('mouseup', e => {
   if (dragState && dragState.type === 'box') {
     boxSelect(dragState.boxStart, p, e.shiftKey);
     preCtx.clearRect(0,0,baseW,baseH);
+  } else if (dragState && dragState.type === 'move') {
+    // 이동 완료 후 안내 원복
+    updateToolStatus();
   }
   dragState = null;
 });
@@ -1065,9 +1079,9 @@ function findBestMatchingArc(p1, p2, path) {
     const d1 = Math.abs(Math.hypot(p1.x - arc.cx, p1.y - arc.cy) - arc.r);
     const d2 = Math.abs(Math.hypot(p2.x - arc.cx, p2.y - arc.cy) - arc.r);
     
-    if (d1 > 20 || d2 > 20) continue;  // 시작/끝이 호에서 너무 멀면 제외
+    if (d1 > 20 || d2 > 20) continue;
     
-    // 2) 마우스 경로의 모든 점이 호 위에 있는지 평균 거리
+    // 2) 마우스 경로의 점들이 호 위에 있는지
     let pathScore = 0;
     let onCount = 0;
     for (const pt of path) {
@@ -1078,27 +1092,19 @@ function findBestMatchingArc(p1, p2, path) {
     pathScore /= Math.max(path.length, 1);
     const onRatio = onCount / Math.max(path.length, 1);
     
-    // 3) 경로가 호 위에 있는 비율이 50% 이상이면 후보
     if (onRatio < 0.5) continue;
     
-    // 4) 종합 점수: 시작/끝 거리 + 경로 평균거리
     const score = d1 + d2 + pathScore * 2;
     
     if (score < bestScore) {
       bestScore = score;
-      // 시작/끝 각도 결정 (실제 클릭점 기준)
-      const startAng = Math.atan2(p1.y - arc.cy, p1.x - arc.cx);
-      const endAng = Math.atan2(p2.y - arc.cy, p2.x - arc.cx);
-      
-      // 회전 방향 결정: 마우스 경로의 중간점을 기준으로
-      const midPathPt = path[Math.floor(path.length / 2)];
-      const midAng = Math.atan2(midPathPt.y - arc.cy, midPathPt.x - arc.cx);
-      const ccw = isAngleBetween(midAng, startAng, endAng, true);
-      
+      // 회전 방향 결정 (경로 중간점 기준)
+      const ccw = determineArcDirection(arc.cx, arc.cy, p1, p2, path);
       best = {
         cx: arc.cx, cy: arc.cy, r: arc.r,
-        startAngle: startAng, endAngle: endAng,
-        ccw: !ccw,  // canvas arc: CCW=false 가 시계방향
+        startAngle: Math.atan2(p1.y - arc.cy, p1.x - arc.cx),
+        endAngle: Math.atan2(p2.y - arc.cy, p2.x - arc.cx),
+        ccw: ccw,
         source: 'bg'
       };
     }
@@ -1107,17 +1113,45 @@ function findBestMatchingArc(p1, p2, path) {
   return best;
 }
 
-// 각도 a가 start→end 사이에 있는지 (방향 고려)
-function isAngleBetween(a, start, end, ccw) {
-  const norm = x => { while(x < 0) x += Math.PI*2; while(x >= Math.PI*2) x -= Math.PI*2; return x; };
-  a = norm(a); start = norm(start); end = norm(end);
-  if (ccw) {
-    if (start <= end) return a >= start && a <= end;
-    return a >= start || a <= end;
-  } else {
-    if (start >= end) return a <= start && a >= end;
-    return a <= start || a >= end;
-  }
+// 호 회전 방향 결정 (마우스 경로 중간점이 어느 방향에 있는지로 판정)
+// 반환: true = ccw (반시계, canvas arc의 counterclockwise=true)
+//       false = cw (시계, canvas arc의 counterclockwise=false)
+function determineArcDirection(cx, cy, p1, p2, path) {
+  if (path.length < 3) return false;
+  
+  const startAng = Math.atan2(p1.y - cy, p1.x - cx);
+  const endAng = Math.atan2(p2.y - cy, p2.x - cx);
+  
+  // 경로의 중간점 (실제 마우스가 지나간 곳)
+  const midPathPt = path[Math.floor(path.length / 2)];
+  const midAng = Math.atan2(midPathPt.y - cy, midPathPt.x - cx);
+  
+  // 시계방향(CW)으로 startAng → endAng 가는 경로 위에 midAng가 있는지 검사
+  // 시계방향 = 각도가 감소하는 방향 (canvas 좌표계: Y가 아래로+ 이므로 실제로는 화면상 시계방향)
+  // canvas에서 atan2는 X축 기준, Y가 아래이므로 시계방향=각도 증가
+  
+  // 정규화: 두 경로(CW 가는 거리, CCW 가는 거리) 중 midAng가 어느 쪽에 있는지
+  const norm = a => { while(a < 0) a += Math.PI*2; while(a >= Math.PI*2) a -= Math.PI*2; return a; };
+  const ns = norm(startAng);
+  const ne = norm(endAng);
+  const nm = norm(midAng);
+  
+  // CW 경로 (canvas counterclockwise=false): startAng → endAng 각도가 증가하는 방향
+  // 즉 ns에서 시계방향으로 nm을 지나 ne에 도달하는지
+  // ns → nm → ne (모두 ns 기준으로 정방향)
+  let cw_s_to_m, cw_s_to_e;
+  if (nm >= ns) cw_s_to_m = nm - ns;
+  else cw_s_to_m = nm - ns + Math.PI*2;
+  if (ne >= ns) cw_s_to_e = ne - ns;
+  else cw_s_to_e = ne - ns + Math.PI*2;
+  
+  // midAng가 CW 경로(ns→ne) 위에 있으려면 cw_s_to_m < cw_s_to_e
+  const midOnCWPath = cw_s_to_m < cw_s_to_e;
+  
+  // canvas의 ctx.arc(cx,cy,r,start,end, counterclockwise):
+  //  - counterclockwise=false → start에서 end로 각도 증가 (canvas의 CW = 화면 시계방향)
+  //  - 마우스가 midOnCWPath면 false 반환 (시계방향으로 그림)
+  return !midOnCWPath;
 }
 
 // 경로 점들로 원 피팅 (3점 또는 최소제곱)
@@ -1134,7 +1168,7 @@ function fitCircleFromPath(path) {
   const cx = p3.x, cy = p3.y;
   
   const d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
-  if (Math.abs(d) < 1e-6) return null;  // 일직선
+  if (Math.abs(d) < 1e-6) return null;
   
   const ux = ((ax*ax + ay*ay) * (by - cy) + (bx*bx + by*by) * (cy - ay) + (cx*cx + cy*cy) * (ay - by)) / d;
   const uy = ((ax*ax + ay*ay) * (cx - bx) + (bx*bx + by*by) * (ax - cx) + (cx*cx + cy*cy) * (bx - ax)) / d;
@@ -1143,10 +1177,10 @@ function fitCircleFromPath(path) {
   
   if (r < 5 || r > 1000) return null;
   
-  // 회전 방향 결정 (외적)
-  const cross = (bx - ax) * (cy - by) - (by - ay) * (cx - bx);
+  // 회전 방향: 마우스 경로 기준으로 통일된 함수 사용
+  const ccw = determineArcDirection(ux, uy, p1, p3, path);
   
-  return { cx: ux, cy: uy, r, ccw: cross > 0 };
+  return { cx: ux, cy: uy, r, ccw };
 }
 
 // 라운드 그리기 중 프리뷰
