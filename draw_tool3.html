@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>tool3 v2.2 - 바닥 도면 표시 + 돌출/회전체 워크플로우</title>
+<title>tool3 v2.3 - 도면 원점 정렬 + 회전체 진단</title>
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
@@ -143,8 +143,8 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
 <body>
 
 <header>
-  <h1>📐 tool3 v2.2</h1>
-  <span class="ver">v2.2 - 바닥 도면 표시 + 돌출/회전체</span>
+  <h1>📐 tool3 v2.3</h1>
+  <span class="ver">v2.3 - 도면 원점 정렬 + 회전체 진단</span>
   <span class="mode-badge" id="modeBadge">스케처 모드</span>
   <span class="stat" id="statText">준비됨</span>
 </header>
@@ -348,12 +348,14 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
       • <span class="kbd">L</span>/<span class="kbd">R</span>/<span class="kbd">C</span>/<span class="kbd">A</span> 도구<br>
       • 돌출/회전체로 3D 생성<br>
       <br>
-      <b>📥 draw_tool 도면 가져오기 (v2.2)</b><br>
-      • 가져온 도면은 <b>3D 바닥</b>(청록색)에 자동 표시<br>
-      • <b>⬆️ 돌출</b> 버튼: 높이 입력 → 위로 돌출<br>
-      • <b>🔄 회전체</b> 버튼: 축+거리+각도 입력<br>
-      • 회전축 미리보기는 <b>분홍 점선</b>으로 표시<br>
-      • <b>👁️ 바닥</b> 버튼: 도면 표시/숨김 토글<br>
+      <b>📥 draw_tool 도면 가져오기 (v2.3)</b><br>
+      • 가져온 도면은 <b>원점 중심으로 자동 정렬</b><br>
+      • <b>3D 바닥</b>(청록색)에 자동 표시<br>
+      • <b>⬆️ 돌출</b>: 높이 입력 → 위로 돌출<br>
+      • <b>🔄 회전체</b>: 축+거리+각도 입력<br>
+      • 회전축은 <b>분홍 점선</b>으로 미리보기<br>
+      • 부품 선택은 3D 클릭 또는 <b>좌측 부품 목록</b><br>
+      • <b>👁️ 바닥</b>: 도면 표시/숨김 토글<br>
     </div>
   </div>
 
@@ -2182,6 +2184,23 @@ function doRevolve(){
   }
   lathePts.sort((a,b)=>a.y - b.y);
   
+  // v2.3: 회전체 결과가 비정상(원반/도넛만) 인지 진단
+  //   - 모든 lathe 점의 반경(x)이 거의 같으면 → 원반/도넛만 나옴
+  //   - 모든 lathe 점의 높이(y)가 거의 같으면 → 단일 원반
+  const radii = lathePts.map(p => p.x);
+  const heights = lathePts.map(p => p.y);
+  const radiusRange = Math.max(...radii) - Math.min(...radii);
+  const heightRange = Math.max(...heights) - Math.min(...heights);
+  let warnMsg = '';
+  if(radiusRange < 0.1 && heightRange > 0){
+    warnMsg = '⚠️ 단면이 회전축과 평행한 단일선 → 얇은 원기둥 외피만 생성됨';
+  } else if(heightRange < 0.1 && radiusRange > 0){
+    warnMsg = '⚠️ 단면이 회전축에 수직인 단일선 → 평평한 원반만 생성됨';
+  } else if(radiusRange < 0.1 && heightRange < 0.1){
+    warnMsg = '⚠️ 단면이 한 점에 모임 → 회전체 결과 없음';
+  }
+  console.log('[doRevolve] lathe 점:', lathePts.length, '개, 반경범위:', radiusRange.toFixed(2), '높이범위:', heightRange.toFixed(2), warnMsg);
+  
   const angleRad = angleDeg * Math.PI / 180;
   const geom = new THREE.LatheGeometry(lathePts, seg, 0, angleRad);
   const mat = makeMaterial(color, 1);
@@ -2201,7 +2220,12 @@ function doRevolve(){
   closeModal('revolveModal');
   switchMode('model');
   fitView();
-  toast('✅ 회전체 완료: ' + name + (axisOffset !== 0 ? ' (축거리 '+axisOffset+'mm)' : ''));
+  if(warnMsg){
+    toast(warnMsg);
+    setStat(warnMsg + ' - 회전축이나 단면 모양을 확인하세요');
+  } else {
+    toast('✅ 회전체 완료: ' + name + (axisOffset !== 0 ? ' (축거리 '+axisOffset+'mm)' : ''));
+  }
 }
 
 function addPrimitive(kind){
@@ -3775,7 +3799,7 @@ function init(){
   renderPartsList();
   updateInfo();
   redrawSketch();
-  setStat('tool3 v2.2 준비됨');
+  setStat('tool3 v2.3 준비됨');
   // v2.2: 항상 3D 모드로 시작 (draw_tool import도 3D 바닥에 표시)
   switchMode('model');
   try {
@@ -3795,6 +3819,36 @@ function manualImportFromDrawTool(){
   importFromDrawTool();
 }
 
+/* v2.3: 도형 배열의 바운딩박스 중심을 원점(0,0)으로 이동 */
+function centerShapesToOrigin(shapes){
+  if(!shapes || shapes.length === 0) return;
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  const acc = (x, y) => {
+    if(x < minX) minX = x; if(x > maxX) maxX = x;
+    if(y < minY) minY = y; if(y > maxY) maxY = y;
+  };
+  shapes.forEach(s => {
+    if(s.type === 'line'){ acc(s.x1, s.y1); acc(s.x2, s.y2); }
+    else if(s.type === 'rect'){ acc(s.x1, s.y1); acc(s.x2, s.y2); }
+    else if(s.type === 'circle'){ acc(s.cx - s.r, s.cy - s.r); acc(s.cx + s.r, s.cy + s.r); }
+    else if(s.type === 'arc'){
+      // 안전하게 원호의 외접 정사각형으로 근사
+      acc(s.cx - s.r, s.cy - s.r); acc(s.cx + s.r, s.cy + s.r);
+    }
+  });
+  if(!isFinite(minX) || !isFinite(maxX)) return;
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  if(Math.abs(cx) < 0.001 && Math.abs(cy) < 0.001) return; // 이미 원점 근처
+  // 모든 점을 -cx, -cy 평행이동
+  shapes.forEach(s => {
+    if(s.type === 'line'){ s.x1 -= cx; s.y1 -= cy; s.x2 -= cx; s.y2 -= cy; }
+    else if(s.type === 'rect'){ s.x1 -= cx; s.y1 -= cy; s.x2 -= cx; s.y2 -= cy; }
+    else if(s.type === 'circle' || s.type === 'arc'){ s.cx -= cx; s.cy -= cy; }
+  });
+  console.log('[draw_tool3] 도형 중심을 원점으로 이동:', {dx: -cx.toFixed(2), dy: -cy.toFixed(2), bbox: {minX, maxX, minY, maxY}});
+}
+
 /* ===== draw_tool.html → C3D 도형 import ===== */
 function importFromDrawTool(){
   let payload = null;
@@ -3805,7 +3859,6 @@ function importFromDrawTool(){
   } catch(e) { return; }
   if (!payload || !payload.shapes || !payload.shapes.length) return;
 
-  // 자동 fit을 위해 도형들의 바운딩박스 계산 (선택)
   const incoming = payload.shapes.slice();
 
   // 도형을 현재 스케치에 누적이 아닌 "치환" 여부 확인
@@ -3817,15 +3870,20 @@ function importFromDrawTool(){
       '취소 = 무시 (다음에 다시 시도)\n\n' +
       '⚠️ 누적은 새로 그린 도형이 있을 때 권장하지 않습니다.'
     );
-    if (!doReplace) return; // localStorage는 남겨둠 (재시도용)
+    if (!doReplace) return;
   }
+
+  // v2.3: 도면을 원점(0,0) 중심으로 자동 평행이동
+  //   - draw_tool의 캔버스 좌표(예: 400, 300)가 그대로 들어오면
+  //     회전체 생성 시 도면이 원점에서 멀리 떨어져 도넛/원반만 나옴
+  //   - 도형 전체 바운딩박스 중심을 (0,0)에 맞추면 회전축/돌출이 도면 중심에 정렬
+  centerShapesToOrigin(incoming);
 
   pushHistory();
   state.shapes = incoming;
   state.selectedShapes.clear();
 
   // v2.2: draw_tool에서 가져온 2D 도형을 3D 뷰의 바닥(Y=0, XZ 평면)에 즉시 표시
-  //       → 사용자는 3D 뷰에서 도면을 보면서 돌출(높이) 또는 회전체(축+거리)를 결정
   switchMode('model');
   drawShapesOnFloor();
   fitView();
@@ -3836,8 +3894,8 @@ function importFromDrawTool(){
   // 한 번 import 후 localStorage 제거 (재진입 시 중복 방지)
   try { localStorage.removeItem('c3d_import_from_draw_tool'); } catch(e){}
 
-  toast('📥 draw_tool에서 ' + incoming.length + '개 도형 바닥에 표시 (스케일 ×' + payload.scale + ')');
-  setStat('✅ 도면 ' + incoming.length + '개 바닥 표시 → [⬆️ 돌출] 또는 [🔄 회전체]로 3D 생성');
+  toast('📥 draw_tool에서 ' + incoming.length + '개 도형 가져옴 (원점 중심 정렬, 스케일 ×' + payload.scale + ')');
+  setStat('✅ 도면 ' + incoming.length + '개 바닥 표시 (원점 정렬) → [⬆️ 돌출] 또는 [🔄 회전체]');
 }
 
 /* 가져온 도형 전체가 화면에 들어오도록 자동 fit */
