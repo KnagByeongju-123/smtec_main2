@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<title>도면 작도기 Rev.10.4 - C3D 탭 추가</title>
+<title>도면 작도기 Rev.10.5 - 회전축 Shift잠금/거리지정</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Malgun Gothic', sans-serif; background: #2b2b2b; color: #eee; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
@@ -124,7 +124,7 @@
 <body>
 
 <header>
-  <h1>📐 도면 작도기 Rev.10.4</h1>
+  <h1>📐 도면 작도기 Rev.10.5</h1>
   <span class="ver">v10.3 (채움 강화)</span>
   <button id="headerBtnHelp" style="padding:5px 12px; background:#27ae60; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:12px; font-weight:bold;" title="도움말 (F1)">❓ 도움말</button>
   <button id="headerBtnFill" style="padding:5px 12px; background:#e67e22; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:12px; font-weight:bold;" title="채우기 도구 (H)">🎨 채움</button>
@@ -880,6 +880,7 @@ let calibFirstPoint = null;
 let rotAxis = null;
 let axisFirstPoint = null;
 let lastGeneratedMesh = null;
+let lastMousePoint = null; // Rev.10.5 - 회전축 거리입력 Enter 처리용
 
 // 끝점 픽킹 모드 (v7.2)
 let endpointPickState = null;
@@ -1599,6 +1600,7 @@ function getCanvasPoint(e) {
 // ====== 마우스 이벤트 ======
 drawCanvas.addEventListener('mousemove', e => {
   const p = getCanvasPoint(e);
+  lastMousePoint = p; // 회전축 거리입력 Enter 처리용
   const mmX = (p.x * mmPerPixel).toFixed(1);
   const mmY = (p.y * mmPerPixel).toFixed(1);
   const unit = calibSet ? `${mmX}, ${mmY} mm` : `${p.x}, ${p.y} px`;
@@ -1612,7 +1614,21 @@ drawCanvas.addEventListener('mousemove', e => {
   
   // 회전축 도구: 첫 점 클릭 후 미리보기
   if (tool === 'axis' && axisFirstPoint) {
-    drawAxisPreview(axisFirstPoint, p);
+    // Shift 직선 잠금 + 거리 오버라이드 적용
+    const constrained = applyAxisConstraint(axisFirstPoint, p);
+    drawAxisPreview(axisFirstPoint, constrained);
+    // 길이 표시 (mm 우선)
+    const dx0 = constrained.x - axisFirstPoint.x;
+    const dy0 = constrained.y - axisFirstPoint.y;
+    const lenPx = Math.hypot(dx0, dy0);
+    const lenMmShow = (lenPx * mmPerPixel).toFixed(2);
+    const angDeg = (Math.atan2(-dy0, dx0) * 180 / Math.PI).toFixed(1);
+    const lockTxt = shiftDown ? ' [Shift:45°잠금]' : '';
+    const distTxt = axisDistanceOverride !== null
+      ? ` ⟪ 거리고정 ${axisDistanceOverride}${calibSet ? 'mm' : 'px'} ⟫` : '';
+    document.getElementById('statusHint').textContent =
+      `🔄 회전축 2번째 점 → 길이 ${lenMmShow}mm (${lenPx.toFixed(0)}px) · ${angDeg}°${lockTxt}${distTxt}` +
+      ` · 숫자입력=거리지정(Enter확정, Esc해제)`;
     return;
   }
   
@@ -1927,9 +1943,47 @@ drawCanvas.addEventListener('dblclick', e => {
 let shiftDown = false;
 window.addEventListener('keydown', e => {
   if (e.key === 'Shift') shiftDown = true;
+
+  // 회전축 도구 + 첫 점 클릭된 상태에서 숫자 입력 = 거리 지정
+  // (입력창에 포커스 있을 때는 동작 안 함)
+  const focusInInput = document.activeElement &&
+    (document.activeElement.tagName === 'INPUT' ||
+     document.activeElement.tagName === 'TEXTAREA' ||
+     document.activeElement.tagName === 'SELECT');
+  if (tool === 'axis' && axisFirstPoint && !focusInInput && !e.ctrlKey && !e.altKey) {
+    // 숫자, 소수점, 백스페이스
+    if (/^[0-9.]$/.test(e.key)) {
+      axisDistanceBuf += e.key;
+      const v = parseFloat(axisDistanceBuf);
+      if (isFinite(v) && v > 0) axisDistanceOverride = v;
+      document.getElementById('statusHint').textContent =
+        `🔄 회전축 거리 입력중: ${axisDistanceBuf}${calibSet ? 'mm' : 'px'} (Enter:확정, Esc:해제, BS:지움)`;
+      e.preventDefault();
+      return;
+    }
+    if (e.key === 'Backspace') {
+      axisDistanceBuf = axisDistanceBuf.slice(0, -1);
+      const v = parseFloat(axisDistanceBuf);
+      axisDistanceOverride = (isFinite(v) && v > 0) ? v : null;
+      document.getElementById('statusHint').textContent =
+        `🔄 회전축 거리 입력중: ${axisDistanceBuf || '(없음)'} (Enter:확정, Esc:해제)`;
+      e.preventDefault();
+      return;
+    }
+    if (e.key === 'Enter') {
+      // 현재 마우스 위치 + 거리 강제 적용 즉시 확정
+      if (axisDistanceOverride !== null && lastMousePoint) {
+        handleAxisClick(lastMousePoint); // 내부에서 applyAxisConstraint로 거리 적용됨
+      }
+      e.preventDefault();
+      return;
+    }
+  }
+
   if (e.key === 'Escape') {
     firstClick = null; arcPath = []; dragState = null;
     calibFirstPoint = null; axisFirstPoint = null;
+    axisDistanceOverride = null; axisDistanceBuf = '';
     endpointPickState = null;
     arcHandleDrag = null;
     filletState = null; offsetState = null; dimState = null;
@@ -3299,18 +3353,27 @@ function drawAngleDim(ctx, l1, l2, offset) {
   ctx.fillText(text, tx, ty);
 }
 
-// ====== 회전축 (v6.0) ======
+// ====== 회전축 (v6.0) - Rev.10.5 Shift 직선잠금 + 거리 입력 ======
+let axisDistanceOverride = null; // 사용자가 키보드로 입력한 거리 (현재 단위: calibSet이면 mm, 아니면 px)
+let axisDistanceBuf = '';        // 입력 중 버퍼
+
 function handleAxisClick(p) {
   if (!axisFirstPoint) {
     axisFirstPoint = {x: p.x, y: p.y};
+    axisDistanceOverride = null;
+    axisDistanceBuf = '';
     document.getElementById('statusHint').textContent = 
-      `🔄 회전축 첫 점 (${p.x}, ${p.y}) → 두 번째 점을 클릭하세요`;
+      `🔄 회전축 첫 점 (${p.x}, ${p.y}) → 두 번째 점 클릭 [Shift: 45°잠금, 숫자입력: 거리지정]`;
   } else {
+    // Shift 직선잠금 + 거리 오버라이드 적용된 최종 좌표
+    const finalP = applyAxisConstraint(axisFirstPoint, p);
     rotAxis = {
       p1: {x: axisFirstPoint.x, y: axisFirstPoint.y},
-      p2: {x: p.x, y: p.y}
+      p2: {x: Math.round(finalP.x), y: Math.round(finalP.y)}
     };
     axisFirstPoint = null;
+    axisDistanceOverride = null;
+    axisDistanceBuf = '';
     preCtx.clearRect(0, 0, baseW, baseH);
     redrawDraw();  // 회전축 표시 위해 다시 그림
     
@@ -3324,6 +3387,34 @@ function handleAxisClick(p) {
       alert(`✓ 회전축 설정됨 (${lenMm}mm)\n[3D 회전체] 탭의 [🧊 3D 생성] 버튼으로 회전체를 만드세요.`);
     }
   }
+}
+
+// 회전축 제약: Shift = 45° 단위 잠금, axisDistanceOverride = 거리 강제
+function applyAxisConstraint(p1, p2) {
+  let dx = p2.x - p1.x;
+  let dy = p2.y - p1.y;
+  let len = Math.hypot(dx, dy);
+  if (len < 0.0001) return {x: p2.x, y: p2.y};
+  let ux = dx / len, uy = dy / len;
+
+  // Shift: 45° 단위 각도 잠금 (수평/수직/대각선 8방향)
+  if (shiftDown) {
+    let ang = Math.atan2(dy, dx);
+    const step = Math.PI / 4; // 45도
+    ang = Math.round(ang / step) * step;
+    ux = Math.cos(ang);
+    uy = Math.sin(ang);
+  }
+
+  // 거리 오버라이드: 사용자가 입력한 mm/px를 강제 적용
+  if (axisDistanceOverride !== null && axisDistanceOverride > 0) {
+    const pxLen = calibSet
+      ? (axisDistanceOverride / mmPerPixel)  // mm → px
+      : axisDistanceOverride;                 // px
+    len = pxLen;
+  }
+
+  return { x: p1.x + ux * len, y: p1.y + uy * len };
 }
 
 function drawAxisPreview(p1, p2) {
@@ -3341,6 +3432,30 @@ function drawAxisPreview(p1, p2) {
   preCtx.fillStyle = '#8e44ad';
   preCtx.beginPath(); preCtx.arc(p1.x, p1.y, 5, 0, Math.PI*2); preCtx.fill();
   preCtx.beginPath(); preCtx.arc(p2.x, p2.y, 5, 0, Math.PI*2); preCtx.fill();
+
+  // 캔버스 라벨: 길이 + 각도 + Shift/거리 잠금 표시
+  const dx = p2.x - p1.x, dy = p2.y - p1.y;
+  const lenPx = Math.hypot(dx, dy);
+  const lenMm = (lenPx * mmPerPixel).toFixed(2);
+  const angDeg = (Math.atan2(-dy, dx) * 180 / Math.PI).toFixed(1);
+  const mid = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+  // 라벨 배경
+  const labelLines = [
+    `${calibSet ? lenMm + 'mm' : lenPx.toFixed(0) + 'px'}  ∠${angDeg}°`
+  ];
+  if (shiftDown) labelLines.push('🔒 Shift 45° 잠금');
+  if (axisDistanceOverride !== null) labelLines.push(`🔒 거리 ${axisDistanceOverride}${calibSet ? 'mm' : 'px'}`);
+  preCtx.font = 'bold 11px sans-serif';
+  const maxW = Math.max(...labelLines.map(s => preCtx.measureText(s).width));
+  const pad = 4, lh = 14;
+  const bx = mid.x + 12, by = mid.y - (labelLines.length * lh) / 2 - pad;
+  preCtx.fillStyle = 'rgba(142, 68, 173, 0.92)';
+  preCtx.fillRect(bx, by, maxW + pad * 2, labelLines.length * lh + pad * 2);
+  preCtx.fillStyle = '#fff';
+  labelLines.forEach((s, i) => {
+    preCtx.fillText(s, bx + pad, by + pad + (i + 1) * lh - 3);
+  });
+
   preCtx.restore();
   drawSnapIndicator();
 }
@@ -5848,16 +5963,101 @@ updateToolStatus = function() {
   updateHeaderSelectButton();
 };
 
+// ====== C3D(draw_tool3.html)로 도형 전송 ======
+function sendToC3D() {
+  if (!shapes || shapes.length === 0) {
+    if (confirm('전송할 2D 도형이 없습니다.\nC3D(3D 모델러)로 그냥 이동할까요?')) {
+      window.location.href = 'draw_tool3.html';
+    }
+    return;
+  }
+
+  // 픽셀 -> mm 스케일 입력 (기본 1픽셀 = 1mm)
+  const scaleStr = prompt(
+    '📐 C3D로 전송\n\n2D 도형 ' + shapes.length + '개를 3D 모델러로 보냅니다.\n\n픽셀 → mm 변환 스케일 입력\n(예: 1 = 1px당 1mm, 0.1 = 1px당 0.1mm)',
+    '1'
+  );
+  if (scaleStr === null) return; // 취소
+  const scale = parseFloat(scaleStr);
+  if (!isFinite(scale) || scale <= 0) {
+    alert('잘못된 스케일 값입니다.');
+    return;
+  }
+
+  // 도형 변환: draw_tool 좌표(Y 아래로 +) -> Catia3D 좌표(Y 위로 +)
+  // 캔버스 좌표의 중앙(또는 0,0)을 기준으로 그대로 변환하되 Y만 반전
+  const out = [];
+  shapes.forEach(s => {
+    const color = s.stroke || '#000000';
+    const lw = s.strokeWidth || 2;
+    if (s.type === 'line') {
+      out.push({
+        type: 'line',
+        x1: s.p1.x * scale, y1: -s.p1.y * scale,
+        x2: s.p2.x * scale, y2: -s.p2.y * scale,
+        color: color, lineWidth: lw
+      });
+    } else if (s.type === 'rect') {
+      out.push({
+        type: 'rect',
+        x1: s.p1.x * scale, y1: -s.p1.y * scale,
+        x2: s.p2.x * scale, y2: -s.p2.y * scale,
+        color: color, lineWidth: lw
+      });
+    } else if (s.type === 'circle') {
+      const r = Math.hypot(s.p2.x - s.p1.x, s.p2.y - s.p1.y) * scale;
+      out.push({
+        type: 'circle',
+        cx: s.p1.x * scale, cy: -s.p1.y * scale, r: r,
+        color: color, lineWidth: lw
+      });
+    } else if (s.type === 'arc') {
+      // Y 반전 시 각도도 부호 반전 (atan2(-y,x))
+      out.push({
+        type: 'arc',
+        cx: s.cx * scale, cy: -s.cy * scale, r: s.r * scale,
+        startAngle: -s.startAngle,
+        endAngle: -s.endAngle,
+        color: color, lineWidth: lw
+      });
+    }
+    // dim/text 등 기타 타입은 3D 변환 불가 → 건너뜀
+  });
+
+  if (out.length === 0) {
+    if (confirm('변환 가능한 도형(선/사각/원/호)이 없습니다.\nC3D로 그냥 이동할까요?')) {
+      window.location.href = 'draw_tool3.html';
+    }
+    return;
+  }
+
+  // localStorage에 저장 (C3D에서 자동 로드)
+  const payload = {
+    from: 'draw_tool',
+    sentAt: new Date().toISOString(),
+    scale: scale,
+    shapes: out
+  };
+  try {
+    localStorage.setItem('c3d_import_from_draw_tool', JSON.stringify(payload));
+  } catch (e) {
+    alert('전송 실패: ' + e.message);
+    return;
+  }
+
+  if (confirm('✅ ' + out.length + '개 도형을 C3D로 전송 준비 완료.\n\nC3D(draw_tool3.html)로 이동하시겠습니까?')) {
+    window.location.href = 'draw_tool3.html';
+  }
+}
+
 // ====== 드롭다운 메뉴바 (Rev.7.7) ======
 document.querySelectorAll('.menu .menu-title').forEach(t => {
   t.addEventListener('click', e => {
     e.stopPropagation();
     const menu = t.parentElement;
-    // C3D 탭은 드롭다운 없이 외부 모델러로 이동
+    // C3D 탭은 드롭다운 없이 외부 모델러로 이동 + 2D 도형 전송
     if (menu.dataset.menu === 'c3d') {
-      if (confirm('Catia3D (프레스 금형 3D 모델러)로 이동하시겠습니까?\n저장하지 않은 작업은 사라질 수 있습니다.')) {
-        window.location.href = 'draw_tool3.html';
-      }
+      sendToC3D();
       return;
     }
     const isOpen = menu.classList.contains('open');
