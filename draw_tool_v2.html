@@ -248,9 +248,15 @@
 <!-- 저장 모달 -->
 <div class="modal-overlay" id="saveModal">
   <div class="modal">
-    <h3>💾 투명이미지 저장 설정</h3>
+    <h3>💾 도면 저장 설정</h3>
     <div class="row"><label>파일명:</label><input type="text" id="saveName" value="도면" style="flex:1;"></div>
-    <div class="row"><label>저장 비율:</label>
+    <div class="row"><label>저장 형식:</label>
+      <select id="saveFormat" style="flex:1;">
+        <option value="svg">SVG (벡터 - 3D프린터/레이저커터/캐드용 ★권장)</option>
+        <option value="png">PNG (래스터 - 엑셀/문서 삽입용, 투명배경)</option>
+      </select>
+    </div>
+    <div class="row" id="rowSaveScale"><label>저장 비율 (PNG):</label>
       <select id="saveScale" style="flex:1;">
         <option value="1">원본 크기 (100%)</option>
         <option value="2">2배 (200%, 고해상도)</option>
@@ -266,9 +272,21 @@
         <option value="canvas">전체 캔버스 크기 그대로</option>
       </select>
     </div>
+    <div class="row" id="rowSvgUnit"><label>SVG 단위:</label>
+      <select id="svgUnit" style="flex:1;">
+        <option value="mm">mm (밀리미터 - 캐드/3D프린터/레이저 표준)</option>
+        <option value="px">px (픽셀)</option>
+      </select>
+    </div>
+    <div class="row" id="rowSvgStrokeMm">
+      <div class="checkbox-group">
+        <input type="checkbox" id="svgStrokeMm" checked>
+        <label for="svgStrokeMm" style="min-width:auto;">선 두께를 0.1mm로 통일 (레이저 커팅용)</label>
+      </div>
+    </div>
     <div class="actions">
       <button id="btnCancelSave">취소</button>
-      <button class="success" id="btnDoSave">저장 (PNG 투명배경)</button>
+      <button class="success" id="btnDoSave">저장</button>
     </div>
   </div>
 </div>
@@ -1720,14 +1738,152 @@ document.getElementById('btnCancelSave').addEventListener('click', () => saveMod
 document.getElementById('saveScale').addEventListener('change', e => {
   document.getElementById('customScaleRow').style.display = e.target.value === 'custom' ? 'flex' : 'none';
 });
+
+// 저장 형식 선택에 따라 옵션 UI 토글
+document.getElementById('saveFormat').addEventListener('change', e => {
+  const isSvg = e.target.value === 'svg';
+  document.getElementById('rowSaveScale').style.display = isSvg ? 'none' : 'flex';
+  document.getElementById('customScaleRow').style.display = (!isSvg && document.getElementById('saveScale').value === 'custom') ? 'flex' : 'none';
+  document.getElementById('rowSvgUnit').style.display = isSvg ? 'flex' : 'none';
+  document.getElementById('rowSvgStrokeMm').style.display = isSvg ? 'flex' : 'none';
+});
+// 초기 상태: SVG가 기본이므로 PNG 옵션은 숨김
+window.addEventListener('load', () => {
+  document.getElementById('rowSaveScale').style.display = 'none';
+});
+
 document.getElementById('btnDoSave').addEventListener('click', () => {
   const name = (document.getElementById('saveName').value || '도면').trim();
-  const sel = document.getElementById('saveScale').value;
-  const scale = sel === 'custom' ? (parseFloat(document.getElementById('customScale').value)||1) : parseFloat(sel);
+  const fmt = document.getElementById('saveFormat').value;
   const crop = document.getElementById('saveCrop').value;
-  exportImage(name, scale, crop);
+  
+  if (fmt === 'svg') {
+    exportSVG(name, crop);
+  } else {
+    const sel = document.getElementById('saveScale').value;
+    const scale = sel === 'custom' ? (parseFloat(document.getElementById('customScale').value)||1) : parseFloat(sel);
+    exportImage(name, scale, crop);
+  }
   saveModal.classList.remove('show');
 });
+
+// ====== SVG 내보내기 (3D프린터/레이저 커터용 벡터) ======
+function exportSVG(name, cropMode) {
+  let x0 = 0, y0 = 0, w = baseW, h = baseH;
+  if (cropMode === 'content') {
+    const bb = computeBoundingBox();
+    if (bb) {
+      const pad = 2;  // SVG는 패딩 적게
+      x0 = Math.max(0, bb.minX - pad);
+      y0 = Math.max(0, bb.minY - pad);
+      w = Math.min(baseW - x0, bb.maxX - bb.minX + pad*2);
+      h = Math.min(baseH - y0, bb.maxY - bb.minY + pad*2);
+    }
+  }
+  
+  const unit = document.getElementById('svgUnit').value;
+  const useStrokeMm = document.getElementById('svgStrokeMm').checked;
+  
+  // mm 단위로 출력하려면 mmPerPixel을 곱함 (캘리브 됐을 때 정확한 실측)
+  const k = (unit === 'mm') ? mmPerPixel : 1;
+  const wOut = (w * k).toFixed(3);
+  const hOut = (h * k).toFixed(3);
+  
+  // 선 두께 (레이저용 0.1mm 또는 원본)
+  const fixedStroke = useStrokeMm ? 0.1 : null;  // mm
+  
+  let svg = `<?xml version="1.0" encoding="UTF-8"?>\n`;
+  svg += `<!-- 도면 작도기 Rev.5 - ${new Date().toISOString()} -->\n`;
+  svg += `<!-- 캘리브: ${calibSet ? `1px = ${mmPerPixel.toFixed(4)}mm` : '미설정'} -->\n`;
+  svg += `<!-- 실측 크기: ${(w*mmPerPixel).toFixed(1)} × ${(h*mmPerPixel).toFixed(1)} mm -->\n`;
+  svg += `<svg xmlns="http://www.w3.org/2000/svg" `;
+  
+  if (unit === 'mm') {
+    svg += `width="${wOut}mm" height="${hOut}mm" `;
+    svg += `viewBox="0 0 ${wOut} ${hOut}">\n`;
+  } else {
+    svg += `width="${wOut}" height="${hOut}" `;
+    svg += `viewBox="0 0 ${wOut} ${hOut}">\n`;
+  }
+  
+  // 채움 (배경 - 채움 도형들)
+  fills.forEach(f => {
+    if (!f.points || f.points.length < 3) return;
+    const pts = f.points.map(p => `${((p.x-x0)*k).toFixed(3)},${((p.y-y0)*k).toFixed(3)}`).join(' ');
+    const rgba = hexToRgba(f.color, f.alpha);
+    svg += `  <polygon points="${pts}" fill="${rgba}" stroke="none"/>\n`;
+  });
+  
+  // 도형
+  shapes.forEach(s => {
+    const stroke = s.stroke;
+    const sw = fixedStroke !== null ? fixedStroke : (s.strokeWidth * k);
+    
+    if (s.type === 'line') {
+      const x1 = ((s.p1.x - x0) * k).toFixed(3);
+      const y1 = ((s.p1.y - y0) * k).toFixed(3);
+      const x2 = ((s.p2.x - x0) * k).toFixed(3);
+      const y2 = ((s.p2.y - y0) * k).toFixed(3);
+      svg += `  <line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${stroke}" stroke-width="${sw}" stroke-linecap="round"/>\n`;
+    } else if (s.type === 'rect') {
+      const rx = ((Math.min(s.p1.x, s.p2.x) - x0) * k).toFixed(3);
+      const ry = ((Math.min(s.p1.y, s.p2.y) - y0) * k).toFixed(3);
+      const rw = (Math.abs(s.p2.x - s.p1.x) * k).toFixed(3);
+      const rh = (Math.abs(s.p2.y - s.p1.y) * k).toFixed(3);
+      svg += `  <rect x="${rx}" y="${ry}" width="${rw}" height="${rh}" fill="none" stroke="${stroke}" stroke-width="${sw}"/>\n`;
+    } else if (s.type === 'circle') {
+      const r = Math.hypot(s.p2.x - s.p1.x, s.p2.y - s.p1.y);
+      const cx = ((s.p1.x - x0) * k).toFixed(3);
+      const cy = ((s.p1.y - y0) * k).toFixed(3);
+      const rOut = (r * k).toFixed(3);
+      svg += `  <circle cx="${cx}" cy="${cy}" r="${rOut}" fill="none" stroke="${stroke}" stroke-width="${sw}"/>\n`;
+    } else if (s.type === 'arc') {
+      // SVG arc는 path로 그림
+      const cx = (s.cx - x0) * k;
+      const cy = (s.cy - y0) * k;
+      const r = s.r * k;
+      const sa = s.startAngle;
+      const ea = s.endAngle;
+      
+      const x1 = (cx + r * Math.cos(sa)).toFixed(3);
+      const y1 = (cy + r * Math.sin(sa)).toFixed(3);
+      const x2 = (cx + r * Math.cos(ea)).toFixed(3);
+      const y2 = (cy + r * Math.sin(ea)).toFixed(3);
+      
+      // largeArcFlag: 180도 이상이면 1
+      let angDiff = ea - sa;
+      if (s.ccw) angDiff = -angDiff;
+      while (angDiff < 0) angDiff += Math.PI * 2;
+      const largeArc = angDiff > Math.PI ? 1 : 0;
+      const sweepFlag = s.ccw ? 0 : 1;  // SVG: 0=CCW, 1=CW
+      
+      svg += `  <path d="M ${x1} ${y1} A ${r.toFixed(3)} ${r.toFixed(3)} 0 ${largeArc} ${sweepFlag} ${x2} ${y2}" fill="none" stroke="${stroke}" stroke-width="${sw}" stroke-linecap="round"/>\n`;
+    } else if (s.type === 'ellipse') {
+      const cx = ((s.cx - x0) * k).toFixed(3);
+      const cy = ((s.cy - y0) * k).toFixed(3);
+      const rx = (s.rx * k).toFixed(3);
+      const ry = (s.ry * k).toFixed(3);
+      const ang = ((s.angle || 0) * 180 / Math.PI).toFixed(2);
+      svg += `  <ellipse cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}" transform="rotate(${ang} ${cx} ${cy})" fill="none" stroke="${stroke}" stroke-width="${sw}"/>\n`;
+    }
+  });
+  
+  svg += `</svg>\n`;
+  
+  // 파일 다운로드
+  let finalName = name;
+  if (calibSet) {
+    const wMm = (w * mmPerPixel).toFixed(0);
+    const hMm = (h * mmPerPixel).toFixed(0);
+    finalName = `${name}_${wMm}x${hMm}mm`;
+  }
+  
+  const blob = new Blob([svg], {type: 'image/svg+xml'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = finalName + '.svg'; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 
 function exportImage(name, scale, cropMode) {
   let x0 = 0, y0 = 0, w = baseW, h = baseH;
