@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<title>도면 작도기 Rev.7.1 - 치수 입력 + 호 방향 수정 + Shift 직선이동</title>
+<title>도면 작도기 Rev.7.2 - 끝점 연속그리기 + 선연결</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Malgun Gothic', sans-serif; background: #2b2b2b; color: #eee; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
@@ -81,8 +81,8 @@
 <body>
 
 <header>
-  <h1>📐 도면 작도기 Rev.7.1</h1>
-  <span class="ver">v7.1 (치수입력 + 호방향 수정 + Shift 직선이동)</span>
+  <h1>📐 도면 작도기 Rev.7.2</h1>
+  <span class="ver">v7.2 (끝점 연속그리기 + 선연결)</span>
   <span class="cvstat" id="cvStat">OpenCV 로딩 중...</span>
   <span class="snapstat" id="snapStat">스냅: 비활성 (배경 없음)</span>
   <span class="snapstat" id="calibStat" style="background:#e67e22;">📏 캘리브: 미설정 (1px = 1mm)</span>
@@ -145,6 +145,11 @@
     <button id="btnRedo">↷ 다시실행</button>
     <button class="danger" id="btnDelSel">🗑 선택삭제</button>
     <button class="danger" id="btnClearAll">🗑 모두지우기</button>
+  </div>
+  
+  <div class="group" style="background:#1f3d35; border-color:#16a085;">
+    <button id="btnContinueFromSel" style="background:#16a085;" title="선택한 선의 끝점부터 새 선 연속 그리기">▶ 끝점에서 이어 그리기</button>
+    <button id="btnConnectSel" style="background:#16a085;" title="선택한 2개 이상의 선들을 가장 가까운 끝점끼리 연결">🔗 선연결</button>
   </div>
   
   <div class="group">
@@ -465,7 +470,10 @@ let axisFirstPoint = null;
 let lastGeneratedMesh = null;
 
 // 치수 입력 모드 (v7.0)
-let dimInputMode = false;  // 치수 입력 활성화 여부
+let dimInputMode = false;
+
+// 끝점 픽킹 모드 (v7.2)
+let endpointPickState = null;  // {endpoints: [{x,y,label?}]}
 
 setCanvasSize(baseW, baseH);
 
@@ -890,6 +898,13 @@ drawCanvas.addEventListener('mousemove', e => {
 });
 
 drawCanvas.addEventListener('mousedown', e => {
+  // 끝점 픽킹 모드 (select 도구 외에서도 동작 - 어느 도구에서든 picker 활성 시 우선 처리)
+  if (endpointPickState) {
+    const p = getCanvasPoint(e);
+    handleEndpointPick(p);
+    e.preventDefault();
+    return;
+  }
   if (tool !== 'select') return;
   const p = getCanvasPoint(e);
   const hit = hitTest(p);
@@ -989,6 +1004,7 @@ window.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     firstClick = null; arcPath = []; dragState = null;
     calibFirstPoint = null; axisFirstPoint = null;
+    endpointPickState = null;
     preCtx.clearRect(0,0,baseW,baseH);
     hideDimInput();
   } else if (e.ctrlKey && e.key === 'z') { e.preventDefault(); undo(); }
@@ -2663,6 +2679,294 @@ function deleteSelected() {
   redrawDraw();
 }
 document.getElementById('btnDelSel').addEventListener('click', deleteSelected);
+
+// ====== 선택한 선에서 이어 그리기 (v7.2) ======
+// 도형의 끝점들을 추출 (선=2개, 사각형=4코너, 원=중심, 호=양끝, 타원=중심)
+function getShapeEndpoints(s) {
+  if (s.type === 'line') return [{x:s.p1.x, y:s.p1.y, label:'start'}, {x:s.p2.x, y:s.p2.y, label:'end'}];
+  if (s.type === 'rect') {
+    const x1 = Math.min(s.p1.x, s.p2.x), x2 = Math.max(s.p1.x, s.p2.x);
+    const y1 = Math.min(s.p1.y, s.p2.y), y2 = Math.max(s.p1.y, s.p2.y);
+    return [{x:x1,y:y1},{x:x2,y:y1},{x:x2,y:y2},{x:x1,y:y2}];
+  }
+  if (s.type === 'arc') {
+    return [
+      {x: s.cx + s.r*Math.cos(s.startAngle), y: s.cy + s.r*Math.sin(s.startAngle), label:'start'},
+      {x: s.cx + s.r*Math.cos(s.endAngle), y: s.cy + s.r*Math.sin(s.endAngle), label:'end'}
+    ];
+  }
+  if (s.type === 'circle') return [{x:s.p1.x, y:s.p1.y, label:'center'}];
+  if (s.type === 'ellipse') return [{x:s.cx, y:s.cy, label:'center'}];
+  return [];
+}
+
+// "끝점에서 이어 그리기" - 선택된 도형의 끝점부터 작도 시작
+document.getElementById('btnContinueFromSel').addEventListener('click', () => {
+  if (selectedIds.size === 0) {
+    alert('먼저 [🔲 선택] 도구로 이어그릴 시작이 될 선을 클릭해주세요.');
+    return;
+  }
+  if (selectedIds.size > 1) {
+    alert('1개의 선만 선택해주세요. (현재 ' + selectedIds.size + '개 선택됨)');
+    return;
+  }
+  
+  // 선택된 도형 찾기
+  const sId = Array.from(selectedIds)[0];
+  const s = shapes.find(x => x.id === sId);
+  if (!s) return;
+  
+  if (s.type === 'circle' || s.type === 'ellipse') {
+    alert('선/사각형/호의 끝점에서만 이어 그릴 수 있습니다.');
+    return;
+  }
+  
+  // 끝점 추출
+  const endpoints = getShapeEndpoints(s);
+  if (endpoints.length === 0) return;
+  
+  // 끝점이 2개면 양쪽 모두 표시하고 사용자 선택
+  let chosenPt;
+  if (endpoints.length === 2) {
+    chosenPt = pickEndpointInteractive(endpoints, s);
+    if (!chosenPt) return;
+    finishContinueFromPoint(chosenPt);
+  } else if (endpoints.length > 2) {
+    // 사각형 등 코너 여러개
+    chosenPt = pickEndpointInteractive(endpoints, s);
+    if (!chosenPt) return;
+    finishContinueFromPoint(chosenPt);
+  } else {
+    finishContinueFromPoint(endpoints[0]);
+  }
+});
+
+// 끝점 인터랙티브 선택: 잠시 화면에 점 표시 후 사용자가 클릭
+function pickEndpointInteractive(endpoints, sourceShape) {
+  // 끝점들을 화면에 강조 표시
+  endpointPickState = { endpoints, callback: null };
+  drawEndpointPicker(endpoints);
+  document.getElementById('statusHint').textContent = 
+    '🎯 이어그릴 끝점을 클릭하세요 (강조된 녹색 원 중 하나) / ESC=취소';
+  
+  // Promise 방식이 아닌 콜백 방식으로 처리하기 어려우니, 
+  // 간단히 동기 prompt 또는 자동 선택으로 변경
+  // → 더 간단한 UX: 화면 표시 후 다음 클릭으로 끝점 선택
+  
+  // 실제 동작: 사용자가 다음 클릭하면 가장 가까운 끝점으로 자동 선택
+  return null;  // 일단 비동기로 처리
+}
+
+// drawEndpointPicker: 끝점을 강조 표시
+function drawEndpointPicker(endpoints) {
+  preCtx.clearRect(0, 0, baseW, baseH);
+  preCtx.save();
+  endpoints.forEach((p, i) => {
+    preCtx.strokeStyle = '#16a085';
+    preCtx.fillStyle = 'rgba(22, 160, 133, 0.4)';
+    preCtx.lineWidth = 2;
+    preCtx.beginPath();
+    preCtx.arc(p.x, p.y, 10, 0, Math.PI*2);
+    preCtx.fill();
+    preCtx.stroke();
+    // 라벨
+    preCtx.fillStyle = '#16a085';
+    preCtx.font = 'bold 11px sans-serif';
+    preCtx.fillText(`P${i+1}`, p.x + 12, p.y - 8);
+  });
+  preCtx.restore();
+}
+
+// 다음 클릭으로 끝점 선택 처리 (mousemove/click 핸들러에서 분기 필요)
+function finishContinueFromPoint(pt) {
+  // 선택 해제하고 line 도구로 전환
+  selectedIds.clear();
+  updateSelStat();
+  redrawDraw();
+  
+  // 도구를 line으로 전환
+  document.querySelectorAll('.toolbtn').forEach(b => b.classList.remove('active'));
+  const lineBtn = document.querySelector('.toolbtn[data-tool="line"]');
+  if (lineBtn) lineBtn.classList.add('active');
+  tool = 'line';
+  drawCanvas.style.cursor = 'crosshair';
+  
+  // firstClick 설정 → 다음 클릭이 두 번째 점
+  firstClick = {x: pt.x, y: pt.y};
+  
+  // 연속선 모드 자동 ON
+  if (!continuousMode) {
+    continuousMode = true;
+    document.getElementById('btnContinuous').classList.add('active');
+    document.getElementById('btnContinuous').textContent = '⛓ 연속선 ON';
+  }
+  
+  updateToolStatus();
+  
+  // 시작점 표시
+  preCtx.clearRect(0, 0, baseW, baseH);
+  preCtx.save();
+  preCtx.fillStyle = '#16a085';
+  preCtx.strokeStyle = '#fff';
+  preCtx.lineWidth = 2;
+  preCtx.beginPath();
+  preCtx.arc(pt.x, pt.y, 6, 0, Math.PI*2);
+  preCtx.fill();
+  preCtx.stroke();
+  preCtx.restore();
+  
+  // 치수입력 모드면 자동 표시
+  if (dimInputMode) showDimInput(firstClick);
+  
+  document.getElementById('statusHint').textContent = 
+    '▶ 시작점 설정됨 - 다음 클릭으로 선 추가 / 치수입력 가능 / ESC=중지';
+}
+
+// 끝점 픽킹 모드의 클릭 처리: drawCanvas click 핸들러에 추가
+// 가장 가까운 끝점 자동 선택
+function handleEndpointPick(p) {
+  if (!endpointPickState) return false;
+  let best = null, bestD = Infinity;
+  for (const pt of endpointPickState.endpoints) {
+    const d = Math.hypot(p.x - pt.x, p.y - pt.y);
+    if (d < bestD) { bestD = d; best = pt; }
+  }
+  if (best) {
+    endpointPickState = null;
+    finishContinueFromPoint(best);
+  }
+  return true;
+}
+
+// 위의 pickEndpointInteractive를 단순화 - 끝점 1개면 바로, 여러개면 픽킹 모드
+document.getElementById('btnContinueFromSel').removeEventListener('click', () => {});
+document.getElementById('btnContinueFromSel').onclick = () => {
+  if (selectedIds.size === 0) {
+    alert('먼저 [🔲 선택] 도구로 이어그릴 시작이 될 선을 클릭해주세요.');
+    return;
+  }
+  if (selectedIds.size > 1) {
+    alert('1개의 도형만 선택해주세요.');
+    return;
+  }
+  const sId = Array.from(selectedIds)[0];
+  const s = shapes.find(x => x.id === sId);
+  if (!s) return;
+  if (s.type === 'circle' || s.type === 'ellipse') {
+    alert('선/사각형/호의 끝점에서만 이어 그릴 수 있습니다.');
+    return;
+  }
+  const endpoints = getShapeEndpoints(s);
+  if (endpoints.length === 0) return;
+  if (endpoints.length === 1) {
+    finishContinueFromPoint(endpoints[0]);
+  } else {
+    // 끝점 표시하고 사용자 클릭 대기
+    endpointPickState = { endpoints };
+    drawEndpointPicker(endpoints);
+    document.getElementById('statusHint').textContent = 
+      '🎯 이어그릴 끝점을 클릭하세요 (녹색 원 중 하나) / ESC=취소';
+  }
+};
+
+// ====== 선 연결 (v7.2) ======
+// 선택된 2개 이상의 선들의 가장 가까운 끝점들끼리 새 연결선 추가
+document.getElementById('btnConnectSel').addEventListener('click', () => {
+  if (selectedIds.size < 2) {
+    alert('연결할 선 2개 이상을 [🔲 선택]으로 선택하세요. (현재 ' + selectedIds.size + '개)');
+    return;
+  }
+  
+  // 선택된 도형들에서 line만 추출 (호/원/사각형은 추후 확장)
+  const selectedShapes = shapes.filter(s => selectedIds.has(s.id));
+  const lineShapes = selectedShapes.filter(s => s.type === 'line' || s.type === 'arc');
+  
+  if (lineShapes.length < 2) {
+    alert('연결 가능한 선/호가 2개 이상 필요합니다.');
+    return;
+  }
+  
+  // 각 도형의 끝점 목록
+  const items = lineShapes.map(s => ({
+    shape: s,
+    endpoints: getShapeEndpoints(s)
+  }));
+  
+  // 모든 도형 쌍에 대해 가장 가까운 끝점 쌍 찾기, 연결선 생성
+  // 그리디: 가장 가까운 두 도형부터 시작해서 체인 형태로 연결
+  
+  // 모든 끝점 쌍의 거리를 계산
+  const pairs = [];  // {i, j, pi, pj, dist} (i,j = 도형 인덱스, pi,pj = 끝점)
+  for (let i = 0; i < items.length; i++) {
+    for (let j = i+1; j < items.length; j++) {
+      for (const pi of items[i].endpoints) {
+        for (const pj of items[j].endpoints) {
+          const d = Math.hypot(pi.x - pj.x, pi.y - pj.y);
+          pairs.push({i, j, pi: {x:pi.x, y:pi.y}, pj: {x:pj.x, y:pj.y}, dist: d});
+        }
+      }
+    }
+  }
+  
+  pairs.sort((a, b) => a.dist - b.dist);
+  
+  // 각 도형이 이미 연결되었는지 추적 (Union-Find)
+  const parent = items.map((_, idx) => idx);
+  function find(x) { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; }
+  function union(a, b) { const ra = find(a), rb = find(b); if (ra !== rb) { parent[ra] = rb; return true; } return false; }
+  
+  // 도형 끝점이 이미 사용되었는지
+  const usedEndpoint = new Map();  // key: "i_x_y" → true
+  function endpointKey(idx, p) { return `${idx}_${p.x.toFixed(1)}_${p.y.toFixed(1)}`; }
+  
+  const newConnections = [];  // 생성할 연결선들
+  
+  // MST 방식: 모든 도형이 하나의 트리로 연결될 때까지
+  for (const pair of pairs) {
+    if (newConnections.length >= items.length - 1) break;  // 충분
+    
+    const k1 = endpointKey(pair.i, pair.pi);
+    const k2 = endpointKey(pair.j, pair.pj);
+    if (usedEndpoint.get(k1) || usedEndpoint.get(k2)) continue;
+    
+    // 같은 컴포넌트면 스킵 (사이클 방지)
+    if (find(pair.i) === find(pair.j)) continue;
+    
+    // 0 거리면 이미 닿아있음 - 연결선 안 만듦 (단지 union)
+    if (pair.dist < 1) {
+      union(pair.i, pair.j);
+      continue;
+    }
+    
+    union(pair.i, pair.j);
+    usedEndpoint.set(k1, true);
+    usedEndpoint.set(k2, true);
+    newConnections.push({p1: pair.pi, p2: pair.pj});
+  }
+  
+  if (newConnections.length === 0) {
+    alert('연결할 새 선이 없습니다 (이미 모두 닿아있거나 연결됨).');
+    return;
+  }
+  
+  // 연결선 추가 (현재 선 스타일 사용)
+  const stroke = document.getElementById('strokeColor').value;
+  const strokeWidth = parseInt(document.getElementById('strokeWidth').value);
+  
+  newConnections.forEach(c => {
+    shapes.push({
+      id: ++shapeIdSeq, type: 'line',
+      p1: {x: c.p1.x, y: c.p1.y}, p2: {x: c.p2.x, y: c.p2.y},
+      stroke, strokeWidth
+    });
+  });
+  
+  redoStack = [];
+  redrawDraw();
+  updateCount();
+  
+  alert(`✓ ${newConnections.length}개의 연결선이 생성되었습니다.`);
+});
 
 function redrawAll() { redrawBg(); redrawFills(); redrawDraw(); }
 function redrawBg() {
