@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<title>도면 작도기 Rev.10.15 - 사각형 모서리R 직접 계산</title>
+<title>도면 작도기 Rev.10.16 - 두 직선 모서리R 보강</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Malgun Gothic', sans-serif; background: #2b2b2b; color: #eee; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
@@ -202,8 +202,8 @@
 <body>
 
 <header>
-  <h1>📐 도면 작도기 Rev.10.15</h1>
-  <span class="ver">v10.15 (사각형 모서리R 직접계산)</span>
+  <h1>📐 도면 작도기 Rev.10.16</h1>
+  <span class="ver">v10.16 (두 직선 모서리R 보강)</span>
   <button id="headerBtnHelp" style="padding:5px 12px; background:#27ae60; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:12px; font-weight:bold;" title="도움말 (F1)">❓ 도움말</button>
   <button id="headerBtnFill" style="padding:5px 12px; background:#e67e22; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:12px; font-weight:bold;" title="채우기 도구 (H)">🎨 채움</button>
   <button id="headerBtnBpoly" style="padding:5px 12px; background:#d35400; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:12px; font-weight:bold;" title="모든 닫힌 영역 자동 채움 (BPOLY)">🎨🎨 전체채움</button>
@@ -3061,13 +3061,17 @@ function handleFilletClick(p) {
 
 // 두 직선에 라운드 적용 - 공통 함수
 function applyFilletToTwoLines(L1, L2, click1, click2) {
+  console.log('🔧 [Fillet] 시작:', {L1_id: L1.id, L2_id: L2.id, click1, click2});
+
   // 두 무한 직선 교점
   const ix = lineLineIntersection(L1.p1, L1.p2, L2.p1, L2.p2);
   if (!ix) {
     alert('두 선이 평행이라 라운드를 만들 수 없습니다.');
+    console.warn('🔧 [Fillet] 두 선 평행');
     redrawDraw();
     return false;
   }
+  console.log('🔧 [Fillet] 교점:', ix);
   
   // 반지름 입력
   const rStr = prompt(`모서리 라운드 반지름(mm)을 입력하세요:\n(예: 5 또는 10)\n\n현재 캘리브: ${calibSet ? '1px = '+mmPerPixel.toFixed(3)+'mm' : '미설정 (1:1)'}`, '5');
@@ -3075,43 +3079,53 @@ function applyFilletToTwoLines(L1, L2, click1, click2) {
   const rMm = parseFloat(rStr);
   if (isNaN(rMm) || rMm <= 0) { alert('잘못된 반지름.'); redrawDraw(); return false; }
   const r = rMm / mmPerPixel;
+  console.log('🔧 [Fillet] r(mm)=' + rMm + ', r(px)=' + r);
   
   // 각 선에 대해: 교점에서 클릭점 방향(=살릴 방향)의 단위벡터
-  // 그리고 어느 끝점을 t1/t2로 옮길지 결정
+  // 클릭점이 선 위에 있으니, 가까운 끝점을 살리고 반대편을 자른다.
   function lineEndpointToCutKey(line, clickPt, ix) {
-    // 클릭점에 가까운 끝점이 "살릴 끝점" → 반대편 끝점이 잘려서 t로 옮겨질 쪽
     const d1 = Math.hypot(clickPt.x - line.p1.x, clickPt.y - line.p1.y);
     const d2 = Math.hypot(clickPt.x - line.p2.x, clickPt.y - line.p2.y);
     const keepKey = d1 < d2 ? 'p1' : 'p2';
-    const cutKey  = d1 < d2 ? 'p2' : 'p1';
-    // 단위벡터: 교점 → 살릴 끝점 방향
+    const cutKey  = keepKey === 'p1' ? 'p2' : 'p1';
     const keep = line[keepKey];
     const dx = keep.x - ix.x, dy = keep.y - ix.y;
     const len = Math.hypot(dx, dy);
-    if (len < 1e-6) return null;
-    return {ux: dx/len, uy: dy/len, keepKey, cutKey};
+    if (len < 1e-6) {
+      // 교점이 살릴 끝점과 일치 (선이 교점에서 끝남) → 다른 끝점 방향 사용
+      const other = line[cutKey];
+      const ox = other.x - ix.x, oy = other.y - ix.y;
+      const oLen = Math.hypot(ox, oy);
+      if (oLen < 1e-6) return null; // 선분이 점에 가까움
+      // 살리는 방향을 반대편으로 (교점 → 다른 끝점)
+      return {ux: -ox/oLen, uy: -oy/oLen, keepKey, cutKey, keepLen: 0};
+    }
+    return {ux: dx/len, uy: dy/len, keepKey, cutKey, keepLen: len};
   }
   
   const e1 = lineEndpointToCutKey(L1, click1, ix);
   const e2 = lineEndpointToCutKey(L2, click2, ix);
-  if (!e1 || !e2) { redrawDraw(); return false; }
+  if (!e1 || !e2) {
+    console.warn('🔧 [Fillet] 단위벡터 계산 실패');
+    redrawDraw(); return false;
+  }
+  console.log('🔧 [Fillet] L1 keep방향:', e1, 'L2 keep방향:', e2);
   
   // 두 단위벡터 사이 각도
   const dot = e1.ux * e2.ux + e1.uy * e2.uy;
   const ang = Math.acos(Math.max(-1, Math.min(1, dot)));
+  console.log('🔧 [Fillet] 두 방향 사이각 = ' + (ang*180/Math.PI).toFixed(1) + '°');
   if (ang < 0.01 || ang > Math.PI - 0.01) {
-    alert('두 선의 각도가 너무 작거나 일직선입니다.');
+    alert('두 선이 거의 평행이거나 일직선입니다.\n각도: ' + (ang*180/Math.PI).toFixed(1) + '°');
     redrawDraw(); return false;
   }
   
-  // 호의 시작/끝 점: 교점에서 살릴 방향으로 d만큼 떨어진 점
-  // d = r / tan(ang/2)
+  // d = r / tan(ang/2): 교점에서 t1, t2까지의 거리
   const d = r / Math.tan(ang/2);
-  // 두 선의 살아남는 길이 (교점에서 살릴 끝점까지) 보다 d가 더 길면 라운드 불가
-  const len1 = Math.hypot(L1[e1.keepKey].x - ix.x, L1[e1.keepKey].y - ix.y);
-  const len2 = Math.hypot(L2[e2.keepKey].x - ix.x, L2[e2.keepKey].y - ix.y);
-  if (d > len1 + 0.5 || d > len2 + 0.5) {
-    alert(`반지름이 너무 큽니다.\n필요 거리: ${(d*mmPerPixel).toFixed(1)}mm\n선 길이: ${(Math.min(len1,len2)*mmPerPixel).toFixed(1)}mm 이하 필요\n\n작은 R을 다시 입력하세요.`);
+  console.log('🔧 [Fillet] 단축 거리 d=' + d.toFixed(2) + 'px (선1 keepLen=' + e1.keepLen.toFixed(1) + ', 선2 keepLen=' + e2.keepLen.toFixed(1) + ')');
+  
+  if (d > e1.keepLen + 0.5 && e1.keepLen > 0.5 || d > e2.keepLen + 0.5 && e2.keepLen > 0.5) {
+    alert(`반지름이 너무 큽니다.\n필요 거리: ${(d*mmPerPixel).toFixed(1)}mm\n선 길이가 부족합니다 (최소 ${(Math.min(e1.keepLen,e2.keepLen)*mmPerPixel).toFixed(1)}mm).\n\n작은 R로 다시 시도하세요.`);
     redrawDraw(); return false;
   }
   
@@ -3125,35 +3139,38 @@ function applyFilletToTwoLines(L1, L2, click1, click2) {
   const distC = r / Math.sin(ang/2);
   const cx = ix.x + (bisX/bisLen) * distC;
   const cy = ix.y + (bisY/bisLen) * distC;
+  console.log('🔧 [Fillet] t1=', t1, 't2=', t2, 'center=', {cx, cy});
   
-  // L1, L2를 t1, t2까지 단축 (잘릴 끝점 cutKey를 t로 덮어씀)
+  // L1, L2 단축
   L1[e1.cutKey] = {x: Math.round(t1.x), y: Math.round(t1.y)};
   L2[e2.cutKey] = {x: Math.round(t2.x), y: Math.round(t2.y)};
   
-  // 호 추가
-  const startAng = Math.atan2(t1.y - cy, t1.x - cx);
-  const endAng   = Math.atan2(t2.y - cy, t2.x - cx);
-  // CCW 결정: 호의 중간점이 교점에서 멀어지는 쪽 = 코너 안쪽으로 휨
-  function midPoint(ccw) {
-    let span = ccw ? (startAng - endAng) : (endAng - startAng);
-    while (span < 0) span += Math.PI*2;
-    const midA = ccw ? (startAng - span/2) : (startAng + span/2);
-    return {x: cx + r*Math.cos(midA), y: cy + r*Math.sin(midA)};
-  }
-  const mA = midPoint(false), mB = midPoint(true);
-  // 교점에서 더 가까운 중간점 → 그쪽 ccw가 코너 라운드 형태
-  const distA = Math.hypot(mA.x-ix.x, mA.y-ix.y);
-  const distB = Math.hypot(mB.x-ix.x, mB.y-ix.y);
-  const ccw = distA < distB;
+  // 호의 양 끝점에서의 각도 (호 중심 기준)
+  const a1 = Math.atan2(t1.y - cy, t1.x - cx);
+  const a2 = Math.atan2(t2.y - cy, t2.x - cx);
+
+  // 코너 라운드는 항상 짧은 쪽 호 (각도 < π)
+  // Canvas arc(cx,cy,r,startAng,endAng,counterclockwise=false=CW)
+  // startAng → endAng 사이를 CW 또는 CCW로 그리는데, 우리는 짧은 호가 그려지도록 방향 결정
+  // 짧은 호의 각도 차이 = (a2-a1)을 -π~π로 정규화한 값
+  let diff = a2 - a1;
+  while (diff > Math.PI) diff -= 2*Math.PI;
+  while (diff < -Math.PI) diff += 2*Math.PI;
+  // diff > 0 이면 a1→a2가 CCW로 짧음(canvas 좌표에서 시계 반대) → ccw=true
+  // diff < 0 이면 a1→a2가 CW로 짧음 → ccw=false
+  // canvas arc()에서 마지막 인자가 'anticlockwise', true면 반시계
+  const ccw = diff > 0;
+  console.log('🔧 [Fillet] a1=' + (a1*180/Math.PI).toFixed(1) + '°, a2=' + (a2*180/Math.PI).toFixed(1) + '°, diff=' + (diff*180/Math.PI).toFixed(1) + '° → ccw=' + ccw);
   
   shapes.push({
     id: ++shapeIdSeq, type: 'arc',
     cx: cx, cy: cy, r: r,
-    startAngle: startAng, endAngle: endAng, ccw: ccw,
+    startAngle: a1, endAngle: a2, ccw: ccw,
     p1: {x: Math.round(t1.x), y: Math.round(t1.y)},
     p2: {x: Math.round(t2.x), y: Math.round(t2.y)},
     stroke: L1.stroke, strokeWidth: L1.strokeWidth
   });
+  console.log('🔧 [Fillet] ✅ 호 추가 완료, shapes 총=' + shapes.length);
   
   redoStack = [];
   redrawDraw();
