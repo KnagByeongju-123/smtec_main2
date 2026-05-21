@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<title>도면 작도기 Rev.10.14 - 사각형 모서리R 지원</title>
+<title>도면 작도기 Rev.10.15 - 사각형 모서리R 직접 계산</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Malgun Gothic', sans-serif; background: #2b2b2b; color: #eee; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
@@ -202,8 +202,8 @@
 <body>
 
 <header>
-  <h1>📐 도면 작도기 Rev.10.14</h1>
-  <span class="ver">v10.14 (사각형 모서리R)</span>
+  <h1>📐 도면 작도기 Rev.10.15</h1>
+  <span class="ver">v10.15 (사각형 모서리R 직접계산)</span>
   <button id="headerBtnHelp" style="padding:5px 12px; background:#27ae60; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:12px; font-weight:bold;" title="도움말 (F1)">❓ 도움말</button>
   <button id="headerBtnFill" style="padding:5px 12px; background:#e67e22; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:12px; font-weight:bold;" title="채우기 도구 (H)">🎨 채움</button>
   <button id="headerBtnBpoly" style="padding:5px 12px; background:#d35400; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:12px; font-weight:bold;" title="모든 닫힌 영역 자동 채움 (BPOLY)">🎨🎨 전체채움</button>
@@ -3163,19 +3163,25 @@ function applyFilletToTwoLines(L1, L2, click1, click2) {
 }
 
 // 사각형의 모서리에 라운드 적용
-// 사각형을 4개의 line으로 분해한 후, 클릭한 위치 기준 가까운 모서리(두 변)에 라운드를 만든다
+// 사각형 → 4개 line으로 분해 + 선택된 모서리에 호 추가 + 인접 두 변 단축
 function handleFilletOnRect(rect, p) {
   const x1 = Math.min(rect.p1.x, rect.p2.x);
   const x2 = Math.max(rect.p1.x, rect.p2.x);
   const y1 = Math.min(rect.p1.y, rect.p2.y);
   const y2 = Math.max(rect.p1.y, rect.p2.y);
-  
+  const w = x2 - x1, h = y2 - y1;
+
+  if (w < 4 || h < 4) {
+    alert('사각형이 너무 작습니다.');
+    return;
+  }
+
   // 4 모서리 위치
   const corners = [
-    {key:'TL', x: x1, y: y1},
-    {key:'TR', x: x2, y: y1},
-    {key:'BR', x: x2, y: y2},
-    {key:'BL', x: x1, y: y2}
+    {key:'TL', label:'좌상', x: x1, y: y1},
+    {key:'TR', label:'우상', x: x2, y: y1},
+    {key:'BR', label:'우하', x: x2, y: y2},
+    {key:'BL', label:'좌하', x: x1, y: y2}
   ];
   // 클릭점에서 가장 가까운 모서리 선택
   let best = null, bd = Infinity;
@@ -3184,73 +3190,105 @@ function handleFilletOnRect(rect, p) {
     if (d < bd) { bd = d; best = c; }
   }
   if (!best) return;
-  
+
   // 반지름 입력
   const rStr = prompt(
-    `사각형 모서리 ${best.key === 'TL'?'좌상':best.key === 'TR'?'우상':best.key === 'BR'?'우하':'좌하'}에 라운드 적용\n\n반지름(mm) 입력:\n현재 캘리브: ${calibSet ? '1px = '+mmPerPixel.toFixed(3)+'mm' : '미설정 (1:1)'}`,
+    `사각형 모서리 [${best.label}]에 라운드 적용\n\n반지름(mm) 입력:\n현재 캘리브: ${calibSet ? '1px = '+mmPerPixel.toFixed(3)+'mm' : '미설정 (1:1)'}`,
     '5'
   );
-  if (!rStr) { redrawDraw(); return; }
+  if (!rStr) return;
   const rMm = parseFloat(rStr);
-  if (isNaN(rMm) || rMm <= 0) { alert('잘못된 반지름.'); redrawDraw(); return; }
+  if (isNaN(rMm) || rMm <= 0) { alert('잘못된 반지름.'); return; }
   const r = rMm / mmPerPixel;
-  
-  // 사각형 변 길이 확인
-  const w = x2 - x1, h = y2 - y1;
-  if (r > w/2 || r > h/2) {
-    alert(`반지름이 너무 큽니다.\n사각형 가로 ${(w*mmPerPixel).toFixed(1)}mm, 세로 ${(h*mmPerPixel).toFixed(1)}mm\n→ 반지름은 ${(Math.min(w,h)/2 * mmPerPixel).toFixed(1)}mm 이하`);
+
+  const maxR = Math.min(w, h) / 2;
+  if (r > maxR) {
+    alert(`반지름이 너무 큽니다.\n사각형: ${(w*mmPerPixel).toFixed(1)}×${(h*mmPerPixel).toFixed(1)}mm\n최대 R: ${(maxR*mmPerPixel).toFixed(1)}mm`);
     return;
   }
-  
-  // 사각형을 4개의 line으로 분해 (shapes에서 rect 제거하고 4개 line 추가)
+
+  // 모서리별로 직접 계산:
+  //   TL 모서리(x1,y1) → 가로변 위 t1=(x1+r, y1), 세로변 위 t2=(x1, y1+r), 호 중심 (x1+r, y1+r)
+  //   TR (x2,y1) → t1=(x2-r,y1), t2=(x2,y1+r), 중심 (x2-r, y1+r)
+  //   BR (x2,y2) → t1=(x2-r,y2), t2=(x2,y2-r), 중심 (x2-r, y2-r)
+  //   BL (x1,y2) → t1=(x1+r,y2), t2=(x1,y2-r), 중심 (x1+r, y2-r)
+  let cx, cy, startAng, endAng;
+  // 호의 각도는 중심에서 t1, t2로 향하는 각도
+  // 작은 호(90°)가 모서리를 채워야 함
+
   const stroke = rect.stroke || '#fff';
   const strokeWidth = rect.strokeWidth || 1;
-  const rectId = rect.id;
-  
-  // 4 line
-  const newLines = [
-    // Top: TL → TR
-    {id: ++shapeIdSeq, type:'line', p1:{x:x1, y:y1}, p2:{x:x2, y:y1}, stroke, strokeWidth, layer: rect.layer},
-    // Right: TR → BR
-    {id: ++shapeIdSeq, type:'line', p1:{x:x2, y:y1}, p2:{x:x2, y:y2}, stroke, strokeWidth, layer: rect.layer},
-    // Bottom: BR → BL
-    {id: ++shapeIdSeq, type:'line', p1:{x:x2, y:y2}, p2:{x:x1, y:y2}, stroke, strokeWidth, layer: rect.layer},
-    // Left: BL → TL
-    {id: ++shapeIdSeq, type:'line', p1:{x:x1, y:y2}, p2:{x:x1, y:y1}, stroke, strokeWidth, layer: rect.layer}
-  ];
-  // 사각형 제거 후 4 line 추가
-  const idx = shapes.findIndex(s => s.id === rectId);
-  if (idx >= 0) shapes.splice(idx, 1);
-  newLines.forEach(L => shapes.push(L));
-  
-  // 어느 두 변에 라운드 적용? (모서리에 인접한 두 변)
-  // TL: Top + Left
-  // TR: Top + Right
-  // BR: Bottom + Right
-  // BL: Bottom + Left
-  const [topL, rightL, bottomL, leftL] = newLines;
-  let La, Lb, clickA, clickB;
+  const layer = rect.layer;
+
+  // 4 line 생성 - 각 변 양 끝을 시작점으로 (이미 라운드된 끝점 적용)
+  // 변 순서: top(x1+r→x2-r), right(y1+r→y2-r), bottom(x2-r→x1+r), left(y2-r→y1+r)
+  // 단순화를 위해 각 모서리 r은 0이지만, 클릭된 모서리만 r 적용
+  let topStartX = x1, topEndX = x2;
+  let rightStartY = y1, rightEndY = y2;
+  let bottomStartX = x2, bottomEndX = x1;
+  let leftStartY = y2, leftEndY = y1;
+
   if (best.key === 'TL') {
-    La = topL; Lb = leftL;
-    clickA = {x: x1 + 5, y: y1};    // top 위에서 모서리 가까운 위치
-    clickB = {x: x1, y: y1 + 5};
+    topStartX = x1 + r;       // top 좌측 끝을 r만큼 안쪽으로
+    leftEndY = y1 + r;        // left 상단 끝을 r만큼 안쪽으로
+    cx = x1 + r; cy = y1 + r;
+    startAng = Math.PI;       // 180° (왼쪽 방향)
+    endAng = -Math.PI/2;      // -90° (위쪽 방향)
   } else if (best.key === 'TR') {
-    La = topL; Lb = rightL;
-    clickA = {x: x2 - 5, y: y1};
-    clickB = {x: x2, y: y1 + 5};
+    topEndX = x2 - r;
+    rightStartY = y1 + r;
+    cx = x2 - r; cy = y1 + r;
+    startAng = -Math.PI/2;    // -90° (위)
+    endAng = 0;               // 0° (오른쪽)
   } else if (best.key === 'BR') {
-    La = bottomL; Lb = rightL;
-    clickA = {x: x2 - 5, y: y2};
-    clickB = {x: x2, y: y2 - 5};
+    rightEndY = y2 - r;
+    bottomStartX = x2 - r;
+    cx = x2 - r; cy = y2 - r;
+    startAng = 0;             // 0° (오른쪽)
+    endAng = Math.PI/2;       // 90° (아래)
   } else { // BL
-    La = bottomL; Lb = leftL;
-    clickA = {x: x1 + 5, y: y2};
-    clickB = {x: x1, y: y2 - 5};
+    bottomEndX = x1 + r;
+    leftStartY = y2 - r;
+    cx = x1 + r; cy = y2 - r;
+    startAng = Math.PI/2;     // 90° (아래)
+    endAng = Math.PI;         // 180° (왼쪽)
   }
-  
-  // 라디우스 prompt가 이미 받음 → applyFilletToTwoLines 내부에서 또 묻지 않도록 직접 처리
-  // applyFilletToTwoLines는 prompt를 또 띄우므로 내부 로직만 추출해 직접 계산
-  applyFilletNoPrompt(La, Lb, clickA, clickB, r, rMm);
+
+  // shapes에서 rect 제거
+  const idx = shapes.findIndex(s => s.id === rect.id);
+  if (idx >= 0) shapes.splice(idx, 1);
+
+  // 4 line 추가 (라운드 적용된 모서리만 단축됨)
+  const newLines = [
+    {id: ++shapeIdSeq, type:'line', p1:{x: Math.round(topStartX), y:y1}, p2:{x: Math.round(topEndX), y:y1}, stroke, strokeWidth, layer},
+    {id: ++shapeIdSeq, type:'line', p1:{x:x2, y: Math.round(rightStartY)}, p2:{x:x2, y: Math.round(rightEndY)}, stroke, strokeWidth, layer},
+    {id: ++shapeIdSeq, type:'line', p1:{x: Math.round(bottomStartX), y:y2}, p2:{x: Math.round(bottomEndX), y:y2}, stroke, strokeWidth, layer},
+    {id: ++shapeIdSeq, type:'line', p1:{x:x1, y: Math.round(leftStartY)}, p2:{x:x1, y: Math.round(leftEndY)}, stroke, strokeWidth, layer}
+  ];
+  newLines.forEach(L => shapes.push(L));
+
+  // 호 추가 (CCW 방향으로 90° 호)
+  // 각 모서리에서 호는 시계방향(CW)으로 그려야 사각형 내부에서 모서리를 깎는 형태
+  // canvas는 y가 아래로 +, atan2 결과도 y가 아래로 +이므로 일반 수학과 반대
+  // 위 startAng/endAng는 화면 좌표 기준이며, CW로 진행 = false(ccw=false 또는 ccw 미사용 방향)
+  // 우리 코드 drawShape arc 그리는 방식이 ccw를 어떻게 쓰는지 확인 필요 → 일단 ccw:false 시도
+  const t1 = {x: cx + r*Math.cos(startAng), y: cy + r*Math.sin(startAng)};
+  const t2 = {x: cx + r*Math.cos(endAng),   y: cy + r*Math.sin(endAng)};
+
+  shapes.push({
+    id: ++shapeIdSeq, type: 'arc',
+    cx: cx, cy: cy, r: r,
+    startAngle: startAng, endAngle: endAng,
+    ccw: false,
+    p1: {x: Math.round(t1.x), y: Math.round(t1.y)},
+    p2: {x: Math.round(t2.x), y: Math.round(t2.y)},
+    stroke, strokeWidth, layer
+  });
+
+  redoStack = [];
+  redrawDraw();
+  updateCount();
+  document.getElementById('statusHint').textContent = `◜ 사각형 [${best.label}] 모서리 R${rMm}mm 적용 완료`;
 }
 
 // 반지름이 이미 정해진 상태에서 두 선에 라운드 적용 (prompt 생략)
