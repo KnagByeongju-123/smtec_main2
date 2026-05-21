@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<title>도면 작도기 Rev.10.17 - 사각형 4모서리 R 동작</title>
+<title>도면 작도기 Rev.10.18 - 사각형 4모서리R 각도 통일</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Malgun Gothic', sans-serif; background: #2b2b2b; color: #eee; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
@@ -202,8 +202,8 @@
 <body>
 
 <header>
-  <h1>📐 도면 작도기 Rev.10.17</h1>
-  <span class="ver">v10.17 (사각형 4모서리 R)</span>
+  <h1>📐 도면 작도기 Rev.10.18</h1>
+  <span class="ver">v10.18 (사각형 4모서리R 각도통일)</span>
   <button id="headerBtnHelp" style="padding:5px 12px; background:#27ae60; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:12px; font-weight:bold;" title="도움말 (F1)">❓ 도움말</button>
   <button id="headerBtnFill" style="padding:5px 12px; background:#e67e22; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:12px; font-weight:bold;" title="채우기 도구 (H)">🎨 채움</button>
   <button id="headerBtnBpoly" style="padding:5px 12px; background:#d35400; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:12px; font-weight:bold;" title="모든 닫힌 영역 자동 채움 (BPOLY)">🎨🎨 전체채움</button>
@@ -3246,29 +3246,37 @@ function handleFilletOnRect(rect, p) {
   let leftStartY = y2, leftEndY = y1;
 
   if (best.key === 'TL') {
-    topStartX = x1 + r;       // top 좌측 끝을 r만큼 안쪽으로
-    leftEndY = y1 + r;        // left 상단 끝을 r만큼 안쪽으로
+    topStartX = x1 + r;
+    leftEndY = y1 + r;
     cx = x1 + r; cy = y1 + r;
-    startAng = Math.PI;       // 180° (왼쪽 방향)
-    endAng = -Math.PI/2;      // -90° (위쪽 방향)
+    // TL: 호중심에서 t1=(x1,cy)는 왼쪽(180°), t2=(cx,y1)은 위(270°=-90°)
+    // 사각형 안쪽으로 휘는 짧은 호 = 180° → 270° 시계방향(ccw=false)
+    startAng = Math.PI;
+    endAng   = 3*Math.PI/2;  // 270° (= -90°와 같지만 양수로 표현)
   } else if (best.key === 'TR') {
     topEndX = x2 - r;
     rightStartY = y1 + r;
     cx = x2 - r; cy = y1 + r;
-    startAng = -Math.PI/2;    // -90° (위)
-    endAng = 0;               // 0° (오른쪽)
+    // TR: t1=(x2,cy)=오른쪽(0°), t2=(cx,y1)=위(270°=-90°)
+    // 안쪽 짧은 호 = 270° → 360°(=0°) 시계방향
+    startAng = 3*Math.PI/2;  // 270°
+    endAng   = 2*Math.PI;    // 360° (=0°)
   } else if (best.key === 'BR') {
     rightEndY = y2 - r;
     bottomStartX = x2 - r;
     cx = x2 - r; cy = y2 - r;
-    startAng = 0;             // 0° (오른쪽)
-    endAng = Math.PI/2;       // 90° (아래)
+    // BR: t1=(cx,y2)=아래(90°), t2=(x2,cy)=오른쪽(0°)
+    // 안쪽 짧은 호 = 0° → 90° 시계방향
+    startAng = 0;
+    endAng   = Math.PI/2;    // 90°
   } else { // BL
     bottomEndX = x1 + r;
     leftStartY = y2 - r;
     cx = x1 + r; cy = y2 - r;
-    startAng = Math.PI/2;     // 90° (아래)
-    endAng = Math.PI;         // 180° (왼쪽)
+    // BL: t1=(x1,cy)=왼쪽(180°), t2=(cx,y2)=아래(90°)
+    // 안쪽 짧은 호 = 90° → 180° 시계방향
+    startAng = Math.PI/2;    // 90°
+    endAng   = Math.PI;      // 180°
   }
 
   // shapes에서 rect 제거
@@ -3285,25 +3293,17 @@ function handleFilletOnRect(rect, p) {
   newLines.forEach(L => shapes.push(L));
 
   // 호 추가 (90° 짧은 호)
-  // 각 모서리별로 시작/끝 각도가 다르므로 ccw를 자동으로 결정
-  // (각 변이 만나는 모서리에서 사각형 안쪽 방향의 짧은 호)
+  // 위에서 startAng < endAng가 되도록 각도를 설정했고, 차이는 정확히 90°
+  // ccw=false (시계방향, canvas 좌표에서 각도 증가 방향) → 90° 짧은 호 그리기
   const t1 = {x: cx + r*Math.cos(startAng), y: cy + r*Math.sin(startAng)};
   const t2 = {x: cx + r*Math.cos(endAng),   y: cy + r*Math.sin(endAng)};
-
-  // 짧은 호 결정: a2 - a1을 -π~π로 정규화
-  // diff > 0 이면 a1→a2가 각도 증가 = 시계방향(canvas) = ccw=false
-  // diff < 0 이면 각도 감소 = 반시계방향 = ccw=true
-  let diff = endAng - startAng;
-  while (diff > Math.PI) diff -= 2*Math.PI;
-  while (diff < -Math.PI) diff += 2*Math.PI;
-  const ccwArc = diff < 0; // 음수면 반시계
-  console.log('🔧 [Fillet rect ' + best.key + '] start=' + (startAng*180/Math.PI).toFixed(0) + '° end=' + (endAng*180/Math.PI).toFixed(0) + '° diff=' + (diff*180/Math.PI).toFixed(0) + '° → ccw=' + ccwArc);
+  console.log('🔧 [Fillet rect ' + best.key + '] start=' + (startAng*180/Math.PI).toFixed(0) + '° end=' + (endAng*180/Math.PI).toFixed(0) + '° (90° 짧은 호, ccw=false)');
 
   shapes.push({
     id: ++shapeIdSeq, type: 'arc',
     cx: cx, cy: cy, r: r,
     startAngle: startAng, endAngle: endAng,
-    ccw: ccwArc,
+    ccw: false,
     p1: {x: Math.round(t1.x), y: Math.round(t1.y)},
     p2: {x: Math.round(t2.x), y: Math.round(t2.y)},
     stroke, strokeWidth, layer
