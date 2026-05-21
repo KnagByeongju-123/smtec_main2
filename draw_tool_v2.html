@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<title>도면 작도기 Rev.7.2 - 끝점 연속그리기 + 선연결</title>
+<title>도면 작도기 Rev.7.3 - 호 각도 편집</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Malgun Gothic', sans-serif; background: #2b2b2b; color: #eee; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
@@ -81,8 +81,8 @@
 <body>
 
 <header>
-  <h1>📐 도면 작도기 Rev.7.2</h1>
-  <span class="ver">v7.2 (끝점 연속그리기 + 선연결)</span>
+  <h1>📐 도면 작도기 Rev.7.3</h1>
+  <span class="ver">v7.3 (호 각도 편집)</span>
   <span class="cvstat" id="cvStat">OpenCV 로딩 중...</span>
   <span class="snapstat" id="snapStat">스냅: 비활성 (배경 없음)</span>
   <span class="snapstat" id="calibStat" style="background:#e67e22;">📏 캘리브: 미설정 (1px = 1mm)</span>
@@ -417,6 +417,47 @@
   </div>
 </div>
 
+<!-- 호 속성 편집 패널 (v7.3) -->
+<div id="arcPropPanel" style="display:none; position:fixed; right:12px; top:120px; background:#1f1f1f; border:2px solid #f39c12; border-radius:6px; padding:12px 14px; z-index:400; box-shadow:0 4px 12px rgba(0,0,0,0.5); min-width:260px;">
+  <div style="font-size:13px; color:#f39c12; margin-bottom:10px; font-weight:bold;">⌒ 호 속성 편집</div>
+  
+  <div style="font-size:11px; color:#aaa; margin-bottom:4px;">중심점 (mm)</div>
+  <div style="display:flex; gap:6px; margin-bottom:8px;">
+    <input type="number" id="arcCenterX" step="0.1" style="width:50%; padding:4px;" placeholder="X">
+    <input type="number" id="arcCenterY" step="0.1" style="width:50%; padding:4px;" placeholder="Y">
+  </div>
+  
+  <div style="font-size:11px; color:#aaa; margin-bottom:4px;">반지름 (mm)</div>
+  <input type="number" id="arcRadius" step="0.1" style="width:100%; padding:4px; margin-bottom:8px;" placeholder="R">
+  
+  <div style="font-size:11px; color:#aaa; margin-bottom:4px;">시작 각도 (°)</div>
+  <input type="number" id="arcStartDeg" step="1" style="width:100%; padding:4px; margin-bottom:8px;" placeholder="0~360">
+  
+  <div style="font-size:11px; color:#aaa; margin-bottom:4px;">끝 각도 (°)</div>
+  <input type="number" id="arcEndDeg" step="1" style="width:100%; padding:4px; margin-bottom:8px;" placeholder="0~360">
+  
+  <div style="font-size:11px; color:#aaa; margin-bottom:4px;">스윕(회전) 방향</div>
+  <select id="arcCcw" style="width:100%; padding:4px; margin-bottom:8px;">
+    <option value="false">시계방향 (CW, 기본)</option>
+    <option value="true">반시계방향 (CCW)</option>
+  </select>
+  
+  <div style="font-size:11px; color:#ffd966; margin-bottom:6px; padding:6px; background:#000; border-radius:4px;">
+    호각도(Span): <span id="arcSpanInfo">-</span>°<br>
+    호길이: <span id="arcLenInfo">-</span> mm
+  </div>
+  
+  <div style="display:flex; gap:6px;">
+    <button id="btnArcApply" style="flex:1; background:#27ae60;">적용</button>
+    <button id="btnArcQuickClose" style="flex:1; background:#4a6fa5;">닫기</button>
+  </div>
+  
+  <div style="font-size:10px; color:#888; margin-top:8px; line-height:1.4;">
+    💡 호의 양끝 동그라미를 드래그하면 각도가 변경됨<br>
+    중앙 동그라미는 호의 휨 방향
+  </div>
+</div>
+
 <script>
   function onOpenCvReady() {
     document.getElementById('cvStat').textContent = '✓ OpenCV 준비완료';
@@ -473,7 +514,11 @@ let lastGeneratedMesh = null;
 let dimInputMode = false;
 
 // 끝점 픽킹 모드 (v7.2)
-let endpointPickState = null;  // {endpoints: [{x,y,label?}]}
+let endpointPickState = null;
+
+// 호 각도 편집 (v7.3)
+let editingArcId = null;          // 편집 중인 호의 id
+let arcHandleDrag = null;         // {type:'start'|'end'|'middle', startMouseAngle, originalStart, originalEnd}
 
 setCanvasSize(baseW, baseH);
 
@@ -859,6 +904,11 @@ drawCanvas.addEventListener('mousemove', e => {
   }
   
   if (tool === 'select') {
+    // 호 핸들 드래그 처리
+    if (arcHandleDrag) {
+      handleArcHandleDrag(p);
+      return;
+    }
     if (dragState && dragState.type === 'move') {
       let dx = p.x - dragState.startX, dy = p.y - dragState.startY;
       // Shift 누르면 수평/수직만 (큰 변위 방향만 적용)
@@ -907,6 +957,31 @@ drawCanvas.addEventListener('mousedown', e => {
   }
   if (tool !== 'select') return;
   const p = getCanvasPoint(e);
+  
+  // 호 핸들 클릭 처리 (편집 중인 호가 있을 때 우선)
+  if (editingArcId !== null) {
+    const arcShape = shapes.find(x => x.id === editingArcId);
+    if (arcShape) {
+      const handleType = hitArcHandle(p, arcShape);
+      if (handleType) {
+        // 핸들 드래그 시작
+        arcHandleDrag = {
+          type: handleType,
+          shapeId: editingArcId,
+          original: {
+            startAngle: arcShape.startAngle,
+            endAngle: arcShape.endAngle,
+            ccw: arcShape.ccw,
+            r: arcShape.r
+          },
+          mouseStartAngle: Math.atan2(p.y - arcShape.cy, p.x - arcShape.cx)
+        };
+        e.preventDefault();
+        return;
+      }
+    }
+  }
+  
   const hit = hitTest(p);
   if (hit) {
     if (!selectedIds.has(hit.id)) {
@@ -927,13 +1002,18 @@ drawCanvas.addEventListener('mousedown', e => {
 });
 
 drawCanvas.addEventListener('mouseup', e => {
+  // 호 핸들 드래그 종료
+  if (arcHandleDrag) {
+    arcHandleDrag = null;
+    updateArcEditPanel();  // 패널값 갱신
+    return;
+  }
   if (tool !== 'select') return;
   const p = getCanvasPoint(e);
   if (dragState && dragState.type === 'box') {
     boxSelect(dragState.boxStart, p, e.shiftKey);
     preCtx.clearRect(0,0,baseW,baseH);
   } else if (dragState && dragState.type === 'move') {
-    // 이동 완료 후 안내 원복
     updateToolStatus();
   }
   dragState = null;
@@ -1005,6 +1085,7 @@ window.addEventListener('keydown', e => {
     firstClick = null; arcPath = []; dragState = null;
     calibFirstPoint = null; axisFirstPoint = null;
     endpointPickState = null;
+    arcHandleDrag = null;
     preCtx.clearRect(0,0,baseW,baseH);
     hideDimInput();
   } else if (e.ctrlKey && e.key === 'z') { e.preventDefault(); undo(); }
@@ -2968,6 +3049,231 @@ document.getElementById('btnConnectSel').addEventListener('click', () => {
   alert(`✓ ${newConnections.length}개의 연결선이 생성되었습니다.`);
 });
 
+// ====== 호 각도 편집 (v7.3) ======
+function updateArcEditPanel() {
+  const panel = document.getElementById('arcPropPanel');
+  if (selectedIds.size !== 1) {
+    panel.style.display = 'none';
+    editingArcId = null;
+    return;
+  }
+  const sId = Array.from(selectedIds)[0];
+  const s = shapes.find(x => x.id === sId);
+  if (!s || s.type !== 'arc') {
+    panel.style.display = 'none';
+    editingArcId = null;
+    return;
+  }
+  
+  editingArcId = sId;
+  panel.style.display = 'block';
+  
+  document.getElementById('arcCenterX').value = (s.cx * mmPerPixel).toFixed(2);
+  document.getElementById('arcCenterY').value = (s.cy * mmPerPixel).toFixed(2);
+  document.getElementById('arcRadius').value = (s.r * mmPerPixel).toFixed(2);
+  document.getElementById('arcStartDeg').value = radToDispDeg(s.startAngle).toFixed(1);
+  document.getElementById('arcEndDeg').value = radToDispDeg(s.endAngle).toFixed(1);
+  document.getElementById('arcCcw').value = s.ccw ? 'true' : 'false';
+  
+  updateArcSpanInfo(s);
+}
+
+function radToDispDeg(rad) {
+  const deg = -rad * 180 / Math.PI;
+  return ((deg % 360) + 360) % 360;
+}
+function dispDegToRad(deg) {
+  return -deg * Math.PI / 180;
+}
+
+function updateArcSpanInfo(s) {
+  const sa = ((s.startAngle % (Math.PI*2)) + Math.PI*2) % (Math.PI*2);
+  const ea = ((s.endAngle % (Math.PI*2)) + Math.PI*2) % (Math.PI*2);
+  let span = s.ccw ? (sa - ea) : (ea - sa);
+  while (span < 0) span += Math.PI*2;
+  while (span > Math.PI*2) span -= Math.PI*2;
+  const spanDeg = span * 180 / Math.PI;
+  const arcLen = span * s.r * mmPerPixel;
+  document.getElementById('arcSpanInfo').textContent = spanDeg.toFixed(1);
+  document.getElementById('arcLenInfo').textContent = arcLen.toFixed(2);
+}
+
+function applyArcPanelToShape() {
+  if (!editingArcId) return;
+  const s = shapes.find(x => x.id === editingArcId);
+  if (!s || s.type !== 'arc') return;
+  
+  const cx = parseFloat(document.getElementById('arcCenterX').value);
+  const cy = parseFloat(document.getElementById('arcCenterY').value);
+  const r = parseFloat(document.getElementById('arcRadius').value);
+  const startDeg = parseFloat(document.getElementById('arcStartDeg').value);
+  const endDeg = parseFloat(document.getElementById('arcEndDeg').value);
+  const ccw = document.getElementById('arcCcw').value === 'true';
+  
+  if ([cx,cy,r,startDeg,endDeg].some(v => isNaN(v))) {
+    alert('숫자 형식이 올바르지 않습니다.');
+    return;
+  }
+  if (r <= 0) { alert('반지름은 양수여야 합니다.'); return; }
+  
+  s.cx = cx / mmPerPixel;
+  s.cy = cy / mmPerPixel;
+  s.r = r / mmPerPixel;
+  s.startAngle = dispDegToRad(startDeg);
+  s.endAngle = dispDegToRad(endDeg);
+  s.ccw = ccw;
+  s.p1 = { x: Math.round(s.cx + s.r*Math.cos(s.startAngle)), y: Math.round(s.cy + s.r*Math.sin(s.startAngle)) };
+  s.p2 = { x: Math.round(s.cx + s.r*Math.cos(s.endAngle)), y: Math.round(s.cy + s.r*Math.sin(s.endAngle)) };
+  
+  updateArcSpanInfo(s);
+  redrawDraw();
+}
+
+document.getElementById('btnArcApply').addEventListener('click', applyArcPanelToShape);
+['arcCenterX','arcCenterY','arcRadius','arcStartDeg','arcEndDeg'].forEach(id => {
+  document.getElementById(id).addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); applyArcPanelToShape(); }
+  });
+  document.getElementById(id).addEventListener('change', applyArcPanelToShape);
+});
+document.getElementById('arcCcw').addEventListener('change', applyArcPanelToShape);
+document.getElementById('btnArcQuickClose').addEventListener('click', () => {
+  document.getElementById('arcPropPanel').style.display = 'none';
+  editingArcId = null;
+});
+
+// 호 핸들 그리기
+function drawArcHandles(ctx, s) {
+  if (s.type !== 'arc') return;
+  ctx.save();
+  const handleR = 7;
+  const sx = s.cx + s.r * Math.cos(s.startAngle);
+  const sy = s.cy + s.r * Math.sin(s.startAngle);
+  const ex = s.cx + s.r * Math.cos(s.endAngle);
+  const ey = s.cy + s.r * Math.sin(s.endAngle);
+  
+  // 중간 각도
+  const sa = s.startAngle, ea = s.endAngle;
+  let span = s.ccw ? (sa - ea) : (ea - sa);
+  while (span < 0) span += Math.PI*2;
+  const midAng = s.ccw ? (sa - span/2) : (sa + span/2);
+  const mx = s.cx + s.r * Math.cos(midAng);
+  const my = s.cy + s.r * Math.sin(midAng);
+  
+  // 중심 십자
+  ctx.strokeStyle = '#f39c12'; ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(s.cx - 6, s.cy); ctx.lineTo(s.cx + 6, s.cy);
+  ctx.moveTo(s.cx, s.cy - 6); ctx.lineTo(s.cx, s.cy + 6);
+  ctx.stroke();
+  
+  // 보조 점선 (반지름 표시)
+  ctx.strokeStyle = 'rgba(243,156,18,0.4)';
+  ctx.setLineDash([3,3]);
+  ctx.beginPath();
+  ctx.moveTo(s.cx, s.cy); ctx.lineTo(sx, sy);
+  ctx.moveTo(s.cx, s.cy); ctx.lineTo(ex, ey);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  
+  // 핸들들
+  drawArcHandle(ctx, sx, sy, handleR, '#27ae60', '시');
+  drawArcHandle(ctx, ex, ey, handleR, '#e74c3c', '끝');
+  drawArcHandle(ctx, mx, my, handleR, '#f39c12', '');
+  
+  ctx.restore();
+}
+
+function drawArcHandle(ctx, x, y, r, color, label) {
+  ctx.fillStyle = color;
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI*2);
+  ctx.fill();
+  ctx.stroke();
+  if (label) {
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 9px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, x, y);
+    ctx.textAlign = 'start';
+    ctx.textBaseline = 'alphabetic';
+  }
+}
+
+function hitArcHandle(p, s) {
+  if (s.type !== 'arc') return null;
+  const handleR = 10;
+  const sx = s.cx + s.r * Math.cos(s.startAngle);
+  const sy = s.cy + s.r * Math.sin(s.startAngle);
+  const ex = s.cx + s.r * Math.cos(s.endAngle);
+  const ey = s.cy + s.r * Math.sin(s.endAngle);
+  const sa = s.startAngle, ea = s.endAngle;
+  let span = s.ccw ? (sa - ea) : (ea - sa);
+  while (span < 0) span += Math.PI*2;
+  const midAng = s.ccw ? (sa - span/2) : (sa + span/2);
+  const mx = s.cx + s.r * Math.cos(midAng);
+  const my = s.cy + s.r * Math.sin(midAng);
+  if (Math.hypot(p.x - sx, p.y - sy) <= handleR) return 'start';
+  if (Math.hypot(p.x - ex, p.y - ey) <= handleR) return 'end';
+  if (Math.hypot(p.x - mx, p.y - my) <= handleR) return 'middle';
+  return null;
+}
+
+// 호 핸들 드래그 처리
+function handleArcHandleDrag(p) {
+  if (!arcHandleDrag) return;
+  const s = shapes.find(x => x.id === arcHandleDrag.shapeId);
+  if (!s || s.type !== 'arc') return;
+  
+  const mouseAng = Math.atan2(p.y - s.cy, p.x - s.cx);
+  const mouseDist = Math.hypot(p.x - s.cx, p.y - s.cy);
+  
+  if (arcHandleDrag.type === 'start') {
+    // 시작 각도 변경 (반지름도 함께 조정)
+    s.startAngle = mouseAng;
+    if (mouseDist > 5) s.r = mouseDist;
+  } else if (arcHandleDrag.type === 'end') {
+    // 끝 각도 변경
+    s.endAngle = mouseAng;
+    if (mouseDist > 5) s.r = mouseDist;
+  } else if (arcHandleDrag.type === 'middle') {
+    // 중간점 드래그: 호의 휨 방향 변경
+    // 마우스 위치가 시작각-끝각의 시계/반시계 어느 쪽에 있는지에 따라 ccw 토글
+    const ns = ((s.startAngle % (Math.PI*2)) + Math.PI*2) % (Math.PI*2);
+    const ne = ((s.endAngle % (Math.PI*2)) + Math.PI*2) % (Math.PI*2);
+    const nm = ((mouseAng % (Math.PI*2)) + Math.PI*2) % (Math.PI*2);
+    
+    let cw_s_to_m = nm - ns; if (cw_s_to_m < 0) cw_s_to_m += Math.PI*2;
+    let cw_s_to_e = ne - ns; if (cw_s_to_e < 0) cw_s_to_e += Math.PI*2;
+    const midOnCWPath = cw_s_to_m < cw_s_to_e;
+    s.ccw = !midOnCWPath;
+    
+    // 마우스 거리에 따라 반지름 조정도 가능 (선택적)
+    if (mouseDist > 5) s.r = mouseDist;
+  }
+  
+  // p1, p2 갱신
+  s.p1 = { x: Math.round(s.cx + s.r*Math.cos(s.startAngle)), y: Math.round(s.cy + s.r*Math.sin(s.startAngle)) };
+  s.p2 = { x: Math.round(s.cx + s.r*Math.cos(s.endAngle)), y: Math.round(s.cy + s.r*Math.sin(s.endAngle)) };
+  
+  redrawDraw();
+  
+  // 실시간 패널 값 갱신
+  document.getElementById('arcRadius').value = (s.r * mmPerPixel).toFixed(2);
+  document.getElementById('arcStartDeg').value = radToDispDeg(s.startAngle).toFixed(1);
+  document.getElementById('arcEndDeg').value = radToDispDeg(s.endAngle).toFixed(1);
+  document.getElementById('arcCcw').value = s.ccw ? 'true' : 'false';
+  updateArcSpanInfo(s);
+  
+  // 상태바
+  const spanDeg = parseFloat(document.getElementById('arcSpanInfo').textContent) || 0;
+  document.getElementById('statusHint').textContent = 
+    `⌒ 호 편집 중: R=${(s.r*mmPerPixel).toFixed(1)}mm, 회전각=${spanDeg.toFixed(1)}° / 마우스 놓으면 확정`;
+}
+
 function redrawAll() { redrawBg(); redrawFills(); redrawDraw(); }
 function redrawBg() {
   bgCtx.clearRect(0,0,baseW,baseH);
@@ -2980,7 +3286,12 @@ function redrawFills() {
 function redrawDraw() {
   drawCtx.clearRect(0,0,baseW,baseH);
   shapes.forEach(s => drawShape(drawCtx, s, selectedIds.has(s.id)));
-  drawRotationAxis(drawCtx);  // 회전축 항상 표시
+  drawRotationAxis(drawCtx);
+  // 선택된 호의 핸들 표시 (마지막에 그려서 위에)
+  if (editingArcId !== null) {
+    const s = shapes.find(x => x.id === editingArcId);
+    if (s) drawArcHandles(drawCtx, s);
+  }
 }
 function updateCount() {
   document.getElementById('statusCount').textContent = shapes.length;
@@ -2988,6 +3299,7 @@ function updateCount() {
 }
 function updateSelStat() {
   document.getElementById('statusSel').textContent = selectedIds.size;
+  updateArcEditPanel();  // 호 편집 패널도 갱신
 }
 
 function undo() {
