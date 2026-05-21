@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<title>도면 작도기 Rev.8.0 - 배경색 선택</title>
+<title>도면 작도기 Rev.8.1 - 원 전체 접선 스냅</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Malgun Gothic', sans-serif; background: #2b2b2b; color: #eee; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
@@ -110,8 +110,8 @@
 <body>
 
 <header>
-  <h1>📐 도면 작도기 Rev.8.0</h1>
-  <span class="ver">v8.0 (배경색 선택)</span>
+  <h1>📐 도면 작도기 Rev.8.1</h1>
+  <span class="ver">v8.1 (원 전체 접선 스냅)</span>
   <button id="headerBtnSelect" style="padding:5px 12px; background:#9b59b6; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:12px; font-weight:bold;" title="선택 도구로 전환 (V)">🔲 선택</button>
   <button id="headerBtnLiveSnap" style="padding:5px 10px; background:#555; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:11px; font-weight:bold;" title="마우스가 도형 근처에 갈 때 자동 흡착 (점/선/면)">🧲 라이브스냅 OFF</button>
   <span class="cvstat" id="cvStat">OpenCV 로딩 중...</span>
@@ -1002,12 +1002,16 @@ function findNearestSnap(p) {
   // 3) A안 정밀 스냅 (작도 중일 때만): 접점/수선/평행/연장
   // firstClick이 있고 line/arc/circle 도구일 때만
   if (firstClick && (tool === 'line' || tool === 'arc' || tool === 'circle' || tool === 'rect')) {
-    if (snapMode || liveSnapMode) {  // 스냅 자체가 켜져 있어야
+    if (snapMode || liveSnapMode) {
       const preciseCands = findPreciseSnapCandidates(firstClick, p);
+      // 정밀 스냅은 반경을 더 크게 (접점이나 연장은 마우스에서 멀 수 있음)
+      const preciseR = Math.max(radius * 3, 40);  // 기본 45px (15*3) 또는 40px
+      const preciseR2 = preciseR * preciseR;
+      
       for (const c of preciseCands) {
         const dx = c.x - p.x, dy = c.y - p.y;
         const d2 = dx*dx + dy*dy;
-        if (d2 < r2 && d2 < bestD) {
+        if (d2 < preciseR2 && d2 < bestD) {
           bestD = d2;
           best = c;
         }
@@ -1025,18 +1029,40 @@ function findPreciseSnapCandidates(firstPt, p) {
   const ids = new Set(); // 중복 방지
   
   // 1) 접점 (Tangent): 시작점에서 원/호에 접하는 직선
+  //    캐드 동작: 마우스가 원 둘레 어느 부분에 가까우면 → 가장 가까운 수학적 접점으로 흡착
+  //    원 외부 시작점일 때 접점은 정확히 2개 (대칭). 마우스 위치로 둘 중 하나 자동 선택.
   if (snapTangent && tool === 'line') {
     for (const s of shapes) {
-      if (s.type !== 'circle' && s.type !== 'arc') continue;
-      const cx = s.type === 'circle' ? s.p1.x : s.cx;
-      const cy = s.type === 'circle' ? s.p1.y : s.cy;
-      const r = s.type === 'circle' 
-        ? Math.hypot(s.p2.x-s.p1.x, s.p2.y-s.p1.y) 
-        : s.r;
-      // firstPt에서 원에 접선 두 개
+      let cx, cy, r, isArc = false, arcStart = 0, arcEnd = Math.PI*2, arcCcw = false;
+      if (s.type === 'circle') {
+        cx = s.p1.x; cy = s.p1.y;
+        r = Math.hypot(s.p2.x-s.p1.x, s.p2.y-s.p1.y);
+      } else if (s.type === 'arc') {
+        cx = s.cx; cy = s.cy; r = s.r;
+        isArc = true; arcStart = s.startAngle; arcEnd = s.endAngle; arcCcw = s.ccw;
+      } else continue;
+      
+      const distStart = Math.hypot(firstPt.x - cx, firstPt.y - cy);
+      if (distStart <= r + 0.5) continue;  // 시작점이 원 안/위면 접선 없음
+      
+      // 마우스가 원 둘레에 얼마나 가까운지 (확장 반경 적용)
+      const distMouse = Math.hypot(p.x - cx, p.y - cy);
+      const distToCircumference = Math.abs(distMouse - r);
+      
+      // 마우스가 원 둘레 근처(원의 반지름의 50% 또는 60px 중 큰 값 이내)면 접점 후보 활성화
+      const tangentSnapThreshold = Math.max(60, r * 0.5);
+      if (distToCircumference > tangentSnapThreshold) continue;
+      
+      // 수학적 접점 2개
       const tangents = computeTangentPoints({x: firstPt.x, y: firstPt.y}, {cx, cy, r});
+      
       tangents.forEach(tp => {
-        cands.push({x: tp.x, y: tp.y, kind: 'tangent'});
+        // 호일 경우 그 접점이 호 범위 내에 있어야 함
+        if (isArc) {
+          const ang = Math.atan2(tp.y - cy, tp.x - cx);
+          if (!isAngleInArcRange(ang, arcStart, arcEnd, arcCcw)) return;
+        }
+        cands.push({x: tp.x, y: tp.y, kind: 'tangent', sourceId: s.id});
       });
     }
   }
@@ -1132,6 +1158,23 @@ function footOnInfiniteLine(P, A, B) {
   if (len2 < 1e-6) return null;
   const t = ((P.x - A.x)*dx + (P.y - A.y)*dy) / len2;
   return { x: A.x + t*dx, y: A.y + t*dy };
+}
+
+// 각도 ang이 호 (startAng, endAng, ccw)의 범위 안에 있는지 (canvas 좌표계)
+function isAngleInArcRange(ang, startAng, endAng, ccw) {
+  const norm = a => { while(a < 0) a += Math.PI*2; while(a >= Math.PI*2) a -= Math.PI*2; return a; };
+  const na = norm(ang);
+  const ns = norm(startAng);
+  const ne = norm(endAng);
+  // canvas의 ccw=false 면 start→end로 각도 증가 방향 (캔버스 시계방향)
+  // 시작각부터 ccw=false 방향으로 끝각까지 경로상에 na가 있는지
+  if (!ccw) {
+    if (ns <= ne) return na >= ns && na <= ne;
+    return na >= ns || na <= ne;
+  } else {
+    if (ns >= ne) return na <= ns && na >= ne;
+    return na <= ns || na >= ne;
+  }
 }
 
 // 점 P에서 중심 (cx,cy) 반지름 r 원에 그어지는 접선의 접점 2개
