@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<title>도면 작도기 Rev.7.8 - 헤더 선택 + 라이브 스냅</title>
+<title>도면 작도기 Rev.7.9 - 접점/수선/평행/연장 스냅</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Malgun Gothic', sans-serif; background: #2b2b2b; color: #eee; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
@@ -109,8 +109,8 @@
 <body>
 
 <header>
-  <h1>📐 도면 작도기 Rev.7.8</h1>
-  <span class="ver">v7.8 (헤더 선택 + 라이브 스냅)</span>
+  <h1>📐 도면 작도기 Rev.7.9</h1>
+  <span class="ver">v7.9 (접점·수선·평행·연장 스냅)</span>
   <button id="headerBtnSelect" style="padding:5px 12px; background:#9b59b6; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:12px; font-weight:bold;" title="선택 도구로 전환 (V)">🔲 선택</button>
   <button id="headerBtnLiveSnap" style="padding:5px 10px; background:#555; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:11px; font-weight:bold;" title="마우스가 도형 근처에 갈 때 자동 흡착 (점/선/면)">🧲 라이브스냅 OFF</button>
   <span class="cvstat" id="cvStat">OpenCV 로딩 중...</span>
@@ -203,6 +203,12 @@
         <span class="ico">📏</span> 스냅 반경(px):
         <input type="number" id="snapRadius" value="15" min="3" max="50" style="width:50px; margin-left:auto;">
       </div>
+      <div class="menu-sep"></div>
+      <div class="menu-section">정밀 스냅 (캐드)</div>
+      <div class="menu-item" id="menuSnapTangent"><span class="ico">⊙</span> 접점 (Tangent) <span class="shortcut" id="snapTanState">ON</span></div>
+      <div class="menu-item" id="menuSnapPerp"><span class="ico">⊥</span> 수선 (Perpendicular) <span class="shortcut" id="snapPerpState">ON</span></div>
+      <div class="menu-item" id="menuSnapParallel"><span class="ico">∥</span> 평행 (Parallel) <span class="shortcut" id="snapParaState">ON</span></div>
+      <div class="menu-item" id="menuSnapExtension"><span class="ico">⤳</span> 연장선 (Extension) <span class="shortcut" id="snapExtState">ON</span></div>
       <div class="menu-sep"></div>
       <div class="menu-section">표시</div>
       <div class="menu-item" style="cursor:default;">
@@ -579,6 +585,13 @@ let arcHandleDrag = null;         // {type:'start'|'end'|'middle', startMouseAng
 // 라이브 스냅 (Rev.7.8): 마우스가 도형 근처에 갈 때 점/선/면으로 자동 흡착
 let liveSnapMode = false;
 
+// A안 정밀 스냅 (Rev.7.9): 접점/수선/평행/연장선
+let snapTangent = true;
+let snapPerpendicular = true;
+let snapParallel = true;
+let snapExtension = true;
+const PARALLEL_ANGLE_TOL_DEG = 1.5;  // 평행 판정 허용 오차 (도)
+
 setCanvasSize(baseW, baseH);
 
 function setCanvasSize(w, h) {
@@ -935,7 +948,6 @@ function findNearestSnap(p) {
   
   // 2) 라이브 스냅: 모든 도형의 가장 가까운 점 (선 위/원 위/사각형 변 위)
   if (liveSnapMode) {
-    // 선택 도구로 도형을 이동 중일때는 자기 자신 제외
     const excludeIds = (dragState && dragState.type === 'move') 
       ? new Set(dragState.offsets.map(o => o.id)) 
       : new Set();
@@ -943,14 +955,14 @@ function findNearestSnap(p) {
     for (const s of shapes) {
       if (excludeIds.has(s.id)) continue;
       const np = nearestPointOnShape(p, s);
-      if (!np) continue;
-      const dx = np.x - p.x, dy = np.y - p.y;
-      const d2 = dx*dx + dy*dy;
-      if (d2 < r2 && d2 < bestD) {
-        bestD = d2;
-        best = {x: np.x, y: np.y, kind: 'on-shape', shapeType: s.type};
+      if (np) {
+        const dx = np.x - p.x, dy = np.y - p.y;
+        const d2 = dx*dx + dy*dy;
+        if (d2 < r2 && d2 < bestD) {
+          bestD = d2;
+          best = {x: np.x, y: np.y, kind: 'on-shape', shapeType: s.type};
+        }
       }
-      // 특징점들도 후보로 (라이브 스냅이 켜져 있으면 끝점/중점도 자동 후보)
       const kps = getShapeKeyPoints(s);
       for (const kp of kps) {
         const ddx = kp.x - p.x, ddy = kp.y - p.y;
@@ -963,7 +975,160 @@ function findNearestSnap(p) {
     }
   }
   
+  // 3) A안 정밀 스냅 (작도 중일 때만): 접점/수선/평행/연장
+  // firstClick이 있고 line/arc/circle 도구일 때만
+  if (firstClick && (tool === 'line' || tool === 'arc' || tool === 'circle' || tool === 'rect')) {
+    if (snapMode || liveSnapMode) {  // 스냅 자체가 켜져 있어야
+      const preciseCands = findPreciseSnapCandidates(firstClick, p);
+      for (const c of preciseCands) {
+        const dx = c.x - p.x, dy = c.y - p.y;
+        const d2 = dx*dx + dy*dy;
+        if (d2 < r2 && d2 < bestD) {
+          bestD = d2;
+          best = c;
+        }
+      }
+    }
+  }
+  
   return best;
+}
+
+// ====== A안 정밀 스냅 후보 계산 (Rev.7.9) ======
+// firstPt(시작점) → p(현재 마우스) 작도 중일 때, 다른 도형들과의 관계 기반 후보점 생성
+function findPreciseSnapCandidates(firstPt, p) {
+  const cands = [];
+  const ids = new Set(); // 중복 방지
+  
+  // 1) 접점 (Tangent): 시작점에서 원/호에 접하는 직선
+  if (snapTangent && tool === 'line') {
+    for (const s of shapes) {
+      if (s.type !== 'circle' && s.type !== 'arc') continue;
+      const cx = s.type === 'circle' ? s.p1.x : s.cx;
+      const cy = s.type === 'circle' ? s.p1.y : s.cy;
+      const r = s.type === 'circle' 
+        ? Math.hypot(s.p2.x-s.p1.x, s.p2.y-s.p1.y) 
+        : s.r;
+      // firstPt에서 원에 접선 두 개
+      const tangents = computeTangentPoints({x: firstPt.x, y: firstPt.y}, {cx, cy, r});
+      tangents.forEach(tp => {
+        cands.push({x: tp.x, y: tp.y, kind: 'tangent'});
+      });
+    }
+  }
+  
+  // 2) 수선 (Perpendicular): 시작점에서 다른 선에 내린 수선의 발
+  if (snapPerpendicular && tool === 'line') {
+    for (const s of shapes) {
+      if (s.type === 'line') {
+        // s의 무한 직선 위에 firstPt에서 내린 수선의 발
+        const foot = footOnInfiniteLine(firstPt, s.p1, s.p2);
+        if (foot) cands.push({x: foot.x, y: foot.y, kind: 'perp', sourceId: s.id});
+      } else if (s.type === 'rect') {
+        // 사각형 4변 각각에 대해
+        const x1 = Math.min(s.p1.x, s.p2.x), x2 = Math.max(s.p1.x, s.p2.x);
+        const y1 = Math.min(s.p1.y, s.p2.y), y2 = Math.max(s.p1.y, s.p2.y);
+        const edges = [
+          [{x:x1,y:y1},{x:x2,y:y1}], [{x:x2,y:y1},{x:x2,y:y2}],
+          [{x:x2,y:y2},{x:x1,y:y2}], [{x:x1,y:y2},{x:x1,y:y1}]
+        ];
+        for (const [a,b] of edges) {
+          const foot = footOnInfiniteLine(firstPt, a, b);
+          if (foot) cands.push({x: foot.x, y: foot.y, kind: 'perp', sourceId: s.id});
+        }
+      }
+      // 원에 대한 수선: 중심을 지나는 직선과의 교점 (= 가까운 4분점)
+      // 일반적으로는 접점이 더 의미있으므로 생략
+    }
+  }
+  
+  // 3) 평행 (Parallel): 시작점에서 그어지는 직선이 다른 직선과 평행이 되는 지점
+  // 현재 마우스 위치가 만드는 선의 각도가 기존 선과 가까우면 정확히 평행으로 보정
+  if (snapParallel && tool === 'line') {
+    const curDx = p.x - firstPt.x;
+    const curDy = p.y - firstPt.y;
+    const curLen = Math.hypot(curDx, curDy);
+    if (curLen > 5) {  // 너무 짧으면 의미 없음
+      const curAng = Math.atan2(curDy, curDx);
+      for (const s of shapes) {
+        if (s.type !== 'line' && s.type !== 'rect') continue;
+        // 후보 각도들 (선=1개, 사각형=2개)
+        let candAngs = [];
+        if (s.type === 'line') {
+          const ang = Math.atan2(s.p2.y-s.p1.y, s.p2.x-s.p1.x);
+          candAngs.push(ang);
+          candAngs.push(ang + Math.PI);  // 반대 방향도
+        } else if (s.type === 'rect') {
+          // 사각형은 수평/수직만
+          candAngs = [0, Math.PI/2, Math.PI, -Math.PI/2];
+        }
+        for (const refAng of candAngs) {
+          // 각도 차이를 -PI~PI로 정규화
+          let diff = curAng - refAng;
+          while (diff > Math.PI) diff -= Math.PI*2;
+          while (diff < -Math.PI) diff += Math.PI*2;
+          const diffDeg = Math.abs(diff * 180 / Math.PI);
+          if (diffDeg < PARALLEL_ANGLE_TOL_DEG) {
+            // 평행 보정: 현재 길이는 유지, 방향만 refAng로
+            const x = firstPt.x + curLen * Math.cos(refAng);
+            const y = firstPt.y + curLen * Math.sin(refAng);
+            cands.push({x, y, kind: 'parallel', sourceId: s.id});
+          }
+        }
+      }
+    }
+  }
+  
+  // 4) 연장선 (Extension): 시작점에서 그어지는 선이 기존 선의 연장선과 일치하거나 그 위에 있을 때
+  // 또는 마우스 근처에 다른 선의 연장선이 있을 때
+  if (snapExtension) {
+    for (const s of shapes) {
+      if (s.type !== 'line') continue;
+      // 선 s의 무한 직선 위에서 p에 가장 가까운 점
+      const foot = footOnInfiniteLine(p, s.p1, s.p2);
+      if (!foot) continue;
+      // 선분 양 끝점에서 떨어져 있어야 "연장선"
+      const dToP1 = Math.hypot(foot.x-s.p1.x, foot.y-s.p1.y);
+      const dToP2 = Math.hypot(foot.x-s.p2.x, foot.y-s.p2.y);
+      const segLen = Math.hypot(s.p2.x-s.p1.x, s.p2.y-s.p1.y);
+      // 선분 안에 있으면 일반 line nearest로 잡힘 → 여기서는 외부 연장만
+      if (dToP1 > segLen + 2 || dToP2 > segLen + 2) {
+        cands.push({x: foot.x, y: foot.y, kind: 'extension', sourceId: s.id});
+      }
+    }
+  }
+  
+  return cands;
+}
+
+// 점 P에서 두 점이 정의하는 무한 직선 위에 내린 수선의 발
+function footOnInfiniteLine(P, A, B) {
+  const dx = B.x - A.x, dy = B.y - A.y;
+  const len2 = dx*dx + dy*dy;
+  if (len2 < 1e-6) return null;
+  const t = ((P.x - A.x)*dx + (P.y - A.y)*dy) / len2;
+  return { x: A.x + t*dx, y: A.y + t*dy };
+}
+
+// 점 P에서 중심 (cx,cy) 반지름 r 원에 그어지는 접선의 접점 2개
+function computeTangentPoints(P, circle) {
+  const cx = circle.cx, cy = circle.cy, r = circle.r;
+  const dx = P.x - cx, dy = P.y - cy;
+  const dist = Math.hypot(dx, dy);
+  if (dist <= r + 0.5) return [];  // 점이 원 안이나 위에 있으면 접선 없음
+  
+  // 벡터 (P-C) 정규화
+  const ux = dx / dist, uy = dy / dist;
+  // 접점은 C에서 (P방향으로 r²/dist만큼) + (수직방향으로 ±r*sqrt(1-(r/dist)²))
+  const a = r * r / dist;
+  const h = r * Math.sqrt(Math.max(0, 1 - (r/dist) * (r/dist)));
+  const baseX = cx + ux * a;
+  const baseY = cy + uy * a;
+  // 수직 단위벡터: (-uy, ux)
+  return [
+    { x: baseX + (-uy) * h, y: baseY + (ux) * h },
+    { x: baseX - (-uy) * h, y: baseY - (ux) * h }
+  ];
 }
 
 function getCanvasPoint(e) {
@@ -1553,17 +1718,51 @@ function drawSnapIndicator() {
   
   const kind = snapShown.kind || 'corner';
   const r = 8;
+  let label = '';
   
-  // 종류별 색상 + 모양
-  if (kind === 'on-shape') {
-    // 라이브 스냅: 청록색 X 표시
+  if (kind === 'tangent') {
+    // 접점: 노란색 원
+    preCtx.strokeStyle = '#ffd966';
+    preCtx.beginPath();
+    preCtx.arc(snapShown.x, snapShown.y, r, 0, Math.PI*2);
+    preCtx.stroke();
+    label = '⊙ 접점';
+  } else if (kind === 'perp') {
+    // 수선: 파란 사각형 + ⊥ 표시
+    preCtx.strokeStyle = '#3498db';
+    preCtx.strokeRect(snapShown.x - r, snapShown.y - r, r*2, r*2);
+    preCtx.beginPath();
+    preCtx.moveTo(snapShown.x - r/2, snapShown.y + r);
+    preCtx.lineTo(snapShown.x - r/2, snapShown.y);
+    preCtx.lineTo(snapShown.x + r/2, snapShown.y);
+    preCtx.stroke();
+    label = '⊥ 수선';
+  } else if (kind === 'parallel') {
+    // 평행: 두 줄 평행선 표시
+    preCtx.strokeStyle = '#9b59b6';
+    preCtx.beginPath();
+    preCtx.moveTo(snapShown.x - r, snapShown.y - r/2); preCtx.lineTo(snapShown.x + r, snapShown.y - r/2);
+    preCtx.moveTo(snapShown.x - r, snapShown.y + r/2); preCtx.lineTo(snapShown.x + r, snapShown.y + r/2);
+    preCtx.stroke();
+    label = '∥ 평행';
+  } else if (kind === 'extension') {
+    // 연장선: 점선 + 점
+    preCtx.strokeStyle = '#e67e22';
+    preCtx.setLineDash([3,2]);
+    preCtx.strokeRect(snapShown.x - r, snapShown.y - r, r*2, r*2);
+    preCtx.setLineDash([]);
+    preCtx.beginPath();
+    preCtx.arc(snapShown.x, snapShown.y, 2, 0, Math.PI*2);
+    preCtx.fillStyle = '#e67e22';
+    preCtx.fill();
+    label = '⤳ 연장';
+  } else if (kind === 'on-shape') {
     preCtx.strokeStyle = '#16a085';
     preCtx.beginPath();
     preCtx.moveTo(snapShown.x - r, snapShown.y - r); preCtx.lineTo(snapShown.x + r, snapShown.y + r);
     preCtx.moveTo(snapShown.x + r, snapShown.y - r); preCtx.lineTo(snapShown.x - r, snapShown.y + r);
     preCtx.stroke();
   } else if (kind === 'midpoint') {
-    // 중점: 청록색 삼각형
     preCtx.strokeStyle = '#16a085';
     preCtx.beginPath();
     preCtx.moveTo(snapShown.x, snapShown.y - r);
@@ -1572,7 +1771,6 @@ function drawSnapIndicator() {
     preCtx.closePath();
     preCtx.stroke();
   } else if (kind === 'center') {
-    // 중심: 빨간 원 + 십자
     preCtx.strokeStyle = '#e74c3c';
     preCtx.beginPath();
     preCtx.arc(snapShown.x, snapShown.y, r, 0, Math.PI*2);
@@ -1582,13 +1780,19 @@ function drawSnapIndicator() {
     preCtx.moveTo(snapShown.x, snapShown.y - r/2); preCtx.lineTo(snapShown.x, snapShown.y + r/2);
     preCtx.stroke();
   } else {
-    // 기본: 주황 사각형 + 십자 (코너/끝점)
     preCtx.strokeStyle = '#f39c12';
     preCtx.strokeRect(snapShown.x - r, snapShown.y - r, r*2, r*2);
     preCtx.beginPath();
     preCtx.moveTo(snapShown.x - r/2, snapShown.y); preCtx.lineTo(snapShown.x + r/2, snapShown.y);
     preCtx.moveTo(snapShown.x, snapShown.y - r/2); preCtx.lineTo(snapShown.x, snapShown.y + r/2);
     preCtx.stroke();
+  }
+  
+  // 라벨 표시 (정밀 스냅인 경우)
+  if (label) {
+    preCtx.fillStyle = preCtx.strokeStyle;
+    preCtx.font = 'bold 11px sans-serif';
+    preCtx.fillText(label, snapShown.x + 12, snapShown.y - 10);
   }
   preCtx.restore();
 }
@@ -3963,6 +4167,24 @@ document.getElementById('menuSnap').addEventListener('click', () => {
 document.getElementById('menuContinuous').addEventListener('click', () => {
   document.getElementById('btnContinuous').click();
   setTimeout(updateMenuToggles, 50);
+});
+
+// A안 정밀 스냅 토글 (Rev.7.9)
+document.getElementById('menuSnapTangent').addEventListener('click', () => {
+  snapTangent = !snapTangent;
+  document.getElementById('snapTanState').textContent = snapTangent ? 'ON' : 'OFF';
+});
+document.getElementById('menuSnapPerp').addEventListener('click', () => {
+  snapPerpendicular = !snapPerpendicular;
+  document.getElementById('snapPerpState').textContent = snapPerpendicular ? 'ON' : 'OFF';
+});
+document.getElementById('menuSnapParallel').addEventListener('click', () => {
+  snapParallel = !snapParallel;
+  document.getElementById('snapParaState').textContent = snapParallel ? 'ON' : 'OFF';
+});
+document.getElementById('menuSnapExtension').addEventListener('click', () => {
+  snapExtension = !snapExtension;
+  document.getElementById('snapExtState').textContent = snapExtension ? 'ON' : 'OFF';
 });
 
 // 상단바의 토글 뱃지
