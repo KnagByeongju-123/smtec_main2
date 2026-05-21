@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>tool3 v3.4 - 우측 정보 섹션 제거 (간소화)</title>
+<title>tool3 v3.8 - 색상 실시간 미리보기 + 피커 강제 닫기</title>
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
@@ -189,8 +189,8 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
 <body>
 
 <header>
-  <h1>📐 tool3 v3.4</h1>
-  <span class="ver">v3.4 - 우측 정보 섹션 제거 (간소화)</span>
+  <h1>📐 tool3 v3.8</h1>
+  <span class="ver">v3.8 - 색상 실시간 미리보기 + 피커 강제 닫기</span>
   <span class="mode-badge" id="modeBadge">스케처 모드</span>
   <span class="stat" id="statText">준비됨</span>
 </header>
@@ -420,7 +420,7 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
         </div>
         <div class="prop-row">
           <label>색상</label>
-          <input type="color" id="propPartColor" onchange="updatePartColor()">
+          <input type="color" id="propPartColor" oninput="updatePartColorPreview()" onchange="updatePartColor()" style="flex:1;min-width:0">
         </div>
         <div class="prop-row">
           <label>투명도</label>
@@ -4171,16 +4171,47 @@ function updatePartName(){
   p.name = document.getElementById('propPartName').value;
   renderPartsList();
 }
+function updatePartColorPreview(){
+  // v3.8: 색상 피커에서 색을 고르는 중 실시간 미리보기 (피커는 닫지 않음)
+  const p = state.parts.find(x => x.id === state.selectedPartId);
+  const colorInp = document.getElementById('propPartColor');
+  if(!p || !colorInp) return;
+  p.color = colorInp.value;
+  if(p.mesh){
+    p.mesh.traverse(o=>{
+      if(o.isMesh && o.material) o.material.color.set(p.color);
+    });
+  }
+}
+
 function updatePartColor(){
   const p = state.parts.find(x => x.id === state.selectedPartId);
-  if(!p) return;
-  p.color = document.getElementById('propPartColor').value;
+  const colorInp = document.getElementById('propPartColor');
+  if(!p || !colorInp) return;
+  const newColor = colorInp.value;
+  p.color = newColor;
   if(p.mesh){
     p.mesh.traverse(o=>{
       if(o.isMesh && o.material) o.material.color.set(p.color);
     });
   }
   renderPartsList();
+  toast('🎨 색상 적용: ' + newColor);
+  // v3.8: 색상 피커 강제 닫기 - input 요소를 새로 만들어 교체
+  //   비동기로 실행해서 onchange 처리가 완전히 끝난 뒤 교체되도록 함
+  setTimeout(() => {
+    const old = document.getElementById('propPartColor');
+    if(!old) return;
+    const parent = old.parentNode;
+    const clone = document.createElement('input');
+    clone.type = 'color';
+    clone.id = old.id;
+    clone.value = newColor;
+    clone.oninput = updatePartColorPreview;
+    clone.onchange = updatePartColor;
+    if(old.getAttribute('style')) clone.setAttribute('style', old.getAttribute('style'));
+    parent.replaceChild(clone, old);
+  }, 0);
 }
 function updatePartOpacity(){
   const p = state.parts.find(x => x.id === state.selectedPartId);
@@ -4977,7 +5008,7 @@ function init(){
   renderPartsList();
   updateInfo();
   redrawSketch();
-  setStat('tool3 v3.4 준비됨');
+  setStat('tool3 v3.8 준비됨');
   // v2.2: 항상 3D 모드로 시작 (draw_tool import도 3D 바닥에 표시)
   switchMode('model');
   try {
