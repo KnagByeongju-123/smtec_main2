@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<title>도면 작도기 Rev.6 - 회전체 3D 생성 (STL/OBJ)</title>
+<title>도면 작도기 Rev.7 - 치수 입력 작도</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Malgun Gothic', sans-serif; background: #2b2b2b; color: #eee; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
@@ -81,8 +81,8 @@
 <body>
 
 <header>
-  <h1>📐 도면 작도기 Rev.6</h1>
-  <span class="ver">v6.0 (회전체 3D 생성 + STL/OBJ 저장)</span>
+  <h1>📐 도면 작도기 Rev.7</h1>
+  <span class="ver">v7.0 (치수 직접 입력 작도)</span>
   <span class="cvstat" id="cvStat">OpenCV 로딩 중...</span>
   <span class="snapstat" id="snapStat">스냅: 비활성 (배경 없음)</span>
   <span class="snapstat" id="calibStat" style="background:#e67e22;">📏 캘리브: 미설정 (1px = 1mm)</span>
@@ -121,6 +121,7 @@
     <button class="snap" id="btnContinuous" title="연속선 모드">⛓ 연속선</button>
     <button class="snap" id="btnSnap" title="배경 코너/교차점 자동흡착">🧲 스냅</button>
     <input type="number" id="snapRadius" value="15" min="3" max="50" style="width:50px;" title="흡착 반경(px)">
+    <button class="snap" id="btnDimMode" title="첫 점 클릭 후 키보드로 치수 입력하여 작도 (F8)">📏 치수입력</button>
   </div>
   
   <div class="group" style="background:#3d2f1f; border-color:#f39c12;">
@@ -399,6 +400,18 @@
   <div id="loadingText" style="font-size:14px;">처리 중...</div>
 </div>
 
+<!-- 치수 입력 플로팅 박스 -->
+<div id="dimInputBox" style="display:none; position:fixed; background:#1f1f1f; border:2px solid #f39c12; border-radius:6px; padding:8px 12px; z-index:500; box-shadow:0 4px 12px rgba(0,0,0,0.5); min-width:280px;">
+  <div style="font-size:11px; color:#ffd966; margin-bottom:6px; font-weight:bold;" id="dimInputLabel">치수 입력:</div>
+  <input type="text" id="dimInput" 
+         style="width:100%; padding:6px 8px; background:#000; color:#0f0; border:1px solid #f39c12; border-radius:3px; font-family:monospace; font-size:14px; font-weight:bold;"
+         placeholder="예: 100,50  또는  100<45">
+  <div style="font-size:10px; color:#aaa; margin-top:4px;" id="dimInputHint">
+    <b>형식:</b> <span style="color:#0fc;">X,Y</span>=상대좌표 / <span style="color:#0fc;">길이&lt;각도</span>=극좌표 / <span style="color:#0fc;">@X,Y</span>=절대좌표<br>
+    <b>Enter</b>=확정 / <b>ESC</b>=취소 / <b>Tab</b>=마우스모드 전환
+  </div>
+</div>
+
 <script>
   function onOpenCvReady() {
     document.getElementById('cvStat').textContent = '✓ OpenCV 준비완료';
@@ -447,9 +460,12 @@ let calibSet = false;
 let calibFirstPoint = null;
 
 // 회전축 (v6.0)
-let rotAxis = null;          // {p1:{x,y}, p2:{x,y}} 회전축 두 점
-let axisFirstPoint = null;   // 축 정의 중 첫 점
-let lastGeneratedMesh = null;  // 가장 최근 생성된 메쉬 (저장용)
+let rotAxis = null;
+let axisFirstPoint = null;
+let lastGeneratedMesh = null;
+
+// 치수 입력 모드 (v7.0)
+let dimInputMode = false;  // 치수 입력 활성화 여부
 
 setCanvasSize(baseW, baseH);
 
@@ -513,6 +529,7 @@ document.querySelectorAll('.toolbtn').forEach(btn => {
     tool = btn.dataset.tool;
     firstClick = null;
     arcPath = [];
+    hideDimInput();
     preCtx.clearRect(0,0,baseW,baseH);
     updateToolStatus();
     if (tool === 'select') drawCanvas.style.cursor = 'default';
@@ -534,11 +551,12 @@ function updateToolStatus() {
   const el = document.getElementById('statusTool');
   el.textContent = names[tool];
   el.className = 'badge tool-' + tool;
+  const dimSuffix = dimInputMode ? ' / 📏 치수입력 ON (첫점 클릭 후 키보드 입력)' : '';
   const hints = {
     select: '클릭=선택 / Shift+클릭=추가 / 빈곳드래그=박스 / 드래그=이동 / Del=삭제',
-    line: continuousMode ? '⛓ 연속선: 매 클릭마다 선 추가 / 더블클릭/ESC=종료' : '첫 클릭→두 번째 클릭 / Shift=직각',
-    rect: '첫 클릭→두 번째 클릭으로 사각형',
-    circle: '첫 클릭(중심)→두 번째 클릭으로 반지름',
+    line: (continuousMode ? '⛓ 연속선: 매 클릭마다 선 추가 / 더블클릭/ESC=종료' : '첫 클릭→두 번째 클릭 / Shift=직각') + dimSuffix,
+    rect: '첫 클릭→두 번째 클릭으로 사각형' + dimSuffix,
+    circle: '첫 클릭(중심)→두 번째 클릭으로 반지름' + dimSuffix,
     arc: '⌒ 1차 클릭 → 라운드를 따라 마우스 이동 → 2차 클릭 시 가장 가까운 배경 라운드 자동 피팅!',
     fill: '🎨 닫힌 영역(도형 안쪽) 클릭 → 자동 채움 / 도형 따라 정확히 색칠',
     calib: '📏 알고 있는 치수의 양 끝점 2개를 클릭 (스냅 권장) → 실제 mm 입력 → 이미지 자동 스케일',
@@ -915,25 +933,31 @@ drawCanvas.addEventListener('click', e => {
     if (!firstClick) {
       firstClick = {x: p.x, y: p.y};
       arcPath = [{x: p.x, y: p.y}];
+      if (dimInputMode) showDimInput(firstClick);
     } else {
       // 2차 클릭: 마우스 경로와 가장 잘 맞는 배경 호 찾기
       addArcFromPath(firstClick, p, arcPath);
       firstClick = null;
       arcPath = [];
       preCtx.clearRect(0,0,baseW,baseH);
+      hideDimInput();
     }
     return;
   }
   
   if (!firstClick) {
     firstClick = {x: p.x, y: p.y};
+    // 치수 입력 모드면 입력창 표시
+    if (dimInputMode) showDimInput(firstClick);
   } else {
     addShape(firstClick, p);
     if (tool === 'line' && continuousMode) {
       firstClick = {x: p.x, y: p.y};
+      if (dimInputMode) showDimInput(firstClick);
     } else {
       firstClick = null;
       preCtx.clearRect(0,0,baseW,baseH);
+      hideDimInput();
     }
   }
 });
@@ -952,6 +976,7 @@ window.addEventListener('keydown', e => {
     firstClick = null; arcPath = []; dragState = null;
     calibFirstPoint = null; axisFirstPoint = null;
     preCtx.clearRect(0,0,baseW,baseH);
+    hideDimInput();
   } else if (e.ctrlKey && e.key === 'z') { e.preventDefault(); undo(); }
   else if (e.ctrlKey && e.key === 'y') { e.preventDefault(); redo(); }
   else if (e.key === 'Delete' || e.key === 'Backspace') {
@@ -1393,6 +1418,237 @@ function resetCalibration() {
   calibFirstPoint = null;
   updateCalibStat();
 }
+
+// ====== 치수 입력 모드 (v7.0) ======
+// 토글
+document.getElementById('btnDimMode').addEventListener('click', toggleDimMode);
+
+function toggleDimMode() {
+  dimInputMode = !dimInputMode;
+  document.getElementById('btnDimMode').classList.toggle('active', dimInputMode);
+  document.getElementById('btnDimMode').textContent = dimInputMode ? '📏 치수입력 ON' : '📏 치수입력';
+  if (!dimInputMode) hideDimInput();
+  updateToolStatus();
+}
+
+// F8 키로도 토글
+window.addEventListener('keydown', e => {
+  if (e.key === 'F8') {
+    e.preventDefault();
+    toggleDimMode();
+  }
+});
+
+// 치수 입력창 표시
+function showDimInput(startPoint) {
+  if (!dimInputMode) return;
+  if (tool !== 'line' && tool !== 'rect' && tool !== 'circle' && tool !== 'arc') return;
+  
+  const box = document.getElementById('dimInputBox');
+  const input = document.getElementById('dimInput');
+  const label = document.getElementById('dimInputLabel');
+  const hint = document.getElementById('dimInputHint');
+  
+  // 라벨 도구별로 변경
+  const labels = {
+    line: '📏 선의 길이/방향 입력:',
+    rect: '📏 사각형 크기 입력 (가로×세로):',
+    circle: '📏 원의 반지름 입력:',
+    arc: '📏 호의 끝점 좌표 입력:'
+  };
+  label.textContent = labels[tool];
+  
+  // 도구별 힌트 변경
+  const hints = {
+    line: `<b>형식:</b> <span style="color:#0fc;">X,Y</span>=상대좌표(시작점 기준)<br><span style="color:#0fc;">100&lt;0</span>=가로 100mm 우측<br><span style="color:#0fc;">100&lt;90</span>=세로 100mm 위쪽<br><span style="color:#0fc;">141.4&lt;45</span>=대각선 길이 각도<br><b>Enter</b>=확정 / <b>ESC</b>=취소 / <b>Tab</b>=마우스 전환`,
+    rect: `<b>형식:</b> <span style="color:#0fc;">가로,세로</span> 또는 <span style="color:#0fc;">100,50</span><br>음수면 반대방향 (예: -100,50)<br><b>Enter</b>=확정 / <b>ESC</b>=취소`,
+    circle: `<b>형식:</b> <span style="color:#0fc;">반지름</span> (예: 25) 또는<br><span style="color:#0fc;">D직경</span> (예: D50 = 직경 50)<br><b>Enter</b>=확정 / <b>ESC</b>=취소`,
+    arc: `<b>형식:</b> <span style="color:#0fc;">X,Y</span>=끝점 상대좌표<br>마우스 위치를 따라 호 자동 피팅<br><b>Enter</b>=확정 / <b>ESC</b>=취소`
+  };
+  hint.innerHTML = hints[tool];
+  
+  // 위치: 시작점 옆에 표시
+  const canvasRect = drawCanvas.getBoundingClientRect();
+  const sx = canvasRect.left + startPoint.x * zoom + 20;
+  const sy = canvasRect.top + startPoint.y * zoom - 30;
+  
+  // 화면 밖으로 안 나가게
+  const winW = window.innerWidth, winH = window.innerHeight;
+  const boxW = 290, boxH = 130;
+  box.style.left = Math.max(10, Math.min(winW - boxW - 10, sx)) + 'px';
+  box.style.top = Math.max(10, Math.min(winH - boxH - 10, sy)) + 'px';
+  
+  box.style.display = 'block';
+  input.value = '';
+  setTimeout(() => input.focus(), 30);
+}
+
+function hideDimInput() {
+  document.getElementById('dimInputBox').style.display = 'none';
+  document.getElementById('dimInput').value = '';
+}
+
+// 입력 파싱 함수
+function parseDimensionInput(text) {
+  // text 예시:
+  //  "100,50"     → 상대좌표 (dx=100, dy=50)
+  //  "100<45"     → 극좌표 (길이 100, 각도 45도)
+  //  "@200,150"   → 절대좌표
+  //  "D50"        → 직경 (원 도구용)
+  //  "50"         → 단일 값 (원 = 반지름)
+  
+  text = text.trim();
+  if (!text) return null;
+  
+  // 절대좌표
+  if (text.startsWith('@')) {
+    const m = text.substring(1).match(/^(-?\d*\.?\d+)\s*,\s*(-?\d*\.?\d+)$/);
+    if (m) return {mode: 'abs', x: parseFloat(m[1]), y: parseFloat(m[2])};
+    return null;
+  }
+  
+  // 극좌표: 100<45 또는 100<-90
+  const polarMatch = text.match(/^(-?\d*\.?\d+)\s*<\s*(-?\d*\.?\d+)$/);
+  if (polarMatch) {
+    return {mode: 'polar', length: parseFloat(polarMatch[1]), angleDeg: parseFloat(polarMatch[2])};
+  }
+  
+  // 상대좌표: 100,50
+  const relMatch = text.match(/^(-?\d*\.?\d+)\s*,\s*(-?\d*\.?\d+)$/);
+  if (relMatch) {
+    return {mode: 'rel', dx: parseFloat(relMatch[1]), dy: parseFloat(relMatch[2])};
+  }
+  
+  // 직경: D50
+  const diaMatch = text.match(/^[Dd]\s*(-?\d*\.?\d+)$/);
+  if (diaMatch) {
+    return {mode: 'diameter', value: parseFloat(diaMatch[1])};
+  }
+  
+  // 단일 숫자
+  const numMatch = text.match(/^(-?\d*\.?\d+)$/);
+  if (numMatch) {
+    return {mode: 'single', value: parseFloat(numMatch[1])};
+  }
+  
+  return null;
+}
+
+// mm를 px로 변환
+function mmToPx(mm) {
+  return mm / mmPerPixel;
+}
+
+// 치수입력 결과 적용: 입력에 따라 끝점 좌표(px) 계산
+function dimInputToEndPoint(startPoint, parsed) {
+  if (!parsed) return null;
+  
+  if (parsed.mode === 'abs') {
+    return {x: mmToPx(parsed.x), y: mmToPx(parsed.y)};
+  }
+  
+  if (parsed.mode === 'rel') {
+    return {
+      x: startPoint.x + mmToPx(parsed.dx),
+      y: startPoint.y - mmToPx(parsed.dy)  // 화면 Y는 아래로+, 수학 Y는 위로+
+    };
+  }
+  
+  if (parsed.mode === 'polar') {
+    const rad = parsed.angleDeg * Math.PI / 180;
+    return {
+      x: startPoint.x + mmToPx(parsed.length) * Math.cos(rad),
+      y: startPoint.y - mmToPx(parsed.length) * Math.sin(rad)  // Y 반전
+    };
+  }
+  
+  if (parsed.mode === 'diameter') {
+    // 원 도구용: 직경 → 반지름
+    const r = mmToPx(parsed.value / 2);
+    return {x: startPoint.x + r, y: startPoint.y};
+  }
+  
+  if (parsed.mode === 'single') {
+    // 원 도구: 반지름으로 해석
+    if (tool === 'circle') {
+      const r = mmToPx(parsed.value);
+      return {x: startPoint.x + r, y: startPoint.y};
+    }
+    return null;
+  }
+  
+  return null;
+}
+
+// 입력 처리 (Enter 확정)
+document.getElementById('dimInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    const text = e.target.value;
+    const parsed = parseDimensionInput(text);
+    if (!parsed) {
+      e.target.style.borderColor = '#e74c3c';
+      setTimeout(() => { e.target.style.borderColor = '#f39c12'; }, 500);
+      return;
+    }
+    
+    if (!firstClick) {
+      hideDimInput();
+      return;
+    }
+    
+    const endPt = dimInputToEndPoint(firstClick, parsed);
+    if (!endPt) {
+      alert('입력 형식이 올바르지 않습니다.');
+      return;
+    }
+    
+    // 도형 추가
+    addShape(firstClick, endPt);
+    
+    // 연속선 모드면 끝점을 다음 시작점으로
+    if (tool === 'line' && continuousMode) {
+      firstClick = {x: endPt.x, y: endPt.y};
+      preCtx.clearRect(0,0,baseW,baseH);
+      showDimInput(firstClick);  // 다시 입력창 표시
+    } else {
+      firstClick = null;
+      preCtx.clearRect(0,0,baseW,baseH);
+      hideDimInput();
+    }
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    firstClick = null;
+    preCtx.clearRect(0,0,baseW,baseH);
+    hideDimInput();
+  } else if (e.key === 'Tab') {
+    // Tab으로 입력창 닫고 마우스 모드로 (firstClick 유지)
+    e.preventDefault();
+    hideDimInput();
+  }
+});
+
+// 실시간 입력 미리보기 (입력하면서 점선으로 표시)
+document.getElementById('dimInput').addEventListener('input', e => {
+  if (!firstClick) return;
+  const text = e.target.value;
+  const parsed = parseDimensionInput(text);
+  if (parsed) {
+    const endPt = dimInputToEndPoint(firstClick, parsed);
+    if (endPt) {
+      drawPreview(firstClick, endPt);
+      // 입력 박스 테두리 녹색 (유효)
+      e.target.style.borderColor = '#27ae60';
+      e.target.style.boxShadow = '0 0 4px #27ae60';
+    } else {
+      e.target.style.borderColor = '#f39c12';
+      e.target.style.boxShadow = '';
+    }
+  } else {
+    e.target.style.borderColor = text ? '#e67e22' : '#f39c12';
+    e.target.style.boxShadow = '';
+  }
+});
 
 // ====== 회전축 (v6.0) ======
 function handleAxisClick(p) {
