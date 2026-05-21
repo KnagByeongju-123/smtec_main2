@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>tool3 v2.0 - 회전 각도 실시간 표시</title>
+<title>tool3 v2.2 - 바닥 도면 표시 + 돌출/회전체 워크플로우</title>
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
@@ -143,8 +143,8 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
 <body>
 
 <header>
-  <h1>📐 tool3 v1.9</h1>
-  <span class="ver">v2.0 - 회전 각도 실시간 표시</span>
+  <h1>📐 tool3 v2.2</h1>
+  <span class="ver">v2.2 - 바닥 도면 표시 + 돌출/회전체</span>
   <span class="mode-badge" id="modeBadge">스케처 모드</span>
   <span class="stat" id="statText">준비됨</span>
 </header>
@@ -270,9 +270,11 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
     <label>두께:</label>
     <input type="number" id="lineWidth" value="2" min="1" max="10" style="width:36px">
   </div>
-  <div class="group sketch-only">
+  <!-- v2.2: 돌출/회전체는 양쪽 모드에서 모두 사용 가능 (3D에서 바닥 스케치 보면서 누를 수 있도록) -->
+  <div class="group">
     <button class="purple" onclick="openExtrudeModal()" title="돌출 (Extrude)">⬆️ 돌출</button>
     <button class="purple" onclick="openRevolveModal()" title="회전체 (Revolve)">🔄 회전체</button>
+    <button onclick="toggleFloorSketch()" title="바닥 스케치 표시/숨김">👁️ 바닥</button>
   </div>
 
   <!-- 모드 전환 (작게) -->
@@ -345,6 +347,13 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
       • 메뉴 → 스케치 또는 📐 버튼<br>
       • <span class="kbd">L</span>/<span class="kbd">R</span>/<span class="kbd">C</span>/<span class="kbd">A</span> 도구<br>
       • 돌출/회전체로 3D 생성<br>
+      <br>
+      <b>📥 draw_tool 도면 가져오기 (v2.2)</b><br>
+      • 가져온 도면은 <b>3D 바닥</b>(청록색)에 자동 표시<br>
+      • <b>⬆️ 돌출</b> 버튼: 높이 입력 → 위로 돌출<br>
+      • <b>🔄 회전체</b> 버튼: 축+거리+각도 입력<br>
+      • 회전축 미리보기는 <b>분홍 점선</b>으로 표시<br>
+      • <b>👁️ 바닥</b> 버튼: 도면 표시/숨김 토글<br>
     </div>
   </div>
 
@@ -1876,6 +1885,132 @@ function makeMaterial(color, opacity){
   });
 }
 
+// ===== v2.2: 바닥(XZ 평면)에 스케치 도형 미리보기 =====
+// 2D 도형 좌표 (x, y) → 3D 좌표 (x, 0, -y)  (돌출 회전과 일관)
+let floorSketchGroup = null;  // 씬에 추가된 바닥 도형 그룹
+let floorAxisHelper = null;   // 회전축 미리보기 라인
+
+function clearFloorSketch(){
+  if(floorSketchGroup){
+    scene.remove(floorSketchGroup);
+    floorSketchGroup.traverse(o=>{
+      if(o.geometry) o.geometry.dispose();
+      if(o.material){
+        if(Array.isArray(o.material)) o.material.forEach(m=>m.dispose());
+        else o.material.dispose();
+      }
+    });
+    floorSketchGroup = null;
+  }
+}
+
+function drawShapesOnFloor(){
+  clearFloorSketch();
+  if(!state.shapes || state.shapes.length === 0) return;
+  floorSketchGroup = new THREE.Group();
+  floorSketchGroup.name = 'floorSketch';
+  floorSketchGroup.userData.isFloorSketch = true;
+  // 외곽선용 라인 재료 (잘 보이게 굵게)
+  const lineMat = new THREE.LineBasicMaterial({color: 0x00d4ff, linewidth: 2});
+  // 닫힌 면(채움) 재료 - 반투명
+  const fillMat = new THREE.MeshBasicMaterial({
+    color: 0x00d4ff, transparent: true, opacity: 0.18,
+    side: THREE.DoubleSide, depthWrite: false
+  });
+  // 2D (x,y) → 3D (x, 0, -y)
+  const to3 = (x, y, yOff) => new THREE.Vector3(x, yOff || 0.05, -y); // 그리드 위로 살짝 띄움
+  state.shapes.forEach(s => {
+    if(s.type === 'line'){
+      const g = new THREE.BufferGeometry().setFromPoints([
+        to3(s.x1, s.y1), to3(s.x2, s.y2)
+      ]);
+      floorSketchGroup.add(new THREE.Line(g, lineMat));
+    } else if(s.type === 'rect'){
+      const x1 = Math.min(s.x1, s.x2), x2 = Math.max(s.x1, s.x2);
+      const y1 = Math.min(s.y1, s.y2), y2 = Math.max(s.y1, s.y2);
+      // 외곽선
+      const g = new THREE.BufferGeometry().setFromPoints([
+        to3(x1,y1), to3(x2,y1), to3(x2,y2), to3(x1,y2), to3(x1,y1)
+      ]);
+      floorSketchGroup.add(new THREE.Line(g, lineMat));
+      // 채움
+      const shape2 = new THREE.Shape();
+      shape2.moveTo(x1, y1); shape2.lineTo(x2, y1); shape2.lineTo(x2, y2); shape2.lineTo(x1, y2); shape2.lineTo(x1, y1);
+      const fg = new THREE.ShapeGeometry(shape2);
+      fg.rotateX(-Math.PI/2); // XY → XZ (y → -z)
+      const fm = new THREE.Mesh(fg, fillMat);
+      fm.position.y = 0.02;
+      floorSketchGroup.add(fm);
+    } else if(s.type === 'circle'){
+      // 외곽선
+      const pts = [];
+      const seg = 64;
+      for(let i=0; i<=seg; i++){
+        const t = i/seg * Math.PI*2;
+        pts.push(to3(s.cx + s.r*Math.cos(t), s.cy + s.r*Math.sin(t)));
+      }
+      const g = new THREE.BufferGeometry().setFromPoints(pts);
+      floorSketchGroup.add(new THREE.Line(g, lineMat));
+      // 채움
+      const shape2 = new THREE.Shape();
+      shape2.absarc(s.cx, s.cy, s.r, 0, Math.PI*2, false);
+      const fg = new THREE.ShapeGeometry(shape2);
+      fg.rotateX(-Math.PI/2);
+      const fm = new THREE.Mesh(fg, fillMat);
+      fm.position.y = 0.02;
+      floorSketchGroup.add(fm);
+    } else if(s.type === 'arc'){
+      const pts = [];
+      const steps = 32;
+      let a1 = s.startAngle, a2 = s.endAngle;
+      if(a2 < a1) a2 += Math.PI*2;
+      for(let i=0; i<=steps; i++){
+        const t = a1 + (a2-a1)*i/steps;
+        pts.push(to3(s.cx + s.r*Math.cos(t), s.cy + s.r*Math.sin(t)));
+      }
+      const g = new THREE.BufferGeometry().setFromPoints(pts);
+      floorSketchGroup.add(new THREE.Line(g, lineMat));
+    }
+  });
+  scene.add(floorSketchGroup);
+}
+
+function toggleFloorSketch(){
+  if(!floorSketchGroup){
+    drawShapesOnFloor();
+    if(!floorSketchGroup){ toast('표시할 스케치 도형이 없습니다'); return; }
+    toast('👁️ 바닥 스케치 표시');
+  } else {
+    clearFloorSketch();
+    toast('🚫 바닥 스케치 숨김');
+  }
+}
+
+// 회전축 미리보기 (3D 뷰에 표시)
+function showAxisPreview(axis){
+  hideAxisPreview();
+  const len = 200;
+  const mat = new THREE.LineDashedMaterial({color: 0xff00aa, dashSize: 4, gapSize: 3, linewidth: 2});
+  let p1, p2;
+  if(axis === 'x'){ p1 = new THREE.Vector3(-len,0,0); p2 = new THREE.Vector3(len,0,0); }
+  else if(axis === 'y'){ p1 = new THREE.Vector3(0,-len,0); p2 = new THREE.Vector3(0,len,0); }
+  else { p1 = new THREE.Vector3(0,0,-len); p2 = new THREE.Vector3(0,0,len); }
+  const g = new THREE.BufferGeometry().setFromPoints([p1,p2]);
+  const line = new THREE.Line(g, mat);
+  line.computeLineDistances();
+  line.name = 'axisPreview';
+  scene.add(line);
+  floorAxisHelper = line;
+}
+function hideAxisPreview(){
+  if(floorAxisHelper){
+    scene.remove(floorAxisHelper);
+    if(floorAxisHelper.geometry) floorAxisHelper.geometry.dispose();
+    if(floorAxisHelper.material) floorAxisHelper.material.dispose();
+    floorAxisHelper = null;
+  }
+}
+
 function openExtrudeModal(){
   if(state.shapes.length === 0){toast('스케치가 없습니다'); return}
   document.getElementById('extrudePartName').value = '돌출_' + state.partIdCounter;
@@ -1917,8 +2052,11 @@ function doExtrude(){
     const shape = shapeToThreeShape(s);
     if(!shape) return;
     const geom = new THREE.ExtrudeGeometry(shape, {depth: height, bevelEnabled: false, curveSegments: 24});
-    if(dir === 'down') geom.translate(0, 0, -height);
+    // v2.2: ExtrudeGeometry는 +Z로 돌출 → rotation.x=-π/2 후 +Z→-Y가 되므로
+    //       'up'(+Y) 의도일 때는 사전에 -Z로 옮겨놓아야 회전 후 +Y가 됨
+    if(dir === 'up') geom.translate(0, 0, -height);
     else if(dir === 'both') geom.translate(0, 0, -height/2);
+    // 'down'은 기본 +Z (회전 후 -Y, 즉 바닥 아래로) 유지
     const mat = makeMaterial(color, 1);
     const mesh = new THREE.Mesh(geom, mat);
     mesh.rotation.x = -Math.PI / 2;
@@ -1950,6 +2088,10 @@ function openRevolveModal(){
   if(state.shapes.length === 0){toast('회전 단면 스케치가 없습니다'); return}
   document.getElementById('revolvePartName').value = '회전체_' + state.partIdCounter;
   document.getElementById('revolveModal').classList.add('show');
+  // v2.2: 3D 뷰에 회전축 미리보기 (분홍 점선)
+  const axisSel = document.getElementById('revolveAxis');
+  showAxisPreview(axisSel.value);
+  axisSel.onchange = () => showAxisPreview(axisSel.value);
 }
 
 function doRevolve(){
@@ -3063,7 +3205,7 @@ function setView(v){
 }
 
 function fitView(){
-  if(state.parts.length === 0){setView('iso'); return}
+  // v2.2: 부품이 없어도 바닥 스케치(import 도형)가 있으면 그것에 맞춰 fit
   const box = new THREE.Box3();
   state.parts.forEach(p=>{
     if(p.visible && p.mesh){
@@ -3071,6 +3213,10 @@ function fitView(){
       if(!b.isEmpty()) box.union(b);
     }
   });
+  if(floorSketchGroup){
+    const b = new THREE.Box3().setFromObject(floorSketchGroup);
+    if(!b.isEmpty()) box.union(b);
+  }
   if(box.isEmpty()){setView('iso'); return}
   const center = box.getCenter(new THREE.Vector3());
   const size = box.getSize(new THREE.Vector3());
@@ -3535,7 +3681,11 @@ function toast(msg){
   window._toastTimer = setTimeout(()=>t.classList.remove('show'), 2200);
 }
 
-function closeModal(id){document.getElementById(id).classList.remove('show')}
+function closeModal(id){
+  document.getElementById(id).classList.remove('show');
+  // v2.2: 회전 모달 닫히면 회전축 미리보기 제거
+  if(id === 'revolveModal') hideAxisPreview();
+}
 
 function toggleHelp(){
   const h = document.getElementById('helpBox');
@@ -3625,11 +3775,14 @@ function init(){
   renderPartsList();
   updateInfo();
   redrawSketch();
-  setStat('tool3 v1.7 준비됨 - 메뉴에서 도형을 추가하세요');
-  // v1.7: 기본 3D 모드로 시작
+  setStat('tool3 v2.2 준비됨');
+  // v2.2: 항상 3D 모드로 시작 (draw_tool import도 3D 바닥에 표시)
   switchMode('model');
-  // draw_tool에서 전송된 도형 자동 import (있을 때만)
-  importFromDrawTool();
+  try {
+    if (localStorage.getItem('c3d_import_from_draw_tool')) {
+      importFromDrawTool();
+    }
+  } catch(e){}
 }
 
 /* 메뉴에서 수동 import 호출용 */
@@ -3671,8 +3824,11 @@ function importFromDrawTool(){
   state.shapes = incoming;
   state.selectedShapes.clear();
 
-  // 가져온 도형이 캔버스 안에 들어오도록 자동 줌/패닝
-  fitSketchToShapes();
+  // v2.2: draw_tool에서 가져온 2D 도형을 3D 뷰의 바닥(Y=0, XZ 평면)에 즉시 표시
+  //       → 사용자는 3D 뷰에서 도면을 보면서 돌출(높이) 또는 회전체(축+거리)를 결정
+  switchMode('model');
+  drawShapesOnFloor();
+  fitView();
 
   redrawSketch();
   updateInfo();
@@ -3680,8 +3836,8 @@ function importFromDrawTool(){
   // 한 번 import 후 localStorage 제거 (재진입 시 중복 방지)
   try { localStorage.removeItem('c3d_import_from_draw_tool'); } catch(e){}
 
-  toast('📥 draw_tool에서 ' + incoming.length + '개 도형 가져옴 (스케일 ×' + payload.scale + ')');
-  setStat('draw_tool 도형 import 완료 - 돌출/회전으로 3D 생성하세요');
+  toast('📥 draw_tool에서 ' + incoming.length + '개 도형 바닥에 표시 (스케일 ×' + payload.scale + ')');
+  setStat('✅ 도면 ' + incoming.length + '개 바닥 표시 → [⬆️ 돌출] 또는 [🔄 회전체]로 3D 생성');
 }
 
 /* 가져온 도형 전체가 화면에 들어오도록 자동 fit */
