@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>tool3 v4.3 - 돌출 파트 바닥(y=0) 안착</title>
+<title>tool3 v4.4 - 흩어진 선을 닫힌 면으로 돌출</title>
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
@@ -190,7 +190,7 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
 <body>
 
 <header>
-  <h1>📐 tool3 v4.3</h1>
+  <h1>📐 tool3 v4.4</h1>
   <span class="ver">v4.1 - 정면/측면뷰에서도 회전 링 클릭 가능</span>
   <span class="mode-badge" id="modeBadge">스케처 모드</span>
   <span class="stat" id="statText">준비됨</span>
@@ -2558,8 +2558,44 @@ function shapeToThreeShape(s){
   } else if(s.type === 'circle'){
     shape.absarc(s.cx, s.cy, s.r, 0, Math.PI*2, false);
     return shape;
+  } else if(s.type === 'polyline' && Array.isArray(s.points) && s.points.length >= 3){
+    shape.moveTo(s.points[0].x, s.points[0].y);
+    for(let i=1;i<s.points.length;i++) shape.lineTo(s.points[i].x, s.points[i].y);
+    shape.closePath();
+    return shape;
   }
   return null;
+}
+
+// v4.4: 흩어진 선(line)들을 끝점 연결 순서로 묶어 닫힌 Shape 만들기
+//   draw_tool에서 선 4개로 사각형을 그려 import한 경우 등에 대응
+function linesToClosedShape(lines){
+  if(!lines || lines.length < 3) return null;
+  const tol = 0.5; // 끝점 일치 허용 오차(px)
+  const segs = lines.map(l => ({a:{x:l.x1,y:l.y1}, b:{x:l.x2,y:l.y2}, used:false}));
+  const near = (p,q)=> Math.hypot(p.x-q.x, p.y-q.y) <= tol;
+  // 시작 세그먼트
+  segs[0].used = true;
+  const path = [segs[0].a, segs[0].b];
+  let cur = segs[0].b;
+  let guard = 0;
+  while(guard++ < segs.length + 2){
+    let found = false;
+    for(const seg of segs){
+      if(seg.used) continue;
+      if(near(seg.a, cur)){ path.push(seg.b); cur = seg.b; seg.used = true; found = true; break; }
+      if(near(seg.b, cur)){ path.push(seg.a); cur = seg.a; seg.used = true; found = true; break; }
+    }
+    if(!found) break;
+    if(near(cur, path[0])) break; // 닫힘
+  }
+  // 닫힌 경로인지 확인 (시작점으로 돌아왔고 점 3개 이상)
+  if(path.length < 4 || !near(path[path.length-1], path[0])) return null;
+  const shape = new THREE.Shape();
+  shape.moveTo(path[0].x, path[0].y);
+  for(let i=1;i<path.length;i++) shape.lineTo(path[i].x, path[i].y);
+  shape.closePath();
+  return shape;
 }
 
 function doExtrude(){
@@ -2575,22 +2611,33 @@ function doExtrude(){
     : state.shapes;
   
   const meshes = [];
+  const lineShapes = []; // v4.4: 따로 모은 line들
   targets.forEach(s=>{
+    if(s.type === 'line'){ lineShapes.push(s); return; } // line은 나중에 묶어서 처리
     const shape = shapeToThreeShape(s);
     if(!shape) return;
     const geom = new THREE.ExtrudeGeometry(shape, {depth: height, bevelEnabled: false, curveSegments: 24});
-    // v3.1: 도면이 XY 평면(Z=0)에 서있으므로 ExtrudeGeometry의 +Z 돌출이 곧 "앞으로 두께 형성"
-    //   'up'(+Z) = 앞으로 / 'down'(-Z) = 뒤로 / 'both' = 양방향
     if(dir === 'down') geom.translate(0, 0, -height);
     else if(dir === 'both') geom.translate(0, 0, -height/2);
-    // 'up'(기본) = 그대로 +Z 방향
     const mat = makeMaterial(color, 1);
     const mesh = new THREE.Mesh(geom, mat);
-    // rotation 적용하지 않음 (도면이 이미 XY에 정렬됨)
     meshes.push(mesh);
   });
+  // v4.4: 흩어진 선들을 닫힌 경로로 묶어 면으로 돌출
+  if(lineShapes.length >= 3){
+    const closed = linesToClosedShape(lineShapes);
+    if(closed){
+      const geom = new THREE.ExtrudeGeometry(closed, {depth: height, bevelEnabled: false, curveSegments: 24});
+      if(dir === 'down') geom.translate(0, 0, -height);
+      else if(dir === 'both') geom.translate(0, 0, -height/2);
+      const mesh = new THREE.Mesh(geom, makeMaterial(color, 1));
+      meshes.push(mesh);
+    } else {
+      toast('⚠ 선들이 닫힌 도형을 이루지 않습니다 (끝점이 안 맞음)');
+    }
+  }
   
-  if(meshes.length === 0){toast('돌출할 닫힌 도형(사각/원)이 없습니다'); closeModal('extrudeModal'); return}
+  if(meshes.length === 0){toast('돌출할 닫힌 도형(사각/원/닫힌 선)이 없습니다'); closeModal('extrudeModal'); return}
   
   const group = new THREE.Group();
   meshes.forEach(m => group.add(m));
@@ -5185,7 +5232,7 @@ function init(){
   renderPartsList();
   updateInfo();
   redrawSketch();
-  setStat('tool3 v4.3 준비됨');
+  setStat('tool3 v4.4 준비됨');
   // v2.2: 항상 3D 모드로 시작 (draw_tool import도 3D 바닥에 표시)
   switchMode('model');
   try {
