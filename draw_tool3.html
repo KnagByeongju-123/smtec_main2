@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>tool3 v4.4 - 흩어진 선을 닫힌 면으로 돌출</title>
+<title>tool3 v4.5 - 스케치/돌출을 바닥(y=0)에 눕힘</title>
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
@@ -190,7 +190,7 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
 <body>
 
 <header>
-  <h1>📐 tool3 v4.4</h1>
+  <h1>📐 tool3 v4.5</h1>
   <span class="ver">v4.1 - 정면/측면뷰에서도 회전 링 클릭 가능</span>
   <span class="mode-badge" id="modeBadge">스케처 모드</span>
   <span class="stat" id="statText">준비됨</span>
@@ -2436,11 +2436,10 @@ function drawShapesOnFloor(){
     color: 0x00d4ff, transparent: true, opacity: 0.18,
     side: THREE.DoubleSide, depthWrite: false
   });
-  // v2.8: 도면을 XY 평면(Z=0)에 세로로 세움
-  //   X축 둘레로 -90° 회전한 효과 = 누워있던 도면이 정면을 향해 일어섬
-  //   2D (x, y) → 3D (x, y, 0)
-  //   z 깊이 정렬: Z=0 평면 안에 있어 평면 채움도 정상 표시
-  const to3 = (x, y, zOff) => new THREE.Vector3(x, y, zOff || 0); // Z=0 평면
+  // v4.5: 도면을 바닥(XZ 평면, y=0)에 눕힘
+  //   2D (x, y) → 3D (x, 0, -y)  · 채움 mesh는 XY평면 geometry라 X축 -90° 회전으로 눕힘
+  const to3 = (x, y, yOff) => new THREE.Vector3(x, (yOff || 0), -y); // 바닥 평면
+  const layFlat = (mesh) => { mesh.rotation.x = -Math.PI/2; }; // ShapeGeometry(XY) → XZ 바닥
   state.shapes.forEach(s => {
     if(s.type === 'line'){
       const g = new THREE.BufferGeometry().setFromPoints([
@@ -2460,7 +2459,7 @@ function drawShapesOnFloor(){
       shape2.moveTo(x1, y1); shape2.lineTo(x2, y1); shape2.lineTo(x2, y2); shape2.lineTo(x1, y2); shape2.lineTo(x1, y1);
       const fg = new THREE.ShapeGeometry(shape2);
       const fm = new THREE.Mesh(fg, fillMat);
-      fm.position.z = 0.01; // 살짝 띄워 라인보다 뒤에 깔리도록
+      layFlat(fm); fm.position.y = 0.02; // 바닥에 눕히고 살짝 띄움
       floorSketchGroup.add(fm);
     } else if(s.type === 'circle'){
       const pts = [];
@@ -2475,7 +2474,7 @@ function drawShapesOnFloor(){
       shape2.absarc(s.cx, s.cy, s.r, 0, Math.PI*2, false);
       const fg = new THREE.ShapeGeometry(shape2);
       const fm = new THREE.Mesh(fg, fillMat);
-      fm.position.z = 0.01;
+      layFlat(fm); fm.position.y = 0.02;
       floorSketchGroup.add(fm);
     } else if(s.type === 'arc'){
       const pts = [];
@@ -2642,12 +2641,12 @@ function doExtrude(){
   const group = new THREE.Group();
   meshes.forEach(m => group.add(m));
   
-  // v4.2: 돌출 파트를 바닥(y=0)에 안착 + 원점 근처로 정렬
-  //   도면이 XY평면에 있어 그대로면 공중에 뜨므로, 바운딩박스 기준으로 위치 보정
+  // v4.5: 미리보기와 일관 - 도면(XY,+Z돌출)을 X축 -90° 회전해 바닥(XZ)에 눕히고 위로 두께
+  group.rotation.x = -Math.PI/2;
+  // 바닥(y=0)에 안착 + XZ 중심 정렬
   group.updateMatrixWorld(true);
   const gbb = new THREE.Box3().setFromObject(group);
   const gc = gbb.getCenter(new THREE.Vector3());
-  // X(좌우), Z(앞뒤)는 중심을 원점으로, Y(높이)는 바닥(min)을 0으로
   group.position.x -= gc.x;
   group.position.z -= gc.z;
   group.position.y -= gbb.min.y;
@@ -5232,7 +5231,7 @@ function init(){
   renderPartsList();
   updateInfo();
   redrawSketch();
-  setStat('tool3 v4.4 준비됨');
+  setStat('tool3 v4.5 준비됨');
   // v2.2: 항상 3D 모드로 시작 (draw_tool import도 3D 바닥에 표시)
   switchMode('model');
   try {
