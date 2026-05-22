@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>tool3 v5.0 - SVG Revolver 닫힌단면 직접 sweep (부드러운 솔리드)</title>
+<title>tool3 v5.4.1 - 그룹화/해제 scene 참조 버그 수정</title>
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
@@ -190,8 +190,8 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
 <body>
 
 <header>
-  <h1>📐 tool3 v5.0</h1>
-  <span class="ver">v5.0 - SVG Revolver 닫힌단면 직접 회전(부드러운 솔리드 + 끝면 정확)</span>
+  <h1>📐 tool3 v5.4.1</h1>
+  <span class="ver">v5.4.1 - 그룹화/해제 시 scene 참조 오류 수정</span>
   <span class="mode-badge" id="modeBadge">스케처 모드</span>
   <span class="stat" id="statText">준비됨</span>
 </header>
@@ -263,6 +263,7 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
       <div class="menu-item" onclick="mirrorPart('z')"><span class="ico">⇋</span>앞뒤 미러 (Z)</div>
       <div class="menu-sep"></div>
       <div class="menu-item" onclick="toggleHole()"><span class="ico">🕳️</span>구멍 전환 (Hole)<span class="shortcut">H</span></div>
+      <div class="menu-item" onclick="setSolid()"><span class="ico">⬛</span>솔리드 전환 (Solid)<span class="shortcut">J</span></div>
       <div class="menu-item" onclick="openAlignModal()"><span class="ico">📐</span>정렬 (Align)</div>
       <div class="menu-item" onclick="groupSelectedParts()"><span class="ico">🔗</span>그룹화 (구멍 빼기 포함)<span class="shortcut">Ctrl+G</span></div>
       <div class="menu-item" onclick="ungroupPart()"><span class="ico">✂️</span>그룹 해제<span class="shortcut">Ctrl+Shift+G</span></div>
@@ -342,8 +343,28 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
     <button onclick="mirrorPart('x')" title="좌우 미러 (M)">⇆ M</button>
     <button onclick="duplicatePart()" title="복제 (Ctrl+D)">📋</button>
     <button onclick="toggleHole()" title="구멍 전환 (H)" style="background:#c0392b">🕳️ H</button>
+    <button onclick="setSolid()" title="솔리드 전환 (J)" style="background:#27ae60">⬛ S</button>
     <button onclick="groupSelectedParts()" title="그룹화 (Ctrl+G)">🔗 G</button>
     <button onclick="openAlignModal()" title="정렬 (L)">📐 L</button>
+    <label style="font-size:11px;color:#ccc;margin-left:6px" title="이동 핸들/드래그 시 지정 단위로 끊어서 이동">📏 이동단위
+      <select id="moveSnapSel" onchange="onMoveSnapChange()" style="font-size:11px;padding:2px 4px">
+        <option value="0">없음</option>
+        <option value="0.1">0.1mm</option>
+        <option value="0.5">0.5mm</option>
+        <option value="1">1mm</option>
+        <option value="5">5mm</option>
+        <option value="10">10mm</option>
+      </select>
+    </label>
+    <label style="font-size:11px;color:#ccc;margin-left:6px" title="회전 핸들 드래그 시 지정 각도로 끊어서 회전">↻ 회전단위
+      <select id="rotSnapSel" onchange="onRotSnapChange()" style="font-size:11px;padding:2px 4px">
+        <option value="0">없음</option>
+        <option value="1">1°</option>
+        <option value="5">5°</option>
+        <option value="45">45°</option>
+        <option value="90">90°</option>
+      </select>
+    </label>
   </div>
 </div>
 
@@ -1023,6 +1044,8 @@ const state = {
   historyIdx: -1,
   gridSnap: true,
   gridSize: 10,
+  moveSnap: 0,   // v5.2: 3D 부품 이동 스냅 단위(mm). 0=없음(자유 이동)
+  rotSnap: 0,    // v5.3: 3D 부품 회전 스냅 단위(도). 0=없음(자유 회전)
   showGrid: true,
   showAxes: true,
   wireframe: false,
@@ -1877,8 +1900,13 @@ function setupRaycastClick(dom){
       const selCount = state.parts.filter(p => p._selected).length;
       if(selCount === 1){
         showTransformHandles(partHit);
+        setStat('1개 선택됨 · Shift+클릭으로 여러 개 선택');
+      } else if(selCount > 1){
+        hideTransformHandles();
+        setStat('🔗 ' + selCount + '개 선택됨 · 그룹화(Ctrl+G) / 그룹해제(Ctrl+Shift+G) / 정렬(L)');
       } else {
         hideTransformHandles();
+        setStat('선택 해제됨');
       }
       // orbit 비활성화
       orbitState.rotating = false;
@@ -1966,6 +1994,16 @@ function setupRaycastClick(dom){
             newPos = partDragState.startPos.clone();
             newPos.x += delta.x;
             newPos.z += delta.z;
+          }
+          // v5.2: 지정 단위로 스냅 (이동한 축만 반올림, 0이면 자유)
+          if(state.moveSnap > 0){
+            const sn = state.moveSnap;
+            const snap = v => Math.round(v / sn) * sn;
+            if(partDragState.useWorkPlane){
+              newPos.x = snap(newPos.x); newPos.y = snap(newPos.y); newPos.z = snap(newPos.z);
+            } else {
+              newPos.x = snap(newPos.x); newPos.z = snap(newPos.z);
+            }
           }
           partDragState.candidate.mesh.position.copy(newPos);
           // 핸들도 따라 이동
@@ -2118,7 +2156,7 @@ function showTransformHandles(part){
   const size = bb.getSize(new THREE.Vector3());
   const maxSize = Math.max(size.x, size.y, size.z, 10);
   const handleSize = maxSize * 0.05;
-  const arrowLen = maxSize * 0.7;
+  const arrowLen = maxSize * 0.55; // v5.1: 지시선 단축
 
   // 바운딩박스 와이어
   const boxGeom = new THREE.BoxGeometry(size.x, size.y, size.z);
@@ -2131,12 +2169,12 @@ function showTransformHandles(part){
   // 이동 핸들 (3축 화살표)
   function makeArrow(color, label){
     const arrowGroup = new THREE.Group();
-    const shaftGeom = new THREE.CylinderGeometry(handleSize*0.3, handleSize*0.3, arrowLen*0.8, 12);
+    const shaftGeom = new THREE.CylinderGeometry(handleSize*0.15, handleSize*0.15, arrowLen*0.8, 10); // v5.1: 가는 막대
     const shaftMat = new THREE.MeshBasicMaterial({color, depthTest: false, transparent: true, opacity: 0.9});
     const shaft = new THREE.Mesh(shaftGeom, shaftMat);
     shaft.position.y = arrowLen*0.4;
     arrowGroup.add(shaft);
-    const tipGeom = new THREE.ConeGeometry(handleSize*0.8, arrowLen*0.2, 16);
+    const tipGeom = new THREE.ConeGeometry(handleSize*0.45, arrowLen*0.18, 14); // v5.1: 작은 화살촉
     const tip = new THREE.Mesh(tipGeom, shaftMat);
     tip.position.y = arrowLen*0.9;
     tip.userData._handle = {type: 'move', axis: label};
@@ -2162,7 +2200,7 @@ function showTransformHandles(part){
     {axis: '-z', pos: [0, 0, -size.z/2], color: 0x88aaff}
   ];
   faceHandles.forEach(h => {
-    const cubeGeom = new THREE.BoxGeometry(handleSize*1.8, handleSize*1.8, handleSize*1.8);
+    const cubeGeom = new THREE.BoxGeometry(handleSize*1.0, handleSize*1.0, handleSize*1.0); // v5.1: 작은 큐브
     const cubeMat = new THREE.MeshBasicMaterial({color: h.color, depthTest: false});
     const cube = new THREE.Mesh(cubeGeom, cubeMat);
     cube.position.set(center.x + h.pos[0], center.y + h.pos[1], center.z + h.pos[2]);
@@ -2178,17 +2216,17 @@ function showTransformHandles(part){
   const topArrowMat = new THREE.MeshBasicMaterial({color: 0xffffff, depthTest: false, transparent: true, opacity: 0.95});
   // 막대
   const tShaft = new THREE.Mesh(
-    new THREE.CylinderGeometry(handleSize*0.55, handleSize*0.55, maxSize*0.18, 14),
+    new THREE.CylinderGeometry(handleSize*0.3, handleSize*0.3, maxSize*0.14, 12), // v5.1: 가는 막대
     topArrowMat
   );
-  tShaft.position.y = maxSize*0.09;
+  tShaft.position.y = maxSize*0.07;
   topArrow.add(tShaft);
   // 화살촉 (위)
   const tTip = new THREE.Mesh(
-    new THREE.ConeGeometry(handleSize*1.5, maxSize*0.12, 18),
+    new THREE.ConeGeometry(handleSize*0.8, maxSize*0.09, 16), // v5.1: 작은 화살촉
     topArrowMat
   );
-  tTip.position.y = maxSize*0.18 + maxSize*0.06;
+  tTip.position.y = maxSize*0.14 + maxSize*0.045;
   topArrow.add(tTip);
   // 위로 향한 큰 화살표 전체에 핸들 정보 부여 (자식 메쉬에 _handle 등록)
   tShaft.userData._handle = {type: 'scale', axis: '+y'};
@@ -2202,8 +2240,8 @@ function showTransformHandles(part){
   //       보이는 가는 링 + 두꺼운 투명 충돌 토러스를 함께 생성
   // v4.5: 회전 링이 객체를 가리지 않도록 반경/두께 대폭 축소
   const ringRadius = maxSize * 0.32;        // 0.55 → 0.32 (객체 안쪽으로)
-  const ringTube   = handleSize * 0.25;     // 0.4 → 0.25 (보이는 링 더 가늘게)
-  const hitTube    = handleSize * 0.9;      // 1.8 → 0.9 (충돌 영역 절반)
+  const ringTube   = handleSize * 0.12;     // v5.1: 보이는 링 더 가늘게
+  const hitTube    = handleSize * 0.7;      // v5.1: 충돌 영역도 약간 축소
   function makeRotRing(axis, color){
     const ringGroup = new THREE.Group();
     // 보이는 링 (가늘게)
@@ -2303,7 +2341,9 @@ function handleDrag(e){
     rayStart.ray.intersectPlane(plane, hitStart);
     if(hitNow && hitStart){
       const moveVec = hitNow.clone().sub(hitStart);
-      const moveAmt = moveVec.dot(axisVec); // 축 방향 투영
+      let moveAmt = moveVec.dot(axisVec); // 축 방향 투영 (mm)
+      // v5.2: 지정 단위로 스냅 (0이면 자유 이동)
+      if(state.moveSnap > 0) moveAmt = Math.round(moveAmt / state.moveSnap) * state.moveSnap;
       p.mesh.position.copy(transformState.dragStartPos.clone().add(axisVec.clone().multiplyScalar(moveAmt)));
     }
     // 핸들도 따라가도록 갱신
@@ -2413,16 +2453,19 @@ function handleDrag(e){
     // 화면 좌표는 y가 아래로 +라 마우스 회전 방향과 일치
     // 축에 따른 부호 조정 (시각적으로 자연스럽게)
     let deltaSigned = (h.axis === 'z') ? -delta : delta;
-    // Shift 누르면 15° 단위 스냅
-    if(e.shiftKey){
-      const step = Math.PI / 12; // 15°
+    // v5.3: 회전 스냅 단위 적용 (드롭다운 선택 우선, 없으면 Shift=15°)
+    let snapDeg = 0;
+    if(state.rotSnap > 0) snapDeg = state.rotSnap;
+    else if(e.shiftKey) snapDeg = 15;
+    if(snapDeg > 0){
+      const step = snapDeg * Math.PI / 180;
       deltaSigned = Math.round(deltaSigned / step) * step;
     }
     if(h.axis === 'y') p.mesh.rotation.y = transformState._rotInitial.y + deltaSigned;
     else if(h.axis === 'x') p.mesh.rotation.x = transformState._rotInitial.x + deltaSigned;
     else if(h.axis === 'z') p.mesh.rotation.z = transformState._rotInitial.z + deltaSigned;
     // v2.0: 실시간 각도 HUD 표시
-    showRotHud(h.axis, p.mesh.rotation[h.axis], deltaSigned, e.shiftKey);
+    showRotHud(h.axis, p.mesh.rotation[h.axis], deltaSigned, snapDeg > 0);
     // 속성 패널 회전값도 즉시 갱신 (선택된 부품이 동일하면)
     syncRotPropPanel(p);
   }
@@ -3988,7 +4031,7 @@ function deletePart(){
   if(target.length === 0){toast('삭제할 부품이 없습니다'); return}
   target.forEach(p => {
     if(transformState.activePart === p) hideTransformHandles();
-    state.scene.remove(p.mesh);
+    scene.remove(p.mesh);
     const idx = state.parts.indexOf(p);
     if(idx >= 0) state.parts.splice(idx, 1);
   });
@@ -4053,7 +4096,7 @@ function doAlign(){
 // ===== 그룹화 =====
 function groupSelectedParts(){
   const sel = getSelectedParts();
-  if(sel.length < 2){toast('2개 이상의 부품을 선택해주세요 (Ctrl+클릭)'); return}
+  if(sel.length < 2){toast('2개 이상의 부품을 선택해주세요 (3D 뷰에서 Shift+클릭 또는 Ctrl+클릭)'); return}
   // 새 그룹 생성
   const group = new THREE.Group();
   const childInfo = []; // 그룹 해제 시 복원용
@@ -4061,7 +4104,7 @@ function groupSelectedParts(){
   const solids = sel.filter(p => !p._isHole);
   sel.forEach(p => {
     // 월드 매트릭스 적용 후 그룹에 추가
-    state.scene.remove(p.mesh);
+    scene.remove(p.mesh);
     p.mesh.updateMatrixWorld(true);
     childInfo.push({
       type: p.type, name: p.name, color: p.color, opacity: p.opacity,
@@ -4085,7 +4128,7 @@ function groupSelectedParts(){
     _children: childInfo
   };
   state.parts.push(newPart);
-  state.scene.add(group);
+  scene.add(group);
   renderPartsList(); updateInfo();
   hideTransformHandles();
   const msg = holes.length > 0
@@ -4135,7 +4178,43 @@ function toggleHole(){
   toast(target[0]._isHole ? '🕳️ ' + target.length + '개 부품을 구멍으로 지정 (그룹화 시 빼기)' : '◯ ' + target.length + '개 부품 구멍 해제');
 }
 
-// v1.5: 위치/크기/회전 직접 입력
+// v5.2: 솔리드 전환 - 선택 부품을 무조건 솔리드(_isHole=false)로 + 원래 색 복원
+function setSolid(){
+  const sel = getSelectedParts();
+  const target = sel.length > 0 ? sel : (state.parts.length > 0 ? [state.parts[state.parts.length-1]] : []);
+  if(target.length === 0){toast('부품을 선택하세요'); return}
+  let changed = 0;
+  target.forEach(p => {
+    if(!p._isHole) return; // 이미 솔리드면 건너뜀
+    p._isHole = false;
+    changed++;
+    p.mesh.traverse(o => {
+      if(o.isMesh && o.material && o.userData._origMat){
+        o.material = o.userData._origMat;
+        delete o.userData._origMat;
+      }
+    });
+  });
+  renderPartsList();
+  if(changed > 0) toast('⬛ ' + changed + '개 부품을 솔리드로 전환');
+  else toast('이미 모두 솔리드 상태입니다');
+}
+
+// v5.2: 3D 이동 스냅 단위 변경
+function onMoveSnapChange(){
+  const v = parseFloat(document.getElementById('moveSnapSel').value) || 0;
+  state.moveSnap = v;
+  if(v > 0) toast('📏 이동 단위: ' + v + 'mm 씩 이동');
+  else toast('📏 이동 단위: 없음 (자유 이동)');
+}
+
+// v5.3: 3D 회전 스냅 단위 변경
+function onRotSnapChange(){
+  const v = parseFloat(document.getElementById('rotSnapSel').value) || 0;
+  state.rotSnap = v;
+  if(v > 0) toast('↻ 회전 단위: ' + v + '° 씩 회전');
+  else toast('↻ 회전 단위: 없음 (자유 회전)');
+}
 function openPosSizeModal(){
   const sel = getSelectedParts();
   const target = sel.length === 1 ? sel[0] : null;
@@ -4403,7 +4482,7 @@ function ungroupPart(){
     children.push(child);
   });
   // 그룹 제거
-  state.scene.remove(target.mesh);
+  scene.remove(target.mesh);
   const idx = state.parts.indexOf(target);
   if(idx >= 0) state.parts.splice(idx, 1);
   // 자식들을 부품으로 재등록
@@ -4421,7 +4500,7 @@ function ungroupPart(){
       sourceShapes: childInfo.sourceShapes
     };
     state.parts.push(part);
-    state.scene.add(mesh);
+    scene.add(mesh);
   });
   renderPartsList(); updateInfo();
   pushHistory(); // v4.6
@@ -4706,11 +4785,17 @@ function selectPart(id, event){
 }
 
 function updateMultiSelectHighlight(){
+  const selCount = state.parts.filter(p=>p._selected).length;
   state.parts.forEach(p=>{
     if(p.mesh){
       p.mesh.traverse(o=>{
         if(o.isMesh && o.material && o.material.emissive){
-          o.material.emissive.setHex(p._selected ? 0x553300 : 0x000000);
+          // 다중 선택(2개 이상)이면 더 밝은 주황 발광으로 뚜렷하게
+          if(p._selected){
+            o.material.emissive.setHex(selCount > 1 ? 0x885500 : 0x553300);
+          } else {
+            o.material.emissive.setHex(0x000000);
+          }
         }
       });
     }
@@ -5667,6 +5752,7 @@ document.addEventListener('keydown', (e)=>{
   // 3D 모드 단축키 (팅커캐드 스타일)
   if(state.mode === 'model'){
     if(e.key === 'h' || e.key === 'H'){toggleHole(); return}
+    if(e.key === 'j' || e.key === 'J'){setSolid(); return}
     if(e.key === 'd' || e.key === 'D'){e.preventDefault(); dropToGround(); return}     // D = 바닥 안착
     if(e.key === 'l' || e.key === 'L'){openAlignModal(); return}                        // L = 정렬
     if(e.key === 'r' || e.key === 'R'){rotate90('y'); return}                           // R = 90도 Y회전
@@ -5717,7 +5803,7 @@ function init(){
   renderPartsList();
   updateInfo();
   redrawSketch();
-  setStat('tool3 v5.0 준비됨');
+  setStat('tool3 v5.4.1 준비됨 · Shift+클릭으로 여러 부품 선택');
   // v2.2: 항상 3D 모드로 시작 (draw_tool import도 3D 바닥에 표시)
   switchMode('model');
   try {
