@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<title>도면 작도기 Rev.11.40 - 모서리R=R/ER, 연결=F (블렌더식)</title>
+<title>도면 작도기 Rev.11.45 - histLock 초기화 에러 수정</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Malgun Gothic', sans-serif; background: #2b2b2b; color: #eee; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
@@ -272,14 +272,14 @@
 <body>
 
 <header>
-  <h1>📐 도면 작도기 Rev.11.40</h1>
-  <span class="ver">v11.40 (모서리R=R/ER, 연결=F)</span>
+  <h1>📐 도면 작도기 Rev.11.45</h1>
+  <span class="ver">v11.45 (초기화 에러 수정)</span>
   <button id="headerBtnHelp" class="hbtn" style="padding:5px 12px; background:#27ae60; color:#fff; border-radius:4px; cursor:pointer; font-size:12px; font-weight:bold;" title="도움말 (F1)">❓ 도움말</button>
   <button id="headerBtnSelect" class="hbtn" style="padding:5px 12px; background:#9b59b6; color:#fff; border-radius:4px; cursor:pointer; font-size:12px; font-weight:bold;" title="선택 도구로 전환 (S)">🔲 선택</button>
-  <button id="headerBtnPoint" class="hbtn" style="padding:5px 12px; background:#16a085; color:#fff; border-radius:4px; cursor:pointer; font-size:12px; font-weight:bold;" title="버텍스(점) 찍기 - 좌표를 클릭해 점 생성">• 점</button>
+  <button id="headerBtnPoint" class="hbtn" style="padding:5px 12px; background:#16a085; color:#fff; border-radius:4px; cursor:pointer; font-size:12px; font-weight:bold;" title="버텍스(점) 찍기 - 좌표를 클릭해 점 1개 생성 (1회성)">• 점</button>
   <button id="headerBtnLine" class="hbtn" style="padding:5px 12px; background:#27ae60; color:#fff; border-radius:4px; cursor:pointer; font-size:12px; font-weight:bold;" title="선 그리기 (L) - 두 점을 클릭해 선 생성">／ 선</button>
   <button id="headerBtnConnect" class="hbtn" style="padding:5px 12px; background:#2980b9; color:#fff; border-radius:4px; cursor:pointer; font-size:12px; font-weight:bold;" title="연결(F) - 두 점(점/끝점)을 클릭하면 선 1개 생성 (1회성)">🔗 연결</button>
-  <button id="headerBtnExtrude" class="hbtn" style="padding:5px 12px; background:#8e44ad; color:#fff; border-radius:4px; cursor:pointer; font-size:12px; font-weight:bold;" title="연장(Extrude, E) - 선택한 점/선을 끌어 선/면 만들기">⬄ 연장</button>
+  <button id="headerBtnExtrude" class="hbtn" style="padding:5px 12px; background:#8e44ad; color:#fff; border-radius:4px; cursor:pointer; font-size:12px; font-weight:bold;" title="연장(Extrude, E) - 선택한 점/선을 드래그해서 선/면 만들기">⬄ 연장</button>
   <button id="headerBtnOffsetTwin" class="hbtn" style="padding:5px 12px; background:#d35400; color:#fff; border-radius:4px; cursor:pointer; font-size:12px; font-weight:bold;" title="거리두기 - 선 생성/선택 시 좌우 평행선 2개 + 원본 = 3개 선 자동 생성">⫴ 거리두기</button>
   <input type="number" id="offsetTwinDistInput" value="0.6" step="0.01" min="0" style="width:56px; padding:4px 6px; background:#1f1f1f; color:#fff; border:1px solid #d35400; border-radius:4px; font-size:12px;" title="거리두기 간격(mm)">
   <button id="headerBtnLiveSnap" class="hbtn" style="padding:5px 10px; background:#555; color:#fff; border-radius:4px; cursor:pointer; font-size:11px; font-weight:bold;" title="마우스가 도형 근처에 갈 때 자동 흡착 (점/선/면)">🧲 라이브스냅 OFF</button>
@@ -824,6 +824,11 @@
       <input type="number" id="lineLen" step="0.1" style="width:50%; padding:4px;" placeholder="길이">
       <input type="number" id="lineAng" step="1" style="width:50%; padding:4px;" placeholder="각도">
     </div>
+    <div style="font-size:11px; color:#aaa; margin-bottom:4px;">상대 이동거리 ΔX / ΔY (mm) — 끝점을 시작점 기준으로 이동</div>
+    <div style="display:flex; gap:6px; margin-bottom:8px;">
+      <input type="number" id="lineDX" step="0.1" style="width:50%; padding:4px;" placeholder="ΔX">
+      <input type="number" id="lineDY" step="0.1" style="width:50%; padding:4px;" placeholder="ΔY">
+    </div>
   </div>
   
   <div id="propRectFields" style="display:none;">
@@ -931,6 +936,11 @@ let tool = 'line';
 let shapes = [];
 let fills = [];        // 영역 채움 목록 [{type:'fill', points:[{x,y}...], color, alpha}]
 let redoStack = [];
+// Rev.11.41: 스냅샷 기반 Undo/Redo (전체 상태 저장 → 정렬·이동·분할 등 모든 작업 복원)
+let history = [];      // 상태 스냅샷 배열
+let histIdx = -1;      // 현재 위치
+let histLock = false;  // 복원 중 재기록 방지
+const HIST_MAX = 100;  // 최대 보관 단계
 let firstClick = null;
 
 let continuousMode = false;
@@ -954,6 +964,7 @@ let connectPoints = [];       // 연결 모드에서 클릭한 좌표 누적 [{x
 let extrudeMode = false;
 let extrudeState = null;      // {lineId, p1, p2}  돌출 대상 선 정보
 let extrudeAxis = null;       // Rev.11.39: 연장 축 제한 null/'x'/'y'
+let extrudeDragging = false;  // Rev.11.43: 연장 드래그 진행 중
 // Rev.11.37: 블렌더식 분할(Subdivide) 모드 - 선 클릭 → 휠로 분할 수 → 좌클릭 적용
 let subdivideMode = false;        // 분할 모드 ON/OFF
 let subdivideTarget = null;       // 선택된 선 도형
@@ -1280,6 +1291,7 @@ document.querySelectorAll('.tool-menu-item').forEach(btn => {
     preCtx.clearRect(0,0,baseW,baseH);
     redrawDraw();
     updateToolStatus();
+    if (typeof updateVertexButtons === 'function') updateVertexButtons(); // Rev.11.43: 선 ON 표시
     if (tool === 'select') drawCanvas.style.cursor = 'default';
     else if (tool === 'fill') drawCanvas.style.cursor = 'cell';
     else if (tool === 'calib') drawCanvas.style.cursor = 'crosshair';
@@ -2041,6 +2053,7 @@ drawCanvas.addEventListener('mousemove', e => {
     }
     if (dragState && dragState.type === 'move') {
       let dx = p.x - dragState.startX, dy = p.y - dragState.startY;
+      if (dx !== 0 || dy !== 0) dragState.moved = true; // Rev.11.41: 실제 이동 표시
       // Shift 누르면 수평/수직만 (큰 변위 방향만 적용)
       if (shiftDown) {
         if (Math.abs(dx) > Math.abs(dy)) dy = 0;
@@ -2210,14 +2223,8 @@ drawCanvas.addEventListener('mousedown', e => {
 
   // Rev.11.20: 연장(Extrude) 확정 (좌클릭)
   if (extrudeMode && extrudeState && e.button === 0) {
-    const p = getCanvasPoint(e);
-    const off = extrudeOffset(p);
-    commitExtrude(off);
-    // 연장 모드 종료 (한 번 돌출 후 종료; 연속하려면 다시 선택+연장)
-    extrudeMode = false; extrudeState = null; extrudeAxis = null;
-    updateVertexButtons();
-    drawCanvas.style.cursor = 'default';
-    preCtx.clearRect(0,0,baseW,baseH);
+    // Rev.11.43: 드래그로 연장 - mousedown은 드래그 시작만 표시
+    extrudeDragging = true;
     e.preventDefault();
     return;
   }
@@ -2232,10 +2239,14 @@ drawCanvas.addEventListener('mousedown', e => {
       stroke: document.getElementById('strokeColor').value || '#16e0b0',
       strokeWidth: sw
     });
-    redoStack = [];
+    redoStack = []; pushHistory();
     redrawDraw(); updateCount();
+    // Rev.11.44: 점 생성은 1회성 - 점 1개 찍으면 모드 종료
+    pointMode = false;
+    updateVertexButtons();
+    drawCanvas.style.cursor = 'default';
     document.getElementById('statusHint').textContent =
-      `• 점 생성 (${(p.x*mmPerPixel).toFixed(2)}, ${(p.y*mmPerPixel).toFixed(2)})mm · 계속 클릭 / 우클릭·Esc=종료`;
+      `• 점 생성 완료 (${(p.x*mmPerPixel).toFixed(2)}, ${(p.y*mmPerPixel).toFixed(2)})mm`;
     e.preventDefault();
     return;
   }
@@ -2275,19 +2286,17 @@ drawCanvas.addEventListener('mousedown', e => {
           if (idx >= 0) shapes.splice(idx, 1);
         }
       });
-      redoStack = [];
+      redoStack = []; pushHistory();
       redrawDraw(); updateCount();
-      // Rev.11.29: 연결은 1회성 - 선 1개 만들면 모드 종료
-      connectMode = false;
+      // Rev.11.43: 연결은 연속 모드 - 선 생성 후 모드 유지, 다음 2점 받기
       connectPoints = [];
-      updateVertexButtons();
-      drawCanvas.style.cursor = 'default';
-      document.getElementById('statusHint').textContent = '🔗 연결 완료 (선 1개 생성)';
+      document.getElementById('statusHint').textContent =
+        '🔗 연결: 선 1개 생성됨 · 계속 두 점을 클릭하면 또 연결 / 우클릭·Esc=종료';
       e.preventDefault();
       return;
     }
     document.getElementById('statusHint').textContent =
-      `🔗 연결: 1번째 점 지정됨 · 두 번째 점을 클릭하면 선 생성 / 우클릭·Esc=취소`;
+      `🔗 연결: 1번째 점 지정됨 · 두 번째 점을 클릭하면 선 생성 / 우클릭·Esc=종료`;
     e.preventDefault();
     return;
   }
@@ -2384,6 +2393,22 @@ drawCanvas.addEventListener('mousedown', e => {
 });
 
 drawCanvas.addEventListener('mouseup', e => {
+  // Rev.11.43: 연장 드래그 종료 → 확정 (모드는 유지하여 연속 연장 가능)
+  if (extrudeMode && extrudeState && extrudeDragging){
+    extrudeDragging = false;
+    const p = getCanvasPoint(e);
+    const off = extrudeOffset(p);
+    if (off.dist > 1){ // 충분히 드래그됐을 때만 확정
+      commitExtrude(off);
+    }
+    preCtx.clearRect(0,0,baseW,baseH);
+    // 모드 종료 (commitExtrude가 새 도형 선택 상태로 만듦) → 다시 연장하려면 버튼/E
+    extrudeMode = false; extrudeState = null; extrudeAxis = null;
+    updateVertexButtons();
+    drawCanvas.style.cursor = 'default';
+    document.getElementById('statusHint').textContent = '⬄ 연장 완료 · 계속하려면 도형 선택 후 연장(E)';
+    return;
+  }
   // 호 핸들 드래그 종료
   if (arcHandleDrag) {
     arcHandleDrag = null;
@@ -2412,10 +2437,12 @@ drawCanvas.addEventListener('mouseup', e => {
     preCtx.clearRect(0,0,baseW,baseH);  // 스냅 표시 제거
     updateToolStatus();
     updateShapePropPanel();  // 이동 후 패널값 갱신
+    // Rev.11.41: 실제로 움직였으면 히스토리 기록
+    if (dragState.moved) { redoStack = []; pushHistory(); }
   } else if (dragState && dragState.type === 'grip') {
     // Rev.11.12: 끝점 그립 드래그 종료
     preCtx.clearRect(0,0,baseW,baseH);
-    redoStack = [];
+    redoStack = []; pushHistory();
     redrawDraw();
     updateToolStatus();
     updateShapePropPanel();
@@ -2680,7 +2707,7 @@ function addShape(p1, p2) {
     strokeWidth: parseInt(document.getElementById('strokeWidth').value)
   };
   shapes.push(newLine);
-  redoStack = [];
+  redoStack = []; pushHistory();
   redrawDraw(); updateCount();
   // Rev.11.27: 거리두기 ON + 선이면 좌우 평행선 2개 즉시 생성 (3개 모두 확정)
   if (offsetTwinMode && tool === 'line'){
@@ -2715,7 +2742,7 @@ function makeOffsetTwins(srcLine){
   // Rev.11.27: 좌(-) / 우(+) 평행선 2개를 원본과 함께 즉시 확정 (3개 모두 살림)
   mk(+1); mk(-1);
   offsetTwinCandidates = []; // 후보 개념 없음 (전부 확정)
-  redoStack = [];
+  redoStack = []; pushHistory();
   redrawDraw(); updateCount();
   document.getElementById('statusHint').textContent =
     `⫴ 거리두기 ${offsetTwinDist}mm: 좌우 평행선 2개 + 원본 = 총 3개 선 생성 완료`;
@@ -2763,7 +2790,7 @@ function addArcFromPath(p1, p2, path) {
       return;
     }
   }
-  redoStack = [];
+  redoStack = []; pushHistory();
   redrawDraw(); updateCount();
 }
 
@@ -3355,7 +3382,7 @@ function handleTrimClick(p) {
     // 원본 제거 후 추가
     shapes = shapes.filter(s => s.id !== target.id);
     newShapes.forEach(s => shapes.push(s));
-    redoStack = [];
+    redoStack = []; pushHistory();
     redrawDraw();
     updateCount();
     
@@ -3495,7 +3522,7 @@ function handleExtendClick(p) {
   
   // extendEnd를 bestPt로 이동
   target[extendEnd] = {x: Math.round(bestPt.x), y: Math.round(bestPt.y)};
-  redoStack = [];
+  redoStack = []; pushHistory();
   redrawDraw();
   document.getElementById('statusHint').textContent = '↔ 연장 완료';
 }
@@ -3715,7 +3742,7 @@ function applyFilletToTwoLines(L1, L2, click1, click2) {
   });
   console.log('🔧 [Fillet] ✅ 호 추가 완료, shapes 총=' + shapes.length);
   
-  redoStack = [];
+  redoStack = []; pushHistory();
   redrawDraw();
   updateCount();
   document.getElementById('statusHint').textContent = `◜ 모서리 R${rMm}mm 생성 완료`;
@@ -3857,7 +3884,7 @@ function handleFilletOnRect(rect, p) {
     stroke, strokeWidth, layer
   });
 
-  redoStack = [];
+  redoStack = []; pushHistory();
   redrawDraw();
   updateCount();
   document.getElementById('statusHint').textContent = `◜ 사각형 [${best.label}] 모서리 R${rMm}mm 적용 완료`;
@@ -3922,7 +3949,7 @@ function applyFilletNoPrompt(L1, L2, click1, click2, r, rMm) {
     p2: {x: Math.round(t2.x), y: Math.round(t2.y)},
     stroke: L1.stroke, strokeWidth: L1.strokeWidth
   });
-  redoStack = [];
+  redoStack = []; pushHistory();
   redrawDraw();
   updateCount();
   document.getElementById('statusHint').textContent = `◜ 모서리 R${rMm}mm 생성 완료`;
@@ -4182,7 +4209,7 @@ function applyBreak(target, brk1, brk2) {
     document.getElementById('statusHint').textContent = '✄ 호 분할 완료';
   }
 
-  redoStack = [];
+  redoStack = []; pushHistory();
   redrawDraw();
   updateCount();
 }
@@ -4262,7 +4289,7 @@ function runBreakAllIntersections() {
   }
 
   selectedIds.clear();
-  redoStack = [];
+  redoStack = []; pushHistory();
   redrawDraw();
   updateCount();
   updateSelStat();
@@ -4335,7 +4362,7 @@ function handleOffsetClick(p) {
   const newShape = createOffsetShape(src, p, dist);
   if (newShape) {
     shapes.push(newShape);
-    redoStack = [];
+    redoStack = []; pushHistory();
     redrawDraw();
     updateCount();
     document.getElementById('statusHint').textContent = `∥ 오프셋 ${distMm}mm 완료`;
@@ -4476,7 +4503,7 @@ function addDimension(dim) {
   dim.strokeWidth = 1;
   dim.fontSize = 12;
   shapes.push(dim);
-  redoStack = [];
+  redoStack = []; pushHistory();
   redrawDraw();
   updateCount();
 }
@@ -5569,7 +5596,7 @@ function handleBpolyCommand() {
       }
       
       newFills.forEach(f => fills.push(f));
-      redoStack = [];
+      redoStack = []; pushHistory();
       redrawFills();
       redrawDraw();
       updateCount();
@@ -5774,7 +5801,7 @@ function doFillAtPoint(p) {
         layer: currentLayer || 'default'
       };
       fills.push(fill);
-      redoStack = [];
+      redoStack = []; pushHistory();
       redrawFills();
       updateCount();
       const areaMm = (pixelCount * mmPerPixel * mmPerPixel).toFixed(2);
@@ -6348,10 +6375,10 @@ function deleteSelected() {
   if (selectedIds.size === 0) return;
   const removed = shapes.filter(s => selectedIds.has(s.id));
   shapes = shapes.filter(s => !selectedIds.has(s.id));
-  redoStack.push({_delAction: true, removed});
   selectedIds.clear();
   updateSelStat(); updateCount();
   redrawDraw();
+  pushHistory(); // Rev.11.41
 }
 document.getElementById('btnDelSel').addEventListener('click', deleteSelected);
 
@@ -6404,7 +6431,7 @@ function alignSelected(mode){
     }
     translateShapeBy(s, dx, dy);
   });
-  redoStack = [];
+  redoStack = []; pushHistory();
   redrawDraw(); updateSelStat();
   const names = { left:'왼쪽', right:'오른쪽', centerH:'수평 가운데', top:'위쪽', bottom:'아래쪽', centerV:'수직 가운데' };
   document.getElementById('statusHint').textContent = `✓ ${names[mode]} 정렬 (${list.length}개)`;
@@ -6525,7 +6552,7 @@ function applySubdivide(){
       stroke, strokeWidth: sw
     });
   }
-  redoStack = [];
+  redoStack = []; pushHistory();
   redrawDraw(); updateCount();
   const cnt = n + 1;
   exitSubdivideMode();
@@ -6562,7 +6589,7 @@ function exitGrabMode(commit){
       if (s && grabBase[id]) restoreShapeFrom(s, grabBase[id]);
     });
   } else {
-    redoStack = [];
+    redoStack = []; pushHistory();
   }
   grabMode = false; grabAxis = null; grabStart = null; grabBase = {};
   drawCanvas.style.cursor = 'default';
@@ -6879,7 +6906,7 @@ document.getElementById('btnConnectSel').addEventListener('click', () => {
     });
   });
   
-  redoStack = [];
+  redoStack = []; pushHistory();
   redrawDraw();
   updateCount();
   
@@ -6933,6 +6960,9 @@ function updateShapePropPanel() {
     const ang = ((-Math.atan2(dy, dx) * 180 / Math.PI) % 360 + 360) % 360;
     document.getElementById('lineLen').value = len.toFixed(2);
     document.getElementById('lineAng').value = ang.toFixed(1);
+    // Rev.11.42: 상대 이동거리 (info 표시와 동일 부호: ΔY는 위쪽 양수)
+    document.getElementById('lineDX').value = dx.toFixed(2);
+    document.getElementById('lineDY').value = (-dy).toFixed(2);
     info.innerHTML = `길이: ${len.toFixed(2)} mm / 각도: ${ang.toFixed(1)}°<br>ΔX: ${dx.toFixed(2)}, ΔY: ${(-dy).toFixed(2)} mm`;
   } else if (s.type === 'rect') {
     title.innerHTML = '▭ 사각형 속성 편집';
@@ -7056,7 +7086,29 @@ function applyLineLenAng() {
   s.p2 = { x: x2/mmPerPixel, y: y2/mmPerPixel };
   document.getElementById('lineX2').value = x2.toFixed(2);
   document.getElementById('lineY2').value = y2.toFixed(2);
+  updateShapePropPanel();
   redrawDraw();
+  redoStack = []; pushHistory(); // Rev.11.42
+}
+
+// Rev.11.42: 선 도구: ΔX/ΔY(상대 이동거리)로 끝점 재계산 (시작점 기준)
+function applyLineDelta() {
+  if (!editingShapeId) return;
+  const s = shapes.find(x => x.id === editingShapeId);
+  if (!s || s.type !== 'line') return;
+  const x1 = parseFloat(document.getElementById('lineX1').value);
+  const y1 = parseFloat(document.getElementById('lineY1').value);
+  const dxMm = parseFloat(document.getElementById('lineDX').value);
+  const dyMm = parseFloat(document.getElementById('lineDY').value); // 위쪽 양수 표시값
+  if ([x1,y1,dxMm,dyMm].some(v=>isNaN(v))) return;
+  // 끝점 = 시작점 + ΔX, 시작점 - ΔY(화면 Y는 아래로 +)
+  const x2 = x1 + dxMm;
+  const y2 = y1 - dyMm;
+  s.p1 = { x: x1/mmPerPixel, y: y1/mmPerPixel };
+  s.p2 = { x: x2/mmPerPixel, y: y2/mmPerPixel };
+  updateShapePropPanel();
+  redrawDraw();
+  redoStack = []; pushHistory(); // Rev.11.42
 }
 
 // 원: 반지름 ↔ 직경 자동 동기화
@@ -7100,6 +7152,15 @@ propAllFields.forEach(id => {
     if (e.key === 'Enter') { e.preventDefault(); applyLineLenAng(); }
   });
   el.addEventListener('change', applyLineLenAng);
+});
+// Rev.11.42: 선 ΔX/ΔY(상대 이동거리) 별도 처리
+['lineDX','lineDY'].forEach(id => {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); applyLineDelta(); }
+  });
+  el.addEventListener('change', applyLineDelta);
 });
 // 원 R/D 동기화
 document.getElementById('circleR').addEventListener('input', () => {
@@ -7491,7 +7552,7 @@ function sabDuplicate() {
   newShapes.forEach(s => shapes.push(s));
   selectedIds.clear();
   newIds.forEach(id => selectedIds.add(id));
-  redoStack = [];
+  redoStack = []; pushHistory();
   redrawDraw();
   updateCount();
   updateSelStat();
@@ -7520,7 +7581,7 @@ function duplicateInPlace() {
   newShapes.forEach(s => shapes.push(s));
   selectedIds.clear();
   newIds.forEach(id => selectedIds.add(id));
-  redoStack = [];
+  redoStack = []; pushHistory();
   // 선택 도구로 전환해서 즉시 드래그 가능하게
   if (tool !== 'select') {
     const selBtn = document.querySelector('.tool-menu-item[data-tool="select"]');
@@ -7568,7 +7629,7 @@ function pasteClipboard(){
   });
   selectedIds.clear();
   newIds.forEach(id => selectedIds.add(id));
-  redoStack = [];
+  redoStack = []; pushHistory();
   // 선택 도구로 전환해 바로 이동/드래그(G) 가능
   if (tool !== 'select'){
     const selBtn = document.querySelector('.tool-menu-item[data-tool="select"]');
@@ -7672,7 +7733,7 @@ function applyMoveDelta(){
     if (s.p2 && base.p2){ s.p2.x = base.p2.x + dxPx; s.p2.y = base.p2.y + dyPx; }
     if (s.cx !== undefined && base.cx !== undefined){ s.cx = base.cx + dxPx; s.cy = base.cy + dyPx; }
   });
-  redoStack = [];
+  redoStack = []; pushHistory();
   redrawDraw();
   updateSelStat();
   if (typeof updateShapePropPanel === 'function') updateShapePropPanel();
@@ -7689,22 +7750,58 @@ function sabOpenProp() {
   }
 }
 
+// ====== Rev.11.41: 스냅샷 기반 Undo/Redo ======
+// 현재 전체 상태를 깊은 복사로 캡처
+function captureState(){
+  return {
+    shapes: JSON.parse(JSON.stringify(shapes)),
+    fills: JSON.parse(JSON.stringify(fills)),
+    rotAxis: rotAxis ? JSON.parse(JSON.stringify(rotAxis)) : null,
+    shapeIdSeq: shapeIdSeq
+  };
+}
+// 스냅샷을 현재 상태로 복원
+function restoreState(st){
+  histLock = true;
+  shapes = JSON.parse(JSON.stringify(st.shapes));
+  fills = JSON.parse(JSON.stringify(st.fills));
+  rotAxis = st.rotAxis ? JSON.parse(JSON.stringify(st.rotAxis)) : null;
+  shapeIdSeq = st.shapeIdSeq;
+  selectedIds.clear();
+  redrawFills(); redrawDraw(); updateCount(); updateSelStat();
+  histLock = false;
+}
+// 변경 직후 호출 → 현재 상태를 히스토리에 추가
+function pushHistory(){
+  if (histLock) return;
+  // 현재 위치 이후(redo 분기)는 버림
+  if (histIdx < history.length - 1) history = history.slice(0, histIdx + 1);
+  history.push(captureState());
+  if (history.length > HIST_MAX) history.shift();
+  histIdx = history.length - 1;
+}
+// 초기 빈 상태 기록
+function initHistory(){
+  history = [captureState()];
+  histIdx = 0;
+}
 function undo() {
-  // 채움이 마지막에 추가된 경우 우선 제거
-  if (fills.length && (!shapes.length || fills[fills.length-1].id > shapes[shapes.length-1].id)) {
-    redoStack.push(fills.pop());
-  } else if (shapes.length) {
-    redoStack.push(shapes.pop());
+  if (histIdx <= 0){
+    document.getElementById('statusHint').textContent = '↶ 더 되돌릴 작업이 없습니다';
+    return;
   }
-  redrawFills(); redrawDraw(); updateCount();
+  histIdx--;
+  restoreState(history[histIdx]);
+  document.getElementById('statusHint').textContent = `↶ 실행 취소 (${histIdx+1}/${history.length})`;
 }
 function redo() {
-  if(!redoStack.length) return;
-  const item = redoStack.pop();
-  if (item._delAction) item.removed.forEach(s => shapes.push(s));
-  else if (item.type === 'fill') fills.push(item);
-  else shapes.push(item);
-  redrawFills(); redrawDraw(); updateCount();
+  if (histIdx >= history.length - 1){
+    document.getElementById('statusHint').textContent = '↷ 다시 실행할 작업이 없습니다';
+    return;
+  }
+  histIdx++;
+  restoreState(history[histIdx]);
+  document.getElementById('statusHint').textContent = `↷ 다시 실행 (${histIdx+1}/${history.length})`;
 }
 document.getElementById('btnUndo').addEventListener('click', undo);
 document.getElementById('btnRedo').addEventListener('click', redo);
@@ -7712,7 +7809,7 @@ document.getElementById('btnRedo').addEventListener('click', redo);
 document.getElementById('btnClearAll').addEventListener('click', () => {
   if (!shapes.length && !fills.length && !rotAxis) return;
   if (!confirm(`도형 ${shapes.length}개 + 채움 ${fills.length}개${rotAxis ? ' + 회전축' : ''}을 모두 지우시겠습니까?`)) return;
-  redoStack = []; shapes = []; fills = []; selectedIds.clear();
+  redoStack = []; shapes = []; fills = []; selectedIds.clear(); pushHistory();
   rotAxis = null;
   redrawFills(); redrawDraw(); updateCount(); updateSelStat();
   if (typeof updateAxisStatus === 'function') updateAxisStatus();
@@ -8098,7 +8195,7 @@ document.getElementById('headerBtnPoint').addEventListener('click', () => {
     const btn = document.querySelector('.tool-menu-item[data-tool="select"]');
     if (btn) btn.click();
     drawCanvas.style.cursor = 'crosshair';
-    document.getElementById('statusHint').textContent = '• 점 찍기 모드: 좌표를 클릭해 점 생성 / 우클릭·Esc=종료';
+    document.getElementById('statusHint').textContent = '• 점 찍기: 좌표를 클릭해 점 1개 생성 (1회성) / 우클릭·Esc=취소';
   } else {
     drawCanvas.style.cursor = 'default';
   }
@@ -8109,6 +8206,7 @@ document.getElementById('headerBtnLine').addEventListener('click', () => {
   exitVertexModes();
   const btn = document.querySelector('.tool-menu-item[data-tool="line"]');
   if (btn) btn.click();
+  updateVertexButtons(); // Rev.11.43: 선 ON 표시
   document.getElementById('statusHint').textContent = '／ 선 그리기: 시작점 클릭 → 끝점 클릭';
 });
 
@@ -8123,7 +8221,7 @@ document.getElementById('headerBtnConnect').addEventListener('click', () => {
     const btn = document.querySelector('.tool-menu-item[data-tool="select"]');
     if (btn) btn.click();
     drawCanvas.style.cursor = 'crosshair';
-    document.getElementById('statusHint').textContent = '🔗 연결: 두 점(점/끝점)을 클릭하면 선 1개 생성 후 종료 / 우클릭·Esc=취소';
+    document.getElementById('statusHint').textContent = '🔗 연결 ON: 두 점(점/끝점)을 클릭해 선 연결 (연속) / 우클릭·Esc=종료';
   } else {
     drawCanvas.style.cursor = 'default';
   }
@@ -8187,6 +8285,15 @@ function updateVertexButtons(){
   const pb = document.getElementById('headerBtnPoint');
   const cb = document.getElementById('headerBtnConnect');
   const eb = document.getElementById('headerBtnExtrude');
+  const lb = document.getElementById('headerBtnLine');
+  // Rev.11.43: 선 도구 활성 시 ON 표시 유지
+  if (lb){
+    const on = (tool === 'line') && !pointMode && !connectMode && !extrudeMode;
+    lb.style.background = on ? '#2ecc71' : '#27ae60';
+    lb.style.boxShadow = on ? '0 0 10px #2ecc71' : 'none';
+    lb.style.border = on ? '2px solid #fff' : 'none';
+    lb.textContent = on ? '● 선 ON' : '／ 선';
+  }
   // 활성 시: 밝은 배경 + 흰 테두리 + 글로우 + 라벨에 ● ON
   if (pb){
     pb.style.background = pointMode ? '#1de9b6' : '#16a085';
@@ -8216,7 +8323,7 @@ function exitConnectMode(){ connectMode = false; connectPoints = []; updateVerte
 function exitVertexModes(){
   if (pointMode || connectMode || extrudeMode){
     pointMode = false; connectMode = false; connectPoints = [];
-    extrudeMode = false; extrudeState = null; extrudeAxis = null;
+    extrudeMode = false; extrudeState = null; extrudeAxis = null; extrudeDragging = false;
     updateVertexButtons();
     preCtx.clearRect(0,0,baseW,baseH);
     drawCanvas.style.cursor = 'default';
@@ -8263,8 +8370,8 @@ function startExtrude(){
   drawCanvas.style.cursor = 'crosshair';
   document.getElementById('statusHint').textContent =
     (target.type === 'point')
-      ? '⬄ 점 연장 중: 마우스로 선 생성 · X/Y=축제한 / 클릭=확정 / Shift=직교 / Esc=취소'
-      : '⬄ 선 연장 중: 마우스로 면 생성 · X/Y=축제한 / 클릭=확정 / Shift=직교 / Esc=취소';
+      ? '⬄ 점 연장: 드래그해서 선 생성 · X/Y=축제한 / 놓으면 확정 / Shift=직교 / Esc=취소'
+      : '⬄ 선 연장: 끝선/선을 드래그해서 면 생성 · X/Y=축제한 / 놓으면 확정 / Shift=직교 / Esc=취소';
 }
 
 // Rev.11.20: 마우스 위치 → 돌출 오프셋 벡터 계산
@@ -8372,7 +8479,7 @@ function commitExtrude(off){
     removeSrc();
     const newLn = { id: ++shapeIdSeq, type: 'line', p1: {...a}, p2: {...a2}, stroke, strokeWidth: sw };
     shapes.push(newLn);
-    redoStack = [];
+    redoStack = []; pushHistory();
     redrawFills(); redrawDraw(); updateCount();
     document.getElementById('statusHint').textContent =
       `✓ 점 연장 완료: ${(off.dist*mmPerPixel).toFixed(2)}mm 선 생성`;
@@ -8400,7 +8507,7 @@ function commitExtrude(off){
     color: fillColor, alpha, pattern,
     layer: (typeof currentLayer !== 'undefined' ? currentLayer : 'default') || 'default'
   });
-  redoStack = [];
+  redoStack = []; pushHistory();
   redrawFills(); redrawDraw(); updateCount();
   document.getElementById('statusHint').textContent =
     `✓ 선 연장 완료: ${(off.dist*mmPerPixel).toFixed(2)}mm 면 생성`;
@@ -9158,6 +9265,8 @@ document.querySelectorAll('.tool-menu-item').forEach(btn => {
 
 // 초기 포커스
 setTimeout(() => cmdInput.focus(), 200);
+// Rev.11.41: 초기 빈 상태를 히스토리에 기록 (undo 기준점)
+initHistory();
 
 // Rev.11.35: 모든 헤더 버튼(.hbtn) 클릭 시 잠깐 눌린 피드백(흰테두리+밝게+줌아웃)
 document.querySelectorAll('header button.hbtn').forEach(btn => {
@@ -9367,7 +9476,7 @@ function handleCopyClick(p) {
       return c;
     });
     newShapes.forEach(s => shapes.push(s));
-    redoStack = [];
+    redoStack = []; pushHistory();
     redrawDraw(); updateCount();
     const dxMm = (dx * mmPerPixel).toFixed(1);
     const dyMm = (dy * mmPerPixel).toFixed(1);
@@ -9397,7 +9506,7 @@ function handleMoveClick(p) {
     moveState.sourceShapes.forEach(s => {
       transformShape(s, (x, y) => ({x: x+dx, y: y+dy}));
     });
-    redoStack = [];
+    redoStack = []; pushHistory();
     redrawDraw(); updateCount();
     cmdLog(`  MOVE: 완료.`, 'system');
     moveState = null;
@@ -9429,7 +9538,7 @@ function handleRotateClick(p) {
     rotateState.sourceShapes.forEach(s => {
       rotateShape(s, rotateState.basePt.x, rotateState.basePt.y, angRad);
     });
-    redoStack = [];
+    redoStack = []; pushHistory();
     redrawDraw(); updateCount();
     cmdLog(`  ROTATE: ${angDeg}° 회전 완료.`, 'system');
     rotateState = null;
@@ -9471,7 +9580,7 @@ function handleMirrorClick(p) {
       });
     }
     
-    redoStack = [];
+    redoStack = []; pushHistory();
     redrawDraw(); updateCount();
     cmdLog(`  MIRROR: 완료.`, 'system');
     mirrorState = null;
@@ -9500,7 +9609,7 @@ function handleScaleClick(p) {
     scaleState.sourceShapes.forEach(s => {
       scaleShape(s, scaleState.basePt.x, scaleState.basePt.y, f);
     });
-    redoStack = [];
+    redoStack = []; pushHistory();
     redrawDraw(); updateCount();
     cmdLog(`  SCALE: ${f}배 완료.`, 'system');
     scaleState = null;
@@ -9554,7 +9663,7 @@ function handleArrayCommand() {
     cmdLog('  잘못된 배열 종류.', 'error');
   }
   
-  redoStack = [];
+  redoStack = []; pushHistory();
   redrawDraw(); updateCount();
   selectedIds.clear();
   updateSelStat();
@@ -9571,7 +9680,7 @@ function handleArrayClick(p) {
       shapes.push(cs);
     });
   }
-  redoStack = [];
+  redoStack = []; pushHistory();
   redrawDraw(); updateCount();
   cmdLog(`  ARRAY-P: ${arrayState.n}개 원형 배열 완료.`, 'system');
   arrayState = null;
@@ -9615,7 +9724,7 @@ function finishPolyline(closed) {
     stroke, strokeWidth,
     layer
   });
-  redoStack = [];
+  redoStack = []; pushHistory();
   redrawDraw(); updateCount();
   cmdLog(`  POLYLINE: ${polylineState.points.length}개 점 (${closed ? '닫힘' : '열림'}) 완료.`, 'system');
   polylineState = null;
@@ -9682,7 +9791,7 @@ function handlePolygonClick(p) {
       points: pts, closed: true,
       stroke, strokeWidth, layer
     });
-    redoStack = [];
+    redoStack = []; pushHistory();
     redrawDraw(); updateCount();
     const rMm = (r * mmPerPixel).toFixed(1);
     cmdLog(`  POLYGON: 정${n}각형 (R=${rMm}mm) 완료.`, 'system');
@@ -9716,7 +9825,7 @@ function handleEllipseClick(p) {
       cx, cy, rx, ry, rotation,
       stroke, strokeWidth, layer
     });
-    redoStack = [];
+    redoStack = []; pushHistory();
     redrawDraw(); updateCount();
     cmdLog(`  ELLIPSE: rx=${(rx*mmPerPixel).toFixed(1)}mm, ry=${(ry*mmPerPixel).toFixed(1)}mm 완료.`, 'system');
     ellipseState = null;
@@ -9754,7 +9863,7 @@ function handleTextClick(p) {
       sizePx: sizePx,
       stroke, layer
     });
-    redoStack = [];
+    redoStack = []; pushHistory();
     redrawDraw(); updateCount();
     cmdLog(`  TEXT: "${text}" 입력 완료.`, 'system');
     textState = null;
