@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>tool3 v4.8 - 2D import 0.01mm 솔리드 + Z축 회전(우측면 정렬)</title>
+<title>tool3 v4.9.1 - SVG Revolver 내장 파서 (외부 라이브러리 불필요)</title>
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
@@ -190,8 +190,8 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
 <body>
 
 <header>
-  <h1>📐 tool3 v4.8</h1>
-  <span class="ver">v4.8 - 2D import=0.01mm 솔리드, 회전축 Z축 추가(우측면+X 정렬)</span>
+  <h1>📐 tool3 v4.9.1</h1>
+  <span class="ver">v4.9.1 - SVG Revolver 내장 파서로 변경 (로딩 문제 해결)</span>
   <span class="mode-badge" id="modeBadge">스케처 모드</span>
   <span class="stat" id="statText">준비됨</span>
 </header>
@@ -251,6 +251,7 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
     <div class="menu-dropdown">
       <div class="menu-item" onclick="openExtrudeModal()"><span class="ico">⬆️</span>돌출 (Extrude)</div>
       <div class="menu-item" onclick="openRevolveModal()"><span class="ico">🔄</span>회전체 (Revolve)</div>
+      <div class="menu-item" onclick="openSvgRevolverModal()"><span class="ico">🌀</span>SVG Revolver</div>
     </div>
   </div>
   <div class="menu">
@@ -320,6 +321,7 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
   <div class="group">
     <button class="purple" onclick="openExtrudeModal()" title="돌출 (Extrude)">⬆️ 돌출</button>
     <button class="purple" onclick="openRevolveModal()" title="회전체 (Revolve)">🔄 회전체</button>
+    <button class="purple" onclick="openSvgRevolverModal()" title="SVG Revolver - SVG 단면으로 회전체 생성">🌀 SVG</button>
     <button onclick="toggleFloorSketch()" title="바닥 스케치 표시/숨김">👁️ 바닥</button>
   </div>
 
@@ -605,6 +607,62 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
     <div class="modal-actions">
       <button onclick="closeModal('revolveModal')">취소</button>
       <button class="success" onclick="doRevolve()">생성</button>
+    </div>
+  </div>
+</div>
+
+<!-- v4.9: SVG Revolver (Tinkercad SVG Revolver 스타일) -->
+<div class="modal-overlay" id="svgRevolverModal">
+  <div class="modal">
+    <h3>🌀 SVG Revolver</h3>
+    <div class="modal-row">
+      <label>모드</label>
+      <select id="svgRevMode">
+        <option value="solid">솔리드</option>
+        <option value="hole">구멍 (빼기용)</option>
+      </select>
+    </div>
+    <div class="modal-row">
+      <label title="SVG 단면을 mm로 환산할 기준 높이. SVG 세로 크기를 이 값에 맞춤">스케치 높이(mm)</label>
+      <input type="number" id="svgRevHeight" value="5" min="0.1" step="0.1">
+    </div>
+    <div class="modal-row">
+      <label title="회전축에서 단면까지의 최소 거리(내부 반지름). 0보다 크면 가운데 구멍이 생김">내부 지름(mm)</label>
+      <input type="number" id="svgRevInnerD" value="1" min="0" step="0.1">
+    </div>
+    <div class="modal-row">
+      <label>면 수</label>
+      <input type="number" id="svgRevSeg" value="24" min="3" max="256" step="1">
+    </div>
+    <div class="modal-row">
+      <label title="단면 자체를 회전축 둘레에서 시작 각도만큼 미리 돌림(도)">스케치 회전(°)</label>
+      <input type="number" id="svgRevStartAngle" value="0" step="1">
+    </div>
+    <div class="modal-row">
+      <label>회전 각도(°)</label>
+      <input type="number" id="svgRevAngle" value="90" min="1" max="360" step="1">
+    </div>
+    <div class="modal-row">
+      <label>색상</label>
+      <input type="color" id="svgRevColor" value="#5ec8d4">
+    </div>
+    <div class="modal-row">
+      <label>부품명</label>
+      <input type="text" id="svgRevPartName" placeholder="자동 생성">
+    </div>
+    <div class="modal-row">
+      <label>SVG 파일</label>
+      <input type="file" id="svgRevFile" accept=".svg,image/svg+xml" onchange="onSvgRevFile(event)">
+    </div>
+    <div class="info-box" id="svgRevInfo">
+      📄 2D .svg 도형을 업로드하면 좌측 윤곽을 단면으로 삼아 회전체를 만듭니다.<br>
+      <b>스케치 높이</b>: SVG 세로 크기를 이 mm로 환산<br>
+      <b>내부 지름</b>: 가운데 빈 구멍 반지름<br>
+      <b>회전 각도</b>: 90=부채꼴, 360=완전한 회전체
+    </div>
+    <div class="modal-actions">
+      <button onclick="closeModal('svgRevolverModal')">취소</button>
+      <button class="success" onclick="doSvgRevolve()">생성</button>
     </div>
   </div>
 </div>
@@ -1418,6 +1476,7 @@ function deserializePart(pdata){
   let part = null;
   if(pdata.type === 'extrude') part = rebuildExtrude(pdata);
   else if(pdata.type === 'revolve') part = rebuildRevolve(pdata);
+  else if(pdata.type === 'svgrevolve') part = rebuildSvgRevolve(pdata);
   else if(pdata.type && pdata.type.startsWith('primitive_')) part = rebuildPrimitive(pdata);
   else if(pdata.type === 'bolt') part = rebuildBolt(pdata);
   else if(pdata.type === 'nut') part = rebuildNut(pdata);
@@ -2935,6 +2994,206 @@ function doRevolve(){
     pushHistory(); // v4.6
     toast('✅ 회전체 완료: ' + name + (axisOffset !== 0 ? ' (축거리 '+axisOffset+'mm)' : ''));
   }
+}
+
+// ===== v4.9: SVG Revolver (Tinkercad SVG Revolver 스타일) =====
+let _svgRevData = null; // 파싱된 SVG 단면 폴리라인 보관
+
+function openSvgRevolverModal(){
+  document.getElementById('svgRevPartName').value = 'SVG회전체_' + state.partIdCounter;
+  document.getElementById('svgRevolverModal').classList.add('show');
+}
+
+// SVG 파일 선택 시 파싱
+function onSvgRevFile(e){
+  const file = e.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    try {
+      _svgRevData = parseSvgToOutline(ev.target.result);
+      if(!_svgRevData || _svgRevData.length === 0){
+        document.getElementById('svgRevInfo').innerHTML = '❌ SVG에서 윤곽을 찾지 못했습니다. (path/polygon 포함 SVG 필요)';
+        _svgRevData = null;
+        return;
+      }
+      const ptCount = _svgRevData.reduce((a,c)=>a+c.length,0);
+      document.getElementById('svgRevInfo').innerHTML =
+        '✅ SVG 파싱 완료: 윤곽 ' + _svgRevData.length + '개, 점 ' + ptCount + '개<br>[생성] 버튼을 누르세요.';
+    } catch(err){
+      document.getElementById('svgRevInfo').innerHTML = '❌ SVG 파싱 오류: ' + err.message;
+      _svgRevData = null;
+    }
+  };
+  reader.readAsText(file);
+}
+
+// v4.9.1: SVG 문자열 → 윤곽 폴리라인 배열 [[{x,y},...], ...]
+//   외부 SVGLoader 없이 브라우저 내장 SVG DOM 사용
+//   getTotalLength/getPointAtLength로 곡선(베지어/호)까지 균일 샘플링
+//   Y는 위가 +가 되도록 반전
+function parseSvgToOutline(svgText){
+  const doc = new DOMParser().parseFromString(svgText, 'image/svg+xml');
+  const perr = doc.querySelector('parsererror');
+  if(perr) throw new Error('SVG 형식 오류');
+  let svg = doc.querySelector('svg');
+  if(!svg) throw new Error('<svg> 요소 없음');
+
+  // 길이 측정을 위해 화면 밖에 임시 삽입 (getTotalLength는 렌더 트리 필요)
+  svg = document.importNode(svg, true);
+  const holder = document.createElement('div');
+  holder.style.cssText = 'position:absolute;left:-99999px;top:-99999px;width:0;height:0;overflow:hidden';
+  holder.appendChild(svg);
+  document.body.appendChild(holder);
+
+  const outlines = [];
+  const SAMPLES = 128; // 윤곽당 샘플 점 수
+  try {
+    const els = svg.querySelectorAll('path, polygon, polyline, line, rect, circle, ellipse');
+    els.forEach(el => {
+      let pts = null;
+      // 1순위: 브라우저 내장 길이 샘플링 (곡선/호 정확)
+      try {
+        const total = el.getTotalLength ? el.getTotalLength() : 0;
+        if(total > 0){
+          pts = [];
+          for(let i=0; i<=SAMPLES; i++){
+            const p = el.getPointAtLength(total * i / SAMPLES);
+            pts.push({x: p.x, y: -p.y});
+          }
+        }
+      } catch(_){ pts = null; }
+      // 2순위: 폴백 - 좌표 직접 추출 (직선 도형, getTotalLength 미지원 환경)
+      if(!pts || pts.length < 2){
+        pts = svgElementToPointsFallback(el);
+      }
+      if(pts && pts.length >= 2) outlines.push(pts);
+    });
+  } finally {
+    document.body.removeChild(holder);
+  }
+  return outlines;
+}
+
+// v4.9.1: getTotalLength 미지원 시 좌표 직접 추출 (직선 위주)
+function svgElementToPointsFallback(el){
+  const tag = el.tagName.toLowerCase();
+  const pts = [];
+  const push = (x,y) => pts.push({x: parseFloat(x), y: -parseFloat(y)});
+  if(tag === 'polygon' || tag === 'polyline'){
+    const raw = (el.getAttribute('points')||'').trim().split(/[\s,]+/).map(Number);
+    for(let i=0; i+1<raw.length; i+=2) push(raw[i], raw[i+1]);
+  } else if(tag === 'line'){
+    push(el.getAttribute('x1'), el.getAttribute('y1'));
+    push(el.getAttribute('x2'), el.getAttribute('y2'));
+  } else if(tag === 'rect'){
+    const x=+el.getAttribute('x')||0, y=+el.getAttribute('y')||0;
+    const w=+el.getAttribute('width')||0, h=+el.getAttribute('height')||0;
+    push(x,y); push(x+w,y); push(x+w,y+h); push(x,y+h); push(x,y);
+  } else if(tag === 'circle' || tag === 'ellipse'){
+    const cx=+el.getAttribute('cx')||0, cy=+el.getAttribute('cy')||0;
+    const rx = tag==='circle' ? (+el.getAttribute('r')||0) : (+el.getAttribute('rx')||0);
+    const ry = tag==='circle' ? (+el.getAttribute('r')||0) : (+el.getAttribute('ry')||0);
+    for(let i=0;i<=64;i++){ const t=i/64*Math.PI*2; push(cx+rx*Math.cos(t), cy+ry*Math.sin(t)); }
+  } else if(tag === 'path'){
+    // 직선 명령(M/L/H/V/Z)만 파싱하는 간이 파서
+    const d = el.getAttribute('d')||'';
+    const tokens = d.match(/[a-zA-Z]|-?\d*\.?\d+(?:e-?\d+)?/g) || [];
+    let i=0, cx=0, cy=0, sx=0, sy=0, cmd='';
+    const num = () => parseFloat(tokens[i++]);
+    while(i < tokens.length){
+      const t = tokens[i];
+      if(/[a-zA-Z]/.test(t)){ cmd = t; i++; }
+      const abs = cmd === cmd.toUpperCase();
+      switch(cmd.toUpperCase()){
+        case 'M': { let x=num(),y=num(); cx=abs?x:cx+x; cy=abs?y:cy+y; sx=cx; sy=cy; push(cx,cy); cmd = abs?'L':'l'; break; }
+        case 'L': { let x=num(),y=num(); cx=abs?x:cx+x; cy=abs?y:cy+y; push(cx,cy); break; }
+        case 'H': { let x=num(); cx=abs?x:cx+x; push(cx,cy); break; }
+        case 'V': { let y=num(); cy=abs?y:cy+y; push(cx,cy); break; }
+        case 'Z': { push(sx,sy); break; }
+        default: { i++; } // 곡선 명령 등은 토큰 건너뛰기 (정확도는 떨어지나 깨지지 않음)
+      }
+    }
+  }
+  return pts;
+}
+
+function doSvgRevolve(){
+  if(!_svgRevData){toast('먼저 SVG 파일을 선택하세요'); return}
+  const mode = document.getElementById('svgRevMode').value;
+  const sketchHeight = parseFloat(document.getElementById('svgRevHeight').value) || 5;
+  const innerD = parseFloat(document.getElementById('svgRevInnerD').value) || 0;
+  const seg = parseInt(document.getElementById('svgRevSeg').value) || 24;
+  const startAngleDeg = parseFloat(document.getElementById('svgRevStartAngle').value) || 0;
+  const angleDeg = parseFloat(document.getElementById('svgRevAngle').value) || 360;
+  const color = document.getElementById('svgRevColor').value;
+  let name = document.getElementById('svgRevPartName').value.trim();
+  if(!name) name = 'SVG회전체_' + state.partIdCounter;
+
+  // 전체 윤곽의 바운딩박스 → 스케치 높이로 스케일
+  let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
+  _svgRevData.forEach(poly => poly.forEach(p => {
+    if(p.x<minX)minX=p.x; if(p.x>maxX)maxX=p.x;
+    if(p.y<minY)minY=p.y; if(p.y>maxY)maxY=p.y;
+  }));
+  const svgH = Math.max(1e-6, maxY - minY);
+  const scale = sketchHeight / svgH; // SVG 세로 → sketchHeight mm
+  const innerR = innerD / 2;
+
+  // 가장 점이 많은(주) 윤곽을 단면으로 사용
+  let main = _svgRevData[0];
+  _svgRevData.forEach(poly => { if(poly.length > main.length) main = poly; });
+
+  // 좌측(minX)을 축 기준으로 → 반경 = (x - minX)*scale + innerR, 높이 = (y - minY)*scale
+  const lathePts = main.map(p => new THREE.Vector2(
+    Math.max(0, (p.x - minX) * scale + innerR),
+    (p.y - minY) * scale
+  ));
+  // y 기준 정렬(LatheGeometry는 단조 증가 권장)
+  lathePts.sort((a,b)=>a.y - b.y);
+
+  if(lathePts.length < 2){toast('단면 점이 부족합니다'); return}
+
+  const angleRad = angleDeg * Math.PI / 180;
+  const startRad = startAngleDeg * Math.PI / 180;
+  const geom = new THREE.LatheGeometry(lathePts, seg, startRad, angleRad);
+  const mat = makeMaterial(color, mode === 'hole' ? 0.4 : 1);
+  const mesh = new THREE.Mesh(geom, mat);
+
+  const part = {
+    id: state.partIdCounter++, name: name, type: 'svgrevolve',
+    color: color, opacity: (mode === 'hole' ? 0.4 : 1), visible: true,
+    mesh: mesh, _isHole: (mode === 'hole'),
+    params: {
+      mode, sketchHeight, innerD, seg, startAngleDeg, angleDeg,
+      // 복원용: 변환 완료된 lathe 좌표(반경,높이) 저장
+      lathe: lathePts.map(v => ({x: v.x, y: v.y}))
+    }
+  };
+  state.parts.push(part);
+  addPartToScene(part);
+  renderPartsList();
+  updateInfo();
+  closeModal('svgRevolverModal');
+  switchMode('model');
+  fitView();
+  pushHistory(); // v4.6
+  toast('✅ SVG Revolver 완료: ' + name + ' (' + angleDeg + '°, ' + seg + '면)');
+}
+
+// 저장/불러오기/undo 복원용
+function rebuildSvgRevolve(pdata){
+  const p = pdata.params || {};
+  const lathe = p.lathe || [];
+  if(lathe.length < 2) return null;
+  const lathePts = lathe.map(o => new THREE.Vector2(o.x, o.y));
+  const angleRad = (p.angleDeg || 360) * Math.PI / 180;
+  const startRad = (p.startAngleDeg || 0) * Math.PI / 180;
+  const geom = new THREE.LatheGeometry(lathePts, p.seg || 24, startRad, angleRad);
+  const mat = makeMaterial(pdata.color, pdata.opacity);
+  const mesh = new THREE.Mesh(geom, mat);
+  mesh.visible = pdata.visible;
+  return {...pdata, mesh};
 }
 
 function addPrimitive(kind){
@@ -5369,7 +5628,7 @@ function init(){
   renderPartsList();
   updateInfo();
   redrawSketch();
-  setStat('tool3 v4.8 준비됨');
+  setStat('tool3 v4.9.1 준비됨');
   // v2.2: 항상 3D 모드로 시작 (draw_tool import도 3D 바닥에 표시)
   switchMode('model');
   try {
