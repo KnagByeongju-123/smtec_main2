@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>tool3 v4.7 - 2D 도형 픽셀→mm 변환 (1mm=45px)</title>
+<title>tool3 v4.8 - 2D import 0.01mm 솔리드 + Z축 회전(우측면 정렬)</title>
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
@@ -190,8 +190,8 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
 <body>
 
 <header>
-  <h1>📐 tool3 v4.7</h1>
-  <span class="ver">v4.7 - draw_tool 도형 픽셀→mm 자동 변환 (1mm=45px)</span>
+  <h1>📐 tool3 v4.8</h1>
+  <span class="ver">v4.8 - 2D import=0.01mm 솔리드, 회전축 Z축 추가(우측면+X 정렬)</span>
   <span class="mode-badge" id="modeBadge">스케처 모드</span>
   <span class="stat" id="statText">준비됨</span>
 </header>
@@ -565,6 +565,7 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
       <select id="revolveAxis">
         <option value="y">Y축 (세로)</option>
         <option value="x">X축 (가로)</option>
+        <option value="z">Z축 (우측면 정렬)</option>
       </select>
     </div>
     <div class="modal-row">
@@ -2743,6 +2744,45 @@ function doExtrude(){
   toast('✅ 돌출 완료: ' + name);
 }
 
+// v4.8: 2D import 도형을 0.01mm 두께의 얇은 솔리드(박스) 부품으로 변환
+//   - 단면 형상은 그대로 두고 Z방향으로 0.01mm 두께만 부여
+//   - 위치는 import 좌표(원점 정렬됨) 유지 → 회전체 단면으로 바로 사용 가능
+function makeThinSolidsFromShapes(shapes, thickness){
+  const TH = (thickness && thickness > 0) ? thickness : 0.01;
+  const color = '#00d4ff';
+  const meshes = [];
+  const lineShapes = [];
+  shapes.forEach(s => {
+    if(s.type === 'line'){ lineShapes.push(s); return; }
+    const shape = shapeToThreeShape(s);
+    if(!shape) return;
+    const geom = new THREE.ExtrudeGeometry(shape, {depth: TH, bevelEnabled: false, curveSegments: 24});
+    geom.translate(0, 0, -TH/2); // 두께 중심을 Z=0에 맞춤
+    meshes.push(new THREE.Mesh(geom, makeMaterial(color, 1)));
+  });
+  // 흩어진 선들을 닫힌 경로로 묶어 면으로
+  if(lineShapes.length >= 3){
+    const closed = linesToClosedShape(lineShapes);
+    if(closed){
+      const geom = new THREE.ExtrudeGeometry(closed, {depth: TH, bevelEnabled: false, curveSegments: 24});
+      geom.translate(0, 0, -TH/2);
+      meshes.push(new THREE.Mesh(geom, makeMaterial(color, 1)));
+    }
+  }
+  if(meshes.length === 0) return null;
+  const group = new THREE.Group();
+  meshes.forEach(m => group.add(m));
+  const part = {
+    id: state.partIdCounter++, name: '소재단면_' + state.partIdCounter,
+    type: 'extrude', color: color, opacity: 1, visible: true,
+    mesh: group, sourceShapes: JSON.parse(JSON.stringify(shapes)),
+    params: {height: TH, dir: 'both'}
+  };
+  state.parts.push(part);
+  addPartToScene(part);
+  return part;
+}
+
 function openRevolveModal(){
   if(state.shapes.length === 0){toast('회전 단면 스케치가 없습니다'); return}
   document.getElementById('revolvePartName').value = '회전체_' + state.partIdCounter;
@@ -2796,7 +2836,17 @@ function doRevolve(){
   // X축 회전: y좌표가 회전 반경. (코드에서는 변환 시 swap)
   // Rev.1.2: 축 거리(offset)는 "축~단면 사이 최소 거리"로 해석
   let lathePts;
-  if(axis === 'y'){
+  if(axis === 'z'){
+    // v4.8: Z축 회전 - 단면 우측면(+X, maxX)을 회전축에 맞닿게 정렬
+    //   반경 = maxX - p.x  (우측 끝 = 반경0, 왼쪽일수록 반경 증가)
+    //   높이축(lathe의 y) = 단면의 y좌표
+    const xs = points.map(p=>p.x);
+    const maxX = Math.max(...xs);
+    lathePts = points.map(p => {
+      const r = (maxX - p.x) + axisOffset; // 우측면 기준 + 축거리
+      return new THREE.Vector2(Math.max(0, r), p.y);
+    });
+  } else if(axis === 'y'){
     // x좌표 범위
     const xs = points.map(p=>p.x);
     const minX = Math.min(...xs), maxX = Math.max(...xs);
@@ -2863,6 +2913,7 @@ function doRevolve(){
   const mat = makeMaterial(color, 1);
   const mesh = new THREE.Mesh(geom, mat);
   if(axis === 'x') mesh.rotation.z = -Math.PI / 2;
+  else if(axis === 'z') mesh.rotation.x = -Math.PI / 2; // v4.8: Lathe(Y축)를 Z축 방향으로 눕힘
   
   const part = {
     id: state.partIdCounter++, name: name, type: 'revolve',
@@ -4660,7 +4711,12 @@ function rebuildRevolve(pdata){
   const axisOffset = pdata.params.axisOffset || 0;
   const axisMode = pdata.params.axisMode || 'auto';
   let lathePts;
-  if(pdata.params.axis === 'y'){
+  if(pdata.params.axis === 'z'){
+    // v4.8: Z축 회전 - 우측면(maxX) 기준
+    const xs = points.map(p=>p.x);
+    const maxX = Math.max(...xs);
+    lathePts = points.map(p => new THREE.Vector2(Math.max(0, (maxX - p.x) + axisOffset), p.y));
+  } else if(pdata.params.axis === 'y'){
     const xs = points.map(p=>p.x);
     const minX = Math.min(...xs), maxX = Math.max(...xs);
     let baseShift = 0;
@@ -4695,6 +4751,7 @@ function rebuildRevolve(pdata){
   const mat = makeMaterial(pdata.color, pdata.opacity);
   const mesh = new THREE.Mesh(geom, mat);
   if(pdata.params.axis === 'x') mesh.rotation.z = -Math.PI / 2;
+  else if(pdata.params.axis === 'z') mesh.rotation.x = -Math.PI / 2; // v4.8
   mesh.visible = pdata.visible;
   return {...pdata, mesh};
 }
@@ -5312,7 +5369,7 @@ function init(){
   renderPartsList();
   updateInfo();
   redrawSketch();
-  setStat('tool3 v4.7 준비됨');
+  setStat('tool3 v4.8 준비됨');
   // v2.2: 항상 3D 모드로 시작 (draw_tool import도 3D 바닥에 표시)
   switchMode('model');
   try {
@@ -5415,19 +5472,26 @@ function importFromDrawTool(){
   // v2.8: draw_tool에서 가져온 2D 도형을 XY 평면(Z=0)에 세로로 세움
   //        바닥이 Y=0에 닿고 X 중심이 0 (정면도에서 자연스럽게 보임)
   switchMode('model');
-  drawShapesOnFloor();
+  // v4.8: 미리보기 대신 0.01mm 두께의 얇은 솔리드 부품으로 변환
+  const thin = makeThinSolidsFromShapes(incoming, 0.01);
   // 정면도로 보면 도면이 평면 그대로 보임
   setView('front');
   fitView(true);  // 시점 유지하고 거리만 조정
 
+  renderPartsList();
   redrawSketch();
   updateInfo();
 
   // 한 번 import 후 localStorage 제거 (재진입 시 중복 방지)
   try { localStorage.removeItem('c3d_import_from_draw_tool'); } catch(e){}
 
-  toast('📥 draw_tool에서 ' + incoming.length + '개 도형 가져옴 (Z=0 평면에 세로 정렬)');
-  setStat('✅ 도면 ' + incoming.length + '개 표시 (XY 평면, 바닥=Y0) → [⬆️ 돌출] 또는 [🔄 회전체]');
+  if(thin){
+    toast('📥 draw_tool 도형 ' + incoming.length + '개 → 0.01mm 두께 솔리드 생성');
+    setStat('✅ 0.01mm 단면 솔리드 생성됨 → [🔄 회전체]로 회전 가능');
+  } else {
+    toast('📥 draw_tool 도형 ' + incoming.length + '개 가져옴 (닫힌 단면 없음)');
+    setStat('⚠️ 솔리드 변환 실패: 닫힌 도형(사각/원/닫힌 선)이 필요합니다');
+  }
 }
 
 /* 가져온 도형 전체가 화면에 들어오도록 자동 fit */
