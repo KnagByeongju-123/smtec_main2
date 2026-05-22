@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>tool3 v4.5 - 회전 링 크기 축소 (객체 가림 해소)</title>
+<title>tool3 v4.6 - 기본도형 Ctrl+Z 되돌리기 지원</title>
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
@@ -190,8 +190,8 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
 <body>
 
 <header>
-  <h1>📐 tool3 v4.5</h1>
-  <span class="ver">v4.5 - 회전 링 크기 축소로 객체 가림 해소</span>
+  <h1>📐 tool3 v4.6</h1>
+  <span class="ver">v4.6 - 3D 부품 추가/이동/회전/크기/삭제 Ctrl+Z 지원</span>
   <span class="mode-badge" id="modeBadge">스케처 모드</span>
   <span class="stat" id="statText">준비됨</span>
 </header>
@@ -1396,31 +1396,99 @@ function clearSketch(){
   toast('스케치 삭제됨');
 }
 
+// v4.6: 부품 1개를 저장 가능한 평형 데이터로 직렬화 (mesh의 현재 위치/회전/크기 포함)
+function serializePart(p){
+  const t = p.mesh ? {
+    pos: [p.mesh.position.x, p.mesh.position.y, p.mesh.position.z],
+    rot: [p.mesh.rotation.x, p.mesh.rotation.y, p.mesh.rotation.z],
+    scl: [p.mesh.scale.x, p.mesh.scale.y, p.mesh.scale.z]
+  } : null;
+  return {
+    id: p.id, name: p.name, type: p.type,
+    color: p.color, opacity: p.opacity, visible: p.visible,
+    sourceShapes: p.sourceShapes ? JSON.parse(JSON.stringify(p.sourceShapes)) : undefined,
+    params: p.params ? JSON.parse(JSON.stringify(p.params)) : {},
+    _xform: t
+  };
+}
+
+// v4.6: 직렬화 데이터 → 부품 객체로 복원 (타입별 rebuildXXX 재사용)
+function deserializePart(pdata){
+  let part = null;
+  if(pdata.type === 'extrude') part = rebuildExtrude(pdata);
+  else if(pdata.type === 'revolve') part = rebuildRevolve(pdata);
+  else if(pdata.type && pdata.type.startsWith('primitive_')) part = rebuildPrimitive(pdata);
+  else if(pdata.type === 'bolt') part = rebuildBolt(pdata);
+  else if(pdata.type === 'nut') part = rebuildNut(pdata);
+  else if(pdata.type === 'spring') part = rebuildSpring(pdata);
+  else if(pdata.type === 'text3d') part = rebuildText3D(pdata);
+  if(part && part.mesh && pdata._xform){
+    const t = pdata._xform;
+    part.mesh.position.set(t.pos[0], t.pos[1], t.pos[2]);
+    part.mesh.rotation.set(t.rot[0], t.rot[1], t.rot[2]);
+    part.mesh.scale.set(t.scl[0], t.scl[1], t.scl[2]);
+  }
+  return part;
+}
+
+// v4.6: 스냅샷 = 2D 스케치 + 3D 부품 전체 상태
+function snapshotState(){
+  return {
+    shapes: JSON.parse(JSON.stringify(state.shapes)),
+    parts: state.parts.map(serializePart),
+    partIdCounter: state.partIdCounter
+  };
+}
+
 function pushHistory(){
   state.history = state.history.slice(0, state.historyIdx + 1);
-  state.history.push({shapes: JSON.parse(JSON.stringify(state.shapes))});
+  state.history.push(snapshotState());
   if(state.history.length > 50) state.history.shift();
   state.historyIdx = state.history.length - 1;
+}
+
+// v4.6: 스냅샷 1개를 화면에 그대로 복원 (스케치 + 3D 부품)
+function restoreSnapshot(snap){
+  // 기존 부품 메쉬 제거
+  state.parts.forEach(p => removePartFromScene(p));
+  state.parts = [];
+  // 스케치 복원
+  state.shapes = JSON.parse(JSON.stringify(snap.shapes || []));
+  if(snap.partIdCounter !== undefined) state.partIdCounter = snap.partIdCounter;
+  // 3D 부품 복원
+  (snap.parts || []).forEach(pdata => {
+    const part = deserializePart(pdata);
+    if(part && part.mesh){
+      state.parts.push(part);
+      addPartToScene(part);
+    }
+  });
+  // 선택 상태 초기화
+  state.selectedShapes.clear();
+  state.selectedPartId = null;
+  state.parts.forEach(p => p._selected = false);
+  hideTransformHandles();
+  const _spp = document.getElementById('selectedPartProp');
+  if(_spp) _spp.style.display = 'none';
+  const _zrp = document.getElementById('zRevolvePanel');
+  if(_zrp) _zrp.style.display = 'none';
+  renderPartsList();
+  redrawSketch();
+  updateInfo();
 }
 
 function undo(){
   if(state.historyIdx <= 0){toast('더 이상 되돌릴 수 없음'); return}
   state.historyIdx--;
-  state.shapes = JSON.parse(JSON.stringify(state.history[state.historyIdx].shapes));
-  state.selectedShapes.clear();
-  redrawSketch();
-  updateInfo();
-  toast('Undo');
+  restoreSnapshot(state.history[state.historyIdx]);
+  toast('↶ Undo');
 }
 
 function redo(){
   if(state.historyIdx >= state.history.length - 1){toast('더 이상 복원할 수 없음'); return}
   state.historyIdx++;
-  state.shapes = JSON.parse(JSON.stringify(state.history[state.historyIdx].shapes));
-  state.selectedShapes.clear();
-  redrawSketch();
-  updateInfo();
-  toast('Redo');
+  restoreSnapshot(state.history[state.historyIdx]);
+  toast('↷ Redo');
 }
 
 /* ===== Three.js ===== */
@@ -1895,6 +1963,7 @@ function setupRaycastClick(dom){
       transformState._scaleStartPos = null;
       // 핸들 위치 갱신 (회전/이동 케이스)
       if(!wasScale && transformState.activePart) updateHandlePositions();
+      pushHistory(); // v4.6: 회전/크기/이동 변형도 되돌리기 대상
       e.stopPropagation();
     }
     // v3.1: 부품 본체 드래그 종료
@@ -1905,6 +1974,7 @@ function setupRaycastClick(dom){
         toast('📍 부품 이동: X=' + finalPos.x.toFixed(1) + ' Z=' + finalPos.z.toFixed(1));
         // 핸들 재배치 (BB 갱신)
         if(transformState.activePart === p) showTransformHandles(p);
+        pushHistory(); // v4.6: 본체 드래그 이동도 되돌리기 대상
       }
       partDragState.candidate = null;
       partDragState.dragging = false;
@@ -2669,6 +2739,7 @@ function doExtrude(){
   closeModal('extrudeModal');
   switchMode('model');
   fitView();
+  pushHistory(); // v4.6
   toast('✅ 돌출 완료: ' + name);
 }
 
@@ -2810,6 +2881,7 @@ function doRevolve(){
     toast(warnMsg);
     setStat(warnMsg + ' - 회전축이나 단면 모양을 확인하세요');
   } else {
+    pushHistory(); // v4.6
     toast('✅ 회전체 완료: ' + name + (axisOffset !== 0 ? ' (축거리 '+axisOffset+'mm)' : ''));
   }
 }
@@ -2835,6 +2907,7 @@ function addPrimitive(kind){
   updateInfo();
   switchMode('model');
   fitView();
+  pushHistory(); // v4.6: 기본도형 추가도 되돌리기 대상
   toast('✅ ' + names[kind] + ' 추가됨');
 }
 
@@ -3066,6 +3139,7 @@ function paletteAdd(kind, evt){
   updateInfo();
   switchMode('model');
   selectPart(part.id);
+  pushHistory(); // v4.6
   toast('✅ ' + name + ' 추가 — 핸들로 위치·크기 조정');
 }
 
@@ -3203,6 +3277,7 @@ function doZAxisRevolve(){
   updateInfo();
   selectPart(newPart.id);
   fitView();
+  pushHistory(); // v4.6
   toast('✅ Z축 회전 솔리드 생성: 반경 ' + offsetX.toFixed(1) + '~' + (offsetX + sizeX).toFixed(1) + 'mm, ' + angleZdeg + '°, ' + seg + '분할');
   setStat('Z회전 완료: ' + (deleteOrig ? '원본 삭제됨' : '원본 유지됨'));
 }
@@ -3358,6 +3433,7 @@ function doPrimitive(){
   addPartToScene(part);
   renderPartsList(); updateInfo();
   closeModal('primitiveModal'); switchMode('model'); fitView();
+  pushHistory(); // v4.6
   toast('✅ ' + info.name + ' 생성: ' + name);
 }
 
@@ -3456,6 +3532,7 @@ function doText3D(){
   addPartToScene(part);
   renderPartsList(); updateInfo();
   closeModal('textModal'); switchMode('model'); fitView();
+  pushHistory(); // v4.6
   toast('✅ 텍스트 3D 생성: ' + name);
 }
 
@@ -3507,6 +3584,7 @@ function mirrorPart(axis){
     else if(axis === 'z') p.mesh.scale.z *= -1;
     // normal이 뒤집혀서 어두워지는 문제를 피하려면 geometry를 재계산해야 하지만 시각적으로는 OK
   });
+  pushHistory(); // v4.6
   toast('🪞 ' + target.length + '개 부품 ' + axis.toUpperCase() + '축 미러');
 }
 
@@ -3521,6 +3599,7 @@ function deletePart(){
     if(idx >= 0) state.parts.splice(idx, 1);
   });
   renderPartsList(); updateInfo();
+  pushHistory(); // v4.6
   toast('🗑️ ' + target.length + '개 부품 삭제됨');
 }
 
@@ -3618,6 +3697,7 @@ function groupSelectedParts(){
   const msg = holes.length > 0
     ? `🔗 그룹화 완료: 솔리드 ${solids.length}개 + 구멍 ${holes.length}개 (시각적 빼기)`
     : `🔗 ${sel.length}개 부품 그룹화`;
+  pushHistory(); // v4.6
   toast(msg);
 }
 
@@ -3950,6 +4030,7 @@ function ungroupPart(){
     state.scene.add(mesh);
   });
   renderPartsList(); updateInfo();
+  pushHistory(); // v4.6
   toast('✂️ 그룹 해제 완료 (' + children.length + '개 부품)');
 }
 
@@ -4063,6 +4144,7 @@ function doBolt(){
   addPartToScene(part);
   renderPartsList(); updateInfo();
   closeModal('boltModal'); switchMode('model'); fitView();
+  pushHistory(); // v4.6
   toast('✅ 볼트 생성: ' + name);
 }
 
@@ -4112,6 +4194,7 @@ function doNut(){
   addPartToScene(part);
   renderPartsList(); updateInfo();
   closeModal('nutModal'); switchMode('model'); fitView();
+  pushHistory(); // v4.6
   toast('✅ 너트 생성: ' + name);
 }
 
@@ -4161,6 +4244,7 @@ function doSpring(){
   addPartToScene(part);
   renderPartsList(); updateInfo();
   closeModal('springModal'); switchMode('model'); fitView();
+  pushHistory(); // v4.6
   toast('✅ 스프링 생성: ' + name);
 }
 
@@ -4262,6 +4346,7 @@ function deletePartById(id){
   }
   renderPartsList();
   updateInfo();
+  pushHistory(); // v4.6: 삭제도 되돌리기 대상
 }
 
 function deletePart(){if(state.selectedPartId) deletePartById(state.selectedPartId)}
@@ -4283,6 +4368,7 @@ function duplicatePart(){
   addPartToScene(dup);
   renderPartsList();
   updateInfo();
+  pushHistory(); // v4.6
   toast('복제됨');
 }
 
@@ -4477,19 +4563,16 @@ function newProject(){
   renderPartsList();
   redrawSketch();
   updateInfo();
+  pushHistory(); // v4.6: 새 프로젝트 빈 상태 시드
   toast('새 프로젝트');
 }
 
 function saveProject(){
   const data = {
-    version: '1.0',
+    version: '1.1',
     savedAt: new Date().toISOString(),
     shapes: state.shapes,
-    parts: state.parts.map(p => ({
-      id: p.id, name: p.name, type: p.type,
-      color: p.color, opacity: p.opacity, visible: p.visible,
-      sourceShapes: p.sourceShapes, params: p.params
-    })),
+    parts: state.parts.map(serializePart), // v4.6: 위치/회전/크기 포함
     partIdCounter: state.partIdCounter
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
@@ -4514,15 +4597,7 @@ function loadProject(e){
       state.shapes = data.shapes || [];
       state.partIdCounter = data.partIdCounter || 1;
       (data.parts || []).forEach(pdata => {
-        let part = null;
-        if(pdata.type === 'extrude') part = rebuildExtrude(pdata);
-        else if(pdata.type === 'revolve') part = rebuildRevolve(pdata);
-        else if(pdata.type && pdata.type.startsWith('primitive_')) part = rebuildPrimitive(pdata);
-        else if(pdata.type === 'bolt') part = rebuildBolt(pdata);
-        else if(pdata.type === 'nut') part = rebuildNut(pdata);
-        else if(pdata.type === 'spring') part = rebuildSpring(pdata);
-        else if(pdata.type === 'text3d') part = rebuildText3D(pdata);
-        // group은 직렬화가 복잡하므로 일단 미지원 (저장은 가능, 로드 시 그룹 해체된 형태로)
+        const part = deserializePart(pdata); // v4.6: 타입별 복원 + 변형 적용 통합
         if(part && part.mesh){
           state.parts.push(part);
           addPartToScene(part);
@@ -5172,6 +5247,7 @@ document.addEventListener('keydown', (e)=>{
         hideTransformHandles();
         renderPartsList();
         updateInfo();
+        pushHistory(); // v4.6
         toast('🗑️ ' + ids.length + '개 부품 삭제됨');
         return;
       } else if(selParts.length === 1 || state.selectedPartId){
@@ -5236,7 +5312,7 @@ function init(){
   renderPartsList();
   updateInfo();
   redrawSketch();
-  setStat('tool3 v4.5 준비됨');
+  setStat('tool3 v4.6 준비됨');
   // v2.2: 항상 3D 모드로 시작 (draw_tool import도 3D 바닥에 표시)
   switchMode('model');
   try {
@@ -5244,9 +5320,9 @@ function init(){
       importFromDrawTool();
     }
   } catch(e){}
+  // v4.6: 초기(빈) 상태를 history[0]로 시드 → 첫 도형까지 완전히 되돌리기 가능
+  if(state.history.length === 0) pushHistory();
 }
-
-/* 메뉴에서 수동 import 호출용 */
 function manualImportFromDrawTool(){
   const raw = localStorage.getItem('c3d_import_from_draw_tool');
   if (!raw) {
