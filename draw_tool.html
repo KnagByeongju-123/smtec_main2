@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<title>도면 작도기 Rev.11.57 - 거리복사 진단 로그 추가</title>
+<title>도면 작도기 Rev.11.59 - 거리복사 각도유지(평행) 모드 추가</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Malgun Gothic', sans-serif; background: #2b2b2b; color: #eee; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
@@ -303,7 +303,7 @@
 <body>
 
 <header>
-  <h1>📐 도면 작도기 Rev.11.57</h1>
+  <h1>📐 도면 작도기 Rev.11.59</h1>
   <span class="ver">v11.47 (단위 1mm=40px)</span>
   <span class="cvstat" id="cvStat">OpenCV 로딩 중...</span>
   <span class="snapstat" id="snapStat">스냅: 비활성 (배경 없음)</span>
@@ -603,6 +603,38 @@
       <button class="mdp-close" onclick="closeMoveDeltaPanel()">✕ 닫기</button>
     </div>
     <div class="mdp-hint">드래그=실시간 / Enter=적용<br>수식 가능: 100.52-100.23</div>
+  </div>
+</div>
+
+<!-- Rev.11.58: 거리복사 입력 모달 (prompt 대체) -->
+<div id="distCopyModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:9999; align-items:center; justify-content:center;">
+  <div style="background:#2b2b2b; border:1px solid #555; border-radius:10px; padding:20px 24px; min-width:320px; box-shadow:0 8px 30px rgba(0,0,0,0.6);">
+    <div style="font-size:15px; font-weight:bold; color:#fff; margin-bottom:14px;">⇉ 거리복사</div>
+    <div style="margin-bottom:12px;">
+      <label style="display:block; font-size:12px; color:#bbb; margin-bottom:5px;">간격 거리 (mm, 콤마로 여러 개)</label>
+      <input type="text" id="dcGaps" value="10,20,30" style="width:100%; padding:7px 9px; background:#1f1f1f; color:#fff; border:1px solid #666; border-radius:5px; font-size:13px;" placeholder="예: 10,25,40">
+      <div style="font-size:10px; color:#888; margin-top:4px;">원본에서 각 거리만큼 떨어진 위치에 복사</div>
+    </div>
+    <div style="margin-bottom:14px; padding:8px 10px; background:#1f1f1f; border-radius:6px;">
+      <label style="display:flex; align-items:center; gap:8px; font-size:12px; color:#ddd; cursor:pointer;">
+        <input type="checkbox" id="dcKeepAngle" checked style="width:16px; height:16px; cursor:pointer;">
+        각도 유지(평행 복사) — 소재 두께선
+      </label>
+      <div style="font-size:10px; color:#888; margin-top:4px; padding-left:24px;">원본 선과 같은 기울기로, 선에 수직으로 간격만큼 떨어뜨림<br>해제 시: 수평/수직선으로 펴서 복사(1.5배)</div>
+    </div>
+    <div style="margin-bottom:16px;">
+      <label style="display:block; font-size:12px; color:#bbb; margin-bottom:5px;">복사 방향</label>
+      <div style="display:flex; gap:6px;">
+        <button type="button" class="dc-dir" data-dir="U" style="flex:1; padding:8px; background:#3a3a3a; color:#fff; border:1px solid #666; border-radius:5px; cursor:pointer;">⬆ 위</button>
+        <button type="button" class="dc-dir" data-dir="D" style="flex:1; padding:8px; background:#3a3a3a; color:#fff; border:1px solid #666; border-radius:5px; cursor:pointer;">⬇ 아래</button>
+        <button type="button" class="dc-dir" data-dir="L" style="flex:1; padding:8px; background:#3a3a3a; color:#fff; border:1px solid #666; border-radius:5px; cursor:pointer;">⬅ 왼쪽</button>
+        <button type="button" class="dc-dir" data-dir="R" style="flex:1; padding:8px; background:#3a3a3a; color:#fff; border:1px solid #666; border-radius:5px; cursor:pointer;">➡ 오른쪽</button>
+      </div>
+    </div>
+    <div style="display:flex; gap:8px; justify-content:flex-end;">
+      <button type="button" onclick="closeDistCopyModal()" style="padding:8px 16px; background:#555; color:#fff; border:none; border-radius:5px; cursor:pointer;">취소</button>
+      <button type="button" id="dcRunBtn" onclick="runDistCopy()" style="padding:8px 16px; background:#27ae60; color:#fff; border:none; border-radius:5px; cursor:pointer; font-weight:bold;">✓ 실행</button>
+    </div>
   </div>
 </div>
 
@@ -1416,6 +1448,18 @@ document.querySelectorAll('.edit-act-btn').forEach(btn => {
   });
 });
 
+// Rev.11.58: 거리복사 모달 방향 버튼
+document.querySelectorAll('.dc-dir').forEach(b => {
+  b.addEventListener('click', () => {
+    _dcDir = b.dataset.dir;
+    if (typeof updateDcDirButtons === 'function') updateDcDirButtons();
+  });
+});
+// 거리복사 모달에서 Enter=실행
+document.getElementById('dcGaps')?.addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); runDistCopy(); }
+});
+
 // Rev.11.53: 상단 파일/스냅 액션 버튼 → 기존 메뉴 핸들러 트리거
 document.querySelectorAll('.ts-act').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -1436,8 +1480,6 @@ document.querySelectorAll('.ts-act').forEach(btn => {
 
 // Rev.11.51: 편집 액션 실행 (대상 선택 필요)
 function runEditAction(act){
-  // Rev.11.57: 진단 - 버튼 클릭 도달 및 선택 개수 표시
-  cmdLog('  [편집] ' + act + ' 실행 (선택 ' + selectedIds.size + '개)', 'prompt');
   // 선택 도형이 없으면 안내 (삭제/배열/거리복사 등 모두 선택 필요)
   if (selectedIds.size === 0){
     cmdLog('  먼저 선택(S) 도구로 대상을 클릭해 선택한 뒤 편집 버튼을 누르세요.', 'error');
@@ -9804,6 +9846,9 @@ function handleArrayClick(p) {
 // ====== 거리복사 (DISTANCE COPY, Rev.11.49) ======
 // 점/선 선택 → 간격 여러개 입력(콤마) → 방향(상하좌우) → 각 간격 위치에 복사
 // 대각선 선은 수평/수직선으로 펴서 복사, 길이는 원본의 1.5배(원본 중점 기준 양쪽)
+// Rev.11.58: 거리복사 - prompt 대신 화면 모달 사용 (GitHub Pages에서 prompt 차단됨)
+let _dcDir = 'D'; // 선택된 방향
+
 function handleDistanceCopyCommand() {
   if (selectedIds.size === 0) {
     cmdLog('  거리복사: 먼저 SELECT(S)로 점 또는 선을 선택하세요.', 'error');
@@ -9815,24 +9860,42 @@ function handleDistanceCopyCommand() {
     cmdLog('  거리복사: 점 또는 선만 지원합니다.', 'error');
     return;
   }
+  // 모달 표시
+  _dcDir = 'D';
+  updateDcDirButtons();
+  document.getElementById('distCopyModal').style.display = 'flex';
+  setTimeout(() => { const g = document.getElementById('dcGaps'); if (g){ g.focus(); g.select(); } }, 50);
+}
 
-  // 1) 간격 입력 (콤마/공백 구분, 누적 아님 — 각각 원본 기준 거리)
-  const gapStr = prompt('간격 거리 입력 (mm, 콤마로 여러 개)\n예: 10,25,40  → 원본에서 각 거리에 복사', '10,20,30');
-  if (!gapStr) return;
+function closeDistCopyModal() {
+  document.getElementById('distCopyModal').style.display = 'none';
+}
+
+function updateDcDirButtons() {
+  document.querySelectorAll('.dc-dir').forEach(b => {
+    const on = b.dataset.dir === _dcDir;
+    b.style.background = on ? '#27ae60' : '#3a3a3a';
+    b.style.borderColor = on ? '#2ecc71' : '#666';
+  });
+}
+
+function runDistCopy() {
+  const gapStr = document.getElementById('dcGaps').value;
   const gaps = gapStr.split(/[,\s]+/).map(v => parseFloat(v)).filter(v => !isNaN(v) && v !== 0);
   if (gaps.length === 0) { cmdLog('  거리복사: 유효한 간격이 없습니다.', 'error'); return; }
 
-  // 2) 방향 입력
-  const dirStr = prompt('복사 방향 선택:\n  U = 위(상)\n  D = 아래(하)\n  L = 왼쪽(좌)\n  R = 오른쪽(우)', 'D');
-  if (!dirStr) return;
-  const dir = dirStr.trim().toUpperCase();
-  let ux = 0, uy = 0;            // 단위 방향 (화면좌표: Y 아래로 +)
-  let horizontal = true;        // 펼침 방향 (수평/수직)
+  const sources = Array.from(selectedIds).map(id => shapes.find(s => s.id === id)).filter(Boolean);
+  const valid = sources.filter(s => s.type === 'line' || s.type === 'point');
+  if (valid.length === 0) { cmdLog('  거리복사: 대상이 없습니다.', 'error'); return; }
+
+  const dir = _dcDir;
+  let ux = 0, uy = 0, horizontal = true;
   if (dir === 'U') { uy = -1; horizontal = true; }
   else if (dir === 'D') { uy = 1; horizontal = true; }
   else if (dir === 'L') { ux = -1; horizontal = false; }
   else if (dir === 'R') { ux = 1; horizontal = false; }
-  else { cmdLog('  거리복사: 방향은 U/D/L/R 중 하나.', 'error'); return; }
+
+  const keepAngle = document.getElementById('dcKeepAngle')?.checked;
 
   let madeCount = 0;
   valid.forEach(src => {
@@ -9840,30 +9903,42 @@ function handleDistanceCopyCommand() {
       const gap = gapMm / mmPerPixel; // mm → px
       const cs = cloneShape(src);
 
-      if (src.type === 'line') {
+      if (src.type === 'line' && keepAngle) {
+        // Rev.11.59: 각도 유지(평행 복사) — 선에 수직으로 간격만큼, 기울기·길이 그대로
+        const dx = src.p2.x - src.p1.x, dy = src.p2.y - src.p1.y;
+        const len = Math.hypot(dx, dy) || 1;
+        // 선의 단위 수직벡터 (법선)
+        let nx = -dy / len, ny = dx / len;
+        // 방향(위/아래/좌/우)에 맞게 법선 부호 결정
+        // 위/아래: 법선의 y성분이 원하는 방향(uy)과 같도록 / 좌/우: x성분이 ux와 같도록
+        if (horizontal) {            // 위(uy=-1)/아래(uy=1)
+          if (Math.sign(ny) !== Math.sign(uy) && ny !== 0) { nx = -nx; ny = -ny; }
+          else if (ny === 0) { ny = uy; nx = 0; } // 수평선이면 그냥 위/아래로
+        } else {                     // 좌(ux=-1)/우(ux=1)
+          if (Math.sign(nx) !== Math.sign(ux) && nx !== 0) { nx = -nx; ny = -ny; }
+          else if (nx === 0) { nx = ux; ny = 0; } // 수직선이면 그냥 좌/우로
+        }
+        transformShape(cs, (x,y) => ({x: x + nx*gap, y: y + ny*gap}));
+      } else if (src.type === 'line') {
+        // 기존: 대각선은 수평/수직선으로 펴서 복사(1.5배)
         const dx = src.p2.x - src.p1.x, dy = src.p2.y - src.p1.y;
         const len = Math.hypot(dx, dy);
-        // 대각선 여부: 수평/수직이 아니면 대각선으로 간주
         const isDiagonal = Math.abs(dx) > 1e-6 && Math.abs(dy) > 1e-6;
         if (isDiagonal) {
-          // 복사 방향 쪽 끝점을 기준(고정점)으로 삼아 1.5배 길이로 펴기
-          // 복사 방향 벡터(ux,uy)로 두 끝점을 투영 → 앞선(복사 방향 쪽) 점이 기준
           const proj1 = src.p1.x*ux + src.p1.y*uy;
           const proj2 = src.p2.x*ux + src.p2.y*uy;
-          const base = (proj1 >= proj2) ? src.p1 : src.p2; // 복사 방향 쪽 끝점
+          const base = (proj1 >= proj2) ? src.p1 : src.p2;
           const newLen = len * 1.5;
-          if (horizontal) { // 위/아래 복사 → 수평선 (기준점에서 오른쪽으로 연장)
+          if (horizontal) {
             cs.p1 = {x: Math.round(base.x), y: Math.round(base.y)};
             cs.p2 = {x: Math.round(base.x + newLen), y: Math.round(base.y)};
-          } else {          // 좌/우 복사 → 수직선 (기준점에서 아래로 연장)
+          } else {
             cs.p1 = {x: Math.round(base.x), y: Math.round(base.y)};
             cs.p2 = {x: Math.round(base.x), y: Math.round(base.y + newLen)};
           }
         }
-        // 방향으로 gap 평행이동
         transformShape(cs, (x,y) => ({x: x + ux*gap, y: y + uy*gap}));
       } else if (src.type === 'point') {
-        // 점은 그대로 방향으로 평행이동
         cs.p1 = {x: Math.round(src.p1.x + ux*gap), y: Math.round(src.p1.y + uy*gap)};
       }
       shapes.push(cs);
@@ -9875,8 +9950,10 @@ function handleDistanceCopyCommand() {
   redrawDraw(); updateCount();
   selectedIds.clear();
   updateSelStat();
+  closeDistCopyModal();
   const dirName = {U:'위', D:'아래', L:'왼쪽', R:'오른쪽'}[dir];
-  cmdLog(`  거리복사: ${dirName} 방향, 간격 [${gaps.join(', ')}]mm → ${madeCount}개 복사 완료.`, 'system');
+  const modeName = keepAngle ? '각도유지(평행)' : '수평펴기';
+  cmdLog(`  거리복사[${modeName}]: ${dirName} 방향, 간격 [${gaps.join(', ')}]mm → ${madeCount}개 복사 완료.`, 'system');
 }
 
 // ====== 도구 ESC 시 상태 리셋용 ======
