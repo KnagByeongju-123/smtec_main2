@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<title>도면 작도기 Rev.12.4</title>
+<title>도면 작도기 Rev.12.5</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Malgun Gothic', sans-serif; background: #2b2b2b; color: #eee; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
@@ -303,8 +303,8 @@
 <body>
 
 <header>
-  <h1>📐 도면 작도기 Rev.12.4</h1>
-  <span class="ver">v12.4 (단위 1mm=75px)</span>
+  <h1>📐 도면 작도기 Rev.12.5</h1>
+  <span class="ver">v12.5 (단위 1mm=75px)</span>
   <span class="cvstat" id="cvStat">OpenCV 로딩 중...</span>
   <span class="snapstat" id="snapStat">스냅: 비활성 (배경 없음)</span>
   <span class="snapstat" id="calibStat" style="background:#e67e22;">📏 캘리브: 미설정 (1px = 1mm)</span>
@@ -362,6 +362,7 @@
     <div class="menu-title">📐 2D <span class="arrow">▼</span></div>
     <div class="menu-dropdown">
       <div class="menu-section">그리기 도구</div>
+      <div class="menu-item" id="menuBaseLines"><span class="ico">📐</span> 도면베이스 (기준선 배치)<span class="shortcut">BASE</span></div>
       <div class="menu-item tool-menu-item" data-tool="select"><span class="ico">🔲</span> 선택<span class="shortcut">S</span></div>
       <div class="menu-item tool-menu-item active" data-tool="line"><span class="ico">／</span> 선<span class="shortcut">L</span></div>
       <div class="menu-item tool-menu-item" data-tool="rect"><span class="ico">▭</span> 사각형<span class="shortcut">REC</span></div>
@@ -747,6 +748,56 @@
   <div style="display:flex; gap:6px; justify-content:flex-end;">
     <button id="btnLineDimSkip" style="font-size:11px; padding:4px 10px; background:#444; color:#ddd; border:none; border-radius:4px; cursor:pointer;">취소</button>
     <button id="btnLineDimApply" style="font-size:11px; padding:4px 12px; background:#2e8b57; color:#fff; border:none; border-radius:4px; cursor:pointer; font-weight:bold;">적용</button>
+  </div>
+</div>
+
+<!-- Rev.12.5: 도면베이스 (기준선 배치) 모달 -->
+<div class="modal-overlay" id="baseModal">
+  <div class="modal" style="min-width:460px;">
+    <h3>📐 도면베이스 (기준선 배치)</h3>
+    <div class="hint-text" style="margin-bottom:10px;">
+      원형 제품 단면 작도용 기준선을 배치합니다. 거리=중심에서의 반경 위치(세로선), 높이=바닥에서의 높이(가로선).<br>
+      값은 콤마(,)로 여러 개 입력. 예: <b>40, 30, 12.5</b>
+    </div>
+
+    <div class="section">
+      <h4>↔ 거리 (지름 파이값, mm) — 세로선</h4>
+      <div class="row">
+        <label>거리 값들:</label>
+        <input type="text" id="baseDistVals" value="80, 60, 30" style="flex:1;" placeholder="예: 80, 60, 30 (파이값)">
+      </div>
+      <div class="checkbox-group" style="margin-top:4px;">
+        <input type="checkbox" id="baseDistIsDiameter" checked>
+        <label for="baseDistIsDiameter" style="min-width:auto;">지름(파이)으로 입력 → 중심에서 ÷2 (반경) 위치에 배치</label>
+      </div>
+      <div class="hint-text">중심선 기준 좌측으로 세로선을 긋습니다. 거리(1)이 가장 바깥(첫 번째).</div>
+    </div>
+
+    <div class="section">
+      <h4>↕ 높이 (mm) — 가로선</h4>
+      <div class="row">
+        <label>높이 값들:</label>
+        <input type="text" id="baseHeightVals" value="0, 5, 10, 15" style="flex:1;" placeholder="예: 0, 5, 10, 15">
+      </div>
+      <div class="hint-text">바닥(높이 0)부터 위로 가로선을 긋습니다. 첫 값이 작업면(바닥).</div>
+    </div>
+
+    <div class="section">
+      <h4>옵션</h4>
+      <div class="checkbox-group">
+        <input type="checkbox" id="baseDrawCenter" checked>
+        <label for="baseDrawCenter" style="min-width:auto;">중심선(세로) 표시</label>
+      </div>
+      <div class="checkbox-group" style="margin-top:4px;">
+        <input type="checkbox" id="baseClearOld">
+        <label for="baseClearOld" style="min-width:auto;">기존 기준선 먼저 삭제</label>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button id="btnBaseCancel">취소</button>
+      <button class="success" id="btnBaseApply">기준선 배치</button>
+    </div>
   </div>
 </div>
 
@@ -6236,6 +6287,13 @@ function drawShape(ctx, s, selected) {
     ctx.setLineDash(LINE_TYPES[lt] || []);
   }
 
+  // Rev.12.5: 도면베이스 가이드선 → 점선 + 구분색
+  if (s.guide){
+    ctx.strokeStyle = selected ? '#ffcc00' : (s.stroke || '#3aa0ff');
+    ctx.lineWidth = 1 / (zoom || 1);
+    ctx.setLineDash([8/(zoom||1), 5/(zoom||1)]);
+  }
+
   ctx.beginPath();
   if (s.type === 'line') {
     ctx.moveTo(s.p1.x,s.p1.y); ctx.lineTo(s.p2.x,s.p2.y); ctx.stroke();
@@ -8173,6 +8231,91 @@ document.getElementById('projFile').addEventListener('change', (e) => {
   e.target.value = ''; // 같은 파일 재선택 허용
   document.querySelectorAll('.menu').forEach(m => m.classList.remove('open')); // 메뉴 닫기
 });
+
+// ====== Rev.12.5: 도면베이스 (기준선 배치) ======
+//  원형 제품 단면 작도용 기준선(가이드).
+//   - 거리: 중심선(세로)에서 좌측으로 반경 위치마다 세로선
+//   - 높이: 바닥선(가로, 높이0)에서 위로 높이마다 가로선
+//  좌표: 중심 cx=작업영역 가로 2/3, 바닥 groundY=세로 1/2.
+function parseNumList(str){
+  if (!str) return [];
+  return String(str).split(/[,\s]+/).map(t => t.trim()).filter(t => t !== '')
+    .map(t => evalExpr(t)).filter(v => isFinite(v));
+}
+
+function applyBaseLines(){
+  const distRaw = parseNumList(document.getElementById('baseDistVals').value);
+  const heightRaw = parseNumList(document.getElementById('baseHeightVals').value);
+  const isDia = document.getElementById('baseDistIsDiameter').checked;
+  const drawCenter = document.getElementById('baseDrawCenter').checked;
+  const clearOld = document.getElementById('baseClearOld').checked;
+
+  if (distRaw.length === 0 && heightRaw.length === 0){
+    document.getElementById('statusHint').textContent = '⚠ 거리 또는 높이 값을 하나 이상 입력하세요';
+    return;
+  }
+
+  // 기존 기준선 삭제 옵션
+  if (clearOld){
+    for (let i = shapes.length - 1; i >= 0; i--){
+      if (shapes[i].guide) shapes.splice(i, 1);
+    }
+  }
+
+  const cx = baseW * 2/3;       // 중심선 X (가로 2/3 지점)
+  const groundY = baseH / 2;    // 바닥선 Y (세로 중간)
+  const guideColor = '#3aa0ff';
+
+  // 거리 → 반경(mm), 큰 값이 바깥(거리1). 정렬해서 일관 배치
+  const radii = distRaw.map(v => isDia ? v/2 : v);
+  // 세로선 Y 범위: 바닥 위/아래로 충분히
+  const yTop = Math.max(0, groundY - (Math.max(...(heightRaw.length?heightRaw:[0])) / mmPerPixel) - 20/mmPerPixel);
+  const yBot = Math.min(baseH, groundY + 10/mmPerPixel);
+
+  const added = [];
+  // 중심선
+  if (drawCenter){
+    const ln = { id: ++shapeIdSeq, type:'line', guide:true, baseRole:'center',
+                 p1:{x:cx, y:yTop}, p2:{x:cx, y:yBot}, stroke:'#ff7f50', strokeWidth:1 };
+    shapes.push(ln); added.push(ln);
+  }
+  // 거리 세로선 (중심에서 좌측)
+  radii.forEach((rmm, i) => {
+    const x = cx - (rmm / mmPerPixel);
+    const ln = { id: ++shapeIdSeq, type:'line', guide:true, baseRole:'dist', baseIndex:i+1, baseValMm:rmm,
+                 p1:{x:x, y:yTop}, p2:{x:x, y:yBot}, stroke:guideColor, strokeWidth:1 };
+    shapes.push(ln); added.push(ln);
+  });
+
+  // 높이 가로선 X 범위: 가장 먼 거리선 ~ 중심
+  const maxR = radii.length ? Math.max(...radii) : 40;
+  const xLeft = cx - (maxR / mmPerPixel) - 10/mmPerPixel;
+  const xRight = cx + 10/mmPerPixel;
+  heightRaw.forEach((hmm, i) => {
+    const y = groundY - (hmm / mmPerPixel);
+    const ln = { id: ++shapeIdSeq, type:'line', guide:true, baseRole:'height', baseIndex:i+1, baseValMm:hmm,
+                 p1:{x:xLeft, y:y}, p2:{x:xRight, y:y},
+                 stroke: (i===0 ? '#2ecc71' : guideColor), strokeWidth:1 };
+    shapes.push(ln); added.push(ln);
+  });
+
+  redoStack = []; pushHistory();
+  if (typeof redrawFills === 'function') redrawFills();
+  redrawDraw(); updateCount();
+  document.getElementById('baseModal').classList.remove('show');
+  document.getElementById('statusHint').textContent =
+    `📐 도면베이스 배치: 거리 ${radii.length}개(세로) · 높이 ${heightRaw.length}개(가로) 기준선 생성`;
+}
+
+// 모달 열기/버튼
+document.getElementById('menuBaseLines').addEventListener('click', () => {
+  document.getElementById('baseModal').classList.add('show');
+  document.querySelectorAll('.menu').forEach(m => m.classList.remove('open'));
+});
+document.getElementById('btnBaseCancel').addEventListener('click', () => {
+  document.getElementById('baseModal').classList.remove('show');
+});
+document.getElementById('btnBaseApply').addEventListener('click', applyBaseLines);
 
 // ====== Rev.11.41: 스냅샷 기반 Undo/Redo ======
 // 현재 전체 상태를 깊은 복사로 캡처
