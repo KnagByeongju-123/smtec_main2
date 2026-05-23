@@ -38,7 +38,7 @@ let bgImageOpacity = 1.0; // 배경 이미지 불투명도 (0~1)
 let bgImageScale = 1.0;   // Rev.11.10: 배경 이미지 자체 확대/축소 (도면 맞춤용)
 let bgImageOffsetX = 0;   // Rev.11.10: 배경 이미지 X 오프셋 (px)
 let bgImageOffsetY = 0;   // Rev.11.10: 배경 이미지 Y 오프셋 (px)
-let bgZoom = 1.0;         // Rev.13.1: 배경 독립 확대/축소 (작업영역과 별개, CSS transform)
+let bgZoom = 1.0;         // Rev.13.2: 배경 독립 확대/축소 (작업영역과 별개, CSS transform)
 let bgZoomOriginX = 50;   // transform-origin X (%)
 let bgZoomOriginY = 50;   // transform-origin Y (%)
 let tool = 'line';
@@ -95,10 +95,13 @@ let offsetTwinTarget = null;       // 선택된 대상 선 도형
 // Rev.12.7: 꼭지점커팅 - 선의 가까운 꼭지점에서 지정 치수(mm)만큼 선을 따라 이동한 지점에서 분할
 let vertexCutMode = false;         // 꼭지점커팅 모드 ON/OFF
 let vertexCutDist = 10;            // 자를 거리(mm)
-// Rev.13.1: 챔퍼(C면취)
+// Rev.13.2: 기준선(중심선) 자동생성
+let centerlineMode = false;
+let centerlineOverhang = 5;   // 원 바깥으로 튀어나오는 길이(mm)
+// Rev.13.2: 챔퍼(C면취)
 let chamferState = null;           // null | {firstLine, firstClickPt}
 let chamferC = 5;                  // 챔퍼 거리(mm)
-// Rev.13.1: 호-직선 접선 연결
+// Rev.13.2: 호-직선 접선 연결
 let tangentState = null;           // null | {line, endKey}
 // Rev.12.8: 각도돌출커팅 - 선 끝 꼭지점에서 지정 각도로 꺾어 지정 거리만큼 새 선 추가
 let angleExtrudeMode = false;      // 각도돌출 모드 ON/OFF
@@ -557,6 +560,7 @@ function updateToolStatus() {
     extend: '↔ 연장: 연장할 선의 늘릴 쪽 끝점 가까이 클릭 → 가장 가까운 다른 선까지 자동 연장',
     fillet: '◜ 모서리 R: ① 사각형/두 선의 꼭지점 클릭→자동 라운드 ② 또는 두 직선 차례 클릭',
     chamfer: '⌐ 챔퍼(C면취): ① 사각형/꼭지점 클릭→즉시 면취 ② 또는 두 직선 차례 클릭 (C값 입력 필드 참조)',
+    centerline: '✛ 기준선: 원/호 클릭→수평+수직 일점쇄선 자동생성 / 선 클릭→그 선의 평행 중심선 / Esc=종료',
     tangent: '⌒ 접선연결: 직선 클릭(끝점 가까운 쪽)→ 호/원 클릭→ 자동 접선 연결',
     offset: '∥ 오프셋: 원본 선/도형 클릭 → 오프셋할 방향 클릭 → 거리 입력으로 평행 복사',
     break: '✄ 분할: 선 클릭 → 첫 분할점 → 두 번째 분할점 클릭 (두 점 사이를 잘라내고 두 선으로 분할). 같은 점 두 번 클릭하면 그 점에서만 분할',
@@ -1753,6 +1757,7 @@ drawCanvas.addEventListener('click', e => {
   if (tool === 'extend') { handleExtendClick(p); return; }
   if (tool === 'fillet') { handleFilletClick(p); return; }
   if (tool === 'chamfer') { handleChamferClick(p); return; }
+  if (tool === 'centerline') { handleCenterlineClick(p); return; }
   if (tool === 'tangent') { handleTangentClick(p); return; }
   if (tool === 'offset') { handleOffsetClick(p); return; }
   if (tool === 'break') { handleBreakClick(p); return; }
@@ -3593,7 +3598,7 @@ function handleFilletOnRect(rect, p) {
 // 반지름이 이미 정해진 상태에서 두 선에 라운드 적용 (prompt 생략)
 
 // ═══════════════════════════════════════════════════════════════
-//  Rev.13.1: 챔퍼(C면취) - applyFilletToTwoLines와 동일 흐름
+//  Rev.13.2: 챔퍼(C면취) - applyFilletToTwoLines와 동일 흐름
 // ═══════════════════════════════════════════════════════════════
 
 function handleChamferClick(p) {
@@ -3807,7 +3812,7 @@ function handleChamferOnRect(rect, p) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  Rev.13.1: 호-직선 접선 자동연결
+//  Rev.13.2: 호-직선 접선 자동연결
 //  ① 직선 클릭(끝점 가까운 쪽 선택) → ② 호/원 클릭
 //  선의 해당 끝점을 호와의 접선점으로 이동
 // ═══════════════════════════════════════════════════════════════
@@ -3911,6 +3916,111 @@ function handleTangentClick(p) {
   redrawDraw(); updateCount();
   tangentState = null;
   document.getElementById('statusHint').textContent = '⌒ 접선연결 완료';
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  Rev.13.2: 기준선(중심선) 자동생성
+//  - 원/호 클릭 → 중심 기준 수평+수직 일점쇄선 생성
+//  - 직선 클릭  → 그 선의 수직이등분 중심선 생성
+//  - 두 평행선 클릭 → 중간 기준선 생성
+//  lineType:'dashdot', layer:'center', stroke:'#ff8800'
+// ═══════════════════════════════════════════════════════════════
+
+function handleCenterlineClick(p) {
+  const target = findShapeAtPoint(p, 15);
+  if (!target) {
+    document.getElementById('statusHint').textContent = '✛ 기준선: 원, 호, 또는 선을 클릭하세요.';
+    return;
+  }
+
+  const oh = centerlineOverhang / mmPerPixel; // 바깥 튀어나오기(px)
+  const clStyle = { lineType:'dashdot', layer:'center', stroke:'#ff8800', strokeWidth:1 };
+
+  // ── 원 클릭: 수평 + 수직 중심선 ──────────────────────────────
+  if (target.type === 'circle') {
+    const cx = target.p1.x, cy = target.p1.y;
+    const r  = Math.hypot(target.p2.x - cx, target.p2.y - cy);
+    addCenterlines(cx, cy, r, oh, clStyle);
+    finish('원');
+    return;
+  }
+
+  // ── 호 클릭: 수평 + 수직 중심선 ──────────────────────────────
+  if (target.type === 'arc') {
+    addCenterlines(target.cx, target.cy, target.r, oh, clStyle);
+    finish('호');
+    return;
+  }
+
+  // ── 직선 클릭: 수직이등분 중심선 + 선 위 중심 마크 ──────────
+  if (target.type === 'line') {
+    const mx = (target.p1.x + target.p2.x) / 2;
+    const my = (target.p1.y + target.p2.y) / 2;
+    const len = Math.hypot(target.p2.x - target.p1.x, target.p2.y - target.p1.y);
+    // 선 방향 단위벡터 → 수직 방향
+    const dx = target.p2.x - target.p1.x, dy = target.p2.y - target.p1.y;
+    const L = Math.hypot(dx, dy);
+    if (L < 1e-6) return;
+    const px = -dy/L, py = dx/L; // 수직 방향
+    // 수직이등분선: 중점에서 수직으로 선 길이/2 + 여백
+    const ext = len/2 + oh;
+    shapes.push({ id:++shapeIdSeq, type:'line',
+      p1:{x: Math.round(mx + px*ext), y: Math.round(my + py*ext)},
+      p2:{x: Math.round(mx - px*ext), y: Math.round(my - py*ext)},
+      ...clStyle });
+    // 선 자체의 중점 마크(짧은 교차선)
+    const mk = oh * 0.6;
+    const ux = dx/L, uy = dy/L;
+    shapes.push({ id:++shapeIdSeq, type:'line',
+      p1:{x: Math.round(mx + ux*mk), y: Math.round(my + uy*mk)},
+      p2:{x: Math.round(mx - ux*mk), y: Math.round(my - uy*mk)},
+      ...clStyle });
+    finish('선 수직이등분');
+    return;
+  }
+
+  // ── 사각형 클릭: 수평 + 수직 중심선 ─────────────────────────
+  if (target.type === 'rect') {
+    const cx = (target.p1.x + target.p2.x) / 2;
+    const cy = (target.p1.y + target.p2.y) / 2;
+    const hw = Math.abs(target.p2.x - target.p1.x) / 2;
+    const hh = Math.abs(target.p2.y - target.p1.y) / 2;
+    // 수평
+    shapes.push({ id:++shapeIdSeq, type:'line',
+      p1:{x: Math.round(cx - hw - oh), y: Math.round(cy)},
+      p2:{x: Math.round(cx + hw + oh), y: Math.round(cy)},
+      ...clStyle });
+    // 수직
+    shapes.push({ id:++shapeIdSeq, type:'line',
+      p1:{x: Math.round(cx), y: Math.round(cy - hh - oh)},
+      p2:{x: Math.round(cx), y: Math.round(cy + hh + oh)},
+      ...clStyle });
+    finish('사각형');
+    return;
+  }
+
+  document.getElementById('statusHint').textContent = '✛ 기준선: 원, 호, 선, 사각형을 클릭하세요.';
+}
+
+// 원/호 중심 기준 수평+수직 일점쇄선 2개 생성
+function addCenterlines(cx, cy, r, oh, style) {
+  // 수평
+  shapes.push({ id:++shapeIdSeq, type:'line',
+    p1:{x: Math.round(cx - r - oh), y: Math.round(cy)},
+    p2:{x: Math.round(cx + r + oh), y: Math.round(cy)},
+    ...style });
+  // 수직
+  shapes.push({ id:++shapeIdSeq, type:'line',
+    p1:{x: Math.round(cx), y: Math.round(cy - r - oh)},
+    p2:{x: Math.round(cx), y: Math.round(cy + r + oh)},
+    ...style });
+}
+
+function finish(label) {
+  redoStack = []; pushHistory();
+  redrawDraw(); updateCount();
+  document.getElementById('statusHint').textContent =
+    `✛ ${label} 기준선(일점쇄선) 생성 완료 — 계속 클릭하거나 Esc 종료`;
 }
 
 
@@ -4522,9 +4632,10 @@ function handleDimClick(p) {
 
 function addDimension(dim) {
   dim.id = ++shapeIdSeq;
-  dim.stroke = '#cc0000';      // 치수선은 빨강 기본
+  dim.stroke = '#cc0000';
   dim.strokeWidth = 1;
-  dim.fontSize = 12;
+  const fsSel = document.getElementById('dimFontSizeInput');
+  dim.fontSize = fsSel ? (parseFloat(fsSel.value) || 12) : 12;
   shapes.push(dim);
   redoStack = []; pushHistory();
   redrawDraw();
@@ -4537,7 +4648,8 @@ function drawDimension(ctx, d, selected) {
   ctx.strokeStyle = selected ? '#3498db' : d.stroke;
   ctx.fillStyle = selected ? '#3498db' : d.stroke;
   ctx.lineWidth = d.strokeWidth || 1;
-  ctx.font = `${d.fontSize || 12}px sans-serif`;
+  const _fs = (d.fontSize || 12) / (zoom || 1);
+  ctx.font = `${_fs}px sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   
@@ -4602,60 +4714,63 @@ function drawLinearDim(ctx, p1, p2, offset, mode, selected) {
   drawArrow(ctx, dp2, dp1, arrowSize);
   drawArrow(ctx, dp1, dp2, arrowSize);
   
-  // 치수 텍스트
+  // 치수 텍스트 (캐드식: 치수선 중간 끊기)
   const dist = horizontal ? Math.abs(p2.x - p1.x) : Math.abs(p2.y - p1.y);
   const distMm = (dist * mmPerPixel).toFixed(2);
   const mx = (dp1.x + dp2.x) / 2, my = (dp1.y + dp2.y) / 2;
-  // 텍스트 배경
   const text = distMm;
-  const padding = 3;
   const m = ctx.measureText(text);
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(mx - m.width/2 - padding, my - 8, m.width + padding*2, 16);
+  const gap = m.width / 2 + 4;
+  // 치수선을 텍스트 폭만큼 끊어서 다시 그리기
+  const lineAng = horizontal ? 0 : Math.PI/2;
+  const ux2 = Math.cos(lineAng), uy2 = Math.sin(lineAng);
+  ctx.beginPath();
+  ctx.moveTo(dp1.x, dp1.y); ctx.lineTo(mx - ux2*gap, my - uy2*gap);
+  ctx.moveTo(mx + ux2*gap, my + uy2*gap); ctx.lineTo(dp2.x, dp2.y);
+  ctx.stroke();
   ctx.fillStyle = selected ? '#3498db' : '#cc0000';
   ctx.fillText(text, mx, my);
 }
 
 function drawAlignedDim(ctx, p1, p2, offset, selected) {
-  // 두 점을 잇는 방향에 평행한 치수선
   const dx = p2.x - p1.x, dy = p2.y - p1.y;
   const len = Math.hypot(dx, dy);
   if (len < 1e-6) return;
-  const ux = dx / len, uy = dy / len;
-  // 법선 벡터
+  const ux = dx/len, uy = dy/len;
   const nx = -uy, ny = ux;
-  // offset이 두 점 잇는 직선에서 얼마나 떨어져 있는지 (법선 방향)
-  const offFromP1 = (offset.x - p1.x) * nx + (offset.y - p1.y) * ny;
-  
-  const dp1 = {x: p1.x + nx * offFromP1, y: p1.y + ny * offFromP1};
-  const dp2 = {x: p2.x + nx * offFromP1, y: p2.y + ny * offFromP1};
-  
+  const offDist = (offset.x - p1.x)*nx + (offset.y - p1.y)*ny;
+  const dp1 = {x: p1.x + nx*offDist, y: p1.y + ny*offDist};
+  const dp2 = {x: p2.x + nx*offDist, y: p2.y + ny*offDist};
+
   // 연장선
   ctx.beginPath();
-  ctx.moveTo(p1.x, p1.y); ctx.lineTo(dp1.x, dp1.y);
-  ctx.moveTo(p2.x, p2.y); ctx.lineTo(dp2.x, dp2.y);
+  ctx.moveTo(p1.x,p1.y); ctx.lineTo(dp1.x,dp1.y);
+  ctx.moveTo(p2.x,p2.y); ctx.lineTo(dp2.x,dp2.y);
   ctx.stroke();
-  
-  // 치수선
-  ctx.beginPath();
-  ctx.moveTo(dp1.x, dp1.y); ctx.lineTo(dp2.x, dp2.y);
-  ctx.stroke();
-  
+
   drawArrow(ctx, dp2, dp1, 8);
   drawArrow(ctx, dp1, dp2, 8);
-  
+
+  // 텍스트
   const distMm = (len * mmPerPixel).toFixed(2);
-  const mx = (dp1.x + dp2.x)/2, my = (dp1.y + dp2.y)/2;
-  ctx.save();
-  ctx.translate(mx, my);
-  // 텍스트가 항상 위쪽 향하게 (180도 이상이면 뒤집어주기)
+  const mx = (dp1.x+dp2.x)/2, my = (dp1.y+dp2.y)/2;
   let textAng = Math.atan2(uy, ux);
   if (Math.abs(textAng) > Math.PI/2) textAng += Math.PI;
+
+  ctx.save();
+  ctx.translate(mx, my);
   ctx.rotate(textAng);
   const text = distMm;
   const m = ctx.measureText(text);
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(-m.width/2 - 3, -8, m.width + 6, 16);
+  const gap = m.width/2 + 4;
+  const half = len/2;
+
+  // 치수선 중간 끊기 (회전 좌표계 x축 = dp1→dp2)
+  ctx.beginPath();
+  ctx.moveTo(-half, 0); ctx.lineTo(-gap, 0);
+  ctx.moveTo( gap,  0); ctx.lineTo( half, 0);
+  ctx.stroke();
+
   ctx.fillStyle = selected ? '#3498db' : '#cc0000';
   ctx.fillText(text, 0, 0);
   ctx.restore();
@@ -4693,9 +4808,6 @@ function drawRadiusDim(ctx, target, offset, isDiameter) {
   
   const valMm = (isDiameter ? r*2 : r) * mmPerPixel;
   const text = (isDiameter ? '⌀' : 'R') + valMm.toFixed(2);
-  const m = ctx.measureText(text);
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(offset.x - m.width/2 - 3, offset.y - 8, m.width + 6, 16);
   ctx.fillStyle = ctx.strokeStyle;
   ctx.fillText(text, offset.x, offset.y);
 }
@@ -4756,9 +4868,6 @@ function drawAngleDim(ctx, l1, l2, offset) {
   const midAng = ang1 + span/2;
   const tx = ix.x + (r + 12) * Math.cos(midAng);
   const ty = ix.y + (r + 12) * Math.sin(midAng);
-  const m = ctx.measureText(text);
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(tx - m.width/2 - 3, ty - 8, m.width + 6, 16);
   ctx.fillStyle = ctx.strokeStyle;
   ctx.fillText(text, tx, ty);
 }
@@ -5957,11 +6066,12 @@ function drawShape(ctx, s, selected) {
     ctx.setLineDash(LINE_TYPES[lt] || []);
   }
 
-  // Rev.12.6: 도면베이스 가이드선 → 실선 + 두께 1 (구분색 유지)
+  // Rev.12.6: 도면베이스 가이드선 → 두께 1, lineType 적용 (dashdot 유지)
   if (s.guide){
     ctx.strokeStyle = selected ? '#ffcc00' : (s.stroke || '#3aa0ff');
     ctx.lineWidth = 1 / (zoom || 1);
-    ctx.setLineDash([]);
+    // lineType이 있으면 유지, 없으면 실선
+    if (!s.lineType) ctx.setLineDash([]);
   }
 
   ctx.beginPath();
@@ -7334,7 +7444,7 @@ function handleArcHandleDrag(p) {
     `⌒ 호 편집 중: R=${(s.r*mmPerPixel).toFixed(1)}mm, 회전각=${spanDeg.toFixed(1)}° / 마우스 놓으면 확정`;
 }
 
-// Rev.13.1: 배경 캔버스만 독립 CSS scale (작업 캔버스와 무관)
+// Rev.13.2: 배경 캔버스만 독립 CSS scale (작업 캔버스와 무관)
 function applyBgZoom() {
   bgCanvas.style.transformOrigin = bgZoomOriginX + '% ' + bgZoomOriginY + '%';
   bgCanvas.style.transform = 'scale(' + bgZoom + ')';
@@ -9364,7 +9474,9 @@ const CMD_DICT = {
   'EX':        { tool: 'extend', name: 'EXTEND (연장)' },
   'EXTEND':    { tool: 'extend', name: 'EXTEND (연장)' },
   'R':         { tool: 'fillet',  name: 'FILLET (모서리R)' },
-  'CH':        { tool: 'chamfer', name: 'CHAMFER (면취)' },
+  'CH':        { tool: 'chamfer',    name: 'CHAMFER (면취)' },
+  'CL':        { tool: 'centerline', name: 'CENTERLINE (기준선)' },
+  'CENTERLINE':{ tool: 'centerline', name: 'CENTERLINE (기준선)' },
   'CHAMFER':   { tool: 'chamfer', name: 'CHAMFER (면취)' },
   'TAN':       { tool: 'tangent', name: 'TANGENT (접선연결)' },
   'TANGENT':   { tool: 'tangent', name: 'TANGENT (접선연결)' },
