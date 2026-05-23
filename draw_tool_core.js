@@ -2298,8 +2298,10 @@ function startAngleExtrude(){
   angleExtrudeState = null;
   selectTool('select');
   drawCanvas.style.cursor = 'crosshair';
+  const _aeMode = (document.getElementById('angleExtrudeDistModeSel') || {}).value || 'line';
+  const _aeModeLabel = {line:'선길이', x:'X변위', y:'Y변위'}[_aeMode] || '선길이';
   document.getElementById('statusHint').textContent =
-    `↱ 각도돌출(${angleExtrudeAng}°, ${angleExtrudeDist}mm): 기준 선을 클릭하세요`;
+    `↱ 각도돌출(${angleExtrudeAng}°, ${_aeModeLabel}=${angleExtrudeDist}mm): 기준 선을 클릭하세요`;
   updateAngleExtrudeButton();
 }
 
@@ -2345,23 +2347,39 @@ function drawAngleExtrudePreview(p){
   preCtx.restore();
 }
 
-// 기준점 base 에서 선 방향(base→other)을 기준으로 angleExtrudeAng만큼 꺾어 angleExtrudeDist 돌출된 끝점
-// 화면 좌표 Y 아래+ 이므로: 반시계(+) = 선 방향 벡터를 -각도 회전(screen 기준)
+// 기준점 base 에서 선 방향(base→other)을 기준으로 angleExtrudeAng만큼 꺾어 돌출된 끝점
+// 거리 모드: 'line'=선 길이, 'x'=X변위, 'y'=Y변위
 function angleExtrudeEndPoint(base, other){
-  const distPx = angleExtrudeDist / mmPerPixel;
-  // 선 방향 단위벡터 (base → other)
+  // 선 방향 단위벡터 (base → other), 화면 Y↓ 좌표계
   const dx = other.x - base.x, dy = other.y - base.y;
   const len = Math.hypot(dx, dy);
-  // 방향이 없으면 X축 기준 fallback
   const ux = len > 1e-6 ? dx / len : 1;
   const uy = len > 1e-6 ? dy / len : 0;
-  // 선 방향 기준으로 angleExtrudeAng 만큼 회전 (화면 Y 아래+ → 반시계=+)
-  //   회전행렬: [cos -sin; sin cos], 화면 좌표계 보정: sin 부호 반전
+
+  // 선 방향 기준으로 angleExtrudeAng 만큼 회전 → 돌출 방향 단위벡터 (nx, ny)
+  // 화면 좌표(Y↓) 반시계+: nx = ux*cos + uy*sin, ny = -ux*sin + uy*cos
   const rad = angleExtrudeAng * Math.PI / 180;
   const cos = Math.cos(rad), sin = Math.sin(rad);
-  // 화면 좌표(Y↓) 에서 반시계+ 회전: nx = ux*cos + uy*sin, ny = -ux*sin + uy*cos
   const nx = ux * cos + uy * sin;
   const ny = -ux * sin + uy * cos;
+
+  // 거리 모드에 따라 실제 선 길이(px) 역산
+  const distMode = (document.getElementById('angleExtrudeDistModeSel') || {}).value || 'line';
+  let distPx;
+  if (distMode === 'x') {
+    // X변위 = angleExtrudeDist → 선 길이 = dist / |nx|
+    distPx = Math.abs(nx) < 1e-6
+      ? angleExtrudeDist / mmPerPixel   // X변위 없는 방향 fallback
+      : (angleExtrudeDist / mmPerPixel) / Math.abs(nx);
+  } else if (distMode === 'y') {
+    // Y변위 = angleExtrudeDist → 선 길이 = dist / |ny|
+    distPx = Math.abs(ny) < 1e-6
+      ? angleExtrudeDist / mmPerPixel   // Y변위 없는 방향 fallback
+      : (angleExtrudeDist / mmPerPixel) / Math.abs(ny);
+  } else {
+    distPx = angleExtrudeDist / mmPerPixel;
+  }
+
   return { x: base.x + nx * distPx, y: base.y + ny * distPx };
 }
 
@@ -2380,7 +2398,7 @@ function handleAngleExtrudeClick(p){
     angleExtrudeState = { target };
     drawVertexCutHandles(target); // 양 끝점 강조 재사용
     document.getElementById('statusHint').textContent =
-      `↱ 돌출 시작 꼭지점(시작/끝)을 클릭하세요 (선 방향 기준 ${angleExtrudeAng}°, ${angleExtrudeDist}mm)`;
+      (()=>{ const _m=(document.getElementById('angleExtrudeDistModeSel')||{}).value||'line'; const _l={line:'선길이',x:'X변위',y:'Y변위'}[_m]||'선길이'; return `↱ 돌출 꼭지점 클릭 (${angleExtrudeAng}°, ${_l}=${angleExtrudeDist}mm)`; })();
     return true;
   }
 
@@ -2404,13 +2422,13 @@ function handleAngleExtrudeClick(p){
   preCtx.clearRect(0, 0, baseW, baseH);
   redrawDraw(); updateCount();
   document.getElementById('statusHint').textContent =
-    `✓ 각도돌출 완료: 선 방향 기준 ${angleExtrudeAng}° 꺾어 ${angleExtrudeDist}mm 선 생성`;
+    (()=>{ const _m=(document.getElementById('angleExtrudeDistModeSel')||{}).value||'line'; const _l={line:'선길이',x:'X변위',y:'Y변위'}[_m]||'선길이'; return `✓ 각도돌출 완료: ${angleExtrudeAng}° / ${_l}=${angleExtrudeDist}mm`; })();
   // 다음 작업 위해 선 선택 단계로 리셋 (모드 유지)
   angleExtrudeState = null;
   setTimeout(() => {
     if (angleExtrudeMode){
       document.getElementById('statusHint').textContent =
-        `↱ 각도돌출(${angleExtrudeAng}°, ${angleExtrudeDist}mm): 기준 선을 클릭하세요 (Esc=종료)`;
+        (()=>{ const _m=(document.getElementById('angleExtrudeDistModeSel')||{}).value||'line'; const _l={line:'선길이',x:'X변위',y:'Y변위'}[_m]||'선길이'; return `↱ 각도돌출(${angleExtrudeAng}°, ${_l}=${angleExtrudeDist}mm): 기준 선 클릭 (Esc=종료)`; })();
     }
   }, 800);
   return true;
@@ -8371,6 +8389,19 @@ document.getElementById('angleExtrudeDistInput').addEventListener('input', e => 
     if (angleExtrudeMode && angleExtrudeState && lastMousePoint){
       drawAngleExtrudePreview(lastMousePoint);
     }
+  }
+});
+
+document.getElementById('angleExtrudeDistModeSel').addEventListener('change', () => {
+  if (angleExtrudeMode && angleExtrudeState && lastMousePoint){
+    drawAngleExtrudePreview(lastMousePoint);
+  }
+  // 상태바 힌트 갱신
+  if (angleExtrudeMode){
+    const _m = document.getElementById('angleExtrudeDistModeSel').value;
+    const _l = {line:'선길이', x:'X변위', y:'Y변위'}[_m] || '선길이';
+    document.getElementById('statusHint').textContent =
+      `↱ 각도돌출(${angleExtrudeAng}°, ${_l}=${angleExtrudeDist}mm): 기준 선을 클릭하세요 (Esc=종료)`;
   }
 });
 
