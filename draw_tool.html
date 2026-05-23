@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<title>도면 작도기 Rev.12.2</title>
+<title>도면 작도기 Rev.12.3</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Malgun Gothic', sans-serif; background: #2b2b2b; color: #eee; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
@@ -303,8 +303,8 @@
 <body>
 
 <header>
-  <h1>📐 도면 작도기 Rev.12.2</h1>
-  <span class="ver">v12.2 (단위 1mm=50px)</span>
+  <h1>📐 도면 작도기 Rev.12.3</h1>
+  <span class="ver">v12.3 (단위 1mm=50px)</span>
   <span class="cvstat" id="cvStat">OpenCV 로딩 중...</span>
   <span class="snapstat" id="snapStat">스냅: 비활성 (배경 없음)</span>
   <span class="snapstat" id="calibStat" style="background:#e67e22;">📏 캘리브: 미설정 (1px = 1mm)</span>
@@ -339,8 +339,14 @@
       </label>
       <div class="menu-item" id="menuClearBg"><span class="ico">❌</span> 배경 이미지 제거</div>
       <div class="menu-sep"></div>
-      <div class="menu-section">저장</div>
-      <div class="menu-item" id="btnSave"><span class="ico">💾</span> 2D 저장 (SVG / PNG)<span class="shortcut">Ctrl+S</span></div>
+      <div class="menu-section">프로젝트 (작업 저장/열기)</div>
+      <div class="menu-item" id="btnSaveProject"><span class="ico">📁</span> 도면 저장 (.json)<span class="shortcut">Ctrl+S</span></div>
+      <div class="menu-item" id="btnOpenProject"><span class="ico">📂</span> 도면 열기 (.json)<span class="shortcut">Ctrl+O</span>
+        <input type="file" id="projFile" accept=".json,application/json" style="display:none;">
+      </div>
+      <div class="menu-sep"></div>
+      <div class="menu-section">내보내기</div>
+      <div class="menu-item" id="btnSave"><span class="ico">💾</span> 2D 내보내기 (SVG / PNG)</div>
       <div class="menu-item" id="btnSave3D"><span class="ico">🧊</span> 3D 저장 (STL / OBJ / PLY)</div>
       <div class="menu-sep"></div>
       <div class="menu-section">편집</div>
@@ -1528,7 +1534,7 @@ document.querySelectorAll('.ts-act').forEach(btn => {
     const trigger = id => { const el = document.getElementById(id); if (el) el.click(); };
     switch(a){
       case 'open':     trigger('imgFile'); break;
-      case 'save':     trigger('btnSave'); break;
+      case 'save':     trigger('btnSaveProject'); break;
       case 'undo':     trigger('btnUndo'); break;
       case 'redo':     trigger('btnRedo'); break;
       case 'clearall': trigger('btnClearAll'); break;
@@ -8043,6 +8049,131 @@ function sabOpenProp() {
   }
 }
 
+// ====== Rev.12.3: 도면 프로젝트 저장 / 열기 (.json) ======
+// 도형·채움·회전축·캘리브레이션·작업영역·배경설정을 하나의 JSON으로 저장/복원.
+function buildProjectData(){
+  return {
+    app: 'TJD-도면작도기',
+    version: '12.3',
+    savedAt: new Date().toISOString(),
+    mmPerPixel: mmPerPixel,
+    calibSet: calibSet,
+    baseW: baseW, baseH: baseH,
+    zoom: zoom,
+    bg: {
+      hasImage: !!bgImage,
+      src: bgImage ? (bgImage.src || null) : null, // dataURL이면 그대로 보존
+      opacity: bgImageOpacity,
+      scale: bgImageScale,
+      offsetX: bgImageOffsetX,
+      offsetY: bgImageOffsetY
+    },
+    shapes: JSON.parse(JSON.stringify(shapes)),
+    fills: JSON.parse(JSON.stringify(fills)),
+    rotAxis: rotAxis ? JSON.parse(JSON.stringify(rotAxis)) : null,
+    shapeIdSeq: shapeIdSeq
+  };
+}
+
+function saveProject(){
+  const data = buildProjectData();
+  const json = JSON.stringify(data, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  // 파일명: 도면_YYYYMMDD_HHMM.json (KST)
+  const now = new Date(Date.now() + 9*3600*1000); // UTC+9
+  const ts = now.toISOString().slice(0,16).replace(/[-T:]/g,'').replace(/(\d{8})(\d{4})/,'$1_$2');
+  const name = `도면_${ts}.json`;
+  const a = document.createElement('a');
+  a.href = url; a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  if (document.getElementById('statusHint'))
+    document.getElementById('statusHint').textContent = `📁 도면 저장됨: ${name} (도형 ${shapes.length}개)`;
+}
+
+function loadProjectData(data){
+  if (!data || !Array.isArray(data.shapes)){
+    alert('올바른 도면 파일이 아닙니다.');
+    return false;
+  }
+  // 단위/작업영역/줌
+  if (typeof data.mmPerPixel === 'number' && data.mmPerPixel > 0) mmPerPixel = data.mmPerPixel;
+  if (typeof data.calibSet === 'boolean') calibSet = data.calibSet;
+  if (typeof data.zoom === 'number' && data.zoom > 0){
+    zoom = data.zoom;
+    const zi = document.getElementById('zoom');
+    if (zi){ zi.value = Math.round(zoom*100); document.getElementById('zoomVal').textContent = Math.round(zoom*100)+'%'; }
+  }
+  const newW = (typeof data.baseW === 'number') ? data.baseW : baseW;
+  const newH = (typeof data.baseH === 'number') ? data.baseH : baseH;
+
+  // 도형/채움/회전축
+  shapes = JSON.parse(JSON.stringify(data.shapes));
+  fills = Array.isArray(data.fills) ? JSON.parse(JSON.stringify(data.fills)) : [];
+  rotAxis = data.rotAxis ? JSON.parse(JSON.stringify(data.rotAxis)) : null;
+  // shapeIdSeq: 저장값 또는 현재 도형 최대 id 중 큰 값
+  let maxId = 0;
+  shapes.forEach(s => { if (s.id > maxId) maxId = s.id; });
+  fills.forEach(s => { if (s.id > maxId) maxId = s.id; });
+  shapeIdSeq = Math.max(typeof data.shapeIdSeq === 'number' ? data.shapeIdSeq : 0, maxId);
+
+  selectedIds.clear();
+  history = []; histIdx = -1; redoStack = [];
+
+  const finishLoad = () => {
+    setCanvasSize(newW, newH);
+    if (typeof updateCalibStat === 'function') updateCalibStat();
+    if (typeof redrawBg === 'function') redrawBg();
+    redrawFills(); redrawDraw(); updateCount(); updateSelStat();
+    pushHistory(); // 불러온 상태를 히스토리 시작점으로
+    if (document.getElementById('statusHint'))
+      document.getElementById('statusHint').textContent = `📂 도면 열기 완료 (도형 ${shapes.length}개)`;
+  };
+
+  // 배경 이미지 복원 (dataURL일 때만)
+  const bg = data.bg || {};
+  bgImageOpacity = (typeof bg.opacity === 'number') ? bg.opacity : 1.0;
+  bgImageScale   = (typeof bg.scale === 'number') ? bg.scale : 1.0;
+  bgImageOffsetX = (typeof bg.offsetX === 'number') ? bg.offsetX : 0;
+  bgImageOffsetY = (typeof bg.offsetY === 'number') ? bg.offsetY : 0;
+  if (bg.hasImage && bg.src && bg.src.indexOf('data:') === 0){
+    const img = new Image();
+    img.onload = () => { bgImage = img; finishLoad(); };
+    img.onerror = () => { bgImage = null; finishLoad(); };
+    img.src = bg.src;
+  } else {
+    bgImage = null;
+    finishLoad();
+  }
+  return true;
+}
+
+function openProjectFile(file){
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    try {
+      const data = JSON.parse(ev.target.result);
+      loadProjectData(data);
+    } catch(err){
+      alert('파일을 읽을 수 없습니다: ' + err.message);
+    }
+  };
+  reader.readAsText(file);
+}
+
+document.getElementById('btnSaveProject').addEventListener('click', saveProject);
+document.getElementById('btnOpenProject').addEventListener('click', (e) => {
+  // 메뉴 안의 input[type=file] 트리거
+  e.stopPropagation();
+  document.getElementById('projFile').click();
+});
+document.getElementById('projFile').addEventListener('change', (e) => {
+  const f = e.target.files && e.target.files[0];
+  if (f) openProjectFile(f);
+  e.target.value = ''; // 같은 파일 재선택 허용
+  document.querySelectorAll('.menu').forEach(m => m.classList.remove('open')); // 메뉴 닫기
+});
+
 // ====== Rev.11.41: 스냅샷 기반 Undo/Redo ======
 // 현재 전체 상태를 깊은 복사로 캡처
 function captureState(){
@@ -9676,10 +9807,15 @@ window.addEventListener('keydown', e => {
   const tag = (e.target && e.target.tagName) || '';
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
   
-  // Ctrl+S: 저장 (단축키 유지)
+  // Ctrl+S: 도면 저장(.json), Ctrl+O: 도면 열기 (Rev.12.3)
   if (e.ctrlKey && e.key.toLowerCase() === 's') {
     e.preventDefault();
-    document.getElementById('btnSave').click();
+    document.getElementById('btnSaveProject').click();
+    return;
+  }
+  if (e.ctrlKey && e.key.toLowerCase() === 'o') {
+    e.preventDefault();
+    document.getElementById('btnOpenProject').click();
     return;
   }
   if (e.ctrlKey || e.altKey || e.metaKey) return;
