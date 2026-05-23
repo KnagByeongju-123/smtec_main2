@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<title>도면 작도기 Rev.11.67 - 점 2개 선택 후 F로 즉시 연결</title>
+<title>도면 작도기 Rev.11.68 - 선 생성 직후 길이 입력</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Malgun Gothic', sans-serif; background: #2b2b2b; color: #eee; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
@@ -697,6 +697,39 @@
     <div class="actions">
       <button id="btnCalibCancel">취소</button>
       <button class="success" id="btnCalibApply">적용</button>
+    </div>
+  </div>
+</div>
+
+<!-- Rev.11.68: 선 길이(치수) 입력 모달 - 점 연장/선 긋기 직후 정확한 길이 보정 -->
+<div class="modal-overlay" id="lineDimModal">
+  <div class="modal" style="min-width:380px;">
+    <h3>📏 선 길이 입력</h3>
+    <div class="section">
+      <h4>방금 그린 선의 실제 길이를 입력하세요</h4>
+      <div class="row">
+        <label>현재 길이:</label>
+        <span id="lineDimCurrent" style="color:#ffd966; font-weight:bold;">- mm</span>
+      </div>
+      <div class="row">
+        <label>실제 길이 (mm):</label>
+        <input type="number" id="lineDimInput" value="" min="0.001" step="0.01" style="flex:1; font-size:15px; font-weight:bold;">
+      </div>
+      <div class="row">
+        <label>고정 끝점:</label>
+        <select id="lineDimFixEnd" style="flex:1;">
+          <option value="start">시작점 고정 (끝점 이동)</option>
+          <option value="end">끝점 고정 (시작점 이동)</option>
+        </select>
+      </div>
+      <div class="hint-text">
+        방향은 그대로 유지하고 길이만 입력값으로 보정합니다.<br>
+        예: <b>52.3</b> 또는 <b>100.52-48.2</b> 같은 수식도 가능. Enter=적용 / Esc=건너뛰기
+      </div>
+    </div>
+    <div class="actions">
+      <button id="btnLineDimSkip">건너뛰기 (Esc)</button>
+      <button class="success" id="btnLineDimApply">적용 (Enter)</button>
     </div>
   </div>
 </div>
@@ -8450,6 +8483,63 @@ document.getElementById('headerBtnConnect').addEventListener('click', () => {
   }
 });
 
+// ===== Rev.11.68: 선 길이(치수) 입력 팝업 =====
+//  점 연장 / 선 긋기 직후, 생성된 선의 정확한 길이를 입력받아 보정.
+//  방향은 유지, 한쪽 끝점을 고정하고 길이만 입력값으로 맞춤.
+let lineDimTargetId = null;   // 보정 대상 선 id
+
+function openLineDimModal(lineId){
+  const ln = shapes.find(s => s.id === lineId && s.type === 'line');
+  if (!ln){ return; }
+  lineDimTargetId = lineId;
+  const lenPx = Math.hypot(ln.p2.x - ln.p1.x, ln.p2.y - ln.p1.y);
+  const lenMm = lenPx * mmPerPixel;
+  document.getElementById('lineDimCurrent').textContent =
+    calibSet ? `${lenMm.toFixed(2)} mm` : `${lenPx.toFixed(1)} px`;
+  const inp = document.getElementById('lineDimInput');
+  inp.value = lenMm.toFixed(2);
+  document.getElementById('lineDimModal').classList.add('show');
+  setTimeout(() => { inp.focus(); inp.select(); }, 30);
+}
+
+function applyLineDim(){
+  const ln = shapes.find(s => s.id === lineDimTargetId && s.type === 'line');
+  if (!ln){ closeLineDimModal(); return; }
+  const valMm = evalExpr(document.getElementById('lineDimInput').value);
+  if (!(valMm > 0)){
+    document.getElementById('statusHint').textContent = '⚠ 0보다 큰 길이(또는 수식)를 입력하세요';
+    return;
+  }
+  const targetPx = valMm / mmPerPixel;           // 입력 길이(px 환산)
+  const fixEnd = document.getElementById('lineDimFixEnd').value; // 'start'|'end'
+  const fix = (fixEnd === 'end') ? ln.p2 : ln.p1; // 고정점
+  const mov = (fixEnd === 'end') ? ln.p1 : ln.p2; // 이동점
+  const dx = mov.x - fix.x, dy = mov.y - fix.y;
+  const cur = Math.hypot(dx, dy);
+  if (cur < 1e-6){ closeLineDimModal(); return; } // 방향 없음
+  const ux = dx / cur, uy = dy / cur;            // 단위 방향벡터(방향 유지)
+  mov.x = fix.x + ux * targetPx;
+  mov.y = fix.y + uy * targetPx;
+  redoStack = []; pushHistory();
+  redrawFills(); redrawDraw(); updateCount();
+  document.getElementById('statusHint').textContent =
+    `✓ 선 길이 보정: ${valMm.toFixed(2)}mm`;
+  closeLineDimModal();
+}
+
+function closeLineDimModal(){
+  document.getElementById('lineDimModal').classList.remove('show');
+  lineDimTargetId = null;
+}
+
+document.getElementById('btnLineDimApply').addEventListener('click', applyLineDim);
+document.getElementById('btnLineDimSkip').addEventListener('click', closeLineDimModal);
+document.getElementById('lineDimInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter'){ e.preventDefault(); applyLineDim(); }
+  else if (e.key === 'Escape'){ e.preventDefault(); closeLineDimModal(); }
+  e.stopPropagation(); // 캔버스 단축키로 전파 방지
+});
+
 // Rev.11.66: 선택된 점들을 선택 순서대로 즉시 연결 (점 2개 이상 선택 후 F)
 //   2개 → 선 1개, 3개 이상 → 연쇄 연결(폴리라인식). 사용된 점은 선으로 흡수(삭제).
 //   반환: 연결 처리했으면 true
@@ -8465,10 +8555,12 @@ function connectSelectedPoints(){
   const sw = parseInt(document.getElementById('strokeWidth').value) || 1;
   const stroke = document.getElementById('strokeColor').value || '#ffffff';
   // 연쇄 연결: p0-p1, p1-p2, ...
+  let lastLineId = null;
   for (let i = 0; i < pts.length - 1; i++){
     const a = pts[i], b = pts[i+1];
+    lastLineId = ++shapeIdSeq;
     shapes.push({
-      id: ++shapeIdSeq, type: 'line',
+      id: lastLineId, type: 'line',
       p1: { x: a.p1.x, y: a.p1.y }, p2: { x: b.p1.x, y: b.p1.y },
       stroke, strokeWidth: sw
     });
@@ -8483,6 +8575,8 @@ function connectSelectedPoints(){
   redrawDraw(); updateCount();
   document.getElementById('statusHint').textContent =
     `🔗 점 ${pts.length}개 연결 완료 (선 ${pts.length-1}개 생성)`;
+  // Rev.11.68: 점 2개로 선 1개만 만든 경우 길이 보정 팝업
+  if (pts.length === 2 && lastLineId != null) openLineDimModal(lastLineId);
   return true;
 }
 
@@ -8710,6 +8804,8 @@ function commitExtrude(off){
       `✓ 점 연장 완료: ${(off.dist*mmPerPixel).toFixed(2)}mm 선 생성`;
     // Rev.11.23: 거리두기 ON이면 좌우 평행선 후보 생성
     if (offsetTwinMode) makeOffsetTwins(newLn);
+    // Rev.11.68: 점 연장으로 만든 선 길이 보정 팝업
+    else openLineDimModal(newLn.id);
     return;
   }
 
