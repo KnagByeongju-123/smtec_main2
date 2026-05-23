@@ -1024,6 +1024,25 @@ function initPanZoom() {
       drawSubdividePreview();
       return;
     }
+
+    // Rev.13.1: Ctrl+휠 = 배경 독립 확대/축소 (작업영역과 별개 CSS scale)
+    //            마우스 위치 기준 zoom-origin → 마우스 아래 지점 고정
+    if (e.ctrlKey && bgImage) {
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 1.08 : (1 / 1.08);
+      bgZoom = Math.max(0.05, Math.min(20.0, bgZoom * factor));
+
+      // 마우스 위치를 bgCanvas 기준 % 로 변환 → transform-origin 설정
+      const rect = bgCanvas.getBoundingClientRect();
+      bgZoomOriginX = Math.max(0, Math.min(100, Math.round(((e.clientX - rect.left) / rect.width)  * 100)));
+      bgZoomOriginY = Math.max(0, Math.min(100, Math.round(((e.clientY - rect.top)  / rect.height) * 100)));
+      applyBgZoom();
+
+      const hint = document.getElementById('statusHint');
+      if (hint) hint.textContent = `🖼 배경 독립줌: ${Math.round(bgZoom*100)}%  (Ctrl+휠 / Ctrl+0=초기화)`;
+      return;
+    }
+
     // Rev.11.25: 휠만으로 확대/축소 (마우스 위치 기준)
     e.preventDefault();
     const zoomInput = document.getElementById('zoom');
