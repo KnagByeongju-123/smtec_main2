@@ -38,6 +38,9 @@ let bgImageOpacity = 1.0; // 배경 이미지 불투명도 (0~1)
 let bgImageScale = 1.0;   // Rev.11.10: 배경 이미지 자체 확대/축소 (도면 맞춤용)
 let bgImageOffsetX = 0;   // Rev.11.10: 배경 이미지 X 오프셋 (px)
 let bgImageOffsetY = 0;   // Rev.11.10: 배경 이미지 Y 오프셋 (px)
+let bgZoom = 1.0;         // Rev.13.1: 배경 독립 확대/축소 (작업영역과 별개, CSS transform)
+let bgZoomOriginX = 50;   // transform-origin X (%)
+let bgZoomOriginY = 50;   // transform-origin Y (%)
 let tool = 'line';
 let shapes = [];
 let fills = [];        // 영역 채움 목록 [{type:'fill', points:[{x,y}...], color, alpha}]
@@ -92,6 +95,11 @@ let offsetTwinTarget = null;       // 선택된 대상 선 도형
 // Rev.12.7: 꼭지점커팅 - 선의 가까운 꼭지점에서 지정 치수(mm)만큼 선을 따라 이동한 지점에서 분할
 let vertexCutMode = false;         // 꼭지점커팅 모드 ON/OFF
 let vertexCutDist = 10;            // 자를 거리(mm)
+// Rev.13.1: 챔퍼(C면취)
+let chamferState = null;           // null | {firstLine, firstClickPt}
+let chamferC = 5;                  // 챔퍼 거리(mm)
+// Rev.13.1: 호-직선 접선 연결
+let tangentState = null;           // null | {line, endKey}
 // Rev.12.8: 각도돌출커팅 - 선 끝 꼭지점에서 지정 각도로 꺾어 지정 거리만큼 새 선 추가
 let angleExtrudeMode = false;      // 각도돌출 모드 ON/OFF
 let angleExtrudeAng = 45;          // 꺾을 각도(°) - X축 0°, 반시계 +
@@ -191,6 +199,7 @@ document.getElementById('imgFile').addEventListener('change', e => {
       bgImage = img;
       // Rev.11.10: 새 이미지 로드 시 배경 맞춤 슬라이더 초기화
       bgImageScale = 1.0; bgImageOffsetX = 0; bgImageOffsetY = 0;
+      bgZoom = 1.0; bgZoomOriginX = 50; bgZoomOriginY = 50; applyBgZoom();
       const bs = document.getElementById('bgScale');
       const bx = document.getElementById('bgOffsetX');
       const by = document.getElementById('bgOffsetY');
@@ -254,6 +263,7 @@ document.getElementById('bgOffsetY').addEventListener('input', e => {
 // Rev.11.10: 배경 위치/크기 초기화
 document.getElementById('menuBgReset').addEventListener('click', () => {
   bgImageScale = 1.0; bgImageOffsetX = 0; bgImageOffsetY = 0;
+  bgZoom = 1.0; bgZoomOriginX = 50; bgZoomOriginY = 50; applyBgZoom();
   document.getElementById('bgScale').value = 100;
   document.getElementById('bgScaleVal').textContent = '100%';
   document.getElementById('bgOffsetX').value = 0;
@@ -546,6 +556,8 @@ function updateToolStatus() {
     trim: '✂ 트리밍: 자르고 싶은 선의 자를 부분을 클릭 (다른 선/도형과 교차하는 부분 기준으로 자름)',
     extend: '↔ 연장: 연장할 선의 늘릴 쪽 끝점 가까이 클릭 → 가장 가까운 다른 선까지 자동 연장',
     fillet: '◜ 모서리 R: ① 사각형/두 선의 꼭지점 클릭→자동 라운드 ② 또는 두 직선 차례 클릭',
+    chamfer: '⌐ 챔퍼(C면취): ① 사각형/꼭지점 클릭→즉시 면취 ② 또는 두 직선 차례 클릭 (C값 입력 필드 참조)',
+    tangent: '⌒ 접선연결: 직선 클릭(끝점 가까운 쪽)→ 호/원 클릭→ 자동 접선 연결',
     offset: '∥ 오프셋: 원본 선/도형 클릭 → 오프셋할 방향 클릭 → 거리 입력으로 평행 복사',
     break: '✄ 분할: 선 클릭 → 첫 분할점 → 두 번째 분할점 클릭 (두 점 사이를 잘라내고 두 선으로 분할). 같은 점 두 번 클릭하면 그 점에서만 분할',
     breakAtPoint: '⋮ 점에서 분할: 선 클릭 → 한 점 클릭 → 그 점에서 두 선으로 분할 (중간 제거 없음)',
@@ -1740,6 +1752,8 @@ drawCanvas.addEventListener('click', e => {
   if (tool === 'trim') { handleTrimClick(p); return; }
   if (tool === 'extend') { handleExtendClick(p); return; }
   if (tool === 'fillet') { handleFilletClick(p); return; }
+  if (tool === 'chamfer') { handleChamferClick(p); return; }
+  if (tool === 'tangent') { handleTangentClick(p); return; }
   if (tool === 'offset') { handleOffsetClick(p); return; }
   if (tool === 'break') { handleBreakClick(p); return; }
   if (tool === 'breakAtPoint') { handleBreakAtPointClick(p); return; }
@@ -3577,6 +3591,329 @@ function handleFilletOnRect(rect, p) {
 }
 
 // 반지름이 이미 정해진 상태에서 두 선에 라운드 적용 (prompt 생략)
+
+// ═══════════════════════════════════════════════════════════════
+//  Rev.13.1: 챔퍼(C면취) - applyFilletToTwoLines와 동일 흐름
+// ═══════════════════════════════════════════════════════════════
+
+function handleChamferClick(p) {
+  // 꼭지점 자동 감지 (두 선 끝점이 만나는 곳)
+  const vertexHit = findVertexAt(p, 15);
+  if (vertexHit) {
+    applyChamferToTwoLines(vertexHit.line1, vertexHit.line2, vertexHit.click1, vertexHit.click2);
+    chamferState = null;
+    return;
+  }
+
+  let target = findShapeAtPoint(p, 15);
+  if (!target) {
+    document.getElementById('statusHint').textContent = '⌐ 챔퍼: 사각형 꼭지점 또는 선을 클릭하세요.';
+    return;
+  }
+
+  if (target.type === 'rect') {
+    handleChamferOnRect(target, p);
+    return;
+  }
+
+  if (target.type !== 'line') {
+    document.getElementById('statusHint').textContent = '⌐ 챔퍼: 선(line) 또는 사각형을 클릭하세요.';
+    return;
+  }
+
+  if (!chamferState) {
+    chamferState = { firstLine: target, firstClickPt: {x:p.x, y:p.y} };
+    document.getElementById('statusHint').textContent = '⌐ 첫 번째 선 선택됨. 두 번째 선을 클릭하세요.';
+    redrawDraw();
+    drawCtx.save();
+    drawCtx.strokeStyle = '#e67e22'; drawCtx.lineWidth = 4;
+    drawCtx.beginPath();
+    drawCtx.moveTo(target.p1.x, target.p1.y);
+    drawCtx.lineTo(target.p2.x, target.p2.y);
+    drawCtx.stroke();
+    drawCtx.restore();
+    return;
+  }
+
+  if (target.id === chamferState.firstLine.id) {
+    document.getElementById('statusHint').textContent = '⌐ 챔퍼: 다른 선을 클릭하세요.';
+    return;
+  }
+
+  const L1 = chamferState.firstLine;
+  applyChamferToTwoLines(L1, target, chamferState.firstClickPt, {x:p.x, y:p.y});
+  chamferState = null;
+}
+
+function applyChamferToTwoLines(L1, L2, click1, click2, cOverride) {
+  const ix = lineLineIntersection(L1.p1, L1.p2, L2.p1, L2.p2);
+  if (!ix) { alert('두 선이 평행이라 면취할 수 없습니다.'); redrawDraw(); return false; }
+
+  // C값: 인자 우선, 없으면 입력창값, 없으면 prompt
+  let cMm = cOverride != null ? cOverride : chamferC;
+  if (cOverride == null) {
+    const inp = document.getElementById('chamferCInput');
+    if (inp) { const v = parseFloat(inp.value); if (!isNaN(v) && v > 0) cMm = v; }
+  }
+  if (cMm <= 0) {
+    const s = prompt('챔퍼 C값(mm):', '5');
+    if (!s) { redrawDraw(); return false; }
+    cMm = parseFloat(s);
+    if (isNaN(cMm) || cMm <= 0) { alert('잘못된 값.'); redrawDraw(); return false; }
+  }
+  chamferC = cMm;
+  const inp2 = document.getElementById('chamferCInput');
+  if (inp2) inp2.value = cMm;
+
+  const c = cMm / mmPerPixel; // px
+
+  // 각 선의 살릴 방향(교점 기준)
+  function lineDir(line, clickPt) {
+    const d1 = Math.hypot(clickPt.x - line.p1.x, clickPt.y - line.p1.y);
+    const d2 = Math.hypot(clickPt.x - line.p2.x, clickPt.y - line.p2.y);
+    const keepKey = d1 < d2 ? 'p1' : 'p2';
+    const cutKey  = keepKey === 'p1' ? 'p2' : 'p1';
+    const keep = line[keepKey];
+    const dx = keep.x - ix.x, dy = keep.y - ix.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-6) {
+      const other = line[cutKey];
+      const ox = other.x - ix.x, oy = other.y - ix.y;
+      const oLen = Math.hypot(ox, oy);
+      if (oLen < 1e-6) return null;
+      return {ux: -ox/oLen, uy: -oy/oLen, keepKey, cutKey, keepLen: 0};
+    }
+    return {ux: dx/len, uy: dy/len, keepKey, cutKey, keepLen: len};
+  }
+
+  const e1 = lineDir(L1, click1);
+  const e2 = lineDir(L2, click2);
+  if (!e1 || !e2) { redrawDraw(); return false; }
+
+  if (c > e1.keepLen + 0.5 && e1.keepLen > 0.5 || c > e2.keepLen + 0.5 && e2.keepLen > 0.5) {
+    alert(`C${cMm}mm가 선 길이를 벗어납니다.
+최대: ${(Math.min(e1.keepLen, e2.keepLen)*mmPerPixel).toFixed(1)}mm`);
+    redrawDraw(); return false;
+  }
+
+  // 각 선 위의 면취 시작점 (교점에서 c만큼)
+  const t1 = {x: ix.x + e1.ux * c, y: ix.y + e1.uy * c};
+  const t2 = {x: ix.x + e2.ux * c, y: ix.y + e2.uy * c};
+
+  // 선 단축
+  L1[e1.cutKey] = {x: Math.round(t1.x), y: Math.round(t1.y)};
+  L2[e2.cutKey] = {x: Math.round(t2.x), y: Math.round(t2.y)};
+
+  // 면취 직선 추가
+  shapes.push({
+    id: ++shapeIdSeq, type: 'line',
+    p1: {x: Math.round(t1.x), y: Math.round(t1.y)},
+    p2: {x: Math.round(t2.x), y: Math.round(t2.y)},
+    stroke: L1.stroke, strokeWidth: L1.strokeWidth || 1
+  });
+
+  redoStack = []; pushHistory();
+  redrawDraw(); updateCount();
+  document.getElementById('statusHint').textContent = `⌐ 챔퍼 C${cMm}mm 생성 완료`;
+  return true;
+}
+
+// 사각형 챔퍼 - 클릭된 모서리만, 양쪽 균등(C값)
+function handleChamferOnRect(rect, p) {
+  const x1 = Math.min(rect.p1.x, rect.p2.x);
+  const x2 = Math.max(rect.p1.x, rect.p2.x);
+  const y1 = Math.min(rect.p1.y, rect.p2.y);
+  const y2 = Math.max(rect.p1.y, rect.p2.y);
+  const w = x2 - x1, h = y2 - y1;
+  if (w < 4 || h < 4) { alert('사각형이 너무 작습니다.'); return; }
+
+  const corners = [
+    {key:'TL', label:'좌상', x:x1, y:y1},
+    {key:'TR', label:'우상', x:x2, y:y1},
+    {key:'BR', label:'우하', x:x2, y:y2},
+    {key:'BL', label:'좌하', x:x1, y:y2}
+  ];
+  let best = null, bd = Infinity;
+  for (const c of corners) {
+    const d = Math.hypot(p.x-c.x, p.y-c.y);
+    if (d < bd) { bd = d; best = c; }
+  }
+  if (!best) return;
+
+  // C값
+  let cMm = chamferC;
+  const inp = document.getElementById('chamferCInput');
+  if (inp) { const v = parseFloat(inp.value); if (!isNaN(v) && v > 0) cMm = v; }
+  if (cMm <= 0) {
+    const s = prompt(`사각형 [${best.label}] 챔퍼 C값(mm):`, '5');
+    if (!s) return;
+    cMm = parseFloat(s);
+    if (isNaN(cMm) || cMm <= 0) { alert('잘못된 값.'); return; }
+  }
+  chamferC = cMm;
+  if (inp) inp.value = cMm;
+
+  const c = cMm / mmPerPixel;
+  const maxC = Math.min(w, h) / 2;
+  if (c > maxC) {
+    alert(`C값이 너무 큽니다. 최대: ${(maxC*mmPerPixel).toFixed(1)}mm`);
+    return;
+  }
+
+  const stroke = rect.stroke || '#fff';
+  const strokeWidth = rect.strokeWidth || 1;
+  const layer = rect.layer;
+
+  // 면취 적용 - 각 변 끝점 조정 (클릭된 모서리만)
+  let topX1=x1, topX2=x2, rightY1=y1, rightY2=y2;
+  let bottomX1=x1, bottomX2=x2, leftY1=y1, leftY2=y2;
+  let chamferP1, chamferP2; // 면취 직선 양 끝
+
+  if (best.key === 'TL') {
+    topX1    = x1 + c; leftY1   = y1 + c;
+    chamferP1 = {x: x1+c, y: y1}; chamferP2 = {x: x1, y: y1+c};
+  } else if (best.key === 'TR') {
+    topX2    = x2 - c; rightY1  = y1 + c;
+    chamferP1 = {x: x2-c, y: y1}; chamferP2 = {x: x2, y: y1+c};
+  } else if (best.key === 'BR') {
+    bottomX2 = x2 - c; rightY2  = y2 - c;
+    chamferP1 = {x: x2-c, y: y2}; chamferP2 = {x: x2, y: y2-c};
+  } else { // BL
+    bottomX1 = x1 + c; leftY2   = y2 - c;
+    chamferP1 = {x: x1+c, y: y2}; chamferP2 = {x: x1, y: y2-c};
+  }
+
+  // 기존 rect 제거
+  const idx = shapes.findIndex(s => s.id === rect.id);
+  if (idx >= 0) shapes.splice(idx, 1);
+
+  // 4변 추가 (면취된 모서리만 단축)
+  const mk = (p1, p2) => ({id:++shapeIdSeq, type:'line', p1, p2, stroke, strokeWidth, layer});
+  shapes.push(
+    mk({x:Math.round(topX1),    y:y1}, {x:Math.round(topX2),    y:y1}),
+    mk({x:x2, y:Math.round(rightY1)},  {x:x2, y:Math.round(rightY2)}),
+    mk({x:Math.round(bottomX2), y:y2}, {x:Math.round(bottomX1), y:y2}),
+    mk({x:x1, y:Math.round(leftY2)},   {x:x1, y:Math.round(leftY1)})
+  );
+  // 면취 직선
+  shapes.push(mk(
+    {x:Math.round(chamferP1.x), y:Math.round(chamferP1.y)},
+    {x:Math.round(chamferP2.x), y:Math.round(chamferP2.y)}
+  ));
+
+  redoStack = []; pushHistory();
+  redrawDraw(); updateCount();
+  document.getElementById('statusHint').textContent = `⌐ 사각형 [${best.label}] 챔퍼 C${cMm}mm 완료`;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  Rev.13.1: 호-직선 접선 자동연결
+//  ① 직선 클릭(끝점 가까운 쪽 선택) → ② 호/원 클릭
+//  선의 해당 끝점을 호와의 접선점으로 이동
+// ═══════════════════════════════════════════════════════════════
+
+function handleTangentClick(p) {
+  if (!tangentState) {
+    // 1단계: 직선 선택
+    const target = findShapeAtPoint(p, 15);
+    if (!target || target.type !== 'line') {
+      document.getElementById('statusHint').textContent = '⌒ 접선연결: 직선(line)을 클릭하세요.';
+      return;
+    }
+    // 클릭점에 가까운 끝점 = 이동할 끝점
+    const d1 = Math.hypot(p.x - target.p1.x, p.y - target.p1.y);
+    const d2 = Math.hypot(p.x - target.p2.x, p.y - target.p2.y);
+    const endKey = d1 <= d2 ? 'p1' : 'p2';
+    tangentState = { line: target, endKey };
+
+    redrawDraw();
+    drawCtx.save();
+    drawCtx.strokeStyle = '#27ae60'; drawCtx.lineWidth = 4;
+    drawCtx.beginPath();
+    drawCtx.moveTo(target.p1.x, target.p1.y);
+    drawCtx.lineTo(target.p2.x, target.p2.y);
+    drawCtx.stroke();
+    // 이동할 끝점 강조
+    const ep = target[endKey];
+    drawCtx.fillStyle = '#f39c12';
+    drawCtx.beginPath(); drawCtx.arc(ep.x, ep.y, 7/(zoom||1), 0, Math.PI*2); drawCtx.fill();
+    drawCtx.restore();
+    document.getElementById('statusHint').textContent = '⌒ 접선연결: 연결할 호/원을 클릭하세요.';
+    return;
+  }
+
+  // 2단계: 호/원 선택 → 접선점 계산
+  const arc = findShapeAtPoint(p, 15);
+  if (!arc || (arc.type !== 'arc' && arc.type !== 'circle')) {
+    document.getElementById('statusHint').textContent = '⌒ 접선연결: 호 또는 원을 클릭하세요.';
+    return;
+  }
+
+  const line = tangentState.line;
+  const endKey = tangentState.endKey;
+  const fixedKey = endKey === 'p1' ? 'p2' : 'p1';
+  const fixed = line[fixedKey]; // 고정 끝점
+  const movePt = line[endKey];  // 이동할 끝점
+
+  // 원/호 중심 (circle: p1=중심, r=hypot(p2-p1) / arc: cx,cy,r)
+  let cx, cy, r;
+  if (arc.type === 'circle') {
+    cx = arc.p1.x; cy = arc.p1.y;
+    r = Math.hypot(arc.p2.x - arc.p1.x, arc.p2.y - arc.p1.y);
+  } else {
+    cx = arc.cx; cy = arc.cy; r = arc.r;
+  }
+
+  // 고정점 → 원 중심 벡터
+  const dx = cx - fixed.x, dy = cy - fixed.y;
+  const dist = Math.hypot(dx, dy);
+
+  if (dist < r - 0.5) {
+    document.getElementById('statusHint').textContent = '⚠ 선의 고정 끝점이 호 안쪽에 있어 접선 불가.';
+    tangentState = null; redrawDraw(); return;
+  }
+
+  // 외부 접선: 고정점 → 원에 접하는 두 접선점 계산
+  // sin(θ) = r/dist → θ = 접선 반각
+  const sinT = r / dist;
+  const cosT = Math.sqrt(Math.max(0, 1 - sinT*sinT));
+  const baseAng = Math.atan2(dy, dx); // 고정점→중심 각도
+
+  // 두 접선점 (원 위)
+  const tang1 = {
+    x: cx + r * Math.cos(baseAng + Math.PI/2 + Math.acos(cosT) - Math.PI/2),
+    y: cy + r * Math.sin(baseAng + Math.PI/2 + Math.acos(cosT) - Math.PI/2)
+  };
+  // 더 정확한 계산: 접선점 = 원 중심에서 수선발
+  // 접선 각도 α = baseAng ± asin(r/dist)
+  const alpha1 = baseAng + Math.asin(sinT);
+  const alpha2 = baseAng - Math.asin(sinT);
+  // 각 접선의 방향벡터와 fixed→원 사이의 접선점
+  // 접선점은: 원 중심에서 접선 방향의 수선발
+  const tp1 = {
+    x: cx - r * Math.sin(alpha1),
+    y: cy + r * Math.cos(alpha1)
+  };
+  const tp2 = {
+    x: cx - r * Math.sin(alpha2),
+    y: cy + r * Math.cos(alpha2)
+  };
+
+  // 이동할 끝점(movePt)에 더 가까운 접선점 선택
+  const d1 = Math.hypot(movePt.x - tp1.x, movePt.y - tp1.y);
+  const d2 = Math.hypot(movePt.x - tp2.x, movePt.y - tp2.y);
+  const tp = d1 <= d2 ? tp1 : tp2;
+
+  // 선의 이동할 끝점을 접선점으로 교체
+  line[endKey] = {x: Math.round(tp.x), y: Math.round(tp.y)};
+
+  redoStack = []; pushHistory();
+  redrawDraw(); updateCount();
+  tangentState = null;
+  document.getElementById('statusHint').textContent = '⌒ 접선연결 완료';
+}
+
+
 function applyFilletNoPrompt(L1, L2, click1, click2, r, rMm) {
   const ix = lineLineIntersection(L1.p1, L1.p2, L2.p1, L2.p2);
   if (!ix) { alert('두 선이 평행입니다.'); return false; }
@@ -6997,6 +7334,11 @@ function handleArcHandleDrag(p) {
     `⌒ 호 편집 중: R=${(s.r*mmPerPixel).toFixed(1)}mm, 회전각=${spanDeg.toFixed(1)}° / 마우스 놓으면 확정`;
 }
 
+// Rev.13.1: 배경 캔버스만 독립 CSS scale (작업 캔버스와 무관)
+function applyBgZoom() {
+  bgCanvas.style.transformOrigin = bgZoomOriginX + '% ' + bgZoomOriginY + '%';
+  bgCanvas.style.transform = 'scale(' + bgZoom + ')';
+}
 function redrawAll() { redrawBg(); redrawFills(); redrawDraw(); }
 function redrawBg() {
   bgCtx.clearRect(0,0,baseW,baseH);
@@ -8372,6 +8714,11 @@ document.getElementById('headerBtnAngleExtrude').addEventListener('click', () =>
   startAngleExtrude();
 });
 
+document.getElementById('chamferCInput') && document.getElementById('chamferCInput').addEventListener('input', e => {
+  const v = parseFloat(e.target.value);
+  if (!isNaN(v) && v > 0) chamferC = v;
+});
+
 document.getElementById('angleExtrudeAngInput').addEventListener('input', e => {
   const v = parseFloat(e.target.value);
   if (!isNaN(v)){
@@ -9016,7 +9363,11 @@ const CMD_DICT = {
   'TRIM':      { tool: 'trim',   name: 'TRIM (트리밍)' },
   'EX':        { tool: 'extend', name: 'EXTEND (연장)' },
   'EXTEND':    { tool: 'extend', name: 'EXTEND (연장)' },
-  'R':         { tool: 'fillet', name: 'FILLET (모서리R)' },
+  'R':         { tool: 'fillet',  name: 'FILLET (모서리R)' },
+  'CH':        { tool: 'chamfer', name: 'CHAMFER (면취)' },
+  'CHAMFER':   { tool: 'chamfer', name: 'CHAMFER (면취)' },
+  'TAN':       { tool: 'tangent', name: 'TANGENT (접선연결)' },
+  'TANGENT':   { tool: 'tangent', name: 'TANGENT (접선연결)' },
   'ER':        { tool: 'fillet', name: 'FILLET (모서리R)' },
   'FILLET':    { tool: 'fillet', name: 'FILLET (모서리R)' },
   'F':         { action: 'connect', name: 'CONNECT (연결)' },
@@ -9339,7 +9690,8 @@ function cancelActiveTool() {
   firstClick = null; arcPath = []; dragState = null;
   calibFirstPoint = null; axisFirstPoint = null;
   endpointPickState = null; arcHandleDrag = null;
-  filletState = null; offsetState = null; dimState = null; breakState = null;
+  filletState = null; chamferState = null; tangentState = null;
+  offsetState = null; dimState = null; breakState = null;
   preCtx.clearRect(0,0,baseW,baseH);
   redrawDraw();
   cmdLog('  ESC: 현재 작업 취소.', 'system');
@@ -9361,6 +9713,17 @@ window.addEventListener('keydown', e => {
   if (e.ctrlKey && e.key.toLowerCase() === 'o') {
     e.preventDefault();
     document.getElementById('btnOpenProject').click();
+    return;
+  }
+  // Ctrl+0: 배경 독립줌 초기화
+  if (e.ctrlKey && e.key === '0') {
+    e.preventDefault();
+    if (bgImage) {
+      bgZoom = 1.0; bgZoomOriginX = 50; bgZoomOriginY = 50;
+      applyBgZoom();
+      const hint = document.getElementById('statusHint');
+      if (hint) hint.textContent = '🖼 배경 독립줌 초기화 (100%)';
+    }
     return;
   }
   if (e.ctrlKey || e.altKey || e.metaKey) return;
