@@ -84,6 +84,11 @@ let grabBase = {};                // {id: 원본도형 복사본}
 let offsetTwinMode = false;        // 거리두기 ON/OFF
 let offsetTwinDist = 0.6;          // mm 단위 거리
 let offsetTwinCandidates = [];     // (미사용: Rev.11.27부터 3개 모두 즉시 확정)
+// Rev.12.6: 거리두기 좌/우 선택 방식
+//   offsetTwinPickMode: 버튼 클릭 후 "선 클릭 → 좌/우 방향 클릭"으로 한쪽만 생성
+//   offsetTwinTarget : 거리두기 대상으로 클릭한 선 도형
+let offsetTwinPickMode = false;    // 좌/우 선택 진행 모드
+let offsetTwinTarget = null;       // 선택된 대상 선 도형
 let shapeIdSeq = 0;
 
 // 라운드(호) 그리기용 마우스 경로 추적
@@ -1068,6 +1073,12 @@ drawCanvas.addEventListener('mousemove', e => {
   const unit = calibSet ? `${mmX}, ${mmY} mm` : `${p.x}, ${p.y} px`;
   document.getElementById('statusCoord').textContent = unit + (p.snapped ? ' 🧲' : '');
 
+  // Rev.12.6: 거리두기 좌/우 미리보기 (대상 선 선택 후)
+  if (offsetTwinPickMode && offsetTwinTarget){
+    drawOffsetTwinPreview(p);
+    return;
+  }
+
   // Rev.11.39: 이동(Grab) 모드 - 마우스 따라 선택 도형 이동
   if (grabMode){
     grabUpdate(p);
@@ -1677,6 +1688,11 @@ drawCanvas.addEventListener('click', e => {
     suppressNextClick = false;
     return;
   }
+  // Rev.12.6: 거리두기 좌/우 선택 모드 (select 도구 상태에서 동작)
+  if (offsetTwinPickMode) {
+    const pOt = getCanvasPoint(e);
+    if (handleOffsetTwinPickClick(pOt)) return;
+  }
   if (tool === 'select') return;
   const p = getCanvasPoint(e);
   
@@ -1828,6 +1844,12 @@ window.addEventListener('keydown', e => {
   }
 
   if (e.key === 'Escape') {
+    // Rev.12.6: 거리두기 좌/우 선택 모드 우선 취소
+    if (offsetTwinPickMode){
+      cancelOffsetTwinPick();
+      document.getElementById('statusHint').textContent = '⫴ 거리두기 취소';
+      return;
+    }
     // Rev.11.39: 이동(Grab) 모드 우선 취소 (원위치 복원)
     if (grabMode){
       exitGrabMode(false);
@@ -1937,12 +1959,9 @@ function addShape(p1, p2) {
   shapes.push(newLine);
   redoStack = []; pushHistory();
   redrawDraw(); updateCount();
-  // Rev.11.27: 거리두기 ON + 선이면 좌우 평행선 2개 즉시 생성 (3개 모두 확정)
-  if (offsetTwinMode && tool === 'line'){
-    makeOffsetTwins(newLine);
-  }
+  // Rev.12.6: 거리두기는 더 이상 선 그리기 시 자동 생성하지 않음 (좌/우 선택 방식)
   // Rev.12.1: 일반 선(line) 그리기 직후 길이/각도/상대거리 팝업 (연속모드 제외)
-  else if (tool === 'line' && !continuousMode){
+  if (tool === 'line' && !continuousMode){
     const _id = newLine.id;
     setTimeout(() => openLineDimModal(_id), 0);
   }
@@ -1979,6 +1998,110 @@ function makeOffsetTwins(srcLine){
   redrawDraw(); updateCount();
   document.getElementById('statusHint').textContent =
     `⫴ 거리두기 ${offsetTwinDist}mm: 좌우 평행선 2개 + 원본 = 총 3개 선 생성 완료`;
+}
+
+// Rev.12.6: 거리두기(좌/우 선택) - 선의 한쪽(sign: +1=법선방향, -1=반대)으로만 평행선 1개 생성
+//   nx,ny = (-dy/len, dx/len). 화면에서 sign=+1 은 진행방향 기준 왼쪽.
+function makeOffsetTwinOneSide(srcLine, sign){
+  if (!srcLine || srcLine.type !== 'line') return null;
+  const distPx = offsetTwinDist / mmPerPixel; // mm → px
+  if (distPx <= 0) return null;
+  const a = srcLine.p1, b = srcLine.p2;
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const nx = -dy / len, ny = dx / len; // 법선 단위벡터
+  const ox = nx * distPx * sign, oy = ny * distPx * sign;
+  const ln = {
+    id: ++shapeIdSeq, type: 'line',
+    p1: { x: a.x + ox, y: a.y + oy },
+    p2: { x: b.x + ox, y: b.y + oy },
+    stroke: srcLine.stroke, strokeWidth: srcLine.strokeWidth
+  };
+  shapes.push(ln);
+  redoStack = []; pushHistory();
+  redrawDraw(); updateCount();
+  return ln.id;
+}
+
+// Rev.12.6: 마우스 위치 p 가 선(srcLine)의 어느 쪽인지 부호 판정 (+1 / -1)
+function offsetTwinSideSign(srcLine, p){
+  const a = srcLine.p1, b = srcLine.p2;
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const nx = -dy / len, ny = dx / len; // 법선
+  // 선 중점에서 마우스까지 벡터를 법선에 투영
+  const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+  const proj = (p.x - mx) * nx + (p.y - my) * ny;
+  return proj >= 0 ? +1 : -1;
+}
+
+// Rev.12.6: 거리두기 좌/우 선택 모드 시작
+function startOffsetTwinPick(){
+  offsetTwinPickMode = true;
+  offsetTwinTarget = null;
+  selectTool('select');
+  drawCanvas.style.cursor = 'crosshair';
+  document.getElementById('statusHint').textContent =
+    `⫴ 거리두기(${offsetTwinDist}mm): 기준이 될 선을 클릭하세요`;
+  updateOffsetTwinButton();
+}
+
+// Rev.12.6: 거리두기 좌/우 선택 모드 종료
+function cancelOffsetTwinPick(){
+  offsetTwinPickMode = false;
+  offsetTwinTarget = null;
+  preCtx.clearRect(0, 0, baseW, baseH);
+  drawCanvas.style.cursor = 'default';
+  updateOffsetTwinButton();
+}
+
+// Rev.12.6: 거리두기 모드의 클릭 처리. 처리했으면 true 반환
+function handleOffsetTwinPickClick(p){
+  if (!offsetTwinPickMode) return false;
+  if (!offsetTwinTarget){
+    // 1단계: 기준 선 선택
+    const hit = hitTest(p);
+    const s = hit ? shapes.find(x => x.id === hit) : null;
+    if (s && s.type === 'line'){
+      offsetTwinTarget = s;
+      document.getElementById('statusHint').textContent =
+        `⫴ 거리두기(${offsetTwinDist}mm): 마우스를 선의 왼쪽/오른쪽으로 옮긴 뒤 클릭 (Esc=취소)`;
+    } else {
+      document.getElementById('statusHint').textContent =
+        '⫴ 거리두기: 선(line)을 클릭하세요. (사각형/원 불가)';
+    }
+    return true;
+  }
+  // 2단계: 좌/우 방향 클릭 → 그 쪽에 평행선 1개 생성
+  const sign = offsetTwinSideSign(offsetTwinTarget, p);
+  const newId = makeOffsetTwinOneSide(offsetTwinTarget, sign);
+  preCtx.clearRect(0, 0, baseW, baseH);
+  document.getElementById('statusHint').textContent =
+    newId ? `✓ 거리두기 완료: ${offsetTwinDist}mm 평행선 1개 생성` : '거리두기 실패';
+  // 한 번 더 만들 수 있도록 대상은 유지(다른 쪽도 클릭 가능). 모드는 계속.
+  return true;
+}
+
+// Rev.12.6: 거리두기 좌/우 미리보기 (점선)
+function drawOffsetTwinPreview(p){
+  preCtx.clearRect(0, 0, baseW, baseH);
+  if (!offsetTwinTarget) return;
+  const sign = offsetTwinSideSign(offsetTwinTarget, p);
+  const distPx = offsetTwinDist / mmPerPixel;
+  const a = offsetTwinTarget.p1, b = offsetTwinTarget.p2;
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const nx = -dy / len, ny = dx / len;
+  const ox = nx * distPx * sign, oy = ny * distPx * sign;
+  preCtx.save();
+  preCtx.strokeStyle = '#f39c12';
+  preCtx.lineWidth = Math.max(1, (offsetTwinTarget.strokeWidth || 1));
+  preCtx.setLineDash([6, 4]);
+  preCtx.beginPath();
+  preCtx.moveTo(a.x + ox, a.y + oy);
+  preCtx.lineTo(b.x + ox, b.y + oy);
+  preCtx.stroke();
+  preCtx.restore();
 }
 
 // ====== 라운드 자동 피팅 ======
@@ -5167,11 +5290,11 @@ function drawShape(ctx, s, selected) {
     ctx.setLineDash(LINE_TYPES[lt] || []);
   }
 
-  // Rev.12.5: 도면베이스 가이드선 → 점선 + 구분색
+  // Rev.12.6: 도면베이스 가이드선 → 실선 + 두께 1 (구분색 유지)
   if (s.guide){
     ctx.strokeStyle = selected ? '#ffcc00' : (s.stroke || '#3aa0ff');
     ctx.lineWidth = 1 / (zoom || 1);
-    ctx.setLineDash([8/(zoom||1), 5/(zoom||1)]);
+    ctx.setLineDash([]);
   }
 
   ctx.beginPath();
@@ -7849,25 +7972,25 @@ document.getElementById('headerBtnExtrude').addEventListener('click', () => {
   startExtrude();
 });
 
-// Rev.11.23: 거리두기 토글 버튼
+// Rev.12.6: 거리두기 버튼 → 좌/우 선택 모드 토글
+//   ON: 선 클릭 → 마우스를 좌/우로 → 클릭한 쪽에만 평행선 1개 생성
 document.getElementById('headerBtnOffsetTwin').addEventListener('click', () => {
-  offsetTwinMode = !offsetTwinMode;
-  updateOffsetTwinButton();
-  if (offsetTwinMode){
-    // 선택된 선이 있으면 즉시 적용(좌우 평행선 생성)
-    let sel = null;
-    selectedIds.forEach(id => {
-      const s = shapes.find(x => x.id === id);
-      if (s && s.type === 'line' && !sel) sel = s;
-    });
-    if (sel){
-      makeOffsetTwins(sel);
-    } else {
-      document.getElementById('statusHint').textContent =
-        `⫴ 거리두기 ON (${offsetTwinDist}mm): 이제 선을 그리거나, 선을 선택하고 버튼을 다시 누르면 좌우 평행선 생성`;
-    }
-  } else {
+  if (offsetTwinPickMode){
+    cancelOffsetTwinPick();
     document.getElementById('statusHint').textContent = '거리두기 OFF';
+    return;
+  }
+  // 이미 선이 선택돼 있으면 그 선을 바로 대상으로
+  let sel = null;
+  selectedIds.forEach(id => {
+    const s = shapes.find(x => x.id === id);
+    if (s && s.type === 'line' && !sel) sel = s;
+  });
+  startOffsetTwinPick();
+  if (sel){
+    offsetTwinTarget = sel;
+    document.getElementById('statusHint').textContent =
+      `⫴ 거리두기(${offsetTwinDist}mm): 마우스를 선의 왼쪽/오른쪽으로 옮긴 뒤 클릭 (Esc=취소)`;
   }
 });
 
@@ -7879,7 +8002,7 @@ document.getElementById('offsetTwinDistInput').addEventListener('input', e => {
 function updateOffsetTwinButton(){
   const b = document.getElementById('headerBtnOffsetTwin');
   if (!b) return;
-  b.classList.toggle('active', !!offsetTwinMode); // Rev.11.54: 도구바 구조 보존
+  b.classList.toggle('active', !!offsetTwinPickMode); // Rev.12.6: 픽 모드 기준
 }
 
 function updateVertexButtons(){
@@ -8062,10 +8185,9 @@ function commitExtrude(off){
     redrawFills(); redrawDraw(); updateCount();
     document.getElementById('statusHint').textContent =
       `✓ 점 연장 완료: ${(off.dist*mmPerPixel).toFixed(2)}mm 선 생성`;
-    // Rev.11.23: 거리두기 ON이면 좌우 평행선 후보 생성
-    if (offsetTwinMode) makeOffsetTwins(newLn);
+    // Rev.12.6: 거리두기 자동 생성 제거 (좌/우 선택 방식으로 변경)
     // Rev.12.1: 점 연장으로 만든 선 길이 팝업
-    else { const _id = newLn.id; setTimeout(() => openLineDimModal(_id), 0); }
+    { const _id = newLn.id; setTimeout(() => openLineDimModal(_id), 0); }
     return;
   }
 
