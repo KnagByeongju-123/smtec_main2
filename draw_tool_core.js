@@ -1765,6 +1765,13 @@ drawCanvas.addEventListener('click', e => {
   
   if (tool === 'fill') {
     doFillAtPoint(p);
+    // Rev.16.1: 채움/외곽선 후 선택 모드로 전환 (연속 모드가 아니면)
+    if (!continuousMode){
+      fillAsOutline = false;
+      const obtn = document.getElementById('headerBtnOutline');
+      if (obtn) obtn.classList.remove('active');
+      selectTool('select');
+    }
     return;
   }
   
@@ -9941,6 +9948,17 @@ document.querySelectorAll('.bg-preset').forEach(el => {
   el.addEventListener('click', e => {
     e.stopPropagation();
     setCanvasBgColor(el.dataset.color);
+  });
+});
+
+// Rev.16.1: 채움 색 팔레트 - 클릭 시 fillColor 설정
+document.querySelectorAll('.fill-preset').forEach(el => {
+  el.addEventListener('click', e => {
+    e.stopPropagation();
+    const c = el.dataset.color;
+    const inp = document.getElementById('fillColor');
+    if (inp) inp.value = c;
+    document.getElementById('statusHint').textContent = `🎨 채움 색: ${c}`;
   });
 });
 
