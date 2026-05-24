@@ -79,6 +79,20 @@ let extrudeDragging = false;  // Rev.11.43: 연장 드래그 진행 중
 let subdivideMode = false;        // 분할 모드 ON/OFF
 let subdivideTarget = null;       // 선택된 선 도형
 let subdivideCount = 1;           // 분할 수 (N개 점 추가 → N+1 세그먼트)
+// Rev.16.14: 쓸어 지우기(Swipe Erase) - 드래그 경로가 가로지른 선 중 방향 각도차≥임계값인 선 삭제
+let swipeEraseMode = false;       // 쓸어 지우기 모드 ON/OFF
+let swipeErasing = false;         // 드래그 중 여부
+let swipePath = [];               // 드래그 경로 점들 [{x,y}]
+let swipeAngleThresh = 30;        // 삭제 각도 임계값(도)
+// Rev.16.9~16.10: 대각선(교점) 모드 - 범위 안 교점을 드래그로 선택(최대2), 2쌍 동시 대각 연결
+let diagXMode = false;            // 대각선-교점 모드 ON/OFF
+let diagXRadius = 40;             // 짧은 클릭 시 교점 탐지 반경 (px, 고정)
+let diagXPhase = 0;              // 0=시작영역 선택, 1=끝영역 선택
+let diagXStartPts = [];          // 시작 교점들 (최대 2) [{x,y}]
+let diagXEndPts = [];            // 끝 교점들 (최대 2) [{x,y}]
+let diagXDragging = false;       // 드래그 중 여부
+let diagXDragOrigin = null;      // 드래그 시작 화면점(도면좌표)
+let diagXHoverPt = null;         // 현재 마우스 도면좌표 (반경 미리보기용)
 // Rev.11.39: 블렌더식 이동(Grab) 모드 - G → 마우스 따라 이동, X/Y로 축 제한
 let grabMode = false;             // 이동 모드 ON/OFF
 let grabAxis = null;              // null=자유, 'x'=X축만, 'y'=Y축만
@@ -1100,6 +1114,25 @@ drawCanvas.addEventListener('mousemove', e => {
   const unit = calibSet ? `${mmX}, ${mmY} mm` : `${p.x}, ${p.y} px`;
   document.getElementById('statusCoord').textContent = unit + (p.snapped ? ' 🧲' : '');
 
+  // Rev.16.14: 쓸어 지우기 미리보기 - 경로(빨강) + 삭제예정 선(빨강 굵게)
+  if (swipeEraseMode){
+    if (swipeErasing){
+      const last = swipePath[swipePath.length-1];
+      if (!last || Math.hypot(p.x-last.x, p.y-last.y) > (3/(zoom||1))){
+        swipePath.push({ x: p.x, y: p.y });
+      }
+    }
+    drawSwipeErasePreview(p);
+    return;
+  }
+
+  // Rev.16.10: 대각선(교점) 미리보기 - 반경 원 + 범위내 교점후보 + 선택점 + 드래그박스
+  if (diagXMode){
+    diagXHoverPt = { x: p.x, y: p.y };
+    drawDiagXPreview(p);
+    return;
+  }
+
   // Rev.12.6: 거리두기 좌/우 미리보기 (대상 선 선택 후)
   if (offsetTwinPickMode && offsetTwinTarget){
     drawOffsetTwinPreview(p);
@@ -1459,6 +1492,46 @@ drawCanvas.addEventListener('mousedown', e => {
     }
   }
 
+  // Rev.16.10: 대각선(교점) 모드 - 드래그 시작 (영역 선택)
+  if (diagXMode){
+    // 우클릭 = 취소
+    if (e.button === 2){
+      cancelDiagX();
+      e.preventDefault();
+      return;
+    }
+    if (e.button === 0){
+      const p = getCanvasPoint(e);
+      // 시작/끝 교점 모두 Shift+드래그 박스로 선택
+      if (e.shiftKey){
+        diagXDragging = true;
+        diagXDragOrigin = { x: p.x, y: p.y };
+      } else {
+        const stg = diagXPhase === 0 ? '시작' : '끝';
+        document.getElementById('statusHint').textContent = `╲ 대각선: ${stg} 교점은 Shift+드래그로 박스 선택하세요 (최대 2개)`;
+      }
+      e.preventDefault();
+      return;
+    }
+  }
+
+  // Rev.16.14: 쓸어 지우기 모드 - 드래그 시작
+  if (swipeEraseMode){
+    if (e.button === 2){  // 우클릭 = 종료
+      exitSwipeEraseMode();
+      document.getElementById('statusHint').textContent = '🧹 쓸어 지우기 종료';
+      e.preventDefault();
+      return;
+    }
+    if (e.button === 0){
+      const p = getCanvasPoint(e);
+      swipeErasing = true;
+      swipePath = [{ x: p.x, y: p.y }];
+      e.preventDefault();
+      return;
+    }
+  }
+
   // Rev.11.37: 블렌더식 분할 모드
   if (subdivideMode){
     if (e.button === 0){
@@ -1677,6 +1750,70 @@ drawCanvas.addEventListener('mousedown', e => {
 });
 
 drawCanvas.addEventListener('mouseup', e => {
+  // Rev.16.14: 쓸어 지우기 - 드래그 종료 시 경로가 가로지른 선 중 각도차≥임계값인 선 삭제
+  if (swipeEraseMode && swipeErasing){
+    swipeErasing = false;
+    const p = getCanvasPoint(e);
+    const last = swipePath[swipePath.length-1];
+    if (!last || Math.hypot(p.x-last.x, p.y-last.y) > 0.5) swipePath.push({x:p.x, y:p.y});
+    const ids = swipeEraseTargets(swipePath, swipeAngleThresh);
+    if (ids.length){
+      shapes = shapes.filter(s => !ids.includes(s.id));
+      selectedIds.clear();
+      redoStack = []; pushHistory();
+      redrawDraw(); updateCount();
+      document.getElementById('statusHint').textContent =
+        `🧹 쓸어 지우기: 방향 ${swipeAngleThresh}° 이상 어긋난 선 ${ids.length}개 삭제 · 계속 드래그 · 우클릭/Esc=종료`;
+    } else {
+      document.getElementById('statusHint').textContent = '🧹 쓸어 지우기: 조건에 맞는 선이 없습니다 (경로를 가로지르고 방향이 어긋난 선만 삭제)';
+    }
+    swipePath = [];
+    preCtx.clearRect(0,0,baseW,baseH);
+    redrawDraw();
+    e.preventDefault();
+    return;
+  }
+
+  // Rev.16.12: 대각선(교점) - Shift+드래그 박스로 시작(Phase0)·끝(Phase1) 교점 각각 선택
+  if (diagXMode && diagXDragging){
+    diagXDragging = false;
+    const p = getCanvasPoint(e);
+    const o = diagXDragOrigin || p;
+    diagXDragOrigin = null;
+
+    const dragDist = Math.hypot(p.x - o.x, p.y - o.y);
+    let picked;
+    if (dragDist > (8 / (zoom||1))){
+      picked = intersectionsInBox(Math.min(o.x,p.x), Math.min(o.y,p.y), Math.max(o.x,p.x), Math.max(o.y,p.y));
+    } else {
+      const rWorld = diagXRadius / (zoom||1);
+      picked = intersectionsWithinRadius(p.x, p.y, rWorld);
+    }
+    const sel = picked.slice(0, 2).map(q => ({x:q.x, y:q.y}));
+
+    if (sel.length === 0){
+      document.getElementById('statusHint').textContent = '╲ 대각선: 선택 영역 안에 교점이 없습니다. 교차부를 더 넓게 Shift+드래그하세요.';
+      drawDiagXPreview(p);
+      e.preventDefault(); return;
+    }
+
+    if (diagXPhase === 0){
+      diagXStartPts = sel;
+      diagXPhase = 1;
+      document.getElementById('statusHint').textContent =
+        `╲ 시작 교점 ${sel.length}곳 마킹됨 — 이제 끝 교점을 Shift+드래그로 선택하세요 (우클릭/Esc=취소)`;
+      drawDiagXPreview(p);
+    } else {
+      // Phase 1: 끝 교점 확정 → 시작 개수에 맞춰 자르고 확인 팝업
+      const n = Math.min(diagXStartPts.length, sel.length);
+      diagXEndPts = sel.slice(0, n);
+      drawDiagXPreview(p);
+      confirmDiagX();
+    }
+    e.preventDefault();
+    return;
+  }
+
   // Rev.11.43: 연장 드래그 종료 → 확정 (모드는 유지하여 연속 연장 가능)
   if (extrudeMode && extrudeState && extrudeDragging){
     extrudeDragging = false;
@@ -1745,6 +1882,10 @@ drawCanvas.addEventListener('mouseup', e => {
 let suppressNextClick = false;
 
 drawCanvas.addEventListener('click', e => {
+  // Rev.16.14: 쓸어 지우기 모드는 mousedown/up에서 처리하므로 click 무시
+  if (swipeEraseMode) return;
+  // Rev.16.11: 대각선 모드는 mousedown에서 처리하므로 click은 무시 (select 동작 방지)
+  if (diagXMode) return;
   // Rev.10.9: 박스 선택 직후의 click 이벤트 무시
   if (suppressNextClick) {
     suppressNextClick = false;
@@ -1937,6 +2078,22 @@ window.addEventListener('keydown', e => {
     if (grabMode){
       exitGrabMode(false);
       document.getElementById('statusHint').textContent = '↔ 이동 취소 (원위치)';
+      return;
+    }
+    // Rev.16.14: 쓸어 지우기 모드 종료
+    if (swipeEraseMode){
+      exitSwipeEraseMode();
+      document.getElementById('statusHint').textContent = '🧹 쓸어 지우기 종료';
+      return;
+    }
+    // Rev.16.11: 대각선(교점) 모드 - 진행 중이면 선택만 취소, 비어있으면 모드 종료
+    if (diagXMode){
+      if (diagXPhase !== 0 || diagXStartPts.length || diagXEndPts.length || diagXDragging){
+        cancelDiagX();
+      } else {
+        exitDiagXMode();
+        document.getElementById('statusHint').textContent = '╲ 대각선 종료';
+      }
       return;
     }
     // Rev.11.37: 분할 모드 우선 종료
@@ -2967,6 +3124,195 @@ function lineSegmentIntersection(a1, a2, b1, b2) {
   const u = ((b1.x - a1.x)*(a2.y - a1.y) - (b1.y - a1.y)*(a2.x - a1.x)) / d;
   if (t < -0.01 || t > 1.01 || u < -0.01 || u > 1.01) return null;
   return { x: a1.x + t*(a2.x - a1.x), y: a1.y + t*(a2.y - a1.y), t: t, u: u };
+}
+
+// Rev.16.14: 두 방향의 각도차(0~90도). 선은 양방향이므로 90도로 접어서 반환
+function angleDiffDeg(ax, ay, bx, by){
+  const la = Math.hypot(ax,ay), lb = Math.hypot(bx,by);
+  if (la < 1e-9 || lb < 1e-9) return 0;
+  let cos = (ax*bx + ay*by) / (la*lb);
+  cos = Math.max(-1, Math.min(1, cos));
+  let deg = Math.acos(cos) * 180 / Math.PI;  // 0~180
+  if (deg > 90) deg = 180 - deg;             // 선 방향성 무시 → 0~90
+  return deg;
+}
+
+// Rev.16.14: 드래그 경로(점 배열)가 가로지른 line 도형 중, 드래그 전체 방향과 각도차≥thresh 인 선 id 수집
+function swipeEraseTargets(path, thresh){
+  if (!path || path.length < 2) return [];
+  // 드래그 전체 방향 = 시작→끝 벡터
+  const dvx = path[path.length-1].x - path[0].x;
+  const dvy = path[path.length-1].y - path[0].y;
+  const ids = new Set();
+  for (const s of shapes){
+    if (s.type !== 'line' || !s.p1 || !s.p2) continue;
+    // 경로의 어느 한 구간이라도 이 선과 교차하면 "지나감"
+    let crossed = false;
+    for (let i=0;i<path.length-1 && !crossed;i++){
+      if (lineSegmentIntersection(path[i], path[i+1], s.p1, s.p2)) crossed = true;
+    }
+    if (!crossed) continue;
+    // 선 방향과 드래그 방향의 각도차
+    const diff = angleDiffDeg(dvx, dvy, s.p2.x - s.p1.x, s.p2.y - s.p1.y);
+    if (diff >= thresh) ids.add(s.id);
+  }
+  return [...ids];
+}
+
+// Rev.16.10: 도면 내 모든 line/polyline 변을 선분 리스트로 수집
+function collectAllSegments(){
+  const segs = [];
+  for (const s of shapes){
+    if (s.type === 'line' && s.p1 && s.p2){
+      segs.push({ a:s.p1, b:s.p2 });
+    } else if (s.type === 'polyline' && Array.isArray(s.points) && s.points.length >= 2){
+      const pts = s.points;
+      for (let i=0;i<pts.length-1;i++) segs.push({ a:pts[i], b:pts[i+1] });
+      if (s.closed && pts.length >= 3) segs.push({ a:pts[pts.length-1], b:pts[0] });
+    }
+  }
+  return segs;
+}
+
+// Rev.16.10: 중심점 cx,cy 에서 반경 rWorld(도면단위) 안에 들어오는 모든 선-교점 수집 (중복 제거)
+function intersectionsWithinRadius(cx, cy, rWorld){
+  const segs = collectAllSegments();
+  const found = [];
+  for (let i=0;i<segs.length;i++){
+    for (let j=i+1;j<segs.length;j++){
+      const ix = lineSegmentIntersection(segs[i].a, segs[i].b, segs[j].a, segs[j].b);
+      if (!ix) continue;
+      if (Math.hypot(ix.x - cx, ix.y - cy) <= rWorld){
+        // 근접 중복 제거 (1px 이내 같은 점)
+        if (!found.some(f => Math.hypot(f.x-ix.x, f.y-ix.y) < 1)){
+          found.push({ x:ix.x, y:ix.y, d:Math.hypot(ix.x-cx, ix.y-cy) });
+        }
+      }
+    }
+  }
+  found.sort((a,b)=> a.d - b.d);  // 중심에 가까운 순
+  return found;
+}
+
+// Rev.16.10: 사각 영역(도면좌표) 안의 모든 선-교점 수집 (박스 중앙 가까운 순)
+function intersectionsInBox(x0, y0, x1, y1){
+  const segs = collectAllSegments();
+  const cx = (x0+x1)/2, cy = (y0+y1)/2;
+  const found = [];
+  for (let i=0;i<segs.length;i++){
+    for (let j=i+1;j<segs.length;j++){
+      const ix = lineSegmentIntersection(segs[i].a, segs[i].b, segs[j].a, segs[j].b);
+      if (!ix) continue;
+      if (ix.x >= x0 && ix.x <= x1 && ix.y >= y0 && ix.y <= y1){
+        if (!found.some(f => Math.hypot(f.x-ix.x, f.y-ix.y) < 1)){
+          found.push({ x:ix.x, y:ix.y, d:Math.hypot(ix.x-cx, ix.y-cy) });
+        }
+      }
+    }
+  }
+  found.sort((a,b)=> a.d - b.d);
+  return found;
+}
+
+// Rev.16.14: 쓸어 지우기 미리보기 (경로=빨강 실선, 삭제예정 선=빨강 굵게)
+function drawSwipeErasePreview(p){
+  if (!preCtx) return;
+  const Z = zoom || 1;
+  preCtx.clearRect(0,0,baseW,baseH);
+  preCtx.save();
+  if (swipeErasing && swipePath.length >= 1){
+    // 경로
+    preCtx.strokeStyle = '#ff4d4d'; preCtx.lineWidth = 2/Z; preCtx.setLineDash([]);
+    preCtx.beginPath();
+    preCtx.moveTo(swipePath[0].x, swipePath[0].y);
+    for (let i=1;i<swipePath.length;i++) preCtx.lineTo(swipePath[i].x, swipePath[i].y);
+    preCtx.lineTo(p.x, p.y);
+    preCtx.stroke();
+    // 삭제 예정 선 하이라이트
+    const tmpPath = swipePath.concat([{x:p.x,y:p.y}]);
+    const ids = swipeEraseTargets(tmpPath, swipeAngleThresh);
+    if (ids.length){
+      preCtx.strokeStyle = 'rgba(255,77,77,0.9)'; preCtx.lineWidth = 4/Z;
+      for (const s of shapes){
+        if (ids.includes(s.id) && s.type==='line'){
+          preCtx.beginPath(); preCtx.moveTo(s.p1.x,s.p1.y); preCtx.lineTo(s.p2.x,s.p2.y); preCtx.stroke();
+        }
+      }
+    }
+  } else {
+    // 호버 시 십자만
+    preCtx.strokeStyle = 'rgba(255,77,77,0.6)'; preCtx.lineWidth = 1/Z; preCtx.setLineDash([4/Z,3/Z]);
+    preCtx.beginPath();
+    preCtx.moveTo(p.x-12/Z, p.y); preCtx.lineTo(p.x+12/Z, p.y);
+    preCtx.moveTo(p.x, p.y-12/Z); preCtx.lineTo(p.x, p.y+12/Z);
+    preCtx.stroke(); preCtx.setLineDash([]);
+  }
+  preCtx.restore();
+  const hint = document.getElementById('statusHint');
+  if (hint && !swipeErasing) hint.textContent = `🧹 쓸어 지우기: 드래그로 경로를 그어 가로지른 선 중 방향 ${swipeAngleThresh}° 이상 어긋난 선 삭제 · 우클릭/Esc=종료`;
+}
+
+// Rev.16.11: 대각선 모드 미리보기 (Phase0=시작박스/반경, Phase1=시작점+끝후보+쌍선)
+function drawDiagXPreview(p){
+  if (!preCtx) return;
+  const Z = zoom || 1;
+  preCtx.clearRect(0,0,baseW,baseH);
+  preCtx.save();
+
+  // 이미 선택된 시작 교점(초록) + 라벨
+  preCtx.fillStyle = '#2ecc71';
+  diagXStartPts.forEach((q,i) => {
+    preCtx.beginPath(); preCtx.arc(q.x,q.y,7/Z,0,Math.PI*2); preCtx.fill();
+  });
+  // 이미 선택된 끝 교점(파랑)
+  preCtx.fillStyle = '#3aa0ff';
+  diagXEndPts.forEach((q,i) => {
+    preCtx.beginPath(); preCtx.arc(q.x,q.y,7/Z,0,Math.PI*2); preCtx.fill();
+  });
+
+  if (diagXPhase === 0){
+    // 시작 선택 단계: Shift+드래그 박스만 (호버 시 가이드 없음)
+    if (diagXDragging && diagXDragOrigin){
+      const o = diagXDragOrigin;
+      preCtx.strokeStyle = '#2ecc71'; preCtx.lineWidth = 1.5/Z; preCtx.setLineDash([6/Z,3/Z]);
+      preCtx.strokeRect(Math.min(o.x,p.x), Math.min(o.y,p.y), Math.abs(p.x-o.x), Math.abs(p.y-o.y));
+      preCtx.setLineDash([]);
+      const cand = intersectionsInBox(Math.min(o.x,p.x),Math.min(o.y,p.y),Math.max(o.x,p.x),Math.max(o.y,p.y));
+      preCtx.fillStyle = '#2ecc71';
+      cand.slice(0,2).forEach(q => { preCtx.beginPath(); preCtx.arc(q.x,q.y,5/Z,0,Math.PI*2); preCtx.fill(); });
+    }
+  } else {
+    // 끝 선택 단계: Shift+드래그 박스 + 박스내 끝교점 후보 + 쌍선 미리보기
+    let endCand = [];
+    if (diagXDragging && diagXDragOrigin){
+      const o = diagXDragOrigin;
+      preCtx.strokeStyle = '#ffcc00'; preCtx.lineWidth = 1.5/Z; preCtx.setLineDash([6/Z,3/Z]);
+      preCtx.strokeRect(Math.min(o.x,p.x), Math.min(o.y,p.y), Math.abs(p.x-o.x), Math.abs(p.y-o.y));
+      preCtx.setLineDash([]);
+      endCand = intersectionsInBox(Math.min(o.x,p.x),Math.min(o.y,p.y),Math.max(o.x,p.x),Math.max(o.y,p.y)).slice(0,2);
+    }
+    // 끝 후보(노랑) 표시
+    preCtx.fillStyle = '#ffcc00';
+    endCand.forEach(q => { preCtx.beginPath(); preCtx.arc(q.x,q.y,5/Z,0,Math.PI*2); preCtx.fill(); });
+
+    // 쌍선 미리보기: 시작점 i ↔ 끝후보 i (있으면)
+    preCtx.strokeStyle = '#ffcc00'; preCtx.lineWidth = 1.5/Z; preCtx.setLineDash([8/Z,4/Z]);
+    diagXStartPts.forEach((a,i) => {
+      if (i < endCand.length){
+        preCtx.beginPath(); preCtx.moveTo(a.x,a.y); preCtx.lineTo(endCand[i].x,endCand[i].y); preCtx.stroke();
+      }
+    });
+    preCtx.setLineDash([]);
+  }
+  preCtx.restore();
+
+  const hint = document.getElementById('statusHint');
+  if (hint && !diagXDragging){
+    if (diagXPhase === 0)
+      hint.textContent = `╲ 대각선: 시작 교점을 Shift+드래그로 선택 (최대2) · Esc=종료`;
+    else
+      hint.textContent = `╲ 끝 교점을 Shift+드래그로 선택 (시작 ${diagXStartPts.length}곳 마킹됨) · 우클릭/Esc=취소`;
+  }
 }
 
 // 선분-원 교점 (선분 안)
@@ -6802,6 +7148,135 @@ Object.keys(_alignBtns).forEach(id => {
   const sb = document.getElementById('headerBtnSubdivide');
   if (sb) sb.addEventListener('click', () => enterSubdivideMode());
 }
+// Rev.16.9: 대각선(교점) 버튼 핸들러
+{
+  const dx = document.getElementById('headerBtnDiagX');
+  if (dx) dx.addEventListener('click', () => {
+    if (diagXMode) exitDiagXMode();
+    else enterDiagXMode();
+  });
+}
+// Rev.16.14: 쓸어 지우기 버튼 핸들러
+{
+  const se = document.getElementById('headerBtnSwipeErase');
+  if (se) se.addEventListener('click', () => {
+    if (swipeEraseMode) exitSwipeEraseMode();
+    else enterSwipeEraseMode();
+  });
+  const thr = document.getElementById('swipeAngleInput');
+  if (thr) thr.addEventListener('change', () => {
+    const v = parseFloat(thr.value);
+    if (isFinite(v) && v >= 0 && v <= 90) swipeAngleThresh = v;
+  });
+}
+function enterSwipeEraseMode(){
+  // 다른 모드 종료
+  pointMode = false; connectMode = false; connectPoints = [];
+  extrudeMode = false; extrudeState = null; extrudeAxis = null;
+  if (typeof exitSubdivideMode === 'function') exitSubdivideMode();
+  if (typeof exitDiagXMode === 'function') exitDiagXMode();
+  if (typeof updateVertexButtons === 'function') updateVertexButtons();
+  swipeEraseMode = true; swipeErasing = false; swipePath = [];
+  const btn = document.querySelector('.tool-menu-item[data-tool="select"]');
+  if (btn) btn.click();
+  drawCanvas.style.cursor = 'crosshair';
+  updateSwipeEraseButton();
+  document.getElementById('statusHint').textContent = `🧹 쓸어 지우기: 드래그로 경로를 그으면 가로지른 선 중 방향 ${swipeAngleThresh}° 이상 어긋난 선 삭제 · 우클릭/Esc=종료`;
+}
+function exitSwipeEraseMode(){
+  if (!swipeEraseMode) return false;
+  swipeEraseMode = false; swipeErasing = false; swipePath = [];
+  drawCanvas.style.cursor = 'default';
+  preCtx.clearRect(0,0,baseW,baseH);
+  updateSwipeEraseButton();
+  redrawDraw();
+  return true;
+}
+function updateSwipeEraseButton(){
+  const btn = document.getElementById('headerBtnSwipeErase');
+  if (btn) btn.classList.toggle('active', !!swipeEraseMode);
+}
+function enterDiagXMode(){
+  // 다른 모드 종료
+  pointMode = false; connectMode = false; connectPoints = [];
+  extrudeMode = false; extrudeState = null; extrudeAxis = null;
+  if (typeof exitSubdivideMode === 'function') exitSubdivideMode();
+  if (typeof exitSwipeEraseMode === 'function') exitSwipeEraseMode();
+  if (typeof updateVertexButtons === 'function') updateVertexButtons();
+  diagXMode = true;
+  diagXPhase = 0; diagXStartPts = []; diagXEndPts = [];
+  diagXDragging = false; diagXDragOrigin = null; diagXHoverPt = null;
+  // 선택 도구로 (클릭/드래그 받기 위해)
+  const btn = document.querySelector('.tool-menu-item[data-tool="select"]');
+  if (btn) btn.click();
+  drawCanvas.style.cursor = 'crosshair';
+  updateDiagXButton();
+  document.getElementById('statusHint').textContent = '╲ 대각선: 시작 교점을 Shift+드래그로 선택(최대2) → 끝 교점도 Shift+드래그로 선택 → 확인 팝업 · 우클릭/Esc=취소';
+}
+function exitDiagXMode(){
+  if (!diagXMode) return false;
+  diagXMode = false;
+  diagXPhase = 0; diagXStartPts = []; diagXEndPts = [];
+  diagXDragging = false; diagXDragOrigin = null; diagXHoverPt = null;
+  drawCanvas.style.cursor = 'default';
+  preCtx.clearRect(0,0,baseW,baseH);
+  updateDiagXButton();
+  redrawDraw();
+  return true;
+}
+function updateDiagXButton(){
+  const btn = document.getElementById('headerBtnDiagX');
+  if (btn) btn.classList.toggle('active', !!diagXMode);
+}
+// Rev.16.11: 끝 교점 2곳 선택 완료 → 확인 팝업 → 확정/취소
+function confirmDiagX(){
+  const n = Math.min(diagXStartPts.length, diagXEndPts.length);
+  if (n < 1){ return; }
+  const lines = [];
+  for (let i=0;i<n;i++){
+    const a = diagXStartPts[i], b = diagXEndPts[i];
+    const lenMm = (Math.hypot(b.x-a.x, b.y-a.y) * mmPerPixel).toFixed(2);
+    lines.push(`선 ${i+1}: 길이 ${lenMm}mm`);
+  }
+  const msg = `대각선 ${n}개를 생성합니다.\n\n${lines.join('\n')}\n\n[확인] 생성  /  [취소] 다시 선택`;
+  if (window.confirm(msg)){
+    commitDiagX();
+  } else {
+    // 끝점만 초기화하고 다시 끝 선택 단계 유지
+    diagXEndPts = [];
+    document.getElementById('statusHint').textContent = '╲ 취소됨 — 끝 교점을 다시 클릭하세요 (우클릭/Esc=전체 취소)';
+    drawDiagXPreview(diagXHoverPt || diagXStartPts[0]);
+  }
+}
+function commitDiagX(){
+  const n = Math.min(diagXStartPts.length, diagXEndPts.length);
+  const sw = parseInt(document.getElementById('strokeWidth').value) || 1;
+  const stroke = document.getElementById('strokeColor').value || '#ffffff';
+  let made = 0;
+  for (let i=0;i<n;i++){
+    const a = diagXStartPts[i], b = diagXEndPts[i];
+    if (Math.hypot(b.x-a.x, b.y-a.y) > 1){
+      shapes.push({ id: ++shapeIdSeq, type:'line',
+        p1:{x:a.x,y:a.y}, p2:{x:b.x,y:b.y}, stroke, strokeWidth: sw });
+      made++;
+    }
+  }
+  if (made > 0){ redoStack = []; pushHistory(); }
+  redrawDraw(); updateCount();
+  // 다음 작업 준비 (모드는 유지)
+  diagXPhase = 0; diagXStartPts = []; diagXEndPts = [];
+  preCtx.clearRect(0,0,baseW,baseH);
+  document.getElementById('statusHint').textContent =
+    `╲ 대각선 ${made}개 생성 · 다시 시작 교점을 Shift+드래그로 선택 · Esc=종료`;
+}
+// Rev.16.11: 진행 중 취소 (선택 초기화, 모드는 유지)
+function cancelDiagX(){
+  diagXPhase = 0; diagXStartPts = []; diagXEndPts = [];
+  diagXDragging = false; diagXDragOrigin = null;
+  preCtx.clearRect(0,0,baseW,baseH);
+  redrawDraw();
+  document.getElementById('statusHint').textContent = '╲ 대각선: 취소됨 — 시작 교점을 Shift+드래그로 선택하세요 (Esc=모드 종료)';
+}
 // Rev.11.65: 교차점 분할(겹친선 분리) 버튼 핸들러
 {
   const ba = document.getElementById('headerBtnBreakAll');
@@ -8366,36 +8841,42 @@ function baseRectPreviewUpdate(){
   const sealOn = document.getElementById('baseRectSealOn').checked;
   const leftXin = document.getElementById('baseRectLeftX').value.trim();
   const el = document.getElementById('baseRectPreview');
-  if (!isFinite(w) || !isFinite(h) || w <= 0 || h <= 0){
-    el.textContent = '⚠ 가로/세로 값을 0보다 크게 입력하세요'; return;
+  if (!isFinite(h) || h <= 0){
+    el.textContent = '⚠ 세로 값을 0보다 크게 입력하세요'; return;
   }
-  // 기준 좌측선 X (mm) - 비우면 작업영역 중앙에서 폭의 절반만큼 왼쪽
-  let leftMm;
-  if (leftXin !== '' && isFinite(evalExpr(leftXin))) leftMm = evalExpr(leftXin);
-  else leftMm = (baseW * 0.5) * mmPerPixel - w/2;
 
-  let msg = `▭ 가로 ${w}mm × 세로 ${h}mm`;
+  // Rev.16.8: 씰모드 ON이면 폭=씰 반지름차, 입력 폭 무시
+  let effW = w;
   if (sealOn){
     const cur = evalExpr(document.getElementById('baseRectSealCur').value);
     const phi = evalExpr(document.getElementById('baseRectSealPhi').value);
-    if (isFinite(cur) && isFinite(phi)){
-      const radDiff = (phi - cur) / 2;          // 양수면 좌측(−X)으로 이동
-      const finalLeft = leftMm - radDiff;
-      msg += ` · 씰 Ø${cur}→Ø${phi} → 좌측선 ${finalLeft.toFixed(2)}mm (${radDiff>=0?'좌':'우'} ${Math.abs(radDiff).toFixed(2)}mm 이동)`;
-    } else {
-      msg += ' · 씰: 현재Ø/목표Ø 입력 필요';
+    if (!isFinite(cur) || !isFinite(phi)){
+      el.textContent = `▭ 세로 ${h}mm · 씰: 현재Ø/목표Ø 입력 필요`; return;
     }
+    effW = Math.abs(phi - cur) / 2;
+    if (effW <= 0){ el.textContent = '⚠ 씰: 현재Ø와 목표Ø가 달라야 폭이 생깁니다'; return; }
   } else {
-    msg += ` · 좌측선 ${leftMm.toFixed(2)}mm · 우측선 ${(leftMm+w).toFixed(2)}mm`;
+    if (!isFinite(w) || w <= 0){ el.textContent = '⚠ 가로 값을 0보다 크게 입력하세요'; return; }
   }
-  el.textContent = msg;
+
+  let leftMm;
+  if (leftXin !== '' && isFinite(evalExpr(leftXin))) leftMm = evalExpr(leftXin);
+  else leftMm = (baseW * 0.5) * mmPerPixel - effW/2;
+
+  if (sealOn){
+    const cur = evalExpr(document.getElementById('baseRectSealCur').value);
+    const phi = evalExpr(document.getElementById('baseRectSealPhi').value);
+    el.textContent = `▭ 씰 Ø${cur}→Ø${phi} → 폭 ${effW.toFixed(2)}mm (폭 입력 무시) × 세로 ${h}mm · 좌측선 ${leftMm.toFixed(2)}mm · 우측선 ${(leftMm+effW).toFixed(2)}mm`;
+  } else {
+    el.textContent = `▭ 가로 ${effW}mm × 세로 ${h}mm · 좌측선 ${leftMm.toFixed(2)}mm · 우측선 ${(leftMm+effW).toFixed(2)}mm`;
+  }
 }
 
 function applyBaseRect(){
   const w = evalExpr(document.getElementById('baseRectW').value);
   const h = evalExpr(document.getElementById('baseRectH').value);
-  if (!isFinite(w) || !isFinite(h) || w <= 0 || h <= 0){
-    document.getElementById('baseRectPreview').textContent = '⚠ 가로/세로 값을 0보다 크게 입력하세요';
+  if (!isFinite(h) || h <= 0){
+    document.getElementById('baseRectPreview').textContent = '⚠ 세로 값을 0보다 크게 입력하세요';
     return;
   }
   const sealOn = document.getElementById('baseRectSealOn').checked;
@@ -8403,26 +8884,39 @@ function applyBaseRect(){
   const asGroup = document.getElementById('baseRectGroup').checked;
   const leftXin = document.getElementById('baseRectLeftX').value.trim();
 
-  // 좌측선 X (mm) 결정
-  let leftMm;
-  if (leftXin !== '' && isFinite(evalExpr(leftXin))) leftMm = evalExpr(leftXin);
-  else leftMm = (baseW * 0.5) * mmPerPixel - w/2;   // 비우면 작업영역 중앙 정렬
+  // 씰모드가 아니면 가로폭도 필수
+  if (!sealOn && (!isFinite(w) || w <= 0)){
+    document.getElementById('baseRectPreview').textContent = '⚠ 가로 값을 0보다 크게 입력하세요';
+    return;
+  }
 
-  // 씰 파이 모드: 좌측선을 반지름차만큼 이동
+  // Rev.16.8: 씰모드 ON이면 폭을 씰 반지름차로 대체 (입력 폭 무시)
+  let effW = w;   // 실제 사용 가로폭
   if (sealOn){
     const cur = evalExpr(document.getElementById('baseRectSealCur').value);
     const phi = evalExpr(document.getElementById('baseRectSealPhi').value);
     if (isFinite(cur) && isFinite(phi)){
-      const radDiff = (phi - cur) / 2;  // 양수 = 좌측(−X)
-      leftMm = leftMm - radDiff;
+      effW = Math.abs(phi - cur) / 2;   // 씰 반지름차를 폭으로 사용
+      if (effW <= 0){
+        document.getElementById('baseRectPreview').textContent = '⚠ 씰: 현재Ø와 목표Ø가 달라야 폭이 생깁니다';
+        return;
+      }
+    } else {
+      document.getElementById('baseRectPreview').textContent = '⚠ 씰: 현재Ø/목표Ø를 모두 입력하세요';
+      return;
     }
   }
+
+  // 좌측선 X (mm) 결정 - 입력값 우선, 비우면 작업영역 중앙 정렬(폭=effW 기준)
+  let leftMm;
+  if (leftXin !== '' && isFinite(evalExpr(leftXin))) leftMm = evalExpr(leftXin);
+  else leftMm = (baseW * 0.5) * mmPerPixel - effW/2;
 
   // 바닥선 Y (mm) - 작업영역 세로 중앙에 사각형이 오도록
   const groundMm = (baseH * 0.5) * mmPerPixel + h/2;  // 바닥(아래) 기준선
   const topMm = groundMm - h;                          // 윗선
 
-  const rightMm = leftMm + w;
+  const rightMm = leftMm + effW;
 
   // mm → px
   const xL = leftMm / mmPerPixel;
@@ -8462,7 +8956,7 @@ function applyBaseRect(){
   redrawDraw(); updateCount();
   document.getElementById('baseRectModal').classList.remove('show');
   document.getElementById('statusHint').textContent =
-    `▭ 베이스 사각형 배치: 가로 ${w}mm × 세로 ${h}mm · 좌측선 ${leftMm.toFixed(2)}mm` + (sealOn ? ' (씰 파이 모드)' : '');
+    `▭ 베이스 사각형 배치: 가로 ${effW.toFixed(2)}mm × 세로 ${h}mm · 좌측선 ${leftMm.toFixed(2)}mm` + (sealOn ? ' (씰 파이 모드: 폭=반지름차)' : '');
 }
 
 // 모달 열기/닫기 + 씰 파이 토글 (Rev.16.7: 방어적 바인딩)
@@ -8485,6 +8979,9 @@ function applyBaseRect(){
     const h = document.getElementById('baseRectSealHint');
     if (r) r.style.display = on ? 'flex' : 'none';
     if (h) h.style.display = on ? 'block' : 'none';
+    // Rev.16.8: 씰모드 ON이면 가로폭 입력칸 비활성(무시됨 표시)
+    const wEl = document.getElementById('baseRectW');
+    if (wEl){ wEl.disabled = on; wEl.style.opacity = on ? '0.4' : '1'; wEl.title = on ? '씰모드에서는 폭이 무시됩니다 (씰 반지름차 사용)' : ''; }
     baseRectPreviewUpdate();
   });
   ['baseRectW','baseRectH','baseRectLeftX','baseRectSealCur','baseRectSealPhi'].forEach(id => {
