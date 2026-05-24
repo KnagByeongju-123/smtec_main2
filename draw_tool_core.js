@@ -41,7 +41,7 @@ let bgImageOffsetY = 0;   // Rev.11.10: 배경 이미지 Y 오프셋 (px)
 let bgZoom = 1.0;         // Rev.13.2: 배경 독립 확대/축소 (작업영역과 별개, CSS transform)
 let bgZoomOriginX = 50;   // transform-origin X (%)
 let bgZoomOriginY = 50;   // transform-origin Y (%)
-let tool = 'line';
+let tool = 'select';
 let shapes = [];
 let fills = [];        // 영역 채움 목록 [{type:'fill', points:[{x,y}...], color, alpha}]
 let fillAsOutline = false;  // Rev.15.5: 채움 도구가 외곽선(폴리라인) 생성 모드인지
@@ -8357,6 +8357,137 @@ document.getElementById('btnBaseCancel').addEventListener('click', () => {
 });
 document.getElementById('btnBaseApply').addEventListener('click', applyBaseLines);
 
+// ====== Rev.16.6: 베이스(사각형) 배치 ======
+// 제품 가로/세로 사이즈로 사각형(4개 선)을 적정 위치에 작도.
+// 세로 좌측선은 직접 X(mm) 입력 또는 씰 파이(현재Ø→목표Ø) 모드로 결정.
+function baseRectPreviewUpdate(){
+  const w = evalExpr(document.getElementById('baseRectW').value);
+  const h = evalExpr(document.getElementById('baseRectH').value);
+  const sealOn = document.getElementById('baseRectSealOn').checked;
+  const leftXin = document.getElementById('baseRectLeftX').value.trim();
+  const el = document.getElementById('baseRectPreview');
+  if (!isFinite(w) || !isFinite(h) || w <= 0 || h <= 0){
+    el.textContent = '⚠ 가로/세로 값을 0보다 크게 입력하세요'; return;
+  }
+  // 기준 좌측선 X (mm) - 비우면 작업영역 중앙에서 폭의 절반만큼 왼쪽
+  let leftMm;
+  if (leftXin !== '' && isFinite(evalExpr(leftXin))) leftMm = evalExpr(leftXin);
+  else leftMm = (baseW * 0.5) * mmPerPixel - w/2;
+
+  let msg = `▭ 가로 ${w}mm × 세로 ${h}mm`;
+  if (sealOn){
+    const cur = evalExpr(document.getElementById('baseRectSealCur').value);
+    const phi = evalExpr(document.getElementById('baseRectSealPhi').value);
+    if (isFinite(cur) && isFinite(phi)){
+      const radDiff = (phi - cur) / 2;          // 양수면 좌측(−X)으로 이동
+      const finalLeft = leftMm - radDiff;
+      msg += ` · 씰 Ø${cur}→Ø${phi} → 좌측선 ${finalLeft.toFixed(2)}mm (${radDiff>=0?'좌':'우'} ${Math.abs(radDiff).toFixed(2)}mm 이동)`;
+    } else {
+      msg += ' · 씰: 현재Ø/목표Ø 입력 필요';
+    }
+  } else {
+    msg += ` · 좌측선 ${leftMm.toFixed(2)}mm · 우측선 ${(leftMm+w).toFixed(2)}mm`;
+  }
+  el.textContent = msg;
+}
+
+function applyBaseRect(){
+  const w = evalExpr(document.getElementById('baseRectW').value);
+  const h = evalExpr(document.getElementById('baseRectH').value);
+  if (!isFinite(w) || !isFinite(h) || w <= 0 || h <= 0){
+    document.getElementById('baseRectPreview').textContent = '⚠ 가로/세로 값을 0보다 크게 입력하세요';
+    return;
+  }
+  const sealOn = document.getElementById('baseRectSealOn').checked;
+  const asGuide = document.getElementById('baseRectGuide').checked;
+  const asGroup = document.getElementById('baseRectGroup').checked;
+  const leftXin = document.getElementById('baseRectLeftX').value.trim();
+
+  // 좌측선 X (mm) 결정
+  let leftMm;
+  if (leftXin !== '' && isFinite(evalExpr(leftXin))) leftMm = evalExpr(leftXin);
+  else leftMm = (baseW * 0.5) * mmPerPixel - w/2;   // 비우면 작업영역 중앙 정렬
+
+  // 씰 파이 모드: 좌측선을 반지름차만큼 이동
+  if (sealOn){
+    const cur = evalExpr(document.getElementById('baseRectSealCur').value);
+    const phi = evalExpr(document.getElementById('baseRectSealPhi').value);
+    if (isFinite(cur) && isFinite(phi)){
+      const radDiff = (phi - cur) / 2;  // 양수 = 좌측(−X)
+      leftMm = leftMm - radDiff;
+    }
+  }
+
+  // 바닥선 Y (mm) - 작업영역 세로 중앙에 사각형이 오도록
+  const groundMm = (baseH * 0.5) * mmPerPixel + h/2;  // 바닥(아래) 기준선
+  const topMm = groundMm - h;                          // 윗선
+
+  const rightMm = leftMm + w;
+
+  // mm → px
+  const xL = leftMm / mmPerPixel;
+  const xR = rightMm / mmPerPixel;
+  const yB = groundMm / mmPerPixel;
+  const yT = topMm / mmPerPixel;
+
+  const stroke = asGuide ? '#3aa0ff' : (document.getElementById('strokeColor').value || '#ffffff');
+  const sw = asGuide ? 1 : (parseInt(document.getElementById('strokeWidth').value) || 1);
+
+  const mk = (p1, p2) => ({
+    id: ++shapeIdSeq, type:'line',
+    p1:{x:p1.x, y:p1.y}, p2:{x:p2.x, y:p2.y},
+    stroke, strokeWidth: sw,
+    ...(asGuide ? { guide:true, baseRole:'rect' } : {})
+  });
+
+  const TL = {x:xL, y:yT}, TR = {x:xR, y:yT}, BR = {x:xR, y:yB}, BL = {x:xL, y:yB};
+
+  if (asGroup){
+    // 닫힌 폴리라인 1개로
+    shapes.push({
+      id: ++shapeIdSeq, type:'polyline', closed:true,
+      points:[ {x:xL,y:yT}, {x:xR,y:yT}, {x:xR,y:yB}, {x:xL,y:yB} ],
+      stroke, strokeWidth: sw, layer: (currentLayer || 'default'),
+      ...(asGuide ? { guide:true, baseRole:'rect' } : {})
+    });
+  } else {
+    shapes.push(mk(TL, TR)); // 윗선(가로)
+    shapes.push(mk(BL, BR)); // 바닥선(가로)
+    shapes.push(mk(TL, BL)); // 좌측선(세로)
+    shapes.push(mk(TR, BR)); // 우측선(세로)
+  }
+
+  redoStack = []; pushHistory();
+  if (typeof redrawFills === 'function') redrawFills();
+  redrawDraw(); updateCount();
+  document.getElementById('baseRectModal').classList.remove('show');
+  document.getElementById('statusHint').textContent =
+    `▭ 베이스 사각형 배치: 가로 ${w}mm × 세로 ${h}mm · 좌측선 ${leftMm.toFixed(2)}mm` + (sealOn ? ' (씰 파이 모드)' : '');
+}
+
+// 모달 열기/닫기 + 씰 파이 토글
+document.getElementById('headerBtnBaseRect').addEventListener('click', () => {
+  document.getElementById('baseRectModal').classList.add('show');
+  baseRectPreviewUpdate();
+});
+document.getElementById('btnBaseRectCancel').addEventListener('click', () => {
+  document.getElementById('baseRectModal').classList.remove('show');
+});
+document.getElementById('btnBaseRectApply').addEventListener('click', applyBaseRect);
+document.getElementById('baseRectSealOn').addEventListener('change', (e) => {
+  const on = e.target.checked;
+  document.getElementById('baseRectSealRow').style.display = on ? 'flex' : 'none';
+  document.getElementById('baseRectSealHint').style.display = on ? 'block' : 'none';
+  baseRectPreviewUpdate();
+});
+['baseRectW','baseRectH','baseRectLeftX','baseRectSealCur','baseRectSealPhi'].forEach(id => {
+  const el = document.getElementById(id);
+  if (el){
+    el.addEventListener('input', baseRectPreviewUpdate);
+    el.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') applyBaseRect(); });
+  }
+});
+
 // ====== Rev.11.41: 스냅샷 기반 Undo/Redo ======
 // 현재 전체 상태를 깊은 복사로 캡처
 function captureState(){
@@ -8447,6 +8578,8 @@ window.addEventListener('load', () => {
   document.getElementById('rowSaveScale').style.display = 'none';
   // Rev.11.4: 메뉴 섹션 접기 기능 초기화
   initCollapsibleMenuSections();
+  // Rev.16.6: 첫 시작 시 도구를 '선택'으로 고정
+  if (typeof selectTool === 'function') selectTool('select');
 });
 
 // ===== Rev.11.4: 메뉴 섹션 접기 =====

@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<title>도면 작도기 Rev.16.5</title>
+<title>도면 작도기 Rev.16.6</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Malgun Gothic', sans-serif; background: #2b2b2b; color: #eee; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
@@ -308,7 +308,7 @@
 <body>
 
 <header>
-  <h1>📐 도면 작도기 Rev.16.5</h1>
+  <h1>📐 도면 작도기 Rev.16.6</h1>
   <span class="ver">v12.8 (단위 1mm=75px)</span>
   <span class="cvstat" id="cvStat">OpenCV 로딩 중...</span>
   <span class="snapstat" id="snapStat">스냅: 비활성 (배경 없음)</span>
@@ -610,6 +610,7 @@
     <button id="headerBtnLiveSnap" class="ts-btn" title="마우스가 도형 근처에 갈 때 자동 흡착"><span class="ico">🧲</span><span class="lbl">라이브</span></button>
     <button id="headerBtnGrid" class="ts-btn" title="눈금자(격자) 표시 ON/OFF"><span class="ico">📐</span><span class="lbl">눈금자</span></button>
     <button id="headerBtnBaseLine" class="ts-btn" title="베이스선 복제: 선 클릭 후 상/하/좌/우 치수 입력으로 평행선 생성 (씰: 파이 입력 지원)"><span class="ico">📋</span><span class="lbl">베이스선</span></button>
+    <button id="headerBtnBaseRect" class="ts-btn" title="베이스(사각형): 제품 가로/세로 사이즈를 입력하면 사각형(4개 선)을 적정 위치에 미리 작도. 세로는 좌측선/씰파이 입력 지원"><span class="ico">▭</span><span class="lbl">베이스</span></button>
   </div>
 </div>
 
@@ -891,6 +892,84 @@
     <div class="actions">
       <button id="btnBaseCancel">취소</button>
       <button class="success" id="btnBaseApply">기준선 배치</button>
+    </div>
+  </div>
+</div>
+
+<!-- Rev.16.6: 베이스(사각형) 모달 - 제품 사이즈 입력 → 적정 위치에 사각형(4선) 작도 -->
+<div class="modal-overlay" id="baseRectModal">
+  <div class="modal" style="min-width:480px;">
+    <h3>▭ 베이스 (제품 사각형 배치)</h3>
+    <div class="hint-text" style="margin-bottom:10px;">
+      제품 사이즈(가로·세로)를 입력하면 4개의 선으로 이루어진 사각형을 작업영역 적정 위치에 미리 작도합니다.<br>
+      가로는 폭만 입력하면 되고, <b>세로</b>는 좌측선 위치 또는 씰 파이(Ø) 모드로 좌측선을 지정할 수 있습니다.
+    </div>
+
+    <div class="section">
+      <h4>↔ 가로 (폭, mm)</h4>
+      <div class="row">
+        <label>가로 폭:</label>
+        <input type="number" id="baseRectW" step="0.01" value="100" style="flex:1;" placeholder="예: 100">
+      </div>
+      <div class="hint-text">사각형의 좌우 폭. 좌측선에서 오른쪽으로 이 폭만큼 우측선을 긋습니다.</div>
+    </div>
+
+    <div class="section">
+      <h4>↕ 세로 (높이, mm)</h4>
+      <div class="row">
+        <label>세로 높이:</label>
+        <input type="number" id="baseRectH" step="0.01" value="60" style="flex:1;" placeholder="예: 60">
+      </div>
+      <div class="hint-text">사각형의 상하 높이. 바닥선에서 위로 이 높이만큼 윗선을 긋습니다.</div>
+    </div>
+
+    <div class="section">
+      <h4>◧ 세로 - 좌측선 기준</h4>
+      <div class="checkbox-group" style="margin-bottom:8px;">
+        <input type="checkbox" id="baseRectSealOn">
+        <label for="baseRectSealOn" style="min-width:auto;"><b style="color:#f0788c;">⌀ 씰 파이(Ø) 모드</b> — 현재Ø→목표Ø 반지름차로 좌측선 위치 결정</label>
+      </div>
+
+      <!-- 일반: 좌측선 X 위치 직접 입력 -->
+      <div class="row" id="baseRectLeftRow">
+        <label>좌측선 X (mm):</label>
+        <input type="number" id="baseRectLeftX" step="0.01" value="" style="flex:1;" placeholder="비우면 작업영역 중앙 기준 자동배치">
+      </div>
+
+      <!-- 씰 파이: 현재Ø → 목표Ø -->
+      <div class="row" id="baseRectSealRow" style="display:none;">
+        <label>현재Ø → 목표Ø:</label>
+        <div style="display:flex; align-items:center; gap:6px; flex:1;">
+          <input type="number" id="baseRectSealCur" step="0.01" placeholder="현재Ø"
+                 style="width:90px; border:1px solid #c0392b;">
+          <span style="color:#888;">→</span>
+          <input type="number" id="baseRectSealPhi" step="0.01" placeholder="목표Ø"
+                 style="width:90px; border:1px solid #c0392b;">
+        </div>
+      </div>
+      <div class="hint-text" id="baseRectSealHint" style="display:none;">
+        목표Ø가 크면 좌측선을 더 좌측(−X)으로 이동 · 이동량 = |목표Ø−현재Ø|/2 (반지름차).<br>
+        기준 좌측선 X는 위 "좌측선 X"값(비우면 중앙 기준)에서 반지름차만큼 이동합니다.
+      </div>
+    </div>
+
+    <div class="section">
+      <h4>옵션</h4>
+      <div class="checkbox-group">
+        <input type="checkbox" id="baseRectGuide" checked>
+        <label for="baseRectGuide" style="min-width:auto;">기준선(가이드)으로 작도 — 파란색, guide 속성</label>
+      </div>
+      <div class="checkbox-group" style="margin-top:4px;">
+        <input type="checkbox" id="baseRectGroup">
+        <label for="baseRectGroup" style="min-width:auto;">4개 선을 하나의 폴리라인으로 묶기</label>
+      </div>
+    </div>
+
+    <div id="baseRectPreview" style="font-size:11px; color:#ffd966; padding:6px; background:#000; border-radius:4px; margin-bottom:10px; min-height:16px;">-</div>
+
+    <div class="actions">
+      <button id="btnBaseRectCancel">취소</button>
+      <button class="success" id="btnBaseRectApply">사각형 배치</button>
     </div>
   </div>
 </div>
