@@ -44,6 +44,7 @@ let bgZoomOriginY = 50;   // transform-origin Y (%)
 let tool = 'line';
 let shapes = [];
 let fills = [];        // 영역 채움 목록 [{type:'fill', points:[{x,y}...], color, alpha}]
+let fillAsOutline = false;  // Rev.15.5: 채움 도구가 외곽선(폴리라인) 생성 모드인지
 let redoStack = [];
 // Rev.11.41: 스냅샷 기반 Undo/Redo (전체 상태 저장 → 정렬·이동·분할 등 모든 작업 복원)
 let history = [];      // 상태 스냅샷 배열
@@ -429,6 +430,10 @@ function selectTool(toolName){
   tool = toolName;
   firstClick = null;
   arcPath = [];
+  // Rev.15.5: 도구 전환 시 외곽선 모드 해제 (외곽선 버튼이 직접 다시 켬)
+  fillAsOutline = false;
+  const obtn = document.getElementById('headerBtnOutline');
+  if (obtn) obtn.classList.remove('active');
   filletState = null; offsetState = null; dimState = null; breakState = null;
   preCtx.clearRect(0,0,baseW,baseH);
   redrawDraw();
@@ -1826,7 +1831,7 @@ drawCanvas.addEventListener('dblclick', e => {
   }
   
   // 채움 영역 더블클릭 시 편집 모달 (선택/채움 도구에서)
-  if (tool === 'select' || tool === 'fill') {
+  if ((tool === 'select' || tool === 'fill') && !fillAsOutline) {
     const p = getCanvasPoint(e);
     const f = hitTestFill(p);
     if (f) {
@@ -5690,6 +5695,37 @@ function handleBpolyCommand() {
 function doFillAtPoint(p) {
   // Rev.11.2: OpenCV 의존 제거 - 순수 JS floodFill로 대체
 
+  // Rev.15.7: 외곽선 모드 + 클릭 위치에 이미 채워진 영역(fill)이 있으면
+  //   선 floodFill 없이 그 fill의 경계점을 바로 외곽선 폴리라인으로 변환 (채움은 삭제)
+  //   → 워크플로: ①채움으로 영역확정 ②기존 선 삭제 ③채움 클릭→외곽선
+  if (fillAsOutline){
+    const f = hitTestFill(p);
+    if (f && Array.isArray(f.points) && f.points.length >= 3){
+      const stroke = document.getElementById('lineColor') ? (document.getElementById('lineColor').value || '#000') : '#000';
+      const poly = {
+        id: ++shapeIdSeq, type: 'polyline',
+        points: f.points.map(pt => ({x: pt.x, y: pt.y})),
+        closed: true,
+        stroke,
+        strokeWidth: (typeof currentStrokeWidth !== 'undefined' ? currentStrokeWidth : 2) || 2,
+        layer: f.layer || currentLayer || 'default'
+      };
+      // 원본 채움 삭제
+      const fi = fills.findIndex(x => x.id === f.id);
+      if (fi >= 0) fills.splice(fi, 1);
+      shapes.push(poly);
+      selectedIds.clear(); selectedIds.add(poly.id);
+      redoStack = []; pushHistory();
+      if (typeof redrawFills === 'function') redrawFills();
+      redrawDraw(); updateCount();
+      if (typeof updateSelStat === 'function') updateSelStat();
+      document.getElementById('statusHint').textContent =
+        `🖊 채움 → 외곽선 변환 완료: 점 ${poly.points.length}개 폴리라인 (채움 삭제). 계속 클릭=다중, Esc=종료`;
+      return;
+    }
+    // 채움이 없으면 아래로 진행: 선을 경계로 floodFill해서 외곽선 생성 (기존 방식)
+  }
+
   if (shapes.length === 0) {
     cmdLog('  🎨 채움 실패: 도형이 없습니다. 먼저 도형을 그려주세요.', 'error');
     return;
@@ -5861,6 +5897,34 @@ function doFillAtPoint(p) {
 
       // 6) 단순화 (Douglas-Peucker 간단 버전 - 거리 기반 점 솎아내기)
       const simplified = simplifyPath(boundary, 2.0);
+
+      // Rev.15.5: 외곽선 모드 - 경계점으로 fill 대신 닫힌 폴리라인 생성
+      if (fillAsOutline){
+        if (simplified.length < 3){
+          cmdLog('  외곽선: 경계점이 부족합니다.', 'error');
+          hideLoading(); return;
+        }
+        const stroke = document.getElementById('lineColor') ? (document.getElementById('lineColor').value || '#000') : '#000';
+        const poly = {
+          id: ++shapeIdSeq, type: 'polyline',
+          points: simplified.map(pt => ({x: pt.x, y: pt.y})),
+          closed: true,
+          stroke,
+          strokeWidth: (typeof currentStrokeWidth !== 'undefined' ? currentStrokeWidth : 2) || 2,
+          layer: currentLayer || 'default'
+        };
+        shapes.push(poly);
+        selectedIds.clear(); selectedIds.add(poly.id);
+        redoStack = []; pushHistory();
+        if (typeof redrawFills === 'function') redrawFills();
+        redrawDraw(); updateCount();
+        if (typeof updateSelStat === 'function') updateSelStat();
+        const areaMm2 = (pixelCount * mmPerPixel * mmPerPixel).toFixed(2);
+        document.getElementById('statusHint').textContent =
+          `🖊 외곽선 생성 완료: 점 ${poly.points.length}개 닫힌 폴리라인 (면적 ${areaMm2}㎟). 계속 클릭=다중, Esc=종료`;
+        hideLoading();
+        return;
+      }
 
       // 7) fill 객체 생성
       const alpha = parseInt(document.getElementById('fillAlpha').value) / 100;
@@ -9021,96 +9085,98 @@ function cleanupDrawing(){
 
 document.getElementById('headerBtnCleanup').addEventListener('click', cleanupDrawing);
 
-// ===== Rev.15.3: 합치기 (선택한 선들을 폴리라인으로 — 여러 갈래는 각각 폴리라인) =====
+// ===== Rev.15.6: 그룹화 (선택한 선들을 하나의 폴리라인으로 — 블렌더 J처럼) =====
+//  이어지는 끝점은 최대한 연결, 안 이어져도 갈래를 한 폴리라인에 모두 담음. 절대 실패 안 함.
 function mergeLinesToPolyline(){
   const tolMm = parseFloat(document.getElementById('cleanupTolInput').value) || 0.5;
   const tolPx = tolMm / mmPerPixel;
 
-  // 선택된 line만 대상
   const sel = shapes.filter(s => s.type === 'line' && selectedIds.has(s.id));
   if (sel.length < 2){
-    document.getElementById('statusHint').textContent = '🔗 합치기: 선을 2개 이상 선택하세요';
+    document.getElementById('statusHint').textContent = '🔗 그룹화: 선을 2개 이상 선택하세요';
     return;
   }
 
-  // 각 선을 {a, b} 세그먼트로
-  const segs = sel.map(s => ({ a:{x:s.p1.x,y:s.p1.y}, b:{x:s.p2.x,y:s.p2.y}, id:s.id,
-                               stroke:s.stroke, strokeWidth:s.strokeWidth, layer:s.layer }));
+  const segs = sel.map(s => ({ a:{x:s.p1.x,y:s.p1.y}, b:{x:s.p2.x,y:s.p2.y} }));
   const near = (p, q) => Math.hypot(p.x - q.x, p.y - q.y) <= tolPx;
 
-  // 끝점 연결성에 따라 여러 체인으로 분리 (위/아래 평행면 등 → 각각 별도 체인)
+  // 연결 가능한 만큼 이어붙이되, 안 이어지면 새 갈래를 그냥 뒤에 이어붙임 (하나의 점 배열)
   const usedSeg = new Array(segs.length).fill(false);
-  const chains = [];        // [{ pts:[...], baseSeg }]
-  for (let start = 0; start < segs.length; start++){
-    if (usedSeg[start]) continue;
-    usedSeg[start] = true;
-    let chain = [ segs[start].a, segs[start].b ];
-    const baseSeg = segs[start];
-    let extended = true;
-    while (extended){
-      extended = false;
-      const head = chain[0], tail = chain[chain.length - 1];
-      for (let i = 0; i < segs.length; i++){
-        if (usedSeg[i]) continue;
-        const s = segs[i];
-        if (near(tail, s.a)){ chain.push(s.b); usedSeg[i]=true; extended=true; break; }
-        if (near(tail, s.b)){ chain.push(s.a); usedSeg[i]=true; extended=true; break; }
-        if (near(head, s.b)){ chain.unshift(s.a); usedSeg[i]=true; extended=true; break; }
-        if (near(head, s.a)){ chain.unshift(s.b); usedSeg[i]=true; extended=true; break; }
-      }
+  const allPts = [];
+  let remaining = segs.length;
+  let curChain = null;
+  while (remaining > 0){
+    if (!curChain){
+      // 미사용 첫 세그먼트로 새 갈래 시작
+      const idx = usedSeg.indexOf(false);
+      usedSeg[idx] = true; remaining--;
+      curChain = [ segs[idx].a, segs[idx].b ];
+      continue;
     }
-    chains.push({ chain, baseSeg });
+    // 현재 갈래의 양끝에 이어지는 세그먼트 탐색
+    const head = curChain[0], tail = curChain[curChain.length - 1];
+    let found = false;
+    for (let i = 0; i < segs.length; i++){
+      if (usedSeg[i]) continue;
+      const s = segs[i];
+      if (near(tail, s.a)){ curChain.push(s.b); usedSeg[i]=true; remaining--; found=true; break; }
+      if (near(tail, s.b)){ curChain.push(s.a); usedSeg[i]=true; remaining--; found=true; break; }
+      if (near(head, s.b)){ curChain.unshift(s.a); usedSeg[i]=true; remaining--; found=true; break; }
+      if (near(head, s.a)){ curChain.unshift(s.b); usedSeg[i]=true; remaining--; found=true; break; }
+    }
+    if (!found){
+      // 더 이상 이 갈래에 못 이으면 → 전체 점배열에 흘려넣고 새 갈래 시작
+      allPts.push(...curChain);
+      curChain = null;
+    }
   }
+  if (curChain) allPts.push(...curChain);
 
-  // 각 체인을 폴리라인으로 생성 (점 2개 이상인 것만)
-  const newPolyIds = [];
-  let madeLines = 0, madePolys = 0;
-  const delIds = new Set();
-  chains.forEach(({ chain, baseSeg }) => {
-    // 인접 중복점 제거
-    const pts = [];
-    chain.forEach(p => { if (pts.length === 0 || !near(pts[pts.length-1], p)) pts.push({x:p.x, y:p.y}); });
-    if (pts.length < 2) return;
-    // 닫힘
-    let closed = false;
-    if (pts.length >= 3 && near(pts[0], pts[pts.length-1])){ closed = true; pts.pop(); }
-    const poly = {
-      id: ++shapeIdSeq, type: 'polyline', points: pts, closed,
-      stroke: baseSeg.stroke || '#000',
-      strokeWidth: baseSeg.strokeWidth || 2,
-      layer: baseSeg.layer || (typeof currentLayer !== 'undefined' ? currentLayer : 'default') || 'default'
-    };
-    shapes.push(poly);
-    newPolyIds.push(poly.id);
-    madePolys++;
-  });
-  // 합쳐진 원본 선 삭제 (체인에 2개 이상 들어간 선만 — 단독 선은 그대로 둠)
-  // 여기서는 선택된 모든 선이 어떤 체인엔가 포함되므로 전부 삭제
-  sel.forEach(s => delIds.add(s.id));
+  // 인접 중복점 제거
+  const pts = [];
+  allPts.forEach(p => { if (pts.length === 0 || !near(pts[pts.length-1], p)) pts.push({x:p.x, y:p.y}); });
+  if (pts.length < 2){
+    document.getElementById('statusHint').textContent = '🔗 그룹화: 유효한 경로가 아닙니다';
+    return;
+  }
+  // 닫힘 (시작=끝)
+  let closed = false;
+  if (pts.length >= 3 && near(pts[0], pts[pts.length-1])){ closed = true; pts.pop(); }
+
+  const base = sel[0];
+  const poly = {
+    id: ++shapeIdSeq, type: 'polyline', points: pts, closed,
+    stroke: base.stroke || '#000',
+    strokeWidth: base.strokeWidth || 2,
+    layer: base.layer || (typeof currentLayer !== 'undefined' ? currentLayer : 'default') || 'default'
+  };
+
+  // 원본 선 삭제
+  const delIds = new Set(sel.map(s => s.id));
   for (let i = shapes.length - 1; i >= 0; i--){
     if (shapes[i].type === 'line' && delIds.has(shapes[i].id)) shapes.splice(i, 1);
   }
-
-  selectedIds.clear();
-  newPolyIds.forEach(id => selectedIds.add(id));
+  shapes.push(poly);
+  selectedIds.clear(); selectedIds.add(poly.id);
 
   redoStack = []; pushHistory();
   if (typeof redrawFills === 'function') redrawFills();
   redrawDraw(); updateCount();
   if (typeof updateSelStat === 'function') updateSelStat();
   if (typeof updateShapePropPanel === 'function') updateShapePropPanel();
-
-  if (madePolys === 0){
-    document.getElementById('statusHint').textContent = '🔗 합치기: 이을 수 있는 경로가 없습니다';
-  } else if (madePolys === 1){
-    document.getElementById('statusHint').textContent =
-      `🔗 합치기 완료: 선 ${sel.length}개 → 폴리라인 1개`;
-  } else {
-    document.getElementById('statusHint').textContent =
-      `🔗 합치기 완료: 선 ${sel.length}개 → 폴리라인 ${madePolys}개 (끊긴 갈래별로 각각). 한 줄로 합치려면 🧹정리 먼저`;
-  }
+  document.getElementById('statusHint').textContent =
+    `🔗 그룹화 완료: 선 ${sel.length}개 → 폴리라인 1개 (점 ${pts.length}개${closed ? ', 닫힘' : ''})`;
 }
 document.getElementById('headerBtnMerge').addEventListener('click', mergeLinesToPolyline);
+
+// Rev.15.5: 외곽선 만들기 버튼 - 채움 도구를 외곽선(폴리라인) 모드로 켬
+document.getElementById('headerBtnOutline').addEventListener('click', () => {
+  selectTool('fill');           // 먼저 도구 전환(여기서 fillAsOutline가 false로 리셋됨)
+  fillAsOutline = true;         // 그 다음 외곽선 모드 ON
+  document.getElementById('headerBtnOutline').classList.add('active');
+  document.getElementById('statusHint').textContent =
+    '🖊 외곽선 만들기: 닫힌 영역 안을 클릭하면 경계를 따라 외곽선(폴리라인) 생성 (Esc=종료)';
+});
 
 // Rev.11.20: 연장(Extrude) 버튼
 document.getElementById('headerBtnExtrude').addEventListener('click', () => {
