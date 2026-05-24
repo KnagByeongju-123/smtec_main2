@@ -9072,9 +9072,13 @@ document.getElementById('saveScale').addEventListener('change', e => {
 
 // 저장 형식 선택에 따라 옵션 UI 토글
 document.getElementById('saveFormat').addEventListener('change', e => {
-  const isSvg = e.target.value === 'svg';
-  document.getElementById('rowSaveScale').style.display = isSvg ? 'none' : 'flex';
-  document.getElementById('customScaleRow').style.display = (!isSvg && document.getElementById('saveScale').value === 'custom') ? 'flex' : 'none';
+  const v = e.target.value;
+  const isSvg = v === 'svg';
+  const isPng = v === 'png';
+  // PNG일 때만 비율 옵션 표시
+  document.getElementById('rowSaveScale').style.display = isPng ? 'flex' : 'none';
+  document.getElementById('customScaleRow').style.display = (isPng && document.getElementById('saveScale').value === 'custom') ? 'flex' : 'none';
+  // SVG 전용 옵션
   document.getElementById('rowSvgUnit').style.display = isSvg ? 'flex' : 'none';
   document.getElementById('rowSvgStrokeMm').style.display = isSvg ? 'flex' : 'none';
 });
@@ -9126,6 +9130,9 @@ document.getElementById('btnDoSave').addEventListener('click', () => {
   
   if (fmt === 'svg') {
     exportSVG(name, crop);
+  } else if (fmt === 'dxf') {
+    if (typeof exportDXF === 'function') exportDXF(name);
+    else { alert('DXF 내보내기 함수를 찾을 수 없습니다.'); return; }
   } else {
     const sel = document.getElementById('saveScale').value;
     const scale = sel === 'custom' ? (parseFloat(document.getElementById('customScale').value)||1) : parseFloat(sel);
