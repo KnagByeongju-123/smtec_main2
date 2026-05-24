@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>tool3 v6.8.1 (통합본) - v.clone 에러 수정</title>
+<title>tool3 v6.9.0 (통합본) - F/E 편집강화</title>
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
@@ -190,8 +190,8 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
 <body>
 
 <header>
-  <h1>📐 tool3 v6.8.1</h1>
-  <span class="ver">v6.8.1 - 스케치 v.clone 에러 수정 (함수명 충돌 해결)</span>
+  <h1>📐 tool3 v6.9.0</h1>
+  <span class="ver">v6.9.0 - F(2점선/3점면) · E확장(X/Y/Z·Shift·스냅)</span>
   <span class="mode-badge" id="modeBadge">스케처 모드</span>
   <span class="stat" id="statText">준비됨</span>
 </header>
@@ -5373,7 +5373,7 @@ function meshCornersWorld(mesh){
   ];
 }
 
-// v6.8.1: 3D 월드좌표 → 화면 픽셀 (스케치용 worldToScreen과 별개)
+// v6.9.0: 3D 월드좌표 → 화면 픽셀 (스케치용 worldToScreen과 별개)
 function worldToScreen3D(v){
   if(!renderer || !camera) return {x:0, y:0, z:2};
   const rect = renderer.domElement.getBoundingClientRect();
@@ -6784,9 +6784,11 @@ const editMode = {
   dragStart: null,       // {x,y}
   dragStartPos: null,    // Map<idx, Vector3>
   dragPlane: null,
-  axis: null,            // v6.8.1: 'x'|'y'|'z'|null — 블렌더식 축 제한
-  numBuf: '',            // v6.8.1: 숫자 입력 버퍼
+  axis: null,            // v6.9.0: 'x'|'y'|'z'|null — 블렌더식 축 제한
+  numBuf: '',            // v6.9.0: 숫자 입력 버퍼
   _moveCenter: null,     // 선택 정점 월드 중심
+  userEdges: [],         // v6.9: 사용자가 F/E로 만든 엣지 [[ai,bi],...]
+  edgeLines: null,       // v6.9: userEdges 시각화 LineSegments
 };
 
 function enterEditMode(){
@@ -6799,6 +6801,7 @@ function enterEditMode(){
   editMode.part = target;
   editMode.elem = 'vertex';
   editMode.selVerts.clear();
+  editMode.userEdges = []; // v6.9: 사용자 엣지 초기화
 
   // geometry를 정점 통합본으로 교체 (정점 이동 시 면이 함께 따라가도록)
   const merged = mergeVerticesGeom(target.mesh.geometry, 1e-3);
@@ -6809,7 +6812,7 @@ function enterEditMode(){
 
   buildEditTopology();
   buildVertexMarkers();
-  setStat('✏️ 편집 모드 — 1점/2선/3면 · 클릭선택(Shift추가) · G이동(X/Y/Z) · F면채우기 · B선이등분 · Tab종료');
+  setStat('✏️ 편집 모드 — 1점/2선/3면 · 클릭선택(Shift추가) · G이동 · F연결/면 · E확장 · B이등분 · Tab종료');
   toast('✏️ 편집 모드 진입 (' + (editMode.verts.length) + '개 정점)');
 }
 
@@ -6893,27 +6896,61 @@ function editFill(){
   if(!editMode.active) return;
   const sel = Array.from(editMode.selVerts);
   if(sel.length < 2){ toast('정점을 2개 이상 선택하세요'); return; }
-  const {verts, idx} = editGeomToArrays();
   if(sel.length === 2){
-    // 2점 = 가는 삼각형(엣지처럼 보이는 면)으로 연결 — 두 점 + 중점 살짝 띄운 점
-    // 실용적으로: 두 점과 그 중점을 약간 offset한 3번째 점으로 얇은 면 생성
-    const a=verts[sel[0]], b=verts[sel[1]];
-    const mid=[(a[0]+b[0])/2,(a[1]+b[1])/2,(a[2]+b[2])/2];
-    // 매우 얇은 삼각형은 보기 안 좋으니, 단순히 외곽선용 엣지만 추가하기 위해
-    // 면 채우기는 3점 이상에서만. 2점은 안내.
-    toast('💡 2점은 면을 만들 수 없습니다. 3점 이상 선택하거나, 선 이등분(B)을 사용하세요');
+    // v6.9: 2점 = 선(엣지) 연결
+    const [a,b] = sel;
+    const k = a<b ? a+'_'+b : b+'_'+a;
+    const exists = editMode.userEdges.some(([x,y])=> (x<y?x+'_'+y:y+'_'+x)===k );
+    if(exists){ toast('이미 연결된 선입니다'); return; }
+    editMode.userEdges.push([a,b]);
+    rebuildUserEdgeLines();
+    pushHistory();
+    toast('✅ 두 점을 선으로 연결');
     return;
   }
-  // 3점 이상 = 팬(fan) 삼각분할로 면 생성
+  // 3점 이상 = 팬(fan) 삼각분할로 면 생성 (양면)
+  const {verts, idx} = editGeomToArrays();
   const base = sel[0];
   for(let i=1;i<sel.length-1;i++){
     idx.push(base, sel[i], sel[i+1]);
-    // 뒷면도 채워 양면 보이게
     idx.push(base, sel[i+1], sel[i]);
   }
   editRebuildFromArrays(verts, idx, true);
   pushHistory();
   toast('✅ ' + sel.length + '개 정점으로 면 생성');
+}
+
+// v6.9: E키 — 선택 정점을 복제(확장)하고 기존 점과 엣지로 연결, 새 점을 이동 모드로 잡음
+function editExtrude(){
+  if(!editMode.active) return;
+  const sel = Array.from(editMode.selVerts);
+  if(sel.length === 0){ toast('확장할 점을 먼저 선택하세요'); return; }
+  const {verts, idx} = editGeomToArrays();
+  // 선택 점마다 복제 → 새 인덱스
+  const newIdxMap = new Map(); // oldIdx → newIdx
+  sel.forEach(oi=>{
+    const v = verts[oi];
+    const ni = verts.length;
+    verts.push([v[0], v[1], v[2]]); // 같은 위치에 복제 (이동 전)
+    newIdxMap.set(oi, ni);
+    // 기존 점 ↔ 새 점 엣지 연결
+    editMode.userEdges.push([oi, ni]);
+  });
+  // 선택점이 2개면, 두 새 점 사이도 연결(선분 확장 → 사각형 변 형성 준비)
+  if(sel.length === 2){
+    editMode.userEdges.push([newIdxMap.get(sel[0]), newIdxMap.get(sel[1])]);
+  }
+  // geometry 재구성 (면 index는 그대로, 정점만 늘어남)
+  editRebuildFromArrays(verts, idx, false);
+  // 새 점들만 선택 상태로
+  editMode.selVerts.clear();
+  newIdxMap.forEach(ni=>editMode.selVerts.add(ni));
+  rebuildUserEdgeLines();
+  updateVertexMarkers();
+  // 바로 이동 모드 진입 (G와 동일: X/Y/Z 축제한, Shift, 숫자, 스냅 지원)
+  editMoveStart(blenderOp._lastMouse ? {clientX:blenderOp._lastMouse.x, clientY:blenderOp._lastMouse.y} : null);
+  setStat('🅴 확장(Extrude) — 새 점 이동 중 · X/Y/Z 축제한 · 숫자입력 · Ctrl=스냅 · 클릭/Enter 확정 · Esc 취소');
+  toast('🅴 ' + sel.length + '개 점 확장 — 이동하세요');
 }
 
 // v6.8: B키 — 선택된 엣지(정점 2개) 이등분: 중점 정점 추가 + 인접 면 분할
@@ -7001,6 +7038,49 @@ function updateVertexMarkers(){
     m.material.color.setHex(selected ? 0xff8000 : 0x111111);
     m.scale.setScalar(selected ? 1.6 : 1.0);
   });
+  updateUserEdgeLines();
+}
+
+// v6.9: 사용자 추가 엣지(userEdges)를 굵은 선으로 표시 (mesh 자식, 로컬 좌표)
+function rebuildUserEdgeLines(){
+  if(editMode.edgeLines){
+    if(editMode.part && editMode.part.mesh) editMode.part.mesh.remove(editMode.edgeLines);
+    if(editMode.edgeLines.geometry) editMode.edgeLines.geometry.dispose();
+    if(editMode.edgeLines.material) editMode.edgeLines.material.dispose();
+    editMode.edgeLines = null;
+  }
+  if(!editMode.userEdges || editMode.userEdges.length === 0) return;
+  const pos = editMode.geom.attributes.position;
+  const pts = [];
+  editMode.userEdges.forEach(([a,b])=>{
+    if(a<pos.count && b<pos.count){
+      pts.push(pos.getX(a),pos.getY(a),pos.getZ(a));
+      pts.push(pos.getX(b),pos.getY(b),pos.getZ(b));
+    }
+  });
+  if(pts.length===0) return;
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pts,3));
+  const lines = new THREE.LineSegments(g, new THREE.LineBasicMaterial({color:0x2266ff, depthTest:false}));
+  lines.userData._isUserEdge = true;
+  lines.renderOrder = 1500;
+  editMode.part.mesh.add(lines);
+  editMode.edgeLines = lines;
+}
+
+// 정점 이동 중 엣지 선 위치만 갱신 (로컬 position 다시 읽기)
+function updateUserEdgeLines(){
+  if(!editMode.edgeLines || !editMode.userEdges) return;
+  const pos = editMode.geom.attributes.position;
+  const arr = editMode.edgeLines.geometry.attributes.position;
+  let k=0;
+  editMode.userEdges.forEach(([a,b])=>{
+    if(a<pos.count && b<pos.count){
+      arr.setXYZ(k++, pos.getX(a),pos.getY(a),pos.getZ(a));
+      arr.setXYZ(k++, pos.getX(b),pos.getY(b),pos.getZ(b));
+    }
+  });
+  arr.needsUpdate = true;
 }
 
 // 화면 클릭 → 가장 가까운 정점 선택 (점 모드). 선/면 모드는 구성 정점 집합 선택.
@@ -7128,17 +7208,66 @@ function editMoveApply(e){
     // 숫자만, 축 없음 → 무시 (축 지정 필요)
   }
 
+  // 1차 적용
   editMode.selVerts.forEach(i=>{
     const sp = editMode.dragStartPos.get(i);
     pos.setXYZ(i, sp.x+localDelta.x, sp.y+localDelta.y, sp.z+localDelta.z);
   });
+
+  // v6.9: 버텍스 스냅 — Ctrl(또는 스냅 ON) + 자유이동 시, 선택 정점이
+  //   다른(비선택) 정점에 화면상 가까우면 그 위치로 달라붙음
+  let snapped = false;
+  const wantSnap = (state.vertexSnap !== false) || (e && (e.ctrlKey || e.metaKey));
+  if(wantSnap && editMode.selVerts.size > 0 && !ax3 && num === null){
+    const snapLocal = computeEditVertexSnap();
+    if(snapLocal){
+      editMode.selVerts.forEach(i=>{
+        const b = new THREE.Vector3(pos.getX(i),pos.getY(i),pos.getZ(i));
+        pos.setXYZ(i, b.x+snapLocal.x, b.y+snapLocal.y, b.z+snapLocal.z);
+      });
+      snapped = true;
+    }
+  }
+
   pos.needsUpdate = true;
   editMode.geom.computeVertexNormals();
   updateVertexMarkers();
 
   const axLabel = editMode.axis ? (editMode.axis.toUpperCase() + (editMode.axis==='z'?'(높이)':editMode.axis==='y'?'(앞뒤)':'') ) : '자유';
   const numTxt = editMode.numBuf !== '' ? (' = ' + editMode.numBuf + 'mm') : '';
-  setStat('✏️ 버텍스 이동 [' + axLabel + ']' + numTxt + ' · Enter/클릭 확정 · Esc 취소');
+  setStat('✏️ 버텍스 이동 [' + axLabel + ']' + numTxt + (snapped?' 🧲스냅':'') + ' · Enter/클릭 확정 · Esc 취소');
+}
+
+// v6.9: 편집 모드 정점 스냅 — 선택 정점 중 하나가 비선택 정점에 화면상 가까우면
+//   그 차이를 로컬 offset으로 반환 (없으면 null)
+function computeEditVertexSnap(){
+  const part = editMode.part;
+  part.mesh.updateMatrixWorld(true);
+  const mat = part.mesh.matrixWorld;
+  const inv = new THREE.Matrix4().copy(mat).invert();
+  const pos = editMode.geom.attributes.position;
+  const rect = renderer.domElement.getBoundingClientRect();
+  const toScreen = (lx,ly,lz)=>{
+    const wp = new THREE.Vector3(lx,ly,lz).applyMatrix4(mat).project(camera);
+    return {x:(wp.x+1)*0.5*rect.width, y:(-wp.y+1)*0.5*rect.height, z:wp.z};
+  };
+  let best=null, bestD=12*12;
+  editMode.selVerts.forEach(si=>{
+    const ss = toScreen(pos.getX(si),pos.getY(si),pos.getZ(si));
+    if(ss.z>1) return;
+    for(let ti=0; ti<pos.count; ti++){
+      if(editMode.selVerts.has(ti)) continue;
+      const ts = toScreen(pos.getX(ti),pos.getY(ti),pos.getZ(ti));
+      if(ts.z>1) continue;
+      const d=(ss.x-ts.x)*(ss.x-ts.x)+(ss.y-ts.y)*(ss.y-ts.y);
+      if(d<bestD){ bestD=d; best={si, ti}; }
+    }
+  });
+  if(!best) return null;
+  // 타깃 정점 - 선택 정점(현재 위치)의 로컬 차이
+  const sv = new THREE.Vector3(pos.getX(best.si),pos.getY(best.si),pos.getZ(best.si));
+  const tv = new THREE.Vector3(pos.getX(best.ti),pos.getY(best.ti),pos.getZ(best.ti));
+  return tv.sub(sv);
 }
 
 function editMoveConfirm(){
@@ -7227,7 +7356,7 @@ function blenderApply(){
   const num = blenderOp.numBuf !== '' && blenderOp.numBuf !== '-' ? parseFloat(blenderOp.numBuf) : null;
   const cur = blenderOp._lastMouse || blenderOp.startMouse;
 
-  // v6.8.1: 블렌더 좌표(Z=높이, Y=앞뒤) → 이 도구 three.js(Y=높이, Z=앞뒤)로 변환
+  // v6.9.0: 블렌더 좌표(Z=높이, Y=앞뒤) → 이 도구 three.js(Y=높이, Z=앞뒤)로 변환
   //   블렌더 X→X, 블렌더 Y(앞뒤)→Z, 블렌더 Z(높이)→Y
   const ax3 = ax === 'y' ? 'z' : (ax === 'z' ? 'y' : ax); // 실제 적용 축
 
@@ -7375,7 +7504,7 @@ document.addEventListener('keydown', (e)=>{
   if(editMode.active){
     if(editMode.dragging){
       const k = e.key.toLowerCase();
-      // v6.8.1: 블렌더식 축 제한 (X/Y/Z) + 숫자 입력
+      // v6.9.0: 블렌더식 축 제한 (X/Y/Z) + 숫자 입력
       if(k === 'x' || k === 'y' || k === 'z'){
         editMode.axis = (editMode.axis === k) ? null : k; // 같은 축 다시 누르면 해제
         editMode.numBuf = '';
@@ -7400,7 +7529,8 @@ document.addEventListener('keydown', (e)=>{
     if(e.key === '2'){ setEditElem('edge'); e.preventDefault(); return; }
     if(e.key === '3'){ setEditElem('face'); e.preventDefault(); return; }
     if(e.key === 'g' || e.key === 'G'){ editMoveStart(blenderOp._lastMouse ? {clientX:blenderOp._lastMouse.x, clientY:blenderOp._lastMouse.y} : null); e.preventDefault(); return; }
-    if(e.key === 'f' || e.key === 'F'){ editFill(); e.preventDefault(); return; }       // v6.8: F = 면 채우기/연결
+    if(e.key === 'f' || e.key === 'F'){ editFill(); e.preventDefault(); return; }       // v6.8: F = 면 채우기/선 연결
+    if(e.key === 'e' || e.key === 'E'){ editExtrude(); e.preventDefault(); return; }     // v6.9: E = 확장(돌출)
     if(e.key === 'b' || e.key === 'B'){ editSubdivide(); e.preventDefault(); return; }   // v6.8: B = 선 이등분
     if(e.key === 'a' || e.key === 'A'){ // 전체 선택/해제
       if(editMode.selVerts.size === editMode.verts.length){ editMode.selVerts.clear(); }
@@ -7604,7 +7734,7 @@ function init(){
   renderPartsList();
   updateInfo();
   redrawSketch();
-  setStat('tool3 v6.8.1 준비됨 · Ctrl+이동=스냅 · 편집: F면채우기 B선이등분 G축이동');
+  setStat('tool3 v6.9.0 준비됨 · 편집 F연결/면 · E확장 · 정점스냅 · G축이동');
   // v2.2: 항상 3D 모드로 시작 (draw_tool import도 3D 바닥에 표시)
   switchMode('model');
   try {
