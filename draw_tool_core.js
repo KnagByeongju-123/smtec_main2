@@ -28,7 +28,7 @@ const fillCtx = fillCanvas.getContext('2d');
 const drawCtx = drawCanvas.getContext('2d');
 const preCtx = previewCanvas.getContext('2d');
 
-let baseW = 9000, baseH = 6750;
+let baseW = 12800, baseH = 7200;  // Rev.13.8: 16:9 가로형 작업영역
 let zoom = 0.23;
 // Rev.11.24: 눈금자(그리드) 표시
 let gridOn = false;
@@ -2170,8 +2170,8 @@ function cancelBaseLineMode(){
 // 베이스선 모드 클릭 처리. 처리했으면 true
 function handleBaseLineClick(p){
   if (!baseLineMode) return false;
-  const s = hitTest(p);   // hitTest는 도형 객체를 반환
-  if (s && s.type === 'line'){
+  const s = findNearestLineForBase(p);   // 넓은 허용폭으로 가장 가까운 직선 탐색
+  if (s){
     baseLineTarget = s;
     baseLineOrient = baseLineDetectOrient(s);
     // 미리보기 강조
@@ -2186,9 +2186,22 @@ function handleBaseLineClick(p){
     openBaseLinePop(s);
   } else {
     document.getElementById('statusHint').textContent =
-      '📋 베이스선: 선(line)을 클릭하세요. (사각형/원/호 불가)';
+      '📋 베이스선: 선(line) 근처를 클릭하세요. (사각형/원/호 불가)';
   }
   return true;
+}
+
+// 베이스선 모드 전용: 클릭점에서 가장 가까운 직선을 넓은 허용폭(화면 14px 환산)으로 탐색
+function findNearestLineForBase(p){
+  const Z = zoom || 1;
+  const tolPx = 14 / Z;   // 화면상 약 14px → 월드좌표 환산
+  let best = null, bestD = tolPx;
+  for (const s of shapes){
+    if (s.type !== 'line') continue;
+    const d = pointToSegmentDist(p, s.p1, s.p2);
+    if (d <= bestD){ bestD = d; best = s; }
+  }
+  return best;
 }
 
 // 클릭한 선의 X좌표(세로선 기준) 또는 Y좌표(가로선 기준) mm값 추정
