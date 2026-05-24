@@ -6464,6 +6464,8 @@ function isPointOnShape(p, s) {
       const last = s.points[s.points.length - 1];
       const first = s.points[0];
       if (pointToSegmentDist(p, last, first) <= tol) return true;
+      // Rev.16.3: 닫힌 폴리라인은 내부 클릭으로도 선택 (가는 외곽선도 쉽게 잡기)
+      if (pointInPolygon(p, s.points)) return true;
     }
     return false;
   }
