@@ -754,7 +754,7 @@ function serializePart(p){
     const pr = p.params || {};
     return {
       id: p.id, name: p.name, type: 'group',
-      color: p.color, opacity: p.opacity, visible: p.visible,
+      color: p.color, opacity: p.opacity, visible: p.visible, material: p.material,
       _xform: t,
       params: {
         childCount: pr.childCount, holeCount: pr.holeCount, solidCount: pr.solidCount,
@@ -767,7 +767,7 @@ function serializePart(p){
 
   return {
     id: p.id, name: p.name, type: p.type,
-    color: p.color, opacity: p.opacity, visible: p.visible,
+    color: p.color, opacity: p.opacity, visible: p.visible, material: p.material,
     sourceShapes: p.sourceShapes ? JSON.parse(JSON.stringify(p.sourceShapes)) : undefined,
     params: p.params ? JSON.parse(JSON.stringify(p.params)) : {},
     _isHole: !!p._isHole,
@@ -801,6 +801,20 @@ function deserializePart(pdata){
   if(part && pdata._isHole){
     part._isHole = true;
     applyHoleMaterial(part);
+  }
+  // v7.0.0: 재질 복원 (구멍이 아닐 때만 — 구멍은 빨간 반투명 유지)
+  if(part && pdata.material && !pdata._isHole){
+    part.material = pdata.material;
+    const preset = MATERIAL_PRESETS[pdata.material];
+    if(preset && part.mesh){
+      part.mesh.traverse(o=>{
+        if(o.isMesh && o.material && !o.userData._isEdgeOutline){
+          o.material.roughness = preset.roughness;
+          o.material.metalness = preset.metalness;
+          o.material.needsUpdate = true;
+        }
+      });
+    }
   }
   return part;
 }
@@ -1027,6 +1041,23 @@ function initThree(){
   const dirLight2 = new THREE.DirectionalLight(0xffffff, 0.4);
   dirLight2.position.set(-100, -100, -150);
   scene.add(dirLight2);
+
+  // v7.0.0: 금속/크롬 반사용 절차적 환경맵 (위=밝음, 아래=어두움 그라데이션)
+  try {
+    const cnv = document.createElement('canvas');
+    cnv.width = 64; cnv.height = 256;
+    const ctx = cnv.getContext('2d');
+    const grd = ctx.createLinearGradient(0, 0, 0, 256);
+    grd.addColorStop(0.0, '#cfe3f0');  // 하늘(위)
+    grd.addColorStop(0.45, '#8a9aa8');
+    grd.addColorStop(0.5, '#5a6470');  // 지평선
+    grd.addColorStop(0.55, '#3a4048');
+    grd.addColorStop(1.0, '#22262b');  // 바닥(아래)
+    ctx.fillStyle = grd; ctx.fillRect(0, 0, 64, 256);
+    const envTex = new THREE.CanvasTexture(cnv);
+    envTex.mapping = THREE.EquirectangularReflectionMapping;
+    scene.environment = envTex;
+  } catch(_) {}
   
   // v2.4: 팅커캐드 스타일 격자 - 청록색 메인선, 회색 보조선
   //   - 메인(10mm): 청록색
@@ -2315,11 +2346,35 @@ function removePartFromScene(part){
   }
 }
 
-function makeMaterial(color, opacity){
-  return new THREE.MeshStandardMaterial({
-    color: color, roughness: 0.6, metalness: 0.3,
-    transparent: opacity < 1, opacity: opacity, side: THREE.DoubleSide
+// v7.0.0: 재질 프리셋 (roughness/metalness/투명도/측면)
+const MATERIAL_PRESETS = {
+  plastic_matte:  {roughness:0.85, metalness:0.0,  clear:0},
+  plastic_glossy: {roughness:0.25, metalness:0.0,  clear:0.3},
+  metal:          {roughness:0.4,  metalness:0.9,  clear:0},
+  chrome:         {roughness:0.05, metalness:1.0,  clear:0},
+  brushed:        {roughness:0.55, metalness:0.85, clear:0},
+  rubber:         {roughness:0.95, metalness:0.0,  clear:0},
+  glass:          {roughness:0.05, metalness:0.0,  clear:0, glassOpacity:0.35},
+  ceramic:        {roughness:0.35, metalness:0.05, clear:0.5}
+};
+
+function makeMaterial(color, opacity, matKey){
+  const preset = MATERIAL_PRESETS[matKey] || MATERIAL_PRESETS.plastic_matte;
+  let op = opacity;
+  let transparent = opacity < 1;
+  // 유리는 기본적으로 반투명
+  if(preset.glassOpacity !== undefined && opacity >= 1){
+    op = preset.glassOpacity; transparent = true;
+  }
+  const mat = new THREE.MeshStandardMaterial({
+    color: color,
+    roughness: preset.roughness,
+    metalness: preset.metalness,
+    transparent: transparent,
+    opacity: op,
+    side: THREE.DoubleSide
   });
+  return mat;
 }
 
 // ===== v2.2: 바닥(XZ 평면)에 스케치 도형 미리보기 =====
@@ -2929,7 +2984,7 @@ function doSvgRevolve(){
   let main = _svgRevData[0];
   _svgRevData.forEach(poly => { if(poly.length > main.length) main = poly; });
 
-  // v6.9.7: SWEEP — 단면의 한쪽 끝을 회전축에 "묶어" 경로 따라 회전
+  // v7.0.0: SWEEP — 단면의 한쪽 끝을 회전축에 "묶어" 경로 따라 회전
   //   기준 A: 왼쪽 끝(minX)을 축에 붙임 → 단면이 오른쪽으로 펼쳐짐
   //   기준 B: 오른쪽 끝(maxX)을 축에 붙임 → 단면을 좌우반전, 반대 방향으로 펼쳐짐
   //   • p.x → 반경방향(축에서 거리, 0 이상), p.y → 높이방향 (Y 뒤집기)
@@ -2965,7 +3020,7 @@ function doSvgRevolve(){
 
   const angleRad = angleDeg * Math.PI / 180;
   const startRad = startAngleDeg * Math.PI / 180;
-  // v6.9.7: 묶는 끝(단면 x의 최솟값)이 경로 반지름 innerR에 정확히 닿도록.
+  // v7.0.0: 묶는 끝(단면 x의 최솟값)이 경로 반지름 innerR에 정확히 닿도록.
   //   innerR=0이면 묶는 끝이 중심축(반지름 0)에 붙어 가운데 구멍이 없음.
   let minPx = Infinity;
   profile.forEach(p=>{ if(p.x < minPx) minPx = p.x; });
@@ -2980,7 +3035,7 @@ function doSvgRevolve(){
     mesh: mesh, _isHole: (mode === 'hole'),
     params: {
       mode, sketchHeight, innerD, seg, startAngleDeg, angleDeg, pathR, dir,
-      sweep: true, // v6.9.7: sweep 방식 표시 (복원 구분)
+      sweep: true, // v7.0.0: sweep 방식 표시 (복원 구분)
       profile: profile.map(v => ({x: v.x, y: v.y}))
     }
   };
@@ -3044,7 +3099,7 @@ function revolveProfileSweep(profile, segments, startAngle, totalAngle, closeEnd
   return geom;
 }
 
-// v6.9.7: SWEEP 방식 — SVG 닫힌 단면을 원형 경로(고리)를 따라 이동시켜 도넛/튜브 생성
+// v7.0.0: SWEEP 방식 — SVG 닫힌 단면을 원형 경로(고리)를 따라 이동시켜 도넛/튜브 생성
 //   단면 좌표(cx,cy)는 단면 로컬평면, 경로 반지름 R, 각도만큼 sweep.
 //   각 링의 단면은 경로 접선에 수직(반경방향+높이방향)으로 배치.
 //   profile: [{x,y}] 단면 폴리곤(로컬 mm, 단면 중심이 원점 근처), R: 경로 반지름
@@ -3127,13 +3182,13 @@ function rebuildSvgRevolve(pdata){
   const startRad = (p.startAngleDeg || 0) * Math.PI / 180;
   let geom;
   if(p.sweep){
-    // v6.9.7: sweep(도넛/파이프) 방식 복원
+    // v7.0.0: sweep(도넛/파이프) 방식 복원
     let pathR = p.pathR;
     if(pathR === undefined){
       let minPx = Infinity; profile.forEach(o=>{ if(o.x<minPx) minPx=o.x; });
-      pathR = (p.innerD ? p.innerD/2 : 0) - minPx; // v6.9.7: innerR - minPx
+      pathR = (p.innerD ? p.innerD/2 : 0) - minPx; // v7.0.0: innerR - minPx
     }
-    const signed = angleRad; // v6.9.7: 방향은 profile 좌우반전으로 이미 반영됨
+    const signed = angleRad; // v7.0.0: 방향은 profile 좌우반전으로 이미 반영됨
     geom = sweepProfileTorus(profile.map(o=>({x:o.x,y:o.y})), p.seg || 24, startRad, signed, pathR, angleDeg < 359.5);
   } else {
     // 구버전 lathe 방식 복원
@@ -4414,7 +4469,7 @@ function meshCornersWorld(mesh){
   ];
 }
 
-// v6.9.7: 3D 월드좌표 → 화면 픽셀 (스케치용 worldToScreen과 별개)
+// v7.0.0: 3D 월드좌표 → 화면 픽셀 (스케치용 worldToScreen과 별개)
 function worldToScreen3D(v){
   if(!renderer || !camera) return {x:0, y:0, z:2};
   const rect = renderer.domElement.getBoundingClientRect();
@@ -4838,6 +4893,8 @@ function selectPart(id, event){
   document.getElementById('selectedPartProp').style.display = '';
   document.getElementById('propPartName').value = part.name;
   document.getElementById('propPartColor').value = part.color;
+  const matSel = document.getElementById('propPartMaterial');
+  if(matSel) matSel.value = part.material || 'plastic_matte';
   document.getElementById('propPartOpacity').value = Math.round(part.opacity * 100);
   // v3.3: 위치/크기/회전 입력값 갱신
   refreshPropPanelTransform(part);
@@ -4959,6 +5016,7 @@ function updatePartColor(){
   }
   renderPartsList();
   toast('🎨 색상 적용: ' + newColor);
+  pushHistory(); // v7.0.0: 색상 변경 되돌리기 지원
   // v3.8: 색상 피커 강제 닫기 - input 요소를 새로 만들어 교체
   //   비동기로 실행해서 onchange 처리가 완전히 끝난 뒤 교체되도록 함
   setTimeout(() => {
@@ -4982,12 +5040,43 @@ function updatePartOpacity(){
   p.opacity = v;
   if(p.mesh){
     p.mesh.traverse(o=>{
-      if(o.isMesh && o.material){
+      if(o.isMesh && o.material && !o.userData._isEdgeOutline){
         o.material.transparent = v < 1;
         o.material.opacity = v;
       }
     });
   }
+}
+
+// v7.0.0: 재질(표면 질감) 프리셋 적용 — 색/투명도는 유지하고 roughness/metalness만 교체
+function updatePartMaterial(){
+  const p = state.parts.find(x => x.id === state.selectedPartId);
+  const sel = document.getElementById('propPartMaterial');
+  if(!p || !sel) return;
+  const matKey = sel.value;
+  const preset = MATERIAL_PRESETS[matKey] || MATERIAL_PRESETS.plastic_matte;
+  p.material = matKey;
+  // 유리 선택 시 투명도 자동 조정
+  if(preset.glassOpacity !== undefined && p.opacity >= 1){
+    p.opacity = preset.glassOpacity;
+    const opInp = document.getElementById('propPartOpacity');
+    if(opInp) opInp.value = Math.round(p.opacity * 100);
+  }
+  if(p.mesh){
+    p.mesh.traverse(o=>{
+      if(o.isMesh && o.material && !o.userData._isEdgeOutline){
+        o.material.roughness = preset.roughness;
+        o.material.metalness = preset.metalness;
+        o.material.transparent = p.opacity < 1;
+        o.material.opacity = p.opacity;
+        o.material.needsUpdate = true;
+      }
+    });
+  }
+  renderPartsList();
+  const labels = {plastic_matte:'무광 플라스틱',plastic_glossy:'광택 플라스틱',metal:'금속',chrome:'크롬',brushed:'브러시드 메탈',rubber:'고무',glass:'유리',ceramic:'세라믹'};
+  toast('🧱 재질: ' + (labels[matKey] || matKey));
+  pushHistory();
 }
 
 function switchMode(m){
@@ -5825,8 +5914,8 @@ const editMode = {
   dragStart: null,       // {x,y}
   dragStartPos: null,    // Map<idx, Vector3>
   dragPlane: null,
-  axis: null,            // v6.9.7: 'x'|'y'|'z'|null — 블렌더식 축 제한
-  numBuf: '',            // v6.9.7: 숫자 입력 버퍼
+  axis: null,            // v7.0.0: 'x'|'y'|'z'|null — 블렌더식 축 제한
+  numBuf: '',            // v7.0.0: 숫자 입력 버퍼
   _moveCenter: null,     // 선택 정점 월드 중심
   userEdges: [],         // v6.9: 사용자가 F/E로 만든 엣지 [[ai,bi],...]
   edgeLines: null,       // v6.9: userEdges 시각화 LineSegments
@@ -6324,7 +6413,7 @@ function editMoveApply(e){
 
 // v6.9: 편집 모드 정점 스냅 — 선택 정점 중 하나가 비선택 정점에 화면상 가까우면
 //   그 차이를 로컬 offset으로 반환 (없으면 null)
-// v6.9.7: 편집 모드 스냅 — 선택 정점이 (비선택)버텍스 또는 엣지에 화면상 가까우면
+// v7.0.0: 편집 모드 스냅 — 선택 정점이 (비선택)버텍스 또는 엣지에 화면상 가까우면
 //   그 위치(로컬)로 가는 offset 반환. 버텍스 우선, 없으면 엣지 수직투영점.
 function computeEditSnap(){
   const part = editMode.part;
@@ -6472,7 +6561,7 @@ function blenderApply(){
   const num = blenderOp.numBuf !== '' && blenderOp.numBuf !== '-' ? parseFloat(blenderOp.numBuf) : null;
   const cur = blenderOp._lastMouse || blenderOp.startMouse;
 
-  // v6.9.7: 블렌더 좌표(Z=높이, Y=앞뒤) → 이 도구 three.js(Y=높이, Z=앞뒤)로 변환
+  // v7.0.0: 블렌더 좌표(Z=높이, Y=앞뒤) → 이 도구 three.js(Y=높이, Z=앞뒤)로 변환
   //   블렌더 X→X, 블렌더 Y(앞뒤)→Z, 블렌더 Z(높이)→Y
   const ax3 = ax === 'y' ? 'z' : (ax === 'z' ? 'y' : ax); // 실제 적용 축
 
@@ -6620,7 +6709,7 @@ document.addEventListener('keydown', (e)=>{
   if(editMode.active){
     if(editMode.dragging){
       const k = e.key.toLowerCase();
-      // v6.9.7: 블렌더식 축 제한 (X/Y/Z) + 숫자 입력
+      // v7.0.0: 블렌더식 축 제한 (X/Y/Z) + 숫자 입력
       if(k === 'x' || k === 'y' || k === 'z'){
         editMode.axis = (editMode.axis === k) ? null : k; // 같은 축 다시 누르면 해제
         editMode.numBuf = '';
@@ -6850,7 +6939,7 @@ function init(){
   renderPartsList();
   updateInfo();
   redrawSketch();
-  setStat('tool3 v6.9.7 준비됨 · SVG회전기 내부지름0=구멍없음 · 묶는기준 A/B');
+  setStat('tool3 v7.0.0 준비됨 · 부품 속성패널 정리 완료');
   // v2.2: 항상 3D 모드로 시작 (draw_tool import도 3D 바닥에 표시)
   switchMode('model');
   try {
