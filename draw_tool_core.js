@@ -2214,6 +2214,8 @@ function openBaseLinePop(ln){
   document.getElementById('baseSealRow').style.display = 'none';
   document.getElementById('baseSealHint').style.display = 'none';
   document.getElementById('baseNormalRow').style.display = 'flex';
+  document.getElementById('baseNormalRow').style.opacity = '1';   // 씰 모드 잔상 제거
+  document.getElementById('baseDist').disabled = false;           // 거리칸 항상 활성화로 리셋
   // 씰 파이 토글은 세로선에서만 노출
   document.getElementById('baseSealWrap').style.display = (orient === 'v') ? 'block' : 'none';
   if (orient === 'v'){
