@@ -5747,7 +5747,7 @@ function doFillAtPoint(p) {
         points: cleaned,
         closed: true,
         stroke,
-        strokeWidth: (typeof currentStrokeWidth !== 'undefined' ? currentStrokeWidth : 2) || 2,
+        strokeWidth: parseInt(document.getElementById('strokeWidth').value) || 1,
         layer: f.layer || currentLayer || 'default'
       };
       // 원본 채움 삭제
@@ -5952,7 +5952,7 @@ function doFillAtPoint(p) {
           points: cleaned,
           closed: true,
           stroke,
-          strokeWidth: (typeof currentStrokeWidth !== 'undefined' ? currentStrokeWidth : 2) || 2,
+          strokeWidth: parseInt(document.getElementById('strokeWidth').value) || 1,
           layer: currentLayer || 'default'
         };
         shapes.push(poly);
@@ -6692,6 +6692,10 @@ function snapshotShape(s) {
     if (s.p1) snap.p1 = {x:s.p1.x, y:s.p1.y};
     if (s.p2) snap.p2 = {x:s.p2.x, y:s.p2.y};
     if (s.offset) snap.offset = {x:s.offset.x, y:s.offset.y};
+  } else if ((s.type === 'polyline' || s.type === 'fill') && Array.isArray(s.points)) {
+    snap.points = s.points.map(pt => ({x: pt.x, y: pt.y}));
+  } else if (s.type === 'point' && s.p1) {
+    snap.p1 = {x:s.p1.x, y:s.p1.y};
   }
   return snap;
 }
@@ -6709,6 +6713,10 @@ function moveShapeTo(s, snap, dx, dy) {
     if (s.p1 && snap.p1) { s.p1.x = snap.p1.x + dx; s.p1.y = snap.p1.y + dy; }
     if (s.p2 && snap.p2) { s.p2.x = snap.p2.x + dx; s.p2.y = snap.p2.y + dy; }
     if (s.offset && snap.offset) { s.offset.x = snap.offset.x + dx; s.offset.y = snap.offset.y + dy; }
+  } else if ((s.type === 'polyline' || s.type === 'fill') && snap.points) {
+    s.points = snap.points.map(pt => ({x: pt.x + dx, y: pt.y + dy}));
+  } else if (s.type === 'point' && snap.p1) {
+    s.p1.x = snap.p1.x + dx; s.p1.y = snap.p1.y + dy;
   }
 }
 
