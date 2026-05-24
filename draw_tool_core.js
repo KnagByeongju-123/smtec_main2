@@ -9336,7 +9336,7 @@ function ungroupPolyline(){
         id: ++shapeIdSeq, type: 'line',
         p1: { x: pts[i].x, y: pts[i].y },
         p2: { x: pts[i+1].x, y: pts[i+1].y },
-        stroke: poly.stroke || '#000',
+        stroke: '#ffffff',
         strokeWidth: poly.strokeWidth || 2,
         layer: poly.layer || 'default'
       };
@@ -9348,7 +9348,7 @@ function ungroupPolyline(){
         id: ++shapeIdSeq, type: 'line',
         p1: { x: pts[pts.length-1].x, y: pts[pts.length-1].y },
         p2: { x: pts[0].x, y: pts[0].y },
-        stroke: poly.stroke || '#000',
+        stroke: '#ffffff',
         strokeWidth: poly.strokeWidth || 2,
         layer: poly.layer || 'default'
       };
