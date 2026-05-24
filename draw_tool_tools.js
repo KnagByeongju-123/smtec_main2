@@ -50,6 +50,12 @@ function transformShape(s, fn) {
     if (s.p1) { const p1 = fn(s.p1.x, s.p1.y); s.p1.x = p1.x; s.p1.y = p1.y; }
     if (s.p2) { const p2 = fn(s.p2.x, s.p2.y); s.p2.x = p2.x; s.p2.y = p2.y; }
     if (s.offset) { const o = fn(s.offset.x, s.offset.y); s.offset.x = o.x; s.offset.y = o.y; }
+  } else if ((s.type === 'polyline' || s.type === 'fill') && Array.isArray(s.points)) {
+    // Rev.15.8: 폴리라인/채움 - 모든 점 변환 (회전·복사·대칭·배율 지원)
+    s.points = s.points.map(pt => { const q = fn(pt.x, pt.y); return { x: q.x, y: q.y }; });
+  } else if (s.type === 'point' && s.p1) {
+    const p1 = fn(s.p1.x, s.p1.y);
+    s.p1.x = p1.x; s.p1.y = p1.y;
   }
 }
 

@@ -1298,6 +1298,17 @@ drawCanvas.addEventListener('mousemove', e => {
       }
       return;
     }
+    if (dragState && dragState.type === 'movefill') {
+      let dx = p.x - dragState.startX, dy = p.y - dragState.startY;
+      if (dx !== 0 || dy !== 0) dragState.moved = true;
+      if (shiftDown) { if (Math.abs(dx) > Math.abs(dy)) dy = 0; else dx = 0; }
+      const f = fills.find(x => x.id === dragState.fillId);
+      if (f){
+        f.points = dragState.basePts.map(pt => ({ x: pt.x + dx, y: pt.y + dy }));
+        redrawFills(); redrawDraw();
+      }
+      return;
+    }
     if (dragState && dragState.type === 'move') {
       let dx = p.x - dragState.startX, dy = p.y - dragState.startY;
       if (dx !== 0 || dy !== 0) dragState.moved = true; // Rev.11.41: 실제 이동 표시
@@ -1568,7 +1579,7 @@ drawCanvas.addEventListener('mousedown', e => {
   //   - 작도 중 첫 점이 이미 찍히지 않은 상태 (firstClick 등)
   //   - 호 핸들 편집 중도 아님
   //   - 도형이 없는 빈 영역에서 시작
-  if (tool !== 'select' && e.button === 0 && !endpointPickState && !arcHandleDrag) {
+  if (tool !== 'select' && tool !== 'fill' && e.button === 0 && !endpointPickState && !arcHandleDrag) {
     const inDrawSequence =
       firstClick || axisFirstPoint || calibFirstPoint ||
       (typeof arcPath !== 'undefined' && arcPath.length > 0) ||
@@ -1640,6 +1651,18 @@ drawCanvas.addEventListener('mousedown', e => {
     captureMoveDeltaBase();
     showMoveDeltaPanel(0, 0);
   } else {
+    // Rev.16.0: 도형이 없으면 채움(fill) 위인지 검사 → 채움 단독 선택·이동
+    const fhit = hitTestFill(p);
+    if (fhit){
+      selectedFillIds.clear(); selectedFillIds.add(fhit.id);
+      if (!e.shiftKey) selectedIds.clear();
+      updateSelStat(); redrawFills(); redrawDraw();
+      dragState = { type: 'movefill', startX: p.x, startY: p.y,
+                    fillId: fhit.id, basePts: fhit.points.map(pt => ({x:pt.x, y:pt.y})) };
+      document.getElementById('statusHint').textContent = '🎨 채움 선택 — 드래그로 이동 (외곽선 버튼 누르면 이 위치에 외곽선 생성)';
+      e.preventDefault();
+      return;
+    }
     // Rev.11.62: 블렌더식 - 점/선 선택 + Shift+빈공간 클릭 → 즉시 연장(점→선, 선→면)
     if (e.shiftKey && selectedIds.size > 0) {
       if (blenderQuickExtrudeAt(p)) {
@@ -1648,7 +1671,7 @@ drawCanvas.addEventListener('mousedown', e => {
         return;
       }
     }
-    if (!e.shiftKey) { selectedIds.clear(); updateSelStat(); redrawDraw(); updateShapePropPanel(); }
+    if (!e.shiftKey) { selectedIds.clear(); selectedFillIds.clear(); updateSelStat(); redrawDraw(); redrawFills(); updateShapePropPanel(); }
     dragState = { type: 'box', boxStart: p };
   }
 });
@@ -1702,6 +1725,10 @@ drawCanvas.addEventListener('mouseup', e => {
     updateShapePropPanel();  // 이동 후 패널값 갱신
     // Rev.11.41: 실제로 움직였으면 히스토리 기록
     if (dragState.moved) { redoStack = []; pushHistory(); }
+  } else if (dragState && dragState.type === 'movefill') {
+    // Rev.16.0: 채움 이동 종료
+    if (dragState.moved) { redoStack = []; pushHistory(); }
+    suppressNextClick = true; // 드래그 후 click으로 선택 해제/외곽선 오작동 방지
   } else if (dragState && dragState.type === 'grip') {
     // Rev.11.12: 끝점 그립 드래그 종료
     preCtx.clearRect(0,0,baseW,baseH);
@@ -2837,7 +2864,7 @@ document.getElementById('btnCalibApply').addEventListener('click', () => {
     const newH = Math.round(baseH * scaleFactor);
     
     // 모든 기존 도형/채움/캘리브 점들도 동일 비율로 스케일
-    shapes.forEach(s => scaleShape(s, scaleFactor));
+    shapes.forEach(s => scaleShapeUniform(s, scaleFactor));
     fills.forEach(f => {
       f.points = f.points.map(p => ({x: p.x * scaleFactor, y: p.y * scaleFactor}));
     });
@@ -2876,7 +2903,7 @@ document.getElementById('btnCalibCancel').addEventListener('click', () => {
   preCtx.clearRect(0, 0, baseW, baseH);
 });
 
-function scaleShape(s, k) {
+function scaleShapeUniform(s, k) {
   if (s.type === 'line' || s.type === 'rect' || s.type === 'circle') {
     s.p1.x *= k; s.p1.y *= k;
     s.p2.x *= k; s.p2.y *= k;
@@ -2886,8 +2913,12 @@ function scaleShape(s, k) {
     if (s.p2) { s.p2.x *= k; s.p2.y *= k; }
   } else if (s.type === 'ellipse') {
     s.cx *= k; s.cy *= k; s.rx *= k; s.ry *= k;
+  } else if ((s.type === 'polyline' || s.type === 'fill') && Array.isArray(s.points)) {
+    s.points = s.points.map(pt => ({ x: pt.x * k, y: pt.y * k }));
+  } else if (s.type === 'point' && s.p1) {
+    s.p1.x *= k; s.p1.y *= k;
   }
-  s.strokeWidth = Math.max(1, Math.round(s.strokeWidth * Math.sqrt(k)));
+  s.strokeWidth = Math.max(1, Math.round((s.strokeWidth || 2) * Math.sqrt(k)));
 }
 
 function updateCalibStat() {
@@ -5702,9 +5733,11 @@ function doFillAtPoint(p) {
     const f = hitTestFill(p);
     if (f && Array.isArray(f.points) && f.points.length >= 3){
       const stroke = document.getElementById('lineColor') ? (document.getElementById('lineColor').value || '#000') : '#000';
+      // Rev.15.9: 픽셀 계단/미세 단차 제거 - 직선 피팅 + 교점 코너
+      const cleaned = fitOutlineToLines(f.points.map(pt => ({x: pt.x, y: pt.y})), 8);
       const poly = {
         id: ++shapeIdSeq, type: 'polyline',
-        points: f.points.map(pt => ({x: pt.x, y: pt.y})),
+        points: cleaned,
         closed: true,
         stroke,
         strokeWidth: (typeof currentStrokeWidth !== 'undefined' ? currentStrokeWidth : 2) || 2,
@@ -5905,9 +5938,11 @@ function doFillAtPoint(p) {
           hideLoading(); return;
         }
         const stroke = document.getElementById('lineColor') ? (document.getElementById('lineColor').value || '#000') : '#000';
+        // Rev.15.9: 픽셀 계단/미세 단차 제거 - 직선 피팅 + 교점 코너
+        const cleaned = fitOutlineToLines(simplified.map(pt => ({x: pt.x, y: pt.y})), 8);
         const poly = {
           id: ++shapeIdSeq, type: 'polyline',
-          points: simplified.map(pt => ({x: pt.x, y: pt.y})),
+          points: cleaned,
           closed: true,
           stroke,
           strokeWidth: (typeof currentStrokeWidth !== 'undefined' ? currentStrokeWidth : 2) || 2,
@@ -6013,6 +6048,96 @@ function simplifyPath(pts, epsilon) {
   }
   out.push(pts[pts.length-1]);
   return out;
+}
+
+// Rev.15.9: 외곽선 정리 - 거의 직선인 구간을 직선으로 피팅하고
+//   인접 직선의 교점으로 코너 꼭짓점을 재계산 (픽셀 계단/미세 단차 제거)
+//   pts: 닫힌 경계 점배열, angTolDeg: 같은 직선으로 볼 각도 임계값
+function fitOutlineToLines(pts, angTolDeg){
+  const n = pts.length;
+  if (n < 4) return pts;
+  angTolDeg = angTolDeg || 8;
+  const angTol = angTolDeg * Math.PI / 180;
+
+  // 1) 닫힌 경로를 직선 세그먼트(연속된 거의 동일방향 점들)로 분할
+  // 코너 후보: 앞뒤 윈도우(여러 점) 평균 진행방향의 차이가 큰 점 (흔들림에 강건)
+  const W = Math.max(2, Math.min(8, Math.floor(n / 12)));  // 윈도우 크기
+  const winDir = (i, sign) => {
+    let sx = 0, sy = 0;
+    for (let k = 1; k <= W; k++){
+      const j = (i + sign*k + n) % n;
+      const jp = (i + sign*(k-1) + n) % n;
+      sx += pts[j].x - pts[jp].x; sy += pts[j].y - pts[jp].y;
+    }
+    return Math.atan2(sign*sy, sign*sx);
+  };
+  const angDiff = (a, b) => { let d = Math.abs(a - b) % (2*Math.PI); if (d > Math.PI) d = 2*Math.PI - d; return d; };
+
+  const cornerScore = new Array(n).fill(0);
+  for (let i = 0; i < n; i++){
+    const dBack = winDir(i, -1);
+    const dFwd  = winDir(i, +1);
+    cornerScore[i] = angDiff(dBack, dFwd);
+  }
+  // 코너 = 국소 최대이면서 임계각 초과 (연속 후보는 가장 큰 것 하나만)
+  const isCorner = new Array(n).fill(false);
+  for (let i = 0; i < n; i++){
+    if (cornerScore[i] <= angTol) continue;
+    let isMax = true;
+    for (let k = -W; k <= W; k++){
+      if (k === 0) continue;
+      const j = (i + k + n) % n;
+      if (cornerScore[j] > cornerScore[i]) { isMax = false; break; }
+    }
+    if (isMax) isCorner[i] = true;
+  }
+  // 코너가 너무 적으면(거의 원형) 원본 유지
+  const cornerIdx = [];
+  for (let i = 0; i < n; i++) if (isCorner[i]) cornerIdx.push(i);
+  if (cornerIdx.length < 2) return pts;
+
+  // 2) 코너~코너 사이 점들로 최소제곱 직선 피팅 → 각 변(edge)의 직선식
+  const edges = [];  // {dir:{x,y}, pt:{x,y}}  (점 pt를 지나고 방향 dir인 직선)
+  for (let c = 0; c < cornerIdx.length; c++){
+    const i0 = cornerIdx[c];
+    const i1 = cornerIdx[(c + 1) % cornerIdx.length];
+    // i0..i1 구간 점 수집 (닫힌 경로 순환)
+    const seg = [];
+    let i = i0;
+    while (true){ seg.push(pts[i]); if (i === i1) break; i = (i + 1) % n; }
+    if (seg.length < 2){ edges.push(null); continue; }
+    // 최소제곱: 평균점 + 주성분 방향
+    let mx = 0, my = 0; seg.forEach(p => { mx += p.x; my += p.y; }); mx /= seg.length; my /= seg.length;
+    let sxx = 0, sxy = 0, syy = 0;
+    seg.forEach(p => { const dx = p.x - mx, dy = p.y - my; sxx += dx*dx; sxy += dx*dy; syy += dy*dy; });
+    // 공분산행렬 최대 고유벡터 = 직선 방향
+    const theta = 0.5 * Math.atan2(2*sxy, sxx - syy);
+    edges.push({ dir: { x: Math.cos(theta), y: Math.sin(theta) }, pt: { x: mx, y: my } });
+  }
+
+  // 3) 인접 두 직선(edge)의 교점 = 새 코너 꼭짓점
+  const lineInt = (a, da, b, db) => {
+    const den = da.x*db.y - da.y*db.x;
+    if (Math.abs(den) < 1e-9) return null;
+    const t = ((b.x - a.x)*db.y - (b.y - a.y)*db.x) / den;
+    return { x: a.x + da.x*t, y: a.y + da.y*t };
+  };
+  const verts = [];
+  const E = edges.length;
+  for (let c = 0; c < E; c++){
+    const e1 = edges[(c - 1 + E) % E];
+    const e2 = edges[c];
+    if (!e1 || !e2){ verts.push(pts[cornerIdx[c]]); continue; }
+    const ix = lineInt(e1.pt, e1.dir, e2.pt, e2.dir);
+    // 교점이 원래 코너에서 너무 멀면(거의 평행) 원래 코너 사용
+    if (ix){
+      const oc = pts[cornerIdx[c]];
+      if (Math.hypot(ix.x - oc.x, ix.y - oc.y) < Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) * 50 + 200){
+        verts.push(ix);
+      } else verts.push(oc);
+    } else verts.push(pts[cornerIdx[c]]);
+  }
+  return verts.length >= 3 ? verts : pts;
 }
 
 // ====== 도형 렌더 ======
@@ -9168,6 +9293,61 @@ function mergeLinesToPolyline(){
     `🔗 그룹화 완료: 선 ${sel.length}개 → 폴리라인 1개 (점 ${pts.length}개${closed ? ', 닫힘' : ''})`;
 }
 document.getElementById('headerBtnMerge').addEventListener('click', mergeLinesToPolyline);
+
+// ===== Rev.15.8: 분리 (선택한 폴리라인을 개별 선들로 분해) =====
+function ungroupPolyline(){
+  const sel = shapes.filter(s => s.type === 'polyline' && selectedIds.has(s.id));
+  if (sel.length === 0){
+    document.getElementById('statusHint').textContent = '✂ 분리: 폴리라인을 선택하세요';
+    return;
+  }
+  const newLineIds = [];
+  let madeLines = 0;
+  sel.forEach(poly => {
+    const pts = poly.points || [];
+    if (pts.length < 2) return;
+    // 인접 점쌍마다 선 1개
+    for (let i = 0; i < pts.length - 1; i++){
+      const ln = {
+        id: ++shapeIdSeq, type: 'line',
+        p1: { x: pts[i].x, y: pts[i].y },
+        p2: { x: pts[i+1].x, y: pts[i+1].y },
+        stroke: poly.stroke || '#000',
+        strokeWidth: poly.strokeWidth || 2,
+        layer: poly.layer || 'default'
+      };
+      shapes.push(ln); newLineIds.push(ln.id); madeLines++;
+    }
+    // 닫힌 폴리라인이면 마지막→처음 선도 추가
+    if (poly.closed && pts.length >= 3){
+      const ln = {
+        id: ++shapeIdSeq, type: 'line',
+        p1: { x: pts[pts.length-1].x, y: pts[pts.length-1].y },
+        p2: { x: pts[0].x, y: pts[0].y },
+        stroke: poly.stroke || '#000',
+        strokeWidth: poly.strokeWidth || 2,
+        layer: poly.layer || 'default'
+      };
+      shapes.push(ln); newLineIds.push(ln.id); madeLines++;
+    }
+  });
+  // 원본 폴리라인 삭제
+  const delIds = new Set(sel.map(s => s.id));
+  for (let i = shapes.length - 1; i >= 0; i--){
+    if (shapes[i].type === 'polyline' && delIds.has(shapes[i].id)) shapes.splice(i, 1);
+  }
+  selectedIds.clear();
+  newLineIds.forEach(id => selectedIds.add(id));
+
+  redoStack = []; pushHistory();
+  if (typeof redrawFills === 'function') redrawFills();
+  redrawDraw(); updateCount();
+  if (typeof updateSelStat === 'function') updateSelStat();
+  if (typeof updateShapePropPanel === 'function') updateShapePropPanel();
+  document.getElementById('statusHint').textContent =
+    `✂ 분리 완료: 폴리라인 ${sel.length}개 → 선 ${madeLines}개`;
+}
+document.getElementById('headerBtnUngroup').addEventListener('click', ungroupPolyline);
 
 // Rev.15.5: 외곽선 만들기 버튼 - 채움 도구를 외곽선(폴리라인) 모드로 켬
 document.getElementById('headerBtnOutline').addEventListener('click', () => {
