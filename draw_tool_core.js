@@ -1535,10 +1535,12 @@ drawCanvas.addEventListener('mousedown', e => {
       });
       redoStack = []; pushHistory();
       redrawDraw(); updateCount();
-      // Rev.11.43: 연결은 연속 모드 - 선 생성 후 모드 유지, 다음 2점 받기
+      // Rev.14.6: 연결은 1회성 - 선 1개 생성 후 모드 종료
       connectPoints = [];
+      exitConnectMode();
+      drawCanvas.style.cursor = 'default';
       document.getElementById('statusHint').textContent =
-        '🔗 연결: 선 1개 생성됨 · 계속 두 점을 클릭하면 또 연결 / 우클릭·Esc=종료';
+        '🔗 연결: 선 1개 생성 완료 (모드 종료) · 다시 연결하려면 F';
       e.preventDefault();
       return;
     }
