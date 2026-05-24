@@ -191,6 +191,87 @@
   };
 })();
 
+// ============================================================
+// v6.5: 정점 통합 유틸 (편집 모드용) — 같은 위치 정점을 하나로 병합한
+//   인덱스드 BufferGeometry 반환. position만 다룸(normal은 이후 recompute).
+// ============================================================
+function mergeVerticesGeom(geom, tol){
+  tol = tol || 1e-4;
+  const src = geom.index ? geom.toNonIndexed() : geom;
+  const pos = src.attributes.position;
+  const n = pos.count;
+  const map = new Map();      // key → 새 정점 인덱스
+  const newPos = [];          // 펼친 좌표
+  const indices = [];
+  const decimals = Math.max(0, Math.floor(-Math.log10(tol)));
+  function key(x,y,z){ return x.toFixed(decimals)+'_'+y.toFixed(decimals)+'_'+z.toFixed(decimals); }
+  for(let i=0;i<n;i++){
+    const x=pos.getX(i), y=pos.getY(i), z=pos.getZ(i);
+    const k=key(x,y,z);
+    let idx=map.get(k);
+    if(idx===undefined){
+      idx=newPos.length/3;
+      map.set(k,idx);
+      newPos.push(x,y,z);
+    }
+    indices.push(idx);
+  }
+  const out=new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.Float32BufferAttribute(newPos,3));
+  out.setIndex(indices);
+  out.computeVertexNormals();
+  return out;
+}
+
+// ============================================================
+// v6.6: 입체도형 외곽 모서리(직선 엣지) 표시
+//   EdgesGeometry(thresholdAngle)로 실제 꺾이는 모서리만 선으로 그림.
+//   메시의 자식 LineSegments로 추가 → 메시와 함께 이동/회전/스케일됨.
+// ============================================================
+const EDGE_OUTLINE_COLOR = 0x1a1a1a;       // 모서리 선 색 (어두운 회색)
+const EDGE_THRESHOLD_DEG = 25;             // 이 각도 이상 꺾인 모서리만 표시
+
+function addEdgeOutline(mesh){
+  if(!mesh) return;
+  // mesh가 Group이면 내부 각 Mesh에 적용
+  if(!mesh.isMesh){
+    mesh.traverse(o=>{ if(o.isMesh) addEdgeOutline(o); });
+    return;
+  }
+  removeEdgeOutline(mesh);
+  if(!mesh.geometry || !mesh.geometry.attributes || !mesh.geometry.attributes.position) return;
+  let eg;
+  try { eg = new THREE.EdgesGeometry(mesh.geometry, EDGE_THRESHOLD_DEG); }
+  catch(err){ return; }
+  const lines = new THREE.LineSegments(
+    eg,
+    new THREE.LineBasicMaterial({color: EDGE_OUTLINE_COLOR})
+  );
+  lines.userData._isEdgeOutline = true;
+  lines.renderOrder = 1; // 면 위에 그려지도록 살짝 우선
+  // 부모(mesh)의 로컬 공간에 그대로 얹음 → 변환 공유
+  mesh.add(lines);
+}
+
+function removeEdgeOutline(mesh){
+  if(!mesh || !mesh.children) return;
+  const toRemove = mesh.children.filter(c=>c.userData && c.userData._isEdgeOutline);
+  toRemove.forEach(c=>{
+    mesh.remove(c);
+    if(c.geometry) c.geometry.dispose();
+    if(c.material) c.material.dispose();
+  });
+}
+
+function refreshEdgeOutline(mesh){
+  addEdgeOutline(mesh); // remove 후 재생성
+}
+
+// 전체 부품 외곽선 일괄 갱신 (토글/로드 후)
+function refreshAllEdgeOutlines(){
+  state.parts.forEach(p=>{ if(p.mesh && p.visible !== false) addEdgeOutline(p.mesh); });
+}
+
 const state = {
   mode: 'sketch',
   tool: 'select',
@@ -209,6 +290,9 @@ const state = {
   showGrid: true,
   showAxes: true,
   wireframe: false,
+  showEdges: true,  // v6.6: 입체도형 외곽 모서리 선 표시
+  showDimLabels: false, // v6.7: 치수 태그(H/D/W) 표시 여부 (기본 끔)
+  vertexSnap: true, // v6.7: 버텍스 스냅(이동 시 코너 일치하면 달라붙음)
   pixelsPerMm: 4,
   panX: 0,
   panY: 0,
@@ -1007,6 +1091,8 @@ function animate(){
     if(transformState.activePart && !dimEditingActive){
       updateDimLabelPositions();
     }
+    // v6.5: 편집 모드 정점 마커는 카메라가 움직여도 위치 고정이지만,
+    //   부품 변환은 안 바뀌므로 매 프레임 갱신 불필요 (선택/이동 시에만 갱신함)
   }
 }
 
@@ -1016,6 +1102,7 @@ let dimEditingActive = false;
 
 function showDimLabels(part){
   hideDimLabels();
+  if(state.showDimLabels === false) return; // v6.7: 치수 태그 기본 숨김
   if(!part || !part.mesh) return;
   part.mesh.updateMatrixWorld(true);
   const bb = new THREE.Box3().setFromObject(part.mesh);
@@ -1374,15 +1461,34 @@ function setupRaycastClick(dom){
           grp.forEach(g => {
             g.part.mesh.position.copy(g.startPos.clone().add(moveOffset));
           });
+          // v6.7: 버텍스 스냅 — 이동한 부품 코너가 다른 부품 코너에 가까우면 달라붙음
+          //   v6.8: 스냅 토글 ON이거나, Ctrl(또는 Cmd)을 누른 동안 임시 스냅
+          let snapped = false;
+          const snapActive = (state.vertexSnap !== false) || e.ctrlKey || e.metaKey;
+          if(snapActive){
+            const moveParts = grp.map(g=>g.part);
+            const excl = new Set(moveParts.map(p=>p.id));
+            const snap = computeVertexSnap(moveParts, excl, true); // force=true: 토글 무시
+            if(snap){
+              grp.forEach(g => {
+                const base = g.part.mesh.position;
+                g.part.mesh.position.set(base.x+snap.x, base.y+snap.y, base.z+snap.z);
+              });
+              snapped = true;
+            }
+          }
           // 핸들도 따라 이동 (단일 선택 시)
           if(transformState.handleGroup && transformState.activePart === partDragState.candidate){
-            transformState.handleGroup.position.copy(moveOffset);
+            const ofs = partDragState.candidate.mesh.position.clone().sub(partDragState.startPos);
+            transformState.handleGroup.position.copy(ofs);
           }
           // 상태바에 좌표 표시
+          const snapTxt = snapped ? '  🧲 스냅' : '';
           if(grp.length > 1){
-            setStat('📍 ' + grp.length + '개 함께 이동: ΔX=' + moveOffset.x.toFixed(1) + '  ΔZ=' + moveOffset.z.toFixed(1));
+            setStat('📍 ' + grp.length + '개 함께 이동: ΔX=' + moveOffset.x.toFixed(1) + '  ΔZ=' + moveOffset.z.toFixed(1) + snapTxt);
           } else {
-            setStat('📍 이동: X=' + newPos.x.toFixed(1) + '  Y=' + newPos.y.toFixed(1) + '  Z=' + newPos.z.toFixed(1));
+            const fp = partDragState.candidate.mesh.position;
+            setStat('📍 이동: X=' + fp.x.toFixed(1) + '  Y=' + fp.y.toFixed(1) + '  Z=' + fp.z.toFixed(1) + snapTxt);
           }
           refreshPropPanelTransform(partDragState.candidate);
         }
@@ -2183,7 +2289,17 @@ function updateCamera(){
   }
 }
 
-function addPartToScene(part){if(part.mesh) scene.add(part.mesh)}
+function addPartToScene(part){
+  if(part.mesh){
+    scene.add(part.mesh);
+    // v6.6: 입체도형 외곽 모서리 선 자동 표시
+    if(state.showEdges !== false) addEdgeOutline(part.mesh);
+    // v6.8: 와이어프레임 모드면 새 부품에도 적용
+    if(state.wireframe){
+      part.mesh.traverse(o=>{ if(o.isMesh && o.material) o.material.wireframe = true; });
+    }
+  }
+}
 function removePartFromScene(part){
   if(part.mesh){
     scene.remove(part.mesh);
@@ -4179,6 +4295,81 @@ function nudgeSelected(dx, dy, dz){
   updateDimLabels();
   // v3.3: 단일 선택일 때 패널 갱신
   if(target.length === 1) refreshPropPanelTransform(target[0]);
+  // v6.7: 연타를 묶어 한 번만 history에 기록
+  if(nudgeSelected._t) clearTimeout(nudgeSelected._t);
+  nudgeSelected._t = setTimeout(()=>{ pushHistory(); nudgeSelected._t = null; }, 350);
+}
+
+// v6.7: 방향키 직선 이동 상태바 표시
+function nudgeStat(axisLabel, step){
+  const sel = getSelectedParts();
+  const tip = step > 0 ? '+' : '';
+  if(sel.length === 1){
+    const p = sel[0].mesh.position;
+    setStat('➡️ ' + axisLabel + '축 ' + tip + step + 'mm 이동 → X=' + p.x.toFixed(1) + ' Y=' + p.y.toFixed(1) + ' Z=' + p.z.toFixed(1));
+  } else if(sel.length > 1){
+    setStat('➡️ ' + sel.length + '개 ' + axisLabel + '축 ' + tip + step + 'mm 직선 이동');
+  }
+}
+
+// ============================================================
+// v6.7: 버텍스 스냅 — 이동 중인 부품의 BB 코너가 다른 부품의 BB 코너와
+//   가까워지면 그 위치에 잠시 달라붙도록 보정 offset 계산
+// ============================================================
+const VERTEX_SNAP_PX = 12; // 화면상 이 픽셀 이내면 스냅
+
+// 부품 mesh의 월드 BB 8코너 반환
+function meshCornersWorld(mesh){
+  mesh.updateMatrixWorld(true);
+  const bb = new THREE.Box3().setFromObject(mesh);
+  if(bb.isEmpty()) return [];
+  const mn = bb.min, mx = bb.max;
+  return [
+    new THREE.Vector3(mn.x,mn.y,mn.z), new THREE.Vector3(mx.x,mn.y,mn.z),
+    new THREE.Vector3(mn.x,mx.y,mn.z), new THREE.Vector3(mx.x,mx.y,mn.z),
+    new THREE.Vector3(mn.x,mn.y,mx.z), new THREE.Vector3(mx.x,mn.y,mx.z),
+    new THREE.Vector3(mn.x,mx.y,mx.z), new THREE.Vector3(mx.x,mx.y,mx.z),
+    bb.getCenter(new THREE.Vector3())
+  ];
+}
+
+// v6.8.1: 3D 월드좌표 → 화면 픽셀 (스케치용 worldToScreen과 별개)
+function worldToScreen3D(v){
+  if(!renderer || !camera) return {x:0, y:0, z:2};
+  const rect = renderer.domElement.getBoundingClientRect();
+  const p = v.clone().project(camera);
+  return {x: rect.left + (p.x+1)*0.5*rect.width, y: rect.top + (-p.y+1)*0.5*rect.height, z: p.z};
+}
+
+// 이동 후보 부품들(moveGroup)의 코너가 다른 부품 코너에 스냅되는 월드 offset 반환(없으면 null)
+function computeVertexSnap(moveParts, excludeSet, force){
+  if(!force && state.vertexSnap === false) return null;
+  // 대상(이동 중) 코너들 (이미 새 위치로 옮겨진 mesh 기준)
+  const movingCorners = [];
+  moveParts.forEach(p=>{ meshCornersWorld(p.mesh).forEach(c=>movingCorners.push(c)); });
+  if(movingCorners.length === 0) return null;
+  // 타깃(고정) 코너들
+  const targetCorners = [];
+  state.parts.forEach(p=>{
+    if(!p.mesh || p.visible === false) return;
+    if(excludeSet && excludeSet.has(p.id)) return;
+    meshCornersWorld(p.mesh).forEach(c=>targetCorners.push(c));
+  });
+  if(targetCorners.length === 0) return null;
+  // 화면거리 최소 쌍 찾기
+  let best=null, bestD=VERTEX_SNAP_PX*VERTEX_SNAP_PX;
+  const tScreens = targetCorners.map(c=>({w:c, s:worldToScreen3D(c)}));
+  for(const mc of movingCorners){
+    const ms = worldToScreen3D(mc);
+    if(ms.z>1) continue;
+    for(const t of tScreens){
+      if(t.s.z>1) continue;
+      const d=(ms.x-t.s.x)*(ms.x-t.s.x)+(ms.y-t.s.y)*(ms.y-t.s.y);
+      if(d<bestD){ bestD=d; best={from:mc, to:t.w}; }
+    }
+  }
+  if(!best) return null;
+  return best.to.clone().sub(best.from); // 이 offset만큼 더 옮기면 코너가 일치
 }
 function showShortcutHelp(){
   const msg = `📋 tool3 팅커캐드 단축키
@@ -4798,6 +4989,33 @@ function toggleWireframe(){
     }
   });
   toast('와이어프레임 ' + (state.wireframe ? 'ON' : 'OFF'));
+}
+
+// v6.6: 입체도형 외곽 모서리 선 표시 토글
+function toggleEdgeOutline(){
+  state.showEdges = !state.showEdges;
+  if(state.showEdges){
+    refreshAllEdgeOutlines();
+  } else {
+    state.parts.forEach(p=>{ if(p.mesh) (p.mesh.isMesh ? removeEdgeOutline(p.mesh) : p.mesh.traverse(o=>{ if(o.isMesh) removeEdgeOutline(o); })); });
+  }
+  const btn = document.getElementById('btnEdgeOutline');
+  if(btn){
+    btn.textContent = state.showEdges ? '🔲 외곽선 ON' : '🔲 외곽선 OFF';
+    btn.className = state.showEdges ? 'success' : '';
+  }
+  toast('모서리 외곽선 ' + (state.showEdges ? 'ON' : 'OFF'));
+}
+
+// v6.7: 버텍스 스냅 토글
+function toggleVertexSnap(){
+  state.vertexSnap = !state.vertexSnap;
+  const btn = document.getElementById('btnVertexSnap');
+  if(btn){
+    btn.textContent = state.vertexSnap ? '🧲 버텍스스냅 ON' : '🧲 버텍스스냅 OFF';
+    btn.className = state.vertexSnap ? 'success' : '';
+  }
+  toast('버텍스 스냅 ' + (state.vertexSnap ? 'ON · 항상 스냅 (또는 Ctrl누르며 이동 시 임시 스냅)' : 'OFF · Ctrl 누르며 이동하면 임시 스냅'));
 }
 
 function toggleGrid(){
@@ -5508,6 +5726,421 @@ document.addEventListener('click', ()=>{
 //   G/R/S 누름 → 마우스 이동으로 변형 → X/Y/Z 축제한 → 숫자입력 정밀 →
 //   클릭/Enter 확정, Esc/우클릭 취소
 // ============================================================
+// ============================================================
+// v6.5: 블렌더식 편집 모드 (점/선/면 선택 → 이동)
+//   Tab으로 진입/종료, 1=점 2=선 3=면, 클릭/Shift클릭 선택, G로 이동
+// ============================================================
+const editMode = {
+  active: false,
+  part: null,            // 편집 대상 part
+  elem: 'vertex',        // 'vertex' | 'edge' | 'face'
+  geom: null,            // 편집용 인덱스드 geometry (part.mesh.geometry로 교체됨)
+  verts: [],             // [{idx, pos:Vector3(local)}]  대표 정점들
+  edges: [],             // [{a,b}] 정점 인덱스 쌍 (중복 제거)
+  faces: [],             // [{a,b,c}] 삼각형 정점 인덱스
+  selVerts: new Set(),   // 선택된 정점 인덱스
+  markerGroup: null,     // 정점 마커들이 담긴 Group (월드)
+  dragging: false,
+  dragStart: null,       // {x,y}
+  dragStartPos: null,    // Map<idx, Vector3>
+  dragPlane: null,
+  axis: null,            // v6.8.1: 'x'|'y'|'z'|null — 블렌더식 축 제한
+  numBuf: '',            // v6.8.1: 숫자 입력 버퍼
+  _moveCenter: null,     // 선택 정점 월드 중심
+};
+
+function enterEditMode(){
+  const sel = state.parts.filter(p => p._selected && p.mesh && p.mesh.isMesh);
+  const target = sel.length === 1 ? sel[0] : (transformState.activePart && transformState.activePart.mesh && transformState.activePart.mesh.isMesh ? transformState.activePart : null);
+  if(!target){ toast('편집할 단일 메시 부품을 선택하세요 (그룹은 먼저 해제)'); return; }
+  if(target.type === 'group'){ toast('그룹은 편집 불가 — 먼저 그룹 해제(Ctrl+Shift+G)'); return; }
+  hideTransformHandles();
+  editMode.active = true;
+  editMode.part = target;
+  editMode.elem = 'vertex';
+  editMode.selVerts.clear();
+
+  // geometry를 정점 통합본으로 교체 (정점 이동 시 면이 함께 따라가도록)
+  const merged = mergeVerticesGeom(target.mesh.geometry, 1e-3);
+  if(target.mesh.geometry) target.mesh.geometry.dispose();
+  target.mesh.geometry = merged;
+  editMode.geom = merged;
+  if(state.showEdges !== false) refreshEdgeOutline(target.mesh); // 외곽선 재생성
+
+  buildEditTopology();
+  buildVertexMarkers();
+  setStat('✏️ 편집 모드 — 1점/2선/3면 · 클릭선택(Shift추가) · G이동(X/Y/Z) · F면채우기 · B선이등분 · Tab종료');
+  toast('✏️ 편집 모드 진입 (' + (editMode.verts.length) + '개 정점)');
+}
+
+function exitEditMode(){
+  if(!editMode.active) return;
+  clearVertexMarkers();
+  // 최종 노멀 재계산
+  if(editMode.geom){
+    editMode.geom.computeVertexNormals();
+    editMode.geom.attributes.position.needsUpdate = true;
+  }
+  editMode.active = false;
+  const part = editMode.part;
+  // v6.6: 변경된 형상으로 외곽선 갱신
+  if(part && part.mesh && state.showEdges !== false) refreshEdgeOutline(part.mesh);
+  editMode.part = null;
+  editMode.selVerts.clear();
+  pushHistory();
+  if(part){ showTransformHandles(part); }
+  setStat('편집 모드 종료');
+  toast('✅ 편집 종료');
+}
+
+// 정점/엣지/면 토폴로지 구성
+function buildEditTopology(){
+  const geom = editMode.geom;
+  const pos = geom.attributes.position;
+  const idx = geom.index ? geom.index.array : null;
+  editMode.verts = [];
+  for(let i=0;i<pos.count;i++){
+    editMode.verts.push({idx:i, pos:new THREE.Vector3(pos.getX(i),pos.getY(i),pos.getZ(i))});
+  }
+  editMode.faces = [];
+  editMode.edges = [];
+  const edgeSet = new Set();
+  const addEdge=(a,b)=>{ const k=a<b?a+'_'+b:b+'_'+a; if(!edgeSet.has(k)){ edgeSet.add(k); editMode.edges.push({a,b}); } };
+  if(idx){
+    for(let i=0;i<idx.length;i+=3){
+      const a=idx[i],b=idx[i+1],c=idx[i+2];
+      editMode.faces.push({a,b,c});
+      addEdge(a,b); addEdge(b,c); addEdge(c,a);
+    }
+  }
+}
+
+// 정점 위치를 geometry에서 다시 읽어 verts 갱신
+function syncVertsFromGeom(){
+  const pos = editMode.geom.attributes.position;
+  editMode.verts.forEach(v=>{ v.pos.set(pos.getX(v.idx),pos.getY(v.idx),pos.getZ(v.idx)); });
+}
+
+// v6.8: 현재 editMode.geom을 position/index 일반 배열로 추출
+function editGeomToArrays(){
+  const pos = editMode.geom.attributes.position;
+  const verts = [];
+  for(let i=0;i<pos.count;i++) verts.push([pos.getX(i),pos.getY(i),pos.getZ(i)]);
+  const idx = editMode.geom.index ? Array.from(editMode.geom.index.array) : [];
+  return {verts, idx};
+}
+
+// v6.8: 배열로부터 editMode.geom 재구성 + 토폴로지/마커 갱신
+function editRebuildFromArrays(verts, idx, keepSel){
+  const flat = new Float32Array(verts.length*3);
+  verts.forEach((v,i)=>{ flat[i*3]=v[0]; flat[i*3+1]=v[1]; flat[i*3+2]=v[2]; });
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(flat,3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  if(editMode.part.mesh.geometry) editMode.part.mesh.geometry.dispose();
+  editMode.part.mesh.geometry = g;
+  editMode.geom = g;
+  buildEditTopology();
+  if(!keepSel) editMode.selVerts.clear();
+  // 마커 재생성 (정점 수가 바뀌므로)
+  buildVertexMarkers();
+  if(state.showEdges !== false) refreshEdgeOutline(editMode.part.mesh);
+}
+
+// v6.8: F키 — 선택 정점으로 면(또는 엣지) 생성
+function editFill(){
+  if(!editMode.active) return;
+  const sel = Array.from(editMode.selVerts);
+  if(sel.length < 2){ toast('정점을 2개 이상 선택하세요'); return; }
+  const {verts, idx} = editGeomToArrays();
+  if(sel.length === 2){
+    // 2점 = 가는 삼각형(엣지처럼 보이는 면)으로 연결 — 두 점 + 중점 살짝 띄운 점
+    // 실용적으로: 두 점과 그 중점을 약간 offset한 3번째 점으로 얇은 면 생성
+    const a=verts[sel[0]], b=verts[sel[1]];
+    const mid=[(a[0]+b[0])/2,(a[1]+b[1])/2,(a[2]+b[2])/2];
+    // 매우 얇은 삼각형은 보기 안 좋으니, 단순히 외곽선용 엣지만 추가하기 위해
+    // 면 채우기는 3점 이상에서만. 2점은 안내.
+    toast('💡 2점은 면을 만들 수 없습니다. 3점 이상 선택하거나, 선 이등분(B)을 사용하세요');
+    return;
+  }
+  // 3점 이상 = 팬(fan) 삼각분할로 면 생성
+  const base = sel[0];
+  for(let i=1;i<sel.length-1;i++){
+    idx.push(base, sel[i], sel[i+1]);
+    // 뒷면도 채워 양면 보이게
+    idx.push(base, sel[i+1], sel[i]);
+  }
+  editRebuildFromArrays(verts, idx, true);
+  pushHistory();
+  toast('✅ ' + sel.length + '개 정점으로 면 생성');
+}
+
+// v6.8: B키 — 선택된 엣지(정점 2개) 이등분: 중점 정점 추가 + 인접 면 분할
+function editSubdivide(){
+  if(!editMode.active) return;
+  const sel = Array.from(editMode.selVerts);
+  if(sel.length !== 2){ toast('이등분할 선의 양 끝 정점 2개를 선택하세요 (선 모드 권장)'); return; }
+  const [a, b] = sel;
+  const {verts, idx} = editGeomToArrays();
+  // 중점 정점 추가
+  const mid=[(verts[a][0]+verts[b][0])/2,(verts[a][1]+verts[b][1])/2,(verts[a][2]+verts[b][2])/2];
+  const m = verts.length;
+  verts.push(mid);
+  // a-b 엣지를 가진 삼각형들을 찾아 두 개로 분할
+  const newIdx = [];
+  let split = 0;
+  for(let i=0;i<idx.length;i+=3){
+    const t=[idx[i],idx[i+1],idx[i+2]];
+    const hasA=t.includes(a), hasB=t.includes(b);
+    if(hasA && hasB){
+      // 세 번째 정점
+      const c = t.find(v=>v!==a && v!==b);
+      // 삼각형 (a,b,c) → (a,m,c)+(m,b,c) — winding 유지 위해 원래 순서 기준
+      // 원래 순서에서 a→b 인접 위치 찾아 m 삽입
+      const tri=[t[0],t[1],t[2]];
+      // 두 삼각형으로
+      newIdx.push(a, m, c,  m, b, c);
+      split++;
+    } else {
+      newIdx.push(t[0],t[1],t[2]);
+    }
+  }
+  if(split===0){ toast('선택한 두 정점이 같은 면의 모서리가 아닙니다'); return; }
+  editMode.selVerts.clear();
+  editMode.selVerts.add(m); // 새 중점 선택
+  editRebuildFromArrays(verts, newIdx, true);
+  pushHistory();
+  toast('✅ 선 이등분 — 중점 정점 추가 (' + split + '개 면 분할)');
+}
+
+// 정점 마커(작은 구) 생성 — 월드 좌표
+function buildVertexMarkers(){
+  clearVertexMarkers();
+  const part = editMode.part;
+  part.mesh.updateMatrixWorld(true);
+  const bb = new THREE.Box3().setFromObject(part.mesh);
+  const sz = bb.getSize(new THREE.Vector3());
+  const r = Math.max(sz.x,sz.y,sz.z,10) * 0.012;
+  const grp = new THREE.Group();
+  editMode.verts.forEach(v=>{
+    const m = new THREE.Mesh(
+      new THREE.SphereGeometry(r, 8, 6),
+      new THREE.MeshBasicMaterial({color:0x111111, depthTest:false})
+    );
+    m.userData._vidx = v.idx;
+    m.renderOrder = 2000;
+    grp.add(m);
+  });
+  scene.add(grp);
+  editMode.markerGroup = grp;
+  editMode._markerR = r;
+  updateVertexMarkers();
+}
+
+function clearVertexMarkers(){
+  if(editMode.markerGroup){
+    scene.remove(editMode.markerGroup);
+    editMode.markerGroup.traverse(o=>{ if(o.isMesh){ if(o.geometry)o.geometry.dispose(); if(o.material)o.material.dispose(); } });
+    editMode.markerGroup = null;
+  }
+}
+
+// 마커 위치/색 갱신 (월드 변환 반영, 선택=주황)
+function updateVertexMarkers(){
+  if(!editMode.markerGroup) return;
+  const part = editMode.part;
+  part.mesh.updateMatrixWorld(true);
+  const mat = part.mesh.matrixWorld;
+  const pos = editMode.geom.attributes.position;
+  editMode.markerGroup.children.forEach(m=>{
+    const i = m.userData._vidx;
+    const lp = new THREE.Vector3(pos.getX(i),pos.getY(i),pos.getZ(i)).applyMatrix4(mat);
+    m.position.copy(lp);
+    const selected = editMode.selVerts.has(i);
+    m.material.color.setHex(selected ? 0xff8000 : 0x111111);
+    m.scale.setScalar(selected ? 1.6 : 1.0);
+  });
+}
+
+// 화면 클릭 → 가장 가까운 정점 선택 (점 모드). 선/면 모드는 구성 정점 집합 선택.
+function editPickVertex(e){
+  const rect = renderer.domElement.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  const part = editMode.part;
+  part.mesh.updateMatrixWorld(true);
+  const mat = part.mesh.matrixWorld;
+  const pos = editMode.geom.attributes.position;
+  let best=-1, bestD=14*14; // 14px 이내
+  for(let i=0;i<pos.count;i++){
+    const wp = new THREE.Vector3(pos.getX(i),pos.getY(i),pos.getZ(i)).applyMatrix4(mat).project(camera);
+    if(wp.z>1) continue;
+    const sx=(wp.x+1)*0.5*rect.width, sy=(-wp.y+1)*0.5*rect.height;
+    const d=(sx-mx)*(sx-mx)+(sy-my)*(sy-my);
+    if(d<bestD){ bestD=d; best=i; }
+  }
+  return best;
+}
+
+// 면 클릭(레이캐스트) → 삼각형 → 모드별 정점 집합
+function editPickFaceVerts(e){
+  const rect = renderer.domElement.getBoundingClientRect();
+  mouseVec.x=((e.clientX-rect.left)/rect.width)*2-1;
+  mouseVec.y=-((e.clientY-rect.top)/rect.height)*2+1;
+  raycaster.setFromCamera(mouseVec, camera);
+  const hits = raycaster.intersectObject(editMode.part.mesh, false);
+  if(hits.length===0) return null;
+  const f = hits[0].face;
+  return [f.a, f.b, f.c];
+}
+
+function editSelect(e){
+  const add = e.shiftKey || e.ctrlKey || e.metaKey;
+  if(!add) editMode.selVerts.clear();
+
+  if(editMode.elem === 'vertex'){
+    const vi = editPickVertex(e);
+    if(vi>=0){ if(add && editMode.selVerts.has(vi)) editMode.selVerts.delete(vi); else editMode.selVerts.add(vi); }
+  } else if(editMode.elem === 'face'){
+    const tri = editPickFaceVerts(e);
+    if(tri){ tri.forEach(i=>editMode.selVerts.add(i)); }
+  } else if(editMode.elem === 'edge'){
+    // 가장 가까운 정점 2개로 엣지 추정 → 클릭점에 가까운 엣지 선택
+    const vi = editPickVertex(e);
+    if(vi>=0){
+      // vi를 포함하는 엣지 중 화면상 클릭점에 가장 가까운 것
+      editMode.selVerts.add(vi);
+      // 인접 정점 중 가장 가까운 하나 추가
+      const rect = renderer.domElement.getBoundingClientRect();
+      const mx=e.clientX-rect.left, my=e.clientY-rect.top;
+      const mat=editMode.part.mesh.matrixWorld; const pos=editMode.geom.attributes.position;
+      let bestB=-1,bestD=Infinity;
+      editMode.edges.forEach(ed=>{
+        let other=-1; if(ed.a===vi)other=ed.b; else if(ed.b===vi)other=ed.a; else return;
+        const wp=new THREE.Vector3(pos.getX(other),pos.getY(other),pos.getZ(other)).applyMatrix4(mat).project(camera);
+        const sx=(wp.x+1)*0.5*rect.width, sy=(-wp.y+1)*0.5*rect.height;
+        const d=(sx-mx)*(sx-mx)+(sy-my)*(sy-my);
+        if(d<bestD){bestD=d;bestB=other;}
+      });
+      if(bestB>=0) editMode.selVerts.add(bestB);
+    }
+  }
+  updateVertexMarkers();
+  setStat('✏️ ' + ({vertex:'점',edge:'선',face:'면'}[editMode.elem]) + ' · 선택 ' + editMode.selVerts.size + '개 정점 · G:이동 Tab:종료');
+}
+
+// 선택 정점 이동 시작 (G키 또는 드래그)
+function editMoveStart(e){
+  if(editMode.selVerts.size===0){ toast('이동할 점/선/면을 먼저 선택'); return; }
+  editMode.dragging = true;
+  editMode.axis = null;
+  editMode.numBuf = '';
+  const sx = e && e.clientX !== undefined ? e.clientX : (blenderOp._lastMouse ? blenderOp._lastMouse.x : 0);
+  const sy = e && e.clientY !== undefined ? e.clientY : (blenderOp._lastMouse ? blenderOp._lastMouse.y : 0);
+  editMode.dragStart = {x: sx, y: sy};
+  const pos = editMode.geom.attributes.position;
+  editMode.dragStartPos = new Map();
+  editMode.selVerts.forEach(i=>editMode.dragStartPos.set(i, new THREE.Vector3(pos.getX(i),pos.getY(i),pos.getZ(i))));
+  // 선택 정점 월드 중심 (드래그 평면 + 화면거리 기준)
+  const part = editMode.part; part.mesh.updateMatrixWorld(true);
+  const center = new THREE.Vector3(); let n=0;
+  editMode.selVerts.forEach(i=>{ center.add(new THREE.Vector3(pos.getX(i),pos.getY(i),pos.getZ(i)).applyMatrix4(part.mesh.matrixWorld)); n++; });
+  if(n>0) center.multiplyScalar(1/n);
+  const camDir = new THREE.Vector3().subVectors(camera.position, center).normalize();
+  editMode.dragPlane = new THREE.Plane().setFromNormalAndCoplanarPoint(camDir, center);
+  editMode._moveCenter = center;
+  setStat('✏️ 버텍스 이동 — X/Y/Z 축제한 · 숫자입력 · 마우스이동 · 클릭/Enter 확정 · Esc 취소');
+}
+
+function editMoveApply(e){
+  if(!editMode.dragging) return;
+  if(!renderer || !camera) return;
+  const part = editMode.part;
+  const pos = editMode.geom.attributes.position;
+  // 블렌더 축(Z=높이,Y=앞뒤) → three.js 로컬축(Y=높이,Z=앞뒤) 변환
+  const ax3 = editMode.axis === 'y' ? 'z' : (editMode.axis === 'z' ? 'y' : editMode.axis);
+  const num = editMode.numBuf !== '' && editMode.numBuf !== '-' ? parseFloat(editMode.numBuf) : null;
+
+  // 로컬 변위 계산
+  let localDelta = new THREE.Vector3();
+  if(num !== null && ax3){
+    // 숫자 + 축: 해당 로컬 축으로 num mm
+    localDelta[ax3] = num;
+  } else if(e && e.clientX !== undefined){
+    const rect = renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(((e.clientX-rect.left)/rect.width)*2-1, -((e.clientY-rect.top)/rect.height)*2+1);
+    const ray = new THREE.Raycaster(); ray.setFromCamera(ndc, camera);
+    const nowHit = new THREE.Vector3();
+    if(ray.ray.intersectPlane(editMode.dragPlane, nowHit)){
+      const ndc0 = new THREE.Vector2(((editMode.dragStart.x-rect.left)/rect.width)*2-1, -((editMode.dragStart.y-rect.top)/rect.height)*2+1);
+      const ray0 = new THREE.Raycaster(); ray0.setFromCamera(ndc0, camera);
+      const startHit = new THREE.Vector3();
+      if(ray0.ray.intersectPlane(editMode.dragPlane, startHit)){
+        const inv = new THREE.Matrix4().copy(part.mesh.matrixWorld).invert();
+        const lNow = nowHit.clone().applyMatrix4(inv);
+        const lStart = startHit.clone().applyMatrix4(inv);
+        localDelta = lNow.clone().sub(lStart);
+        // 축 제한: 해당 축 성분만 남김
+        if(ax3){ const keep = localDelta[ax3]; localDelta.set(0,0,0); localDelta[ax3] = keep; }
+      }
+    }
+  } else if(num !== null && !ax3){
+    // 숫자만, 축 없음 → 무시 (축 지정 필요)
+  }
+
+  editMode.selVerts.forEach(i=>{
+    const sp = editMode.dragStartPos.get(i);
+    pos.setXYZ(i, sp.x+localDelta.x, sp.y+localDelta.y, sp.z+localDelta.z);
+  });
+  pos.needsUpdate = true;
+  editMode.geom.computeVertexNormals();
+  updateVertexMarkers();
+
+  const axLabel = editMode.axis ? (editMode.axis.toUpperCase() + (editMode.axis==='z'?'(높이)':editMode.axis==='y'?'(앞뒤)':'') ) : '자유';
+  const numTxt = editMode.numBuf !== '' ? (' = ' + editMode.numBuf + 'mm') : '';
+  setStat('✏️ 버텍스 이동 [' + axLabel + ']' + numTxt + ' · Enter/클릭 확정 · Esc 취소');
+}
+
+function editMoveConfirm(){
+  if(!editMode.dragging) return;
+  editMode.dragging = false;
+  editMode.dragStartPos = null;
+  editMode.axis = null; editMode.numBuf = '';
+  // v6.6: 변경된 형상으로 외곽선 갱신
+  if(editMode.part && editMode.part.mesh && state.showEdges !== false) refreshEdgeOutline(editMode.part.mesh);
+  setStat('✏️ 이동 적용 · 계속 편집 (Tab 종료)');
+}
+
+function editMoveCancel(){
+  if(!editMode.dragging) return;
+  const pos = editMode.geom.attributes.position;
+  editMode.dragStartPos.forEach((sp,i)=>pos.setXYZ(i, sp.x, sp.y, sp.z));
+  pos.needsUpdate = true;
+  editMode.geom.computeVertexNormals();
+  editMode.dragging = false;
+  editMode.dragStartPos = null;
+  editMode.axis = null; editMode.numBuf = '';
+  if(editMode.part && editMode.part.mesh && state.showEdges !== false) refreshEdgeOutline(editMode.part.mesh);
+  updateVertexMarkers();
+  setStat('이동 취소');
+}
+
+function setEditElem(elem){
+  if(!editMode.active) return;
+  editMode.elem = elem;
+  setStat('✏️ ' + ({vertex:'점',edge:'선',face:'면'}[elem]) + ' 모드 · 클릭 선택 · G:이동');
+}
+
+function toggleEditMode(){
+  if(editMode.active) exitEditMode();
+  else enterEditMode();
+  const btn = document.getElementById('btnEditMode');
+  if(btn){
+    btn.textContent = editMode.active ? '✏️ 편집중 (Tab종료)' : '✏️ 편집(Tab)';
+    btn.className = editMode.active ? 'danger' : 'warn';
+  }
+}
+
 const blenderOp = {
   active: false, mode: null, axis: null, numBuf: '',
   startMouse: null, parts: [], centerScreen: null, startAngle: 0,
@@ -5533,12 +6166,16 @@ function blenderStart(mode){
   sel.forEach(p=>{ p.mesh.updateMatrixWorld(true); const bb=new THREE.Box3().setFromObject(p.mesh); c.add(bb.getCenter(new THREE.Vector3())); n++; });
   if(n>0) c.multiplyScalar(1/n);
   blenderOp._center3D = c.clone();
-  const rect = renderer.domElement.getBoundingClientRect();
-  const pj = c.clone().project(camera);
-  blenderOp.centerScreen = {
-    x: rect.left + (pj.x+1)*0.5*rect.width,
-    y: rect.top + (-pj.y+1)*0.5*rect.height
-  };
+  if(renderer && camera){
+    const rect = renderer.domElement.getBoundingClientRect();
+    const pj = c.clone().project(camera);
+    blenderOp.centerScreen = {
+      x: rect.left + (pj.x+1)*0.5*rect.width,
+      y: rect.top + (-pj.y+1)*0.5*rect.height
+    };
+  } else {
+    blenderOp.centerScreen = {x: window.innerWidth/2, y: window.innerHeight/2};
+  }
   blenderOp.startAngle = Math.atan2(blenderOp.startMouse.y - blenderOp.centerScreen.y, blenderOp.startMouse.x - blenderOp.centerScreen.x);
   const label = {grab:'이동(G)', rotate:'회전(R)', scale:'크기(S)'}[mode];
   setStat('🅱️ 블렌더 ' + label + ' — 마우스 이동 · X/Y/Z 축제한 · 숫자입력 · 클릭/Enter 확정 · Esc 취소');
@@ -5550,7 +6187,7 @@ function blenderApply(){
   const num = blenderOp.numBuf !== '' && blenderOp.numBuf !== '-' ? parseFloat(blenderOp.numBuf) : null;
   const cur = blenderOp._lastMouse || blenderOp.startMouse;
 
-  // v6.4.1: 블렌더 좌표(Z=높이, Y=앞뒤) → 이 도구 three.js(Y=높이, Z=앞뒤)로 변환
+  // v6.8.1: 블렌더 좌표(Z=높이, Y=앞뒤) → 이 도구 three.js(Y=높이, Z=앞뒤)로 변환
   //   블렌더 X→X, 블렌더 Y(앞뒤)→Z, 블렌더 Z(높이)→Y
   const ax3 = ax === 'y' ? 'z' : (ax === 'z' ? 'y' : ax); // 실제 적용 축
 
@@ -5642,9 +6279,28 @@ function blenderCancel(){
 
 window.addEventListener('mousemove', (e)=>{
   blenderOp._lastMouse = {x: e.clientX, y: e.clientY};
+  if(editMode.active && editMode.dragging){ editMoveApply(e); return; }
   if(blenderOp.active) blenderApply();
 });
 window.addEventListener('mousedown', (e)=>{
+  // v6.5: 편집 모드 마우스 처리 우선
+  if(editMode.active){
+    // 캔버스 영역인지 확인 (UI 버튼 클릭은 무시)
+    const onCanvas = e.target && (e.target.id === 'viewerCanvas' || (renderer && renderer.domElement === e.target));
+    if(editMode.dragging){
+      if(e.button === 0){ editMoveConfirm(); }
+      else if(e.button === 2){ editMoveCancel(); }
+      e.preventDefault(); e.stopPropagation();
+      return;
+    }
+    if(onCanvas && e.button === 0){
+      editSelect(e);
+      e.preventDefault(); e.stopPropagation();
+      return;
+    }
+    // 편집 모드 중 우클릭은 회전(orbit) 허용 → 막지 않음
+    return;
+  }
   if(!blenderOp.active) return;
   if(e.button === 0){ blenderConfirm(); }
   else if(e.button === 2){ blenderCancel(); }
@@ -5668,6 +6324,53 @@ function toggleBlenderKeys(){
 
 document.addEventListener('keydown', (e)=>{
   if(e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+
+  // v6.5: Tab = 편집 모드 진입/종료 (3D 모드)
+  if(e.key === 'Tab' && state.mode === 'model'){
+    e.preventDefault();
+    toggleEditMode();
+    return;
+  }
+  // v6.5: 편집 모드 중 키 처리
+  if(editMode.active){
+    if(editMode.dragging){
+      const k = e.key.toLowerCase();
+      // v6.8.1: 블렌더식 축 제한 (X/Y/Z) + 숫자 입력
+      if(k === 'x' || k === 'y' || k === 'z'){
+        editMode.axis = (editMode.axis === k) ? null : k; // 같은 축 다시 누르면 해제
+        editMode.numBuf = '';
+        editMoveApply(blenderOp._lastMouse ? {clientX:blenderOp._lastMouse.x, clientY:blenderOp._lastMouse.y} : null);
+        e.preventDefault(); return;
+      }
+      if((e.key >= '0' && e.key <= '9') || e.key === '.' || e.key === '-'){
+        editMode.numBuf += e.key;
+        editMoveApply(null);
+        e.preventDefault(); return;
+      }
+      if(e.key === 'Backspace'){
+        editMode.numBuf = editMode.numBuf.slice(0, -1);
+        editMoveApply(blenderOp._lastMouse ? {clientX:blenderOp._lastMouse.x, clientY:blenderOp._lastMouse.y} : null);
+        e.preventDefault(); return;
+      }
+      if(e.key === 'Enter'){ editMoveConfirm(); e.preventDefault(); return; }
+      if(e.key === 'Escape'){ editMoveCancel(); e.preventDefault(); return; }
+      return;
+    }
+    if(e.key === '1'){ setEditElem('vertex'); e.preventDefault(); return; }
+    if(e.key === '2'){ setEditElem('edge'); e.preventDefault(); return; }
+    if(e.key === '3'){ setEditElem('face'); e.preventDefault(); return; }
+    if(e.key === 'g' || e.key === 'G'){ editMoveStart(blenderOp._lastMouse ? {clientX:blenderOp._lastMouse.x, clientY:blenderOp._lastMouse.y} : null); e.preventDefault(); return; }
+    if(e.key === 'f' || e.key === 'F'){ editFill(); e.preventDefault(); return; }       // v6.8: F = 면 채우기/연결
+    if(e.key === 'b' || e.key === 'B'){ editSubdivide(); e.preventDefault(); return; }   // v6.8: B = 선 이등분
+    if(e.key === 'a' || e.key === 'A'){ // 전체 선택/해제
+      if(editMode.selVerts.size === editMode.verts.length){ editMode.selVerts.clear(); }
+      else { editMode.verts.forEach(v=>editMode.selVerts.add(v.idx)); }
+      updateVertexMarkers(); e.preventDefault(); return;
+    }
+    if(e.key === 'Escape'){ exitEditMode(); e.preventDefault(); return; }
+    // 그 외 키는 편집 모드에서 무시 (회전 등 카메라 조작은 우클릭으로)
+    return;
+  }
 
   // v6.4: 블렌더식 모달 변형 처리 (블렌더키 ON + 3D 모드)
   if(state.blenderKeys && state.mode === 'model'){
@@ -5783,14 +6486,15 @@ document.addEventListener('keydown', (e)=>{
       return;
     }
     if(e.key === 'g' || e.key === 'G'){toggleGrid(); return}                             // G = 그리드
-    // 방향키 = 미세 이동 (Shift = 큰 이동)
-    const moveStep = e.shiftKey ? 10 : 1;
-    if(e.key === 'ArrowLeft'){e.preventDefault(); nudgeSelected(-moveStep, 0, 0); return}
-    if(e.key === 'ArrowRight'){e.preventDefault(); nudgeSelected(moveStep, 0, 0); return}
-    if(e.key === 'ArrowUp'){e.preventDefault(); nudgeSelected(0, 0, -moveStep); return}
-    if(e.key === 'ArrowDown'){e.preventDefault(); nudgeSelected(0, 0, moveStep); return}
-    if(e.key === 'PageUp'){e.preventDefault(); nudgeSelected(0, moveStep, 0); return}
-    if(e.key === 'PageDown'){e.preventDefault(); nudgeSelected(0, -moveStep, 0); return}
+    // v6.7: 방향키 = 축 정렬 직선 이동. 기본 1mm, Shift = 10mm(또는 이동단위 배수)
+    const base = state.moveSnap > 0 ? state.moveSnap : 1;
+    const moveStep = e.shiftKey ? base*10 : base;
+    if(e.key === 'ArrowLeft'){e.preventDefault(); nudgeSelected(-moveStep, 0, 0); nudgeStat('X', -moveStep); return}
+    if(e.key === 'ArrowRight'){e.preventDefault(); nudgeSelected(moveStep, 0, 0); nudgeStat('X', moveStep); return}
+    if(e.key === 'ArrowUp'){e.preventDefault(); nudgeSelected(0, 0, -moveStep); nudgeStat('Z', -moveStep); return}
+    if(e.key === 'ArrowDown'){e.preventDefault(); nudgeSelected(0, 0, moveStep); nudgeStat('Z', moveStep); return}
+    if(e.key === 'PageUp'){e.preventDefault(); nudgeSelected(0, moveStep, 0); nudgeStat('Y(높이)', moveStep); return}
+    if(e.key === 'PageDown'){e.preventDefault(); nudgeSelected(0, -moveStep, 0); nudgeStat('Y(높이)', -moveStep); return}
     if(e.key === '?'){showShortcutHelp(); return}
     return;
   }
@@ -5860,7 +6564,7 @@ function init(){
   renderPartsList();
   updateInfo();
   redrawSketch();
-  setStat('tool3 v6.4.1 준비됨 · 🅱️블렌더키 G/R/S · 축 X=좌우 Y=앞뒤 Z=높이');
+  setStat('tool3 v6.8.1 준비됨 · Ctrl+이동=스냅 · 편집: F면채우기 B선이등분 G축이동');
   // v2.2: 항상 3D 모드로 시작 (draw_tool import도 3D 바닥에 표시)
   switchMode('model');
   try {
