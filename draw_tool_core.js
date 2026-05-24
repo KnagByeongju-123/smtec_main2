@@ -549,7 +549,7 @@ function updateToolStatus() {
   el.textContent = names[tool];
   el.className = 'badge tool-' + tool;
   const hints = {
-    select: '클릭=선택 / Shift+클릭=추가 / 빈곳드래그=박스 / 드래그=이동 (끝점/도형 자동 스냅) / Shift+드래그=수평수직만 / Del=삭제',
+    select: '클릭=선택 / Shift+클릭=추가 / 빈곳드래그=박스(영역에 걸치면 선택) / 드래그=이동 (끝점/도형 자동 스냅) / Shift+드래그=수평수직만 / Del=삭제',
     line: continuousMode ? '⛓ 연속선: 매 클릭마다 선 추가 / 더블클릭/ESC=종료' : '첫 클릭→두 번째 클릭 / Shift=직각',
     rect: '첫 클릭→두 번째 클릭으로 사각형',
     circle: '첫 클릭(중심)→두 번째 클릭으로 반지름',
@@ -6516,14 +6516,77 @@ function nearestPointOnShape(p, s) {
 function boxSelect(p1, p2, addMode) {
   const minX = Math.min(p1.x, p2.x), maxX = Math.max(p1.x, p2.x);
   const minY = Math.min(p1.y, p2.y), maxY = Math.max(p1.y, p2.y);
+  const box = { minX, maxX, minY, maxY };
   if (!addMode) selectedIds.clear();
   shapes.forEach(s => {
-    const bb = shapeBoundingBox(s);
-    if (bb.minX >= minX && bb.maxX <= maxX && bb.minY >= minY && bb.maxY <= maxY) {
-      selectedIds.add(s.id);
-    }
+    // Rev.13.9: 교차(걸치기) 선택 - 박스에 도형이 일부라도 걸치면 선택
+    if (shapeIntersectsBox(s, box)) selectedIds.add(s.id);
   });
   updateSelStat(); redrawDraw();
+}
+
+// Rev.13.9: 도형이 선택 박스와 걸치는지(교차/포함) 판정
+function shapeIntersectsBox(s, box){
+  const bb = shapeBoundingBox(s);
+  // 1) BBox가 박스와 전혀 안 겹치면 즉시 제외
+  if (bb.maxX < box.minX || bb.minX > box.maxX || bb.maxY < box.minY || bb.minY > box.maxY) return false;
+  // 2) BBox가 박스 안에 완전히 포함되면 선택 (윈도우 케이스)
+  if (bb.minX >= box.minX && bb.maxX <= box.maxX && bb.minY >= box.minY && bb.maxY <= box.maxY) return true;
+  // 3) 형상별 정밀 교차 (걸치기)
+  if (s.type === 'line'){
+    return segIntersectsBox(s.p1, s.p2, box);
+  }
+  if (s.type === 'rect'){
+    const x1 = Math.min(s.p1.x, s.p2.x), x2 = Math.max(s.p1.x, s.p2.x);
+    const y1 = Math.min(s.p1.y, s.p2.y), y2 = Math.max(s.p1.y, s.p2.y);
+    const edges = [
+      [{x:x1,y:y1},{x:x2,y:y1}], [{x:x2,y:y1},{x:x2,y:y2}],
+      [{x:x2,y:y2},{x:x1,y:y2}], [{x:x1,y:y2},{x:x1,y:y1}]
+    ];
+    return edges.some(([a,b]) => segIntersectsBox(a, b, box));
+  }
+  if (s.type === 'circle' || s.type === 'arc' || s.type === 'ellipse'){
+    // BBox가 박스와 겹치는 시점에서 원/호/타원은 걸친 것으로 간주(실용적)
+    return true;
+  }
+  if (s.type === 'polyline' && Array.isArray(s.points)){
+    for (let i = 0; i < s.points.length - 1; i++){
+      if (segIntersectsBox(s.points[i], s.points[i+1], box)) return true;
+    }
+    if (s.closed && s.points.length >= 3){
+      if (segIntersectsBox(s.points[s.points.length-1], s.points[0], box)) return true;
+    }
+    return false;
+  }
+  // 그 외(text/dim 등): BBox가 겹치면 선택
+  return true;
+}
+
+// 선분(a-b)이 박스와 교차하거나 박스 안에 있는지
+function segIntersectsBox(a, b, box){
+  // 끝점 중 하나라도 박스 안이면 교차
+  if (pointInBox(a, box) || pointInBox(b, box)) return true;
+  // 박스 네 변과의 선분 교차 검사
+  const c1 = {x:box.minX, y:box.minY}, c2 = {x:box.maxX, y:box.minY};
+  const c3 = {x:box.maxX, y:box.maxY}, c4 = {x:box.minX, y:box.maxY};
+  return segSegIntersect(a,b,c1,c2) || segSegIntersect(a,b,c2,c3) ||
+         segSegIntersect(a,b,c3,c4) || segSegIntersect(a,b,c4,c1);
+}
+function pointInBox(p, box){
+  return p.x >= box.minX && p.x <= box.maxX && p.y >= box.minY && p.y <= box.maxY;
+}
+// 두 선분 교차 판정 (CCW 방식)
+function segSegIntersect(p1, p2, p3, p4){
+  const d = (a,b,c) => (b.x-a.x)*(c.y-a.y) - (b.y-a.y)*(c.x-a.x);
+  const d1 = d(p3,p4,p1), d2 = d(p3,p4,p2), d3 = d(p1,p2,p3), d4 = d(p1,p2,p4);
+  if (((d1>0&&d2<0)||(d1<0&&d2>0)) && ((d3>0&&d4<0)||(d3<0&&d4>0))) return true;
+  const onSeg = (a,b,c) => Math.min(a.x,b.x)<=c.x && c.x<=Math.max(a.x,b.x) &&
+                           Math.min(a.y,b.y)<=c.y && c.y<=Math.max(a.y,b.y);
+  if (d1===0 && onSeg(p3,p4,p1)) return true;
+  if (d2===0 && onSeg(p3,p4,p2)) return true;
+  if (d3===0 && onSeg(p1,p2,p3)) return true;
+  if (d4===0 && onSeg(p1,p2,p4)) return true;
+  return false;
 }
 
 function snapshotShape(s) {
