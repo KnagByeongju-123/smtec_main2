@@ -97,9 +97,7 @@ let baseLineMode = false;          // 베이스선 복제 ON/OFF
 let baseLineTarget = null;         // 클릭된 기준 선 도형
 let baseLineOrient = null;         // 'h'(가로) | 'v'(세로) | 'o'(기타)
 let baseLineDir = null;            // 선택된 방향 'up'|'down'|'left'|'right'
-// Rev.12.7: 꼭지점커팅 - 선의 가까운 꼭지점에서 지정 치수(mm)만큼 선을 따라 이동한 지점에서 분할
-let vertexCutMode = false;         // 꼭지점커팅 모드 ON/OFF
-let vertexCutDist = 10;            // 자를 거리(mm)
+let baseOffDir = null;             // Rev.14.9: 거리두기 독립 방향 (베이스선과 별개)
 // Rev.13.2: 기준선(중심선) 자동생성
 let centerlineMode = false;
 let centerlineOverhang = 5;   // 원 바깥으로 튀어나오는 길이(mm)
@@ -1432,8 +1430,8 @@ drawCanvas.addEventListener('mousedown', e => {
   // Rev.11.26: 휠 클릭(가운데 버튼)은 패닝 전용 → 작도/선택 처리 안 함
   if (e.button === 1) return;
 
-  // Rev.12.7: 거리두기/꼭지점커팅 픽 모드 중에는 select 드래그(박스·이동) 시작 안 함 (click 으로만 처리)
-  if ((offsetTwinPickMode || vertexCutMode || baseLineMode) && e.button === 0) return;
+  // Rev.12.7: 거리두기 픽 모드 중에는 select 드래그(박스·이동) 시작 안 함 (click 으로만 처리)
+  if ((offsetTwinPickMode || baseLineMode) && e.button === 0) return;
 
   // Rev.11.39: 이동(Grab) 모드 - 좌클릭 = 확정
   if (grabMode){
@@ -1730,11 +1728,6 @@ drawCanvas.addEventListener('click', e => {
     const pBl = getCanvasPoint(e);
     if (handleBaseLineClick(pBl)) return;
   }
-  // Rev.12.7: 꼭지점커팅 모드 (select 도구 상태에서 동작)
-  if (vertexCutMode) {
-    const pVc = getCanvasPoint(e);
-    if (handleVertexCutClick(pVc)) return;
-  }
   if (tool === 'select') return;
   const p = getCanvasPoint(e);
   
@@ -1893,12 +1886,6 @@ window.addEventListener('keydown', e => {
     if (offsetTwinPickMode){
       cancelOffsetTwinPick();
       document.getElementById('statusHint').textContent = '⫴ 거리두기 취소';
-      return;
-    }
-    // Rev.12.7: 꼭지점커팅 모드 취소
-    if (vertexCutMode){
-      cancelVertexCut();
-      document.getElementById('statusHint').textContent = '⊣ 꼭지점커팅 종료';
       return;
     }
     // Rev.13.3: 베이스선 복제 모드 종료
@@ -2226,6 +2213,13 @@ function openBaseLinePop(ln){
     b.style.opacity = ok ? '1' : '0.3';
     b.style.cursor = ok ? 'pointer' : 'not-allowed';
   });
+  // Rev.15.0: 거리두기 방향 버튼도 동일 규칙 (가로선=상/하, 세로선=좌/우)
+  document.querySelectorAll('.baseOffDirBtn').forEach(b => {
+    const ok = allow.includes(b.dataset.dir);
+    b.disabled = !ok;
+    b.style.opacity = ok ? '1' : '0.3';
+    b.style.cursor = ok ? 'pointer' : 'not-allowed';
+  });
   // 입력칸 초기화
   ['baseDist','baseSealCur','basePhi'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   document.getElementById('baseSealOn').checked = false;
@@ -2243,6 +2237,8 @@ function openBaseLinePop(ln){
   document.getElementById('basePreviewTxt').textContent = '';
   // 기본 방향 자동 선택 (가로=상, 세로=좌)
   baseLineSelectDir(orient === 'h' ? 'up' : orient === 'v' ? 'left' : 'up');
+  // Rev.15.0: 거리두기 기본 방향 — 같은 축이되 베이스선 반대쪽 (가로선=하, 세로선=우)
+  baseOffSelectDir(orient === 'h' ? 'down' : orient === 'v' ? 'right' : 'down');
 
   const pop = document.getElementById('baseLinePop');
   pop.style.display = 'block';
@@ -2340,6 +2336,43 @@ function baseLineGenerate(){
   document.getElementById('statusHint').textContent = id ? ('✓ ' + msg + ' 생성') : '생성 실패';
 }
 
+// Rev.14.9: 거리두기 방향 버튼 선택 (베이스선과 독립)
+function baseOffSelectDir(dir){
+  baseOffDir = dir;
+  document.querySelectorAll('.baseOffDirBtn').forEach(b => {
+    const on = (b.dataset.dir === dir) && !b.disabled;
+    b.style.background = on ? '#9b59b6' : '#1f1f1f';
+    b.style.color = on ? '#fff' : '#ccc';
+    b.style.borderColor = on ? '#9b59b6' : '#6a4a7a';
+  });
+}
+
+// Rev.14.9: 거리두기 생성 (클릭한 기준선에 직접, 자체 방향/거리 사용)
+function baseOffGenerate(){
+  if (!baseLineTarget){ document.getElementById('statusHint').textContent = '⫴ 먼저 기준 선을 클릭하세요'; return; }
+  const dir = baseOffDir;
+  if (!dir){ document.getElementById('statusHint').textContent = '⚠ 거리두기 방향(상/하/좌/우)을 선택하세요'; return; }
+  const mm = parseFloat(document.getElementById('baseOffDist').value);
+  if (!(mm > 0)){ document.getElementById('statusHint').textContent = '⚠ 0보다 큰 거리두기 거리(mm)를 입력하세요'; return; }
+  const px = mm / mmPerPixel;
+  let dxPx = 0, dyPx = 0, dirTxt = '';
+  if (dir === 'up')    { dyPx = -px; dirTxt = '⬆ 상'; }
+  else if (dir==='down'){ dyPx = +px; dirTxt = '⬇ 하'; }
+  else if (dir==='left'){ dxPx = -px; dirTxt = '⬅ 좌'; }
+  else if (dir==='right'){ dxPx = +px; dirTxt = '➡ 우'; }
+  const id = baseLineMakeCopy(dxPx, dyPx);
+  // 기준선 강조 다시 그리기
+  const ln = baseLineTarget, Z = zoom || 1;
+  preCtx.clearRect(0,0,baseW,baseH);
+  preCtx.save();
+  preCtx.strokeStyle = '#e67e22'; preCtx.lineWidth = 3/Z; preCtx.setLineDash([8/Z,4/Z]);
+  preCtx.beginPath(); preCtx.moveTo(ln.p1.x, ln.p1.y); preCtx.lineTo(ln.p2.x, ln.p2.y); preCtx.stroke();
+  preCtx.restore();
+  const msg = `⫴ 거리두기 ${dirTxt} ${mm}mm 평행선`;
+  document.getElementById('basePreviewTxt').textContent = id ? ('✓ ' + msg + ' 생성') : '생성 실패';
+  document.getElementById('statusHint').textContent = id ? ('✓ ' + msg + ' 생성') : '생성 실패';
+}
+
 // Rev.12.6: 거리두기 좌/우 미리보기 (점선)
 function drawOffsetTwinPreview(p){
   preCtx.clearRect(0, 0, baseW, baseH);
@@ -2360,152 +2393,6 @@ function drawOffsetTwinPreview(p){
   preCtx.lineTo(b.x + ox, b.y + oy);
   preCtx.stroke();
   preCtx.restore();
-}
-
-// ====== Rev.12.7: 꼭지점커팅 ======
-//  선 클릭 → 기준 꼭지점(시작/끝) 클릭 → 그 점에서 vertexCutDist(mm)만큼
-//  선 방향으로 이동한 지점에서 2개 선으로 분할 (둘 다 남김).
-//  상태: vertexCutState = null | {target} (선 선택됨, 꼭지점 대기)
-let vertexCutState = null;
-
-function startVertexCut(){
-  vertexCutMode = true;
-  vertexCutState = null;
-  selectTool('select');
-  drawCanvas.style.cursor = 'crosshair';
-  document.getElementById('statusHint').textContent =
-    `⊣ 꼭지점커팅(${vertexCutDist}mm): 자를 선을 클릭하세요`;
-  updateVertexCutButton();
-}
-
-function cancelVertexCut(){
-  vertexCutMode = false;
-  vertexCutState = null;
-  preCtx.clearRect(0, 0, baseW, baseH);
-  drawCanvas.style.cursor = 'default';
-  redrawDraw();
-  updateVertexCutButton();
-}
-
-function updateVertexCutButton(){
-  const b = document.getElementById('headerBtnVertexCut');
-  if (b) b.classList.toggle('active', !!vertexCutMode);
-}
-
-// 선의 양 끝 꼭지점을 강조 표시
-function drawVertexCutHandles(line){
-  redrawDraw();
-  drawCtx.save();
-  // 대상 선 강조
-  drawCtx.strokeStyle = '#f39c12'; drawCtx.lineWidth = 3 / (zoom||1);
-  drawCtx.setLineDash([]);
-  drawCtx.beginPath();
-  drawCtx.moveTo(line.p1.x, line.p1.y);
-  drawCtx.lineTo(line.p2.x, line.p2.y);
-  drawCtx.stroke();
-  // 양 끝점 동그라미
-  const r = 6 / (zoom||1);
-  [line.p1, line.p2].forEach(pt => {
-    drawCtx.fillStyle = '#2faf66';
-    drawCtx.strokeStyle = '#fff';
-    drawCtx.lineWidth = 1.5 / (zoom||1);
-    drawCtx.beginPath();
-    drawCtx.arc(pt.x, pt.y, r, 0, Math.PI*2);
-    drawCtx.fill(); drawCtx.stroke();
-  });
-  drawCtx.restore();
-}
-
-// 꼭지점커팅 클릭 처리. 처리했으면 true 반환
-function handleVertexCutClick(p){
-  if (!vertexCutMode) return false;
-
-  // 1단계: 선 선택
-  if (!vertexCutState){
-    const target = findShapeAtPoint(p, 15);
-    if (!target || target.type !== 'line'){
-      document.getElementById('statusHint').textContent =
-        '⊣ 꼭지점커팅: 선(line)을 클릭하세요. (사각형/원/호 불가)';
-      return true;
-    }
-    vertexCutState = { target };
-    drawVertexCutHandles(target);
-    document.getElementById('statusHint').textContent =
-      `⊣ 기준이 될 꼭지점(시작/끝, 초록 동그라미)을 클릭하세요`;
-    return true;
-  }
-
-  // 2단계: 기준 꼭지점 클릭 → 분할 실행
-  const line = vertexCutState.target;
-  const dP1 = Math.hypot(p.x - line.p1.x, p.y - line.p1.y);
-  const dP2 = Math.hypot(p.x - line.p2.x, p.y - line.p2.y);
-  const base = (dP1 <= dP2) ? line.p1 : line.p2;
-  const other = (dP1 <= dP2) ? line.p2 : line.p1;
-
-  // 선 방향 단위벡터 (base → other)
-  const vx = other.x - base.x, vy = other.y - base.y;
-  const len = Math.hypot(vx, vy);
-  if (len < 1e-6){
-    document.getElementById('statusHint').textContent = '⊣ 선 길이가 0입니다';
-    cancelVertexCut();
-    return true;
-  }
-  const ux = vx / len, uy = vy / len;
-  const distPx = vertexCutDist / mmPerPixel;  // mm → px
-  const dir = (document.getElementById('vertexCutDirSel') || {}).value || 'line';
-
-  // 방향별 분할점(선 위) 계산
-  //   line: 선을 따라 distPx 이동
-  //   x   : 가로(X) 변위가 distPx 가 되는 선 위 지점
-  //   y   : 세로(Y) 변위가 distPx 가 되는 선 위 지점
-  let cut = null;
-  let along = 0; // base에서 선을 따라 이동한 거리(px) - 범위 검사용
-  if (dir === 'line'){
-    along = distPx;
-    cut = { x: base.x + ux * distPx, y: base.y + uy * distPx };
-  } else if (dir === 'x'){
-    if (Math.abs(ux) < 1e-6){
-      document.getElementById('statusHint').textContent =
-        '⚠ 세로선은 X축 방향 커팅 불가 (가로 변위 없음). 방향=선/Y축 선택';
-      return true;
-    }
-    // base.x 에서 X로 distPx (other 쪽 부호) 이동한 X좌표에 대응하는 선 위 점
-    const signX = (other.x - base.x) >= 0 ? 1 : -1;
-    along = distPx / Math.abs(ux); // 선을 따라 이동한 실제 길이
-    cut = { x: base.x + ux * along, y: base.y + uy * along };
-    void signX;
-  } else { // 'y'
-    if (Math.abs(uy) < 1e-6){
-      document.getElementById('statusHint').textContent =
-        '⚠ 가로선은 Y축 방향 커팅 불가 (세로 변위 없음). 방향=선/X축 선택';
-      return true;
-    }
-    along = distPx / Math.abs(uy);
-    cut = { x: base.x + ux * along, y: base.y + uy * along };
-  }
-
-  if (along >= len){
-    const dirTxt = dir === 'line' ? '선방향' : (dir === 'x' ? 'X축' : 'Y축');
-    document.getElementById('statusHint').textContent =
-      `⚠ 자를 거리(${vertexCutDist}mm, ${dirTxt})가 선 범위를 벗어납니다. 더 작은 값으로.`;
-    return true; // 상태 유지
-  }
-
-  // applyBreak(target, p1, p2) - 같은 점 두 번이면 1점에서 2개로 분할 (둘 다 남김)
-  applyBreak(line, cut, cut);
-
-  document.getElementById('statusHint').textContent =
-    `✓ 꼭지점커팅 완료: 꼭지점에서 ${vertexCutDist}mm 지점에서 분할`;
-  // 다음 선을 위해 선 선택 단계로 리셋 (모드 유지)
-  vertexCutState = null;
-  preCtx.clearRect(0, 0, baseW, baseH);
-  setTimeout(() => {
-    if (vertexCutMode){
-      document.getElementById('statusHint').textContent =
-        `⊣ 꼭지점커팅(${vertexCutDist}mm): 자를 선을 클릭하세요 (Esc=종료)`;
-    }
-  }, 800);
-  return true;
 }
 
 // ====== 라운드 자동 피팅 ======
@@ -8877,6 +8764,17 @@ document.getElementById('btnBaseLineGo').addEventListener('click', () => baseLin
 document.querySelectorAll('.baseDirBtn').forEach(btn => {
   btn.addEventListener('click', () => { if (!btn.disabled) baseLineSelectDir(btn.dataset.dir); });
 });
+// Rev.14.9: 거리두기 방향 버튼/생성버튼 (독립)
+document.querySelectorAll('.baseOffDirBtn').forEach(btn => {
+  btn.addEventListener('click', () => { if (!btn.disabled) baseOffSelectDir(btn.dataset.dir); });
+});
+document.getElementById('btnBaseOffGo').addEventListener('click', () => baseOffGenerate());
+document.getElementById('baseOffDist').addEventListener('keydown', e => {
+  if (e.key === 'Enter'){ e.preventDefault(); baseOffGenerate(); }
+  else if (e.key === 'Escape'){ e.preventDefault(); cancelBaseLineMode();
+    document.getElementById('statusHint').textContent = '📋 베이스선 복제 종료'; }
+  e.stopPropagation();
+});
 // 씰 파이 토글
 document.getElementById('baseSealOn').addEventListener('change', e => {
   const on = e.target.checked;
@@ -8938,6 +8836,108 @@ function connectSelectedPoints(){
   return true;
 }
 
+// ===== Rev.14.7: 도면 정리 (끝점 맞물림 + 일직선 병합) =====
+function cleanupDrawing(){
+  const tolMm = parseFloat(document.getElementById('cleanupTolInput').value) || 0.5;
+  const tolPx = tolMm / mmPerPixel;
+
+  // 대상: 선(line)만. 선택된 게 있으면 선택 선만, 없으면 전체 선
+  let targetLines = shapes.filter(s => s.type === 'line');
+  if (selectedIds.size > 0){
+    const selLines = targetLines.filter(s => selectedIds.has(s.id));
+    if (selLines.length >= 1) targetLines = selLines;
+  }
+  if (targetLines.length === 0){
+    document.getElementById('statusHint').textContent = '🧹 정리할 선이 없습니다';
+    return;
+  }
+
+  // --- 1단계: 끝점 맞물림 (허용오차 안의 끝점들을 평균 좌표로 통일) ---
+  // 모든 끝점 수집 (각 선의 p1, p2 참조)
+  const endpoints = [];
+  targetLines.forEach(ln => {
+    endpoints.push({ ln, key: 'p1' });
+    endpoints.push({ ln, key: 'p2' });
+  });
+  const used = new Array(endpoints.length).fill(false);
+  let weldCount = 0;
+  for (let i = 0; i < endpoints.length; i++){
+    if (used[i]) continue;
+    const group = [i];
+    const ai = endpoints[i].ln[endpoints[i].key];
+    for (let j = i+1; j < endpoints.length; j++){
+      if (used[j]) continue;
+      const bj = endpoints[j].ln[endpoints[j].key];
+      if (Math.hypot(ai.x - bj.x, ai.y - bj.y) <= tolPx){
+        group.push(j); used[j] = true;
+      }
+    }
+    used[i] = true;
+    if (group.length >= 2){
+      // 평균 좌표로 통일
+      let sx = 0, sy = 0;
+      group.forEach(gi => { const pt = endpoints[gi].ln[endpoints[gi].key]; sx += pt.x; sy += pt.y; });
+      const cx = sx / group.length, cy = sy / group.length;
+      group.forEach(gi => { const e = endpoints[gi]; e.ln[e.key] = { x: cx, y: cy }; });
+      weldCount += group.length - 1;
+    }
+  }
+
+  // --- 2단계: 일직선 병합 (공유 끝점에서 거의 같은 방향인 두 선을 하나로) ---
+  const angTolDeg = 1.0;  // 각도 허용오차(도)
+  const sameAng = (l1, l2) => {
+    const a1 = Math.atan2(l1.p2.y - l1.p1.y, l1.p2.x - l1.p1.x);
+    const a2 = Math.atan2(l2.p2.y - l2.p1.y, l2.p2.x - l2.p1.x);
+    let d = Math.abs(a1 - a2) * 180 / Math.PI;
+    d = d % 180;            // 방향 무관(반대방향도 일직선)
+    if (d > 90) d = 180 - d;
+    return d <= angTolDeg;
+  };
+  const ptEq = (a, b) => Math.hypot(a.x - b.x, a.y - b.y) <= 1e-6;
+  let mergeCount = 0;
+  let changed = true;
+  while (changed){
+    changed = false;
+    const lines = shapes.filter(s => s.type === 'line' &&
+      (selectedIds.size === 0 || targetLines.includes(s) || true)); // 전체 선 대상으로 병합
+    for (let i = 0; i < lines.length && !changed; i++){
+      for (let j = i+1; j < lines.length && !changed; j++){
+        const A = lines[i], B = lines[j];
+        if (!sameAng(A, B)) continue;
+        // 공유 끝점 찾기
+        let shared = null, aOther = null, bOther = null;
+        if (ptEq(A.p1, B.p1)){ shared = A.p1; aOther = A.p2; bOther = B.p2; }
+        else if (ptEq(A.p1, B.p2)){ shared = A.p1; aOther = A.p2; bOther = B.p1; }
+        else if (ptEq(A.p2, B.p1)){ shared = A.p2; aOther = A.p1; bOther = B.p2; }
+        else if (ptEq(A.p2, B.p2)){ shared = A.p2; aOther = A.p1; bOther = B.p1; }
+        if (!shared) continue;
+        // 공유점이 두 선 사이에 있어야 일직선 병합 (양 끝이 서로 반대편)
+        const v1x = aOther.x - shared.x, v1y = aOther.y - shared.y;
+        const v2x = bOther.x - shared.x, v2y = bOther.y - shared.y;
+        const dot = v1x*v2x + v1y*v2y;
+        if (dot > 0) continue;  // 같은 쪽으로 뻗으면(겹침) 병합 안 함
+        // A를 aOther~bOther로 확장, B 삭제
+        A.p1 = { x: aOther.x, y: aOther.y };
+        A.p2 = { x: bOther.x, y: bOther.y };
+        const bi = shapes.findIndex(s => s.id === B.id);
+        if (bi >= 0) shapes.splice(bi, 1);
+        selectedIds.delete(B.id);
+        mergeCount++;
+        changed = true;
+      }
+    }
+  }
+
+  redoStack = []; pushHistory();
+  if (typeof redrawFills === 'function') redrawFills();
+  redrawDraw(); updateCount();
+  if (typeof updateShapePropPanel === 'function') updateShapePropPanel();
+  document.getElementById('statusHint').textContent =
+    `🧹 정리 완료: 끝점 맞물림 ${weldCount}개 · 일직선 병합 ${mergeCount}개 (허용오차 ${tolMm}mm)`;
+}
+
+document.getElementById('headerBtnCleanup').addEventListener('click', cleanupDrawing);
+
 // Rev.11.20: 연장(Extrude) 버튼
 document.getElementById('headerBtnExtrude').addEventListener('click', () => {
   if (extrudeMode){
@@ -8979,31 +8979,6 @@ function updateOffsetTwinButton(){
   if (!b) return;
   b.classList.toggle('active', !!offsetTwinPickMode); // Rev.12.6: 픽 모드 기준
 }
-
-// Rev.12.7: 꼭지점커팅 버튼 토글
-document.getElementById('headerBtnVertexCut').addEventListener('click', () => {
-  if (vertexCutMode){
-    cancelVertexCut();
-    document.getElementById('statusHint').textContent = '꼭지점커팅 OFF';
-    return;
-  }
-  // 다른 픽 모드가 켜져 있으면 끄고 시작
-  if (offsetTwinPickMode) cancelOffsetTwinPick();
-  startVertexCut();
-});
-
-document.getElementById('vertexCutDistInput').addEventListener('input', e => {
-  const v = parseFloat(e.target.value);
-  if (!isNaN(v) && v >= 0){
-    vertexCutDist = v;
-    if (vertexCutMode){
-      document.getElementById('statusHint').textContent =
-        vertexCutState
-          ? `⊣ 기준 꼭지점을 클릭하세요 (자를 거리 ${vertexCutDist}mm)`
-          : `⊣ 꼭지점커팅(${vertexCutDist}mm): 자를 선을 클릭하세요`;
-    }
-  }
-});
 
 document.getElementById('chamferCInput') && document.getElementById('chamferCInput').addEventListener('input', e => {
   const v = parseFloat(e.target.value);
