@@ -765,6 +765,20 @@ function serializePart(p){
     };
   }
 
+  // v7.0.2: 가져온 메시는 geometry 정점 배열을 직접 저장
+  if(p.type === 'imported_mesh' && p.mesh && p.mesh.geometry){
+    const pos = p.mesh.geometry.attributes.position;
+    const arr = Array.from(pos.array);
+    const idxAttr = p.mesh.geometry.index;
+    return {
+      id: p.id, name: p.name, type: p.type,
+      color: p.color, opacity: p.opacity, visible: p.visible, material: p.material,
+      params: { imported: true, format: (p.params&&p.params.format)||'stl',
+                positions: arr, indices: idxAttr ? Array.from(idxAttr.array) : null },
+      _isHole: !!p._isHole, _xform: t
+    };
+  }
+
   return {
     id: p.id, name: p.name, type: p.type,
     color: p.color, opacity: p.opacity, visible: p.visible, material: p.material,
@@ -786,6 +800,7 @@ function deserializePart(pdata){
   if(pdata.type === 'extrude') part = rebuildExtrude(pdata);
   else if(pdata.type === 'revolve') part = rebuildRevolve(pdata);
   else if(pdata.type === 'svgrevolve') part = rebuildSvgRevolve(pdata);
+  else if(pdata.type === 'imported_mesh') part = rebuildImportedMesh(pdata);
   else if(pdata.type && pdata.type.startsWith('primitive_')) part = rebuildPrimitive(pdata);
   else if(pdata.type === 'bolt') part = rebuildBolt(pdata);
   else if(pdata.type === 'nut') part = rebuildNut(pdata);
@@ -802,7 +817,7 @@ function deserializePart(pdata){
     part._isHole = true;
     applyHoleMaterial(part);
   }
-  // v7.0.0: 재질 복원 (구멍이 아닐 때만 — 구멍은 빨간 반투명 유지)
+  // v7.0.2: 재질 복원 (구멍이 아닐 때만 — 구멍은 빨간 반투명 유지)
   if(part && pdata.material && !pdata._isHole){
     part.material = pdata.material;
     const preset = MATERIAL_PRESETS[pdata.material];
@@ -1042,7 +1057,7 @@ function initThree(){
   dirLight2.position.set(-100, -100, -150);
   scene.add(dirLight2);
 
-  // v7.0.0: 금속/크롬 반사용 절차적 환경맵 (위=밝음, 아래=어두움 그라데이션)
+  // v7.0.2: 금속/크롬 반사용 절차적 환경맵 (위=밝음, 아래=어두움 그라데이션)
   try {
     const cnv = document.createElement('canvas');
     cnv.width = 64; cnv.height = 256;
@@ -2346,7 +2361,7 @@ function removePartFromScene(part){
   }
 }
 
-// v7.0.0: 재질 프리셋 (roughness/metalness/투명도/측면)
+// v7.0.2: 재질 프리셋 (roughness/metalness/투명도/측면)
 const MATERIAL_PRESETS = {
   plastic_matte:  {roughness:0.85, metalness:0.0,  clear:0},
   plastic_glossy: {roughness:0.25, metalness:0.0,  clear:0.3},
@@ -2984,7 +2999,7 @@ function doSvgRevolve(){
   let main = _svgRevData[0];
   _svgRevData.forEach(poly => { if(poly.length > main.length) main = poly; });
 
-  // v7.0.0: SWEEP — 단면의 한쪽 끝을 회전축에 "묶어" 경로 따라 회전
+  // v7.0.2: SWEEP — 단면의 한쪽 끝을 회전축에 "묶어" 경로 따라 회전
   //   기준 A: 왼쪽 끝(minX)을 축에 붙임 → 단면이 오른쪽으로 펼쳐짐
   //   기준 B: 오른쪽 끝(maxX)을 축에 붙임 → 단면을 좌우반전, 반대 방향으로 펼쳐짐
   //   • p.x → 반경방향(축에서 거리, 0 이상), p.y → 높이방향 (Y 뒤집기)
@@ -3020,7 +3035,7 @@ function doSvgRevolve(){
 
   const angleRad = angleDeg * Math.PI / 180;
   const startRad = startAngleDeg * Math.PI / 180;
-  // v7.0.0: 묶는 끝(단면 x의 최솟값)이 경로 반지름 innerR에 정확히 닿도록.
+  // v7.0.2: 묶는 끝(단면 x의 최솟값)이 경로 반지름 innerR에 정확히 닿도록.
   //   innerR=0이면 묶는 끝이 중심축(반지름 0)에 붙어 가운데 구멍이 없음.
   let minPx = Infinity;
   profile.forEach(p=>{ if(p.x < minPx) minPx = p.x; });
@@ -3035,7 +3050,7 @@ function doSvgRevolve(){
     mesh: mesh, _isHole: (mode === 'hole'),
     params: {
       mode, sketchHeight, innerD, seg, startAngleDeg, angleDeg, pathR, dir,
-      sweep: true, // v7.0.0: sweep 방식 표시 (복원 구분)
+      sweep: true, // v7.0.2: sweep 방식 표시 (복원 구분)
       profile: profile.map(v => ({x: v.x, y: v.y}))
     }
   };
@@ -3099,7 +3114,7 @@ function revolveProfileSweep(profile, segments, startAngle, totalAngle, closeEnd
   return geom;
 }
 
-// v7.0.0: SWEEP 방식 — SVG 닫힌 단면을 원형 경로(고리)를 따라 이동시켜 도넛/튜브 생성
+// v7.0.2: SWEEP 방식 — SVG 닫힌 단면을 원형 경로(고리)를 따라 이동시켜 도넛/튜브 생성
 //   단면 좌표(cx,cy)는 단면 로컬평면, 경로 반지름 R, 각도만큼 sweep.
 //   각 링의 단면은 경로 접선에 수직(반경방향+높이방향)으로 배치.
 //   profile: [{x,y}] 단면 폴리곤(로컬 mm, 단면 중심이 원점 근처), R: 경로 반지름
@@ -3182,13 +3197,13 @@ function rebuildSvgRevolve(pdata){
   const startRad = (p.startAngleDeg || 0) * Math.PI / 180;
   let geom;
   if(p.sweep){
-    // v7.0.0: sweep(도넛/파이프) 방식 복원
+    // v7.0.2: sweep(도넛/파이프) 방식 복원
     let pathR = p.pathR;
     if(pathR === undefined){
       let minPx = Infinity; profile.forEach(o=>{ if(o.x<minPx) minPx=o.x; });
-      pathR = (p.innerD ? p.innerD/2 : 0) - minPx; // v7.0.0: innerR - minPx
+      pathR = (p.innerD ? p.innerD/2 : 0) - minPx; // v7.0.2: innerR - minPx
     }
-    const signed = angleRad; // v7.0.0: 방향은 profile 좌우반전으로 이미 반영됨
+    const signed = angleRad; // v7.0.2: 방향은 profile 좌우반전으로 이미 반영됨
     geom = sweepProfileTorus(profile.map(o=>({x:o.x,y:o.y})), p.seg || 24, startRad, signed, pathR, angleDeg < 359.5);
   } else {
     // 구버전 lathe 방식 복원
@@ -3198,6 +3213,20 @@ function rebuildSvgRevolve(pdata){
   const mesh = new THREE.Mesh(geom, mat);
   mesh.visible = pdata.visible;
   return {...pdata, mesh};
+}
+
+// v7.0.2: 가져온 메시 복원 (저장된 정점 배열로 geometry 재생성)
+function rebuildImportedMesh(pdata){
+  const p = pdata.params || {};
+  if(!p.positions || p.positions.length === 0) return null;
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(p.positions), 3));
+  if(p.indices && p.indices.length) g.setIndex(p.indices);
+  g.computeVertexNormals();
+  const mat = makeMaterial(pdata.color || '#9aa7b4', pdata.opacity != null ? pdata.opacity : 1, pdata.material || 'plastic_matte');
+  const mesh = new THREE.Mesh(g, mat);
+  mesh.visible = pdata.visible !== false;
+  return {...pdata, mesh, params: p};
 }
 
 function addPrimitive(kind){
@@ -4469,7 +4498,7 @@ function meshCornersWorld(mesh){
   ];
 }
 
-// v7.0.0: 3D 월드좌표 → 화면 픽셀 (스케치용 worldToScreen과 별개)
+// v7.0.2: 3D 월드좌표 → 화면 픽셀 (스케치용 worldToScreen과 별개)
 function worldToScreen3D(v){
   if(!renderer || !camera) return {x:0, y:0, z:2};
   const rect = renderer.domElement.getBoundingClientRect();
@@ -5016,7 +5045,7 @@ function updatePartColor(){
   }
   renderPartsList();
   toast('🎨 색상 적용: ' + newColor);
-  pushHistory(); // v7.0.0: 색상 변경 되돌리기 지원
+  pushHistory(); // v7.0.2: 색상 변경 되돌리기 지원
   // v3.8: 색상 피커 강제 닫기 - input 요소를 새로 만들어 교체
   //   비동기로 실행해서 onchange 처리가 완전히 끝난 뒤 교체되도록 함
   setTimeout(() => {
@@ -5048,7 +5077,7 @@ function updatePartOpacity(){
   }
 }
 
-// v7.0.0: 재질(표면 질감) 프리셋 적용 — 색/투명도는 유지하고 roughness/metalness만 교체
+// v7.0.2: 재질(표면 질감) 프리셋 적용 — 색/투명도는 유지하고 roughness/metalness만 교체
 function updatePartMaterial(){
   const p = state.parts.find(x => x.id === state.selectedPartId);
   const sel = document.getElementById('propPartMaterial');
@@ -5512,14 +5541,51 @@ function rebuildSpring(pdata){
   return {...pdata, mesh};
 }
 
+// v7.0.2: STL 출력 정비 — 삼각형 배열을 받아 정점 병합(weld) + 중복/퇴화 삼각형 제거
+//   tris: [[Vector3,Vector3,Vector3], ...] (월드 좌표)
+//   반환: {tris: 정리된 삼각형, stats: {welded, removed, boundary, nonManifold}}
+function cleanTrianglesForSTL(tris){
+  const QUANT = 1000; // 0.001mm 격자로 양자화해 같은 위치 정점 병합
+  const keyOf = v => Math.round(v.x*QUANT)+'_'+Math.round(v.y*QUANT)+'_'+Math.round(v.z*QUANT);
+  const vmap = new Map(); const verts = [];
+  const vid = v => { const k=keyOf(v); let id=vmap.get(k); if(id===undefined){ id=verts.length; verts.push(v.clone()); vmap.set(k,id); } return id; };
+  const triKeys = new Set();
+  const outTris = [];
+  let removed = 0;
+  tris.forEach(t=>{
+    const a=vid(t[0]), b=vid(t[1]), c=vid(t[2]);
+    if(a===b || b===c || a===c){ removed++; return; } // 퇴화(면적0)
+    const sorted=[a,b,c].slice().sort((x,y)=>x-y).join('_');
+    if(triKeys.has(sorted)){ removed++; return; }     // 중복(양면 등)
+    triKeys.add(sorted);
+    outTris.push([verts[a], verts[b], verts[c]]);
+  });
+  // watertight 검사 (엣지가 정확히 2면 공유?)
+  const edge = {};
+  outTris.forEach(t=>{
+    const ids=[vid(t[0]),vid(t[1]),vid(t[2])];
+    for(let e=0;e<3;e++){ const a=ids[e],b=ids[(e+1)%3]; const k=a<b?a+'_'+b:b+'_'+a; edge[k]=(edge[k]||0)+1; }
+  });
+  let boundary=0, nonManifold=0;
+  Object.values(edge).forEach(c=>{ if(c===1) boundary++; else if(c>2) nonManifold++; });
+  return {tris: outTris, stats: {removed, boundary, nonManifold, vertexCount: verts.length}};
+}
+
 function exportSTL(){
   if(state.parts.length === 0){toast('내보낼 부품이 없습니다'); return}
+  // v7.0.2: 선택된 부품만 내보내기 (다중 선택 우선, 없으면 단일 선택)
+  let targets = state.parts.filter(p => p._selected);
+  if(targets.length === 0 && state.selectedPartId){
+    const sp = state.parts.find(p => p.id === state.selectedPartId);
+    if(sp) targets = [sp];
+  }
+  if(targets.length === 0){ toast('내보낼 부품을 먼저 선택하세요'); return; }
   const triangles = [];
-  state.parts.forEach(p=>{
-    if(!p.visible || !p.mesh) return;
+  targets.forEach(p=>{
+    if(!p.mesh) return;
     p.mesh.updateMatrixWorld(true);
     p.mesh.traverse(o=>{
-      if(o.isMesh){
+      if(o.isMesh && !o.userData._isEdgeOutline){
         const geom = o.geometry;
         const matrix = o.matrixWorld;
         const pos = geom.attributes.position;
@@ -5544,8 +5610,13 @@ function exportSTL(){
     });
   });
   
+  // v7.0.2: 정점 병합 + 중복/퇴화 제거 + watertight 검사
+  const cleaned = cleanTrianglesForSTL(triangles);
+  const useTris = cleaned.tris;
+  const st = cleaned.stats;
+
   let stl = 'solid Catia3D\n';
-  triangles.forEach(t=>{
+  useTris.forEach(t=>{
     const n = new THREE.Vector3().crossVectors(
       new THREE.Vector3().subVectors(t[1], t[0]),
       new THREE.Vector3().subVectors(t[2], t[0])
@@ -5565,7 +5636,15 @@ function exportSTL(){
   a.download = `Catia3D_${Date.now()}.stl`;
   a.click();
   URL.revokeObjectURL(url);
-  toast('📦 STL 내보내기 완료 (' + triangles.length + ' 삼각형)');
+
+  // 출력 적합성 안내
+  const issues = st.boundary + st.nonManifold;
+  const pfx = '(' + targets.length + '개 부품) ';
+  if(issues === 0){
+    toast('✅ STL 완료 ' + pfx + '— watertight (출력 가능) · ' + useTris.length + '면');
+  } else {
+    toast('⚠️ STL 완료 ' + pfx + '— 비밀폐: 열린모서리 ' + st.boundary + ', 비매니폴드 ' + st.nonManifold + ' (슬라이서 자동수정 필요할 수 있음)');
+  }
 }
 
 function exportImage(){
@@ -5914,8 +5993,8 @@ const editMode = {
   dragStart: null,       // {x,y}
   dragStartPos: null,    // Map<idx, Vector3>
   dragPlane: null,
-  axis: null,            // v7.0.0: 'x'|'y'|'z'|null — 블렌더식 축 제한
-  numBuf: '',            // v7.0.0: 숫자 입력 버퍼
+  axis: null,            // v7.0.2: 'x'|'y'|'z'|null — 블렌더식 축 제한
+  numBuf: '',            // v7.0.2: 숫자 입력 버퍼
   _moveCenter: null,     // 선택 정점 월드 중심
   userEdges: [],         // v6.9: 사용자가 F/E로 만든 엣지 [[ai,bi],...]
   edgeLines: null,       // v6.9: userEdges 시각화 LineSegments
@@ -6413,7 +6492,7 @@ function editMoveApply(e){
 
 // v6.9: 편집 모드 정점 스냅 — 선택 정점 중 하나가 비선택 정점에 화면상 가까우면
 //   그 차이를 로컬 offset으로 반환 (없으면 null)
-// v7.0.0: 편집 모드 스냅 — 선택 정점이 (비선택)버텍스 또는 엣지에 화면상 가까우면
+// v7.0.2: 편집 모드 스냅 — 선택 정점이 (비선택)버텍스 또는 엣지에 화면상 가까우면
 //   그 위치(로컬)로 가는 offset 반환. 버텍스 우선, 없으면 엣지 수직투영점.
 function computeEditSnap(){
   const part = editMode.part;
@@ -6561,7 +6640,7 @@ function blenderApply(){
   const num = blenderOp.numBuf !== '' && blenderOp.numBuf !== '-' ? parseFloat(blenderOp.numBuf) : null;
   const cur = blenderOp._lastMouse || blenderOp.startMouse;
 
-  // v7.0.0: 블렌더 좌표(Z=높이, Y=앞뒤) → 이 도구 three.js(Y=높이, Z=앞뒤)로 변환
+  // v7.0.2: 블렌더 좌표(Z=높이, Y=앞뒤) → 이 도구 three.js(Y=높이, Z=앞뒤)로 변환
   //   블렌더 X→X, 블렌더 Y(앞뒤)→Z, 블렌더 Z(높이)→Y
   const ax3 = ax === 'y' ? 'z' : (ax === 'z' ? 'y' : ax); // 실제 적용 축
 
@@ -6709,7 +6788,7 @@ document.addEventListener('keydown', (e)=>{
   if(editMode.active){
     if(editMode.dragging){
       const k = e.key.toLowerCase();
-      // v7.0.0: 블렌더식 축 제한 (X/Y/Z) + 숫자 입력
+      // v7.0.2: 블렌더식 축 제한 (X/Y/Z) + 숫자 입력
       if(k === 'x' || k === 'y' || k === 'z'){
         editMode.axis = (editMode.axis === k) ? null : k; // 같은 축 다시 누르면 해제
         editMode.numBuf = '';
@@ -6939,7 +7018,7 @@ function init(){
   renderPartsList();
   updateInfo();
   redrawSketch();
-  setStat('tool3 v7.0.0 준비됨 · 부품 속성패널 정리 완료');
+  setStat('tool3 v7.0.2 준비됨 · 선택부품 STL · STL/OBJ 가져오기');
   // v2.2: 항상 3D 모드로 시작 (draw_tool import도 3D 바닥에 표시)
   switchMode('model');
   try {
@@ -6950,13 +7029,127 @@ function init(){
   // v4.6: 초기(빈) 상태를 history[0]로 시드 → 첫 도형까지 완전히 되돌리기 가능
   if(state.history.length === 0) pushHistory();
 }
-function manualImportFromDrawTool(){
-  const raw = localStorage.getItem('c3d_import_from_draw_tool');
-  if (!raw) {
-    toast('draw_tool에 전송된 도형이 없습니다. draw_tool에서 C3D 탭을 먼저 클릭하세요.');
-    return;
+// v7.0.2: 3D 메시 파일 가져오기 (STL 바이너리/아스키, OBJ)
+function importMeshFile(event){
+  const file = event.target.files[0];
+  if(!file) return;
+  const name = file.name;
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  const reader = new FileReader();
+  reader.onload = function(e){
+    try {
+      let geom = null;
+      if(ext === 'stl'){
+        geom = parseSTL(e.target.result); // ArrayBuffer
+      } else if(ext === 'obj'){
+        geom = parseOBJ(e.target.result); // text
+      } else {
+        toast('지원하지 않는 형식입니다 (STL/OBJ만 가능)'); return;
+      }
+      if(!geom){ toast('파일을 읽지 못했습니다'); return; }
+      geom.computeVertexNormals();
+      geom.computeBoundingBox();
+      // 바닥(Y=0)에 안착 + XZ 중심 정렬
+      const bb = geom.boundingBox;
+      const cx = (bb.min.x+bb.max.x)/2, cz=(bb.min.z+bb.max.z)/2, minY=bb.min.y;
+      geom.translate(-cx, -minY, -cz);
+      const baseName = name.replace(/\.(stl|obj)$/i,'');
+      const color = '#9aa7b4';
+      const mat = makeMaterial(color, 1, 'plastic_matte');
+      const mesh = new THREE.Mesh(geom, mat);
+      const part = {
+        id: state.partIdCounter++, name: baseName, type: 'imported_mesh',
+        color: color, opacity: 1, visible: true, material: 'plastic_matte',
+        mesh: mesh, _isHole: false,
+        params: { imported: true, format: ext }
+      };
+      state.parts.push(part);
+      addPartToScene(part);
+      renderPartsList();
+      updateInfo();
+      switchMode('model');
+      fitView();
+      pushHistory();
+      const sz = bb.getSize ? bb.getSize(new THREE.Vector3()) : {x:0,y:0,z:0};
+      toast('✅ 가져오기 완료: ' + baseName + ' (' + (geom.index?geom.index.count/3:geom.attributes.position.count/3) + '면)');
+    } catch(err){
+      console.error(err);
+      toast('가져오기 실패: ' + err.message);
+    }
+    event.target.value = ''; // 같은 파일 재선택 가능하게
+  };
+  if(ext === 'stl') reader.readAsArrayBuffer(file);
+  else reader.readAsText(file);
+}
+
+// STL 파서 (바이너리/아스키 자동 판별) → BufferGeometry
+function parseSTL(data){
+  const dv = new DataView(data);
+  // 아스키 판별: 선두 'solid' + 바이너리 길이 불일치
+  const isBinary = (() => {
+    if(data.byteLength < 84) return false;
+    const nTri = dv.getUint32(80, true);
+    const expected = 84 + nTri*50;
+    if(expected === data.byteLength) return true;
+    // 'solid'로 시작하면 아스키 가능성
+    const head = String.fromCharCode(dv.getUint8(0),dv.getUint8(1),dv.getUint8(2),dv.getUint8(3),dv.getUint8(4));
+    return head.toLowerCase() !== 'solid';
+  })();
+  const positions = [];
+  if(isBinary){
+    const nTri = dv.getUint32(80, true);
+    let off = 84;
+    for(let i=0;i<nTri;i++){
+      off += 12; // normal 건너뜀
+      for(let v=0;v<3;v++){
+        positions.push(dv.getFloat32(off,true), dv.getFloat32(off+4,true), dv.getFloat32(off+8,true));
+        off += 12;
+      }
+      off += 2; // attribute byte count
+    }
+  } else {
+    const text = new TextDecoder().decode(data);
+    const re = /vertex\s+([\-0-9.eE+]+)\s+([\-0-9.eE+]+)\s+([\-0-9.eE+]+)/g;
+    let m;
+    while((m = re.exec(text)) !== null){
+      positions.push(parseFloat(m[1]), parseFloat(m[2]), parseFloat(m[3]));
+    }
   }
-  importFromDrawTool();
+  if(positions.length === 0) return null;
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  return g;
+}
+
+// OBJ 파서 (v/f만, 삼각/사각면 지원) → BufferGeometry
+function parseOBJ(text){
+  const verts = [];
+  const positions = [];
+  const lines = text.split('\n');
+  for(const line of lines){
+    const t = line.trim();
+    if(t.startsWith('v ')){
+      const p = t.split(/\s+/);
+      verts.push([parseFloat(p[1]), parseFloat(p[2]), parseFloat(p[3])]);
+    } else if(t.startsWith('f ')){
+      const p = t.split(/\s+/).slice(1);
+      // 면 정점 인덱스 (v 또는 v/vt/vn 형식, 음수 인덱스 지원)
+      const fi = p.map(tok => {
+        let idx = parseInt(tok.split('/')[0]);
+        if(idx < 0) idx = verts.length + idx; else idx = idx - 1;
+        return idx;
+      });
+      // 다각형 → 삼각형 팬
+      for(let i=1;i<fi.length-1;i++){
+        const a=verts[fi[0]], b=verts[fi[i]], c=verts[fi[i+1]];
+        if(a&&b&&c) positions.push(a[0],a[1],a[2], b[0],b[1],b[2], c[0],c[1],c[2]);
+      }
+    }
+  }
+  if(positions.length === 0) return null;
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  return g;
 }
 
 /* v2.3: 도형 배열의 바운딩박스 중심을 원점(0,0)으로 이동 */
