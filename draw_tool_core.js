@@ -8465,28 +8465,36 @@ function applyBaseRect(){
     `▭ 베이스 사각형 배치: 가로 ${w}mm × 세로 ${h}mm · 좌측선 ${leftMm.toFixed(2)}mm` + (sealOn ? ' (씰 파이 모드)' : '');
 }
 
-// 모달 열기/닫기 + 씰 파이 토글
-document.getElementById('headerBtnBaseRect').addEventListener('click', () => {
-  document.getElementById('baseRectModal').classList.add('show');
-  baseRectPreviewUpdate();
-});
-document.getElementById('btnBaseRectCancel').addEventListener('click', () => {
-  document.getElementById('baseRectModal').classList.remove('show');
-});
-document.getElementById('btnBaseRectApply').addEventListener('click', applyBaseRect);
-document.getElementById('baseRectSealOn').addEventListener('change', (e) => {
-  const on = e.target.checked;
-  document.getElementById('baseRectSealRow').style.display = on ? 'flex' : 'none';
-  document.getElementById('baseRectSealHint').style.display = on ? 'block' : 'none';
-  baseRectPreviewUpdate();
-});
-['baseRectW','baseRectH','baseRectLeftX','baseRectSealCur','baseRectSealPhi'].forEach(id => {
-  const el = document.getElementById(id);
-  if (el){
-    el.addEventListener('input', baseRectPreviewUpdate);
-    el.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') applyBaseRect(); });
-  }
-});
+// 모달 열기/닫기 + 씰 파이 토글 (Rev.16.7: 방어적 바인딩)
+(function bindBaseRect(){
+  const openBtn = document.getElementById('headerBtnBaseRect');
+  const modal   = document.getElementById('baseRectModal');
+  if (!openBtn || !modal){ console.warn('baseRect: 요소 없음', !!openBtn, !!modal); return; }
+  openBtn.addEventListener('click', () => {
+    modal.classList.add('show');
+    try { baseRectPreviewUpdate(); } catch(e){ console.warn(e); }
+  });
+  const cancel = document.getElementById('btnBaseRectCancel');
+  if (cancel) cancel.addEventListener('click', () => modal.classList.remove('show'));
+  const apply = document.getElementById('btnBaseRectApply');
+  if (apply) apply.addEventListener('click', applyBaseRect);
+  const sealOn = document.getElementById('baseRectSealOn');
+  if (sealOn) sealOn.addEventListener('change', (e) => {
+    const on = e.target.checked;
+    const r = document.getElementById('baseRectSealRow');
+    const h = document.getElementById('baseRectSealHint');
+    if (r) r.style.display = on ? 'flex' : 'none';
+    if (h) h.style.display = on ? 'block' : 'none';
+    baseRectPreviewUpdate();
+  });
+  ['baseRectW','baseRectH','baseRectLeftX','baseRectSealCur','baseRectSealPhi'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el){
+      el.addEventListener('input', baseRectPreviewUpdate);
+      el.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') applyBaseRect(); });
+    }
+  });
+})();
 
 // ====== Rev.11.41: 스냅샷 기반 Undo/Redo ======
 // 현재 전체 상태를 깊은 복사로 캡처
@@ -8575,11 +8583,11 @@ document.getElementById('saveFormat').addEventListener('change', e => {
 });
 // 초기 상태: SVG가 기본이므로 PNG 옵션은 숨김
 window.addEventListener('load', () => {
-  document.getElementById('rowSaveScale').style.display = 'none';
+  // Rev.16.7: 첫 시작 시 도구를 '선택'으로 고정 (다른 초기화보다 먼저, 에러 영향 차단)
+  try { if (typeof selectTool === 'function') selectTool('select'); } catch(e){ console.warn('selectTool init', e); }
+  try { document.getElementById('rowSaveScale').style.display = 'none'; } catch(e){}
   // Rev.11.4: 메뉴 섹션 접기 기능 초기화
-  initCollapsibleMenuSections();
-  // Rev.16.6: 첫 시작 시 도구를 '선택'으로 고정
-  if (typeof selectTool === 'function') selectTool('select');
+  try { initCollapsibleMenuSections(); } catch(e){ console.warn('collapsible init', e); }
 });
 
 // ===== Rev.11.4: 메뉴 섹션 접기 =====
