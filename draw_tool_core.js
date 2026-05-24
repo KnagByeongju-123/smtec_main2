@@ -9021,6 +9021,98 @@ function cleanupDrawing(){
 
 document.getElementById('headerBtnCleanup').addEventListener('click', cleanupDrawing);
 
+// ===== Rev.15.3: 합치기 (선택한 선들을 하나의 폴리라인 도형으로) =====
+function mergeLinesToPolyline(){
+  const tolMm = parseFloat(document.getElementById('cleanupTolInput').value) || 0.5;
+  const tolPx = tolMm / mmPerPixel;
+
+  // 선택된 line만 대상
+  const sel = shapes.filter(s => s.type === 'line' && selectedIds.has(s.id));
+  if (sel.length < 2){
+    document.getElementById('statusHint').textContent = '🔗 합치기: 선을 2개 이상 선택하세요';
+    return;
+  }
+
+  // 각 선을 {a, b} 세그먼트로 (참조용 원본 id 보관)
+  const segs = sel.map(s => ({ a: {x:s.p1.x, y:s.p1.y}, b: {x:s.p2.x, y:s.p2.y}, id: s.id }));
+  const near = (p, q) => Math.hypot(p.x - q.x, p.y - q.y) <= tolPx;
+
+  // 체인 정렬: 첫 세그먼트에서 시작해 끝점이 이어지는 다음 세그먼트를 계속 찾음
+  const usedSeg = new Array(segs.length).fill(false);
+  // 시작 세그먼트 = 0번
+  usedSeg[0] = true;
+  let chain = [ segs[0].a, segs[0].b ];   // 점 배열
+  let extended = true;
+  while (extended){
+    extended = false;
+    const head = chain[0], tail = chain[chain.length - 1];
+    for (let i = 0; i < segs.length; i++){
+      if (usedSeg[i]) continue;
+      const s = segs[i];
+      // tail 쪽 이어붙이기
+      if (near(tail, s.a)){ chain.push(s.b); usedSeg[i]=true; extended=true; break; }
+      if (near(tail, s.b)){ chain.push(s.a); usedSeg[i]=true; extended=true; break; }
+      // head 쪽 이어붙이기 (앞에 삽입)
+      if (near(head, s.b)){ chain.unshift(s.a); usedSeg[i]=true; extended=true; break; }
+      if (near(head, s.a)){ chain.unshift(s.b); usedSeg[i]=true; extended=true; break; }
+    }
+  }
+
+  const linkedCount = usedSeg.filter(Boolean).length;
+  if (linkedCount < sel.length){
+    document.getElementById('statusHint').textContent =
+      `🔗 합치기 실패: 선택한 ${sel.length}개 중 ${linkedCount}개만 끝점이 이어집니다. 먼저 🧹정리로 끝점을 맞물리거나 허용오차를 키우세요`;
+    return;
+  }
+
+  // 인접 중복점 제거 (허용오차 내)
+  const pts = [];
+  chain.forEach(p => {
+    if (pts.length === 0 || !near(pts[pts.length-1], p)) pts.push({x:p.x, y:p.y});
+  });
+  if (pts.length < 2){
+    document.getElementById('statusHint').textContent = '🔗 합치기: 유효한 경로가 아닙니다';
+    return;
+  }
+
+  // 닫힘 여부 (시작=끝)
+  let closed = false;
+  if (pts.length >= 3 && near(pts[0], pts[pts.length-1])){
+    closed = true;
+    pts.pop();  // 마지막 중복점 제거 (closed로 처리)
+  }
+
+  // 원본 선들의 스타일 계승 (첫 선 기준)
+  const base = sel[0];
+  const poly = {
+    id: ++shapeIdSeq,
+    type: 'polyline',
+    points: pts,
+    closed,
+    stroke: base.stroke || '#000',
+    strokeWidth: base.strokeWidth || 2,
+    layer: base.layer || (typeof currentLayer !== 'undefined' ? currentLayer : 'default') || 'default'
+  };
+
+  // 원본 선 삭제
+  const delIds = new Set(sel.map(s => s.id));
+  for (let i = shapes.length - 1; i >= 0; i--){
+    if (shapes[i].type === 'line' && delIds.has(shapes[i].id)) shapes.splice(i, 1);
+  }
+  shapes.push(poly);
+  selectedIds.clear();
+  selectedIds.add(poly.id);
+
+  redoStack = []; pushHistory();
+  if (typeof redrawFills === 'function') redrawFills();
+  redrawDraw(); updateCount();
+  if (typeof updateSelStat === 'function') updateSelStat();
+  if (typeof updateShapePropPanel === 'function') updateShapePropPanel();
+  document.getElementById('statusHint').textContent =
+    `🔗 합치기 완료: 선 ${sel.length}개 → 폴리라인 1개 (점 ${pts.length}개${closed ? ', 닫힘' : ''})`;
+}
+document.getElementById('headerBtnMerge').addEventListener('click', mergeLinesToPolyline);
+
 // Rev.11.20: 연장(Extrude) 버튼
 document.getElementById('headerBtnExtrude').addEventListener('click', () => {
   if (extrudeMode){
