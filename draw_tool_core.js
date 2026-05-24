@@ -8071,9 +8071,12 @@ function updateMoveDeltaPanelLive(){
     const cur = shapes.find(x => x.id === id);
     const base = moveDeltaBase[id];
     if (cur && base){
-      // p1 우선, 없으면 cx/cy
+      // p1 우선, 없으면 cx/cy, 없으면 폴리라인 첫 점
       if (cur.p1 && base.p1){ dxPx = cur.p1.x - base.p1.x; dyPx = cur.p1.y - base.p1.y; found = true; break; }
       if (cur.cx !== undefined && base.cx !== undefined){ dxPx = cur.cx - base.cx; dyPx = cur.cy - base.cy; found = true; break; }
+      if (Array.isArray(cur.points) && Array.isArray(base.points) && cur.points.length && base.points.length){
+        dxPx = cur.points[0].x - base.points[0].x; dyPx = cur.points[0].y - base.points[0].y; found = true; break;
+      }
     }
   }
   if (!found) return;
@@ -8122,6 +8125,10 @@ function applyMoveDelta(){
     if (s.p1 && base.p1){ s.p1.x = base.p1.x + dxPx; s.p1.y = base.p1.y + dyPx; }
     if (s.p2 && base.p2){ s.p2.x = base.p2.x + dxPx; s.p2.y = base.p2.y + dyPx; }
     if (s.cx !== undefined && base.cx !== undefined){ s.cx = base.cx + dxPx; s.cy = base.cy + dyPx; }
+    // Rev.16.4: 폴리라인/채움 - points 배열 절대 재배치
+    if ((s.type === 'polyline' || s.type === 'fill') && Array.isArray(base.points)){
+      s.points = base.points.map(pt => ({ x: pt.x + dxPx, y: pt.y + dyPx }));
+    }
   });
   redoStack = []; pushHistory();
   redrawDraw();
