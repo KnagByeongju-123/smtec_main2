@@ -97,9 +97,6 @@ let baseLineMode = false;          // 베이스선 복제 ON/OFF
 let baseLineTarget = null;         // 클릭된 기준 선 도형
 let baseLineOrient = null;         // 'h'(가로) | 'v'(세로) | 'o'(기타)
 let baseLineDir = null;            // 선택된 방향 'up'|'down'|'left'|'right'
-// Rev.14.0: 양방향 연장 모드 - 직선 클릭 후 같은 각도로 양쪽 균등 연장
-let extLineMode = false;           // 양방향 연장 ON/OFF
-let extLineTarget = null;          // 클릭된 직선 도형
 // Rev.12.7: 꼭지점커팅 - 선의 가까운 꼭지점에서 지정 치수(mm)만큼 선을 따라 이동한 지점에서 분할
 let vertexCutMode = false;         // 꼭지점커팅 모드 ON/OFF
 let vertexCutDist = 10;            // 자를 거리(mm)
@@ -1436,7 +1433,7 @@ drawCanvas.addEventListener('mousedown', e => {
   if (e.button === 1) return;
 
   // Rev.12.7: 거리두기/꼭지점커팅 픽 모드 중에는 select 드래그(박스·이동) 시작 안 함 (click 으로만 처리)
-  if ((offsetTwinPickMode || vertexCutMode || baseLineMode || extLineMode) && e.button === 0) return;
+  if ((offsetTwinPickMode || vertexCutMode || baseLineMode) && e.button === 0) return;
 
   // Rev.11.39: 이동(Grab) 모드 - 좌클릭 = 확정
   if (grabMode){
@@ -1728,11 +1725,6 @@ drawCanvas.addEventListener('click', e => {
     const pBl = getCanvasPoint(e);
     if (handleBaseLineClick(pBl)) return;
   }
-  // Rev.14.0: 양방향 연장 모드 (select 도구 상태에서 동작)
-  if (extLineMode) {
-    const pEx = getCanvasPoint(e);
-    if (handleExtLineClick(pEx)) return;
-  }
   // Rev.12.7: 꼭지점커팅 모드 (select 도구 상태에서 동작)
   if (vertexCutMode) {
     const pVc = getCanvasPoint(e);
@@ -1908,12 +1900,6 @@ window.addEventListener('keydown', e => {
     if (baseLineMode){
       cancelBaseLineMode();
       document.getElementById('statusHint').textContent = '📋 베이스선 복제 종료';
-      return;
-    }
-    // Rev.14.0: 양방향 연장 모드 종료
-    if (extLineMode){
-      cancelExtLineMode();
-      document.getElementById('statusHint').textContent = '⟷ 양방향 연장 종료';
       return;
     }
     // Rev.11.39: 이동(Grab) 모드 우선 취소 (원위치 복원)
@@ -2347,110 +2333,6 @@ function baseLineGenerate(){
   preCtx.restore();
   document.getElementById('basePreviewTxt').textContent = id ? ('✓ ' + msg + ' 생성') : '생성 실패';
   document.getElementById('statusHint').textContent = id ? ('✓ ' + msg + ' 생성') : '생성 실패';
-}
-
-// ===== Rev.14.0: 양방향 연장 =====
-function startExtLineMode(){
-  extLineMode = true;
-  extLineTarget = null;
-  selectTool('select');
-  drawCanvas.style.cursor = 'crosshair';
-  document.getElementById('headerBtnExtLine')?.classList.add('active');
-  closeExtLinePop();
-  document.getElementById('statusHint').textContent =
-    '⟷ 양방향 연장: 늘릴 직선을 클릭하세요 (Esc=종료)';
-}
-function cancelExtLineMode(){
-  extLineMode = false;
-  extLineTarget = null;
-  preCtx.clearRect(0,0,baseW,baseH);
-  drawCanvas.style.cursor = 'default';
-  document.getElementById('headerBtnExtLine')?.classList.remove('active');
-  closeExtLinePop();
-}
-function closeExtLinePop(){
-  const pop = document.getElementById('extLinePop');
-  if (pop) pop.style.display = 'none';
-}
-// 양방향 연장 모드 클릭 처리. 처리했으면 true
-function handleExtLineClick(p){
-  if (!extLineMode) return false;
-  const s = findNearestLineForBase(p);  // 넓은 허용폭으로 직선 탐색 (재사용)
-  if (s){
-    extLineTarget = s;
-    // 강조
-    preCtx.clearRect(0,0,baseW,baseH);
-    const Z = zoom || 1;
-    preCtx.save();
-    preCtx.strokeStyle = '#3498db'; preCtx.lineWidth = 3/Z; preCtx.setLineDash([8/Z,4/Z]);
-    preCtx.beginPath(); preCtx.moveTo(s.p1.x, s.p1.y); preCtx.lineTo(s.p2.x, s.p2.y); preCtx.stroke();
-    preCtx.restore();
-    openExtLinePop(s);
-  } else {
-    document.getElementById('statusHint').textContent = '⟷ 양방향 연장: 직선(line) 근처를 클릭하세요';
-  }
-  return true;
-}
-function openExtLinePop(ln){
-  const lenPx = Math.hypot(ln.p2.x - ln.p1.x, ln.p2.y - ln.p1.y);
-  const lenMm = lenPx * mmPerPixel;
-  let angDeg = Math.atan2(-(ln.p2.y - ln.p1.y), ln.p2.x - ln.p1.x) * 180 / Math.PI;
-  if (angDeg < 0) angDeg += 360;
-  document.getElementById('extLineCur').textContent =
-    `현재 길이 ${lenMm.toFixed(2)}mm · 각도 ${angDeg.toFixed(1)}°`;
-  document.getElementById('extEach').value = '';
-  document.getElementById('extPreviewTxt').textContent = '';
-  const pop = document.getElementById('extLinePop');
-  pop.style.display = 'block';
-  const mx = (ln.p1.x + ln.p2.x)/2, my = (ln.p1.y + ln.p2.y)/2;
-  const sc = worldToScreen(mx, my);
-  const pw = pop.offsetWidth || 240, ph = pop.offsetHeight || 220;
-  let left = sc.x + 16, top = sc.y + 16;
-  if (left + pw > window.innerWidth - 8) left = sc.x - pw - 16;
-  if (top + ph > window.innerHeight - 8) top = window.innerHeight - ph - 8;
-  if (left < 8) left = 8;
-  if (top < 8) top = 8;
-  pop.style.left = left + 'px';
-  pop.style.top = top + 'px';
-  const inp = document.getElementById('extEach');
-  setTimeout(() => { inp.focus(); inp.select(); }, 30);
-  document.getElementById('statusHint').textContent =
-    '⟷ 직선 선택됨 · 한쪽당 늘릴 길이(mm) 입력 → Enter/적용 · Esc=종료';
-}
-// 양방향 연장 적용 (한쪽당 +mm, 중심 고정·각도 유지)
-function extLineApply(){
-  const ln = extLineTarget;
-  if (!ln){ document.getElementById('statusHint').textContent = '⟷ 먼저 직선을 클릭하세요'; return; }
-  const dx = ln.p2.x - ln.p1.x, dy = ln.p2.y - ln.p1.y;
-  const lenPx = Math.hypot(dx, dy);
-  if (lenPx < 1e-6){ document.getElementById('statusHint').textContent = '⚠ 길이가 0인 선'; return; }
-  const ux = dx / lenPx, uy = dy / lenPx;  // 단위 방향벡터
-  const cx = (ln.p1.x + ln.p2.x)/2, cy = (ln.p1.y + ln.p2.y)/2;  // 중점
-  const v = parseFloat(document.getElementById('extEach').value);
-  if (!isFinite(v)){ document.getElementById('statusHint').textContent = '⚠ 한쪽당 늘릴 길이를 입력하세요'; return; }
-  const addPx = v / mmPerPixel;
-  const halfPx = lenPx/2 + addPx;
-  if (halfPx <= 0){ document.getElementById('statusHint').textContent = '⚠ 축소량이 너무 커서 선이 사라집니다'; return; }
-  const msg = `한쪽당 ${v>=0?'+':''}${v}mm → 총 길이 ${((halfPx*2)*mmPerPixel).toFixed(2)}mm`;
-  // 중점 기준 양방향 균등 연장 (각도 유지)
-  ln.p1.x = cx - ux * halfPx; ln.p1.y = cy - uy * halfPx;
-  ln.p2.x = cx + ux * halfPx; ln.p2.y = cy + uy * halfPx;
-  redoStack = []; pushHistory();
-  if (typeof redrawFills === 'function') redrawFills();
-  redrawDraw(); updateCount();
-  // 강조 갱신 + 현재값 갱신
-  const Z = zoom || 1;
-  preCtx.clearRect(0,0,baseW,baseH);
-  preCtx.save();
-  preCtx.strokeStyle = '#3498db'; preCtx.lineWidth = 3/Z; preCtx.setLineDash([8/Z,4/Z]);
-  preCtx.beginPath(); preCtx.moveTo(ln.p1.x, ln.p1.y); preCtx.lineTo(ln.p2.x, ln.p2.y); preCtx.stroke();
-  preCtx.restore();
-  const newLenMm = Math.hypot(ln.p2.x-ln.p1.x, ln.p2.y-ln.p1.y) * mmPerPixel;
-  let newAng = Math.atan2(-(ln.p2.y-ln.p1.y), ln.p2.x-ln.p1.x) * 180/Math.PI; if (newAng<0) newAng+=360;
-  document.getElementById('extLineCur').textContent = `현재 길이 ${newLenMm.toFixed(2)}mm · 각도 ${newAng.toFixed(1)}°`;
-  document.getElementById('extEach').value = '';
-  document.getElementById('extPreviewTxt').textContent = '✓ ' + msg;
-  document.getElementById('statusHint').textContent = '✓ 양방향 연장: ' + msg;
 }
 
 // Rev.12.6: 거리두기 좌/우 미리보기 (점선)
@@ -7492,7 +7374,37 @@ function applyCircleRD(changed) {
 }
 
 // 패널 적용 버튼/이벤트
+// Rev.14.2: 선 속성 패널 - 양방향 연장 (같은 각도로 중심 고정 양쪽 균등)
+function applyLineExtend(){
+  if (!editingShapeId) return;
+  const s = shapes.find(x => x.id === editingShapeId);
+  if (!s || s.type !== 'line') return;
+  const v = parseFloat(document.getElementById('lineExtEach').value);
+  if (!isFinite(v)){ document.getElementById('statusHint').textContent = '⚠ 한쪽당 늘릴 길이(mm)를 입력하세요'; return; }
+  const dx = s.p2.x - s.p1.x, dy = s.p2.y - s.p1.y;
+  const lenPx = Math.hypot(dx, dy);
+  if (lenPx < 1e-6){ document.getElementById('statusHint').textContent = '⚠ 길이가 0인 선'; return; }
+  const ux = dx/lenPx, uy = dy/lenPx;
+  const cx = (s.p1.x + s.p2.x)/2, cy = (s.p1.y + s.p2.y)/2;
+  const halfPx = lenPx/2 + (v / mmPerPixel);
+  if (halfPx <= 0){ document.getElementById('statusHint').textContent = '⚠ 축소량이 너무 커서 선이 사라집니다'; return; }
+  s.p1 = { x: cx - ux*halfPx, y: cy - uy*halfPx };
+  s.p2 = { x: cx + ux*halfPx, y: cy + uy*halfPx };
+  redoStack = []; pushHistory();
+  if (typeof redrawFills === 'function') redrawFills();
+  redrawDraw(); updateCount();
+  updateShapePropPanel();  // 길이/좌표 갱신
+  document.getElementById('lineExtEach').value = '';
+  const totalMm = halfPx*2*mmPerPixel;
+  document.getElementById('statusHint').textContent =
+    `✓ 양방향 연장: 한쪽당 ${v>=0?'+':''}${v}mm → 총 길이 ${totalMm.toFixed(2)}mm`;
+}
+
 document.getElementById('btnPropApply').addEventListener('click', applyShapePropToShape);
+document.getElementById('btnLineExtApply').addEventListener('click', applyLineExtend);
+document.getElementById('lineExtEach').addEventListener('keydown', e => {
+  if (e.key === 'Enter'){ e.preventDefault(); applyLineExtend(); }
+});
 document.getElementById('btnPropClose').addEventListener('click', () => {
   document.getElementById('shapePropPanel').style.display = 'none';
   editingShapeId = null;
@@ -8972,26 +8884,6 @@ document.getElementById('baseSealOn').addEventListener('change', e => {
       document.getElementById('statusHint').textContent = '📋 베이스선 복제 종료'; }
     e.stopPropagation();
   });
-});
-
-// Rev.14.0: 양방향 연장 버튼/팝업 바인딩
-document.getElementById('headerBtnExtLine').addEventListener('click', () => {
-  if (extLineMode) cancelExtLineMode();
-  else startExtLineMode();
-});
-document.getElementById('btnExtLineClose').addEventListener('click', () => {
-  closeExtLinePop();
-  extLineTarget = null;
-  preCtx.clearRect(0,0,baseW,baseH);
-  if (extLineMode) document.getElementById('statusHint').textContent =
-    '⟷ 양방향 연장: 다음 직선을 클릭하세요 (Esc=종료)';
-});
-document.getElementById('btnExtEachGo').addEventListener('click', () => extLineApply());
-document.getElementById('extEach').addEventListener('keydown', e => {
-  if (e.key === 'Enter'){ e.preventDefault(); extLineApply(); }
-  else if (e.key === 'Escape'){ e.preventDefault(); cancelExtLineMode();
-    document.getElementById('statusHint').textContent = '⟷ 양방향 연장 종료'; }
-  e.stopPropagation();
 });
 
 // Rev.11.66: 선택된 점들을 선택 순서대로 즉시 연결 (점 2개 이상 선택 후 F)
