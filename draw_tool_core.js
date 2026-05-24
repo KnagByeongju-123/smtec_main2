@@ -7376,11 +7376,17 @@ function applyCircleRD(changed) {
 // 패널 적용 버튼/이벤트
 // Rev.14.2: 선 속성 패널 - 양방향 연장 (같은 각도로 중심 고정 양쪽 균등)
 function applyLineExtend(){
-  if (!editingShapeId) return;
-  const s = shapes.find(x => x.id === editingShapeId);
-  if (!s || s.type !== 'line') return;
-  const v = parseFloat(document.getElementById('lineExtEach').value);
-  if (!isFinite(v)){ document.getElementById('statusHint').textContent = '⚠ 한쪽당 늘릴 길이(mm)를 입력하세요'; return; }
+  // editingShapeId가 비어도 단일 선택된 선이 있으면 그것을 사용
+  let sid = editingShapeId;
+  if (sid == null && selectedIds.size === 1) sid = Array.from(selectedIds)[0];
+  if (sid == null){ document.getElementById('statusHint').textContent = '⚠ 먼저 연장할 선을 클릭해 선택하세요'; return; }
+  const s = shapes.find(x => x.id === sid);
+  if (!s){ document.getElementById('statusHint').textContent = '⚠ 선택된 도형을 찾을 수 없습니다'; return; }
+  if (s.type !== 'line'){ document.getElementById('statusHint').textContent = '⚠ 직선(line)만 양방향 연장이 가능합니다'; return; }
+  editingShapeId = sid;
+  const raw = document.getElementById('lineExtEach').value;
+  const v = parseFloat(raw);
+  if (raw === '' || !isFinite(v)){ document.getElementById('statusHint').textContent = '⚠ 한쪽당 늘릴 길이(mm)를 입력하세요'; return; }
   const dx = s.p2.x - s.p1.x, dy = s.p2.y - s.p1.y;
   const lenPx = Math.hypot(dx, dy);
   if (lenPx < 1e-6){ document.getElementById('statusHint').textContent = '⚠ 길이가 0인 선'; return; }
@@ -7401,6 +7407,7 @@ function applyLineExtend(){
 }
 
 document.getElementById('btnPropApply').addEventListener('click', applyShapePropToShape);
+window.applyLineExtend = applyLineExtend;  // 인라인 onclick 백업
 document.getElementById('btnLineExtApply').addEventListener('click', applyLineExtend);
 document.getElementById('lineExtEach').addEventListener('keydown', e => {
   if (e.key === 'Enter'){ e.preventDefault(); applyLineExtend(); }
