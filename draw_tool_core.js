@@ -1624,6 +1624,7 @@ drawCanvas.addEventListener('mousedown', e => {
       selectedIds.add(hit.id);
       updateSelStat(); redrawDraw();
     }
+    updateShapePropPanel();  // Rev.14.5: 클릭 즉시 속성 패널 갱신 (editingShapeId 설정)
     const offsets = [];
     selectedIds.forEach(id => {
       const s = shapes.find(x => x.id === id);
@@ -1642,7 +1643,7 @@ drawCanvas.addEventListener('mousedown', e => {
         return;
       }
     }
-    if (!e.shiftKey) { selectedIds.clear(); updateSelStat(); redrawDraw(); }
+    if (!e.shiftKey) { selectedIds.clear(); updateSelStat(); redrawDraw(); updateShapePropPanel(); }
     dragState = { type: 'box', boxStart: p };
   }
 });
@@ -1677,6 +1678,7 @@ drawCanvas.addEventListener('mouseup', e => {
       const p = getCanvasPoint(e);
       boxSelect(dragState.boxStart, p, e.shiftKey);
       preCtx.clearRect(0,0,baseW,baseH);
+      updateShapePropPanel();  // Rev.14.5
       suppressNextClick = true; // click 이벤트 차단
     }
     // active=false였다면 도구의 일반 클릭으로 처리되도록 그냥 종료
@@ -1688,6 +1690,7 @@ drawCanvas.addEventListener('mouseup', e => {
   if (dragState && dragState.type === 'box') {
     boxSelect(dragState.boxStart, p, e.shiftKey);
     preCtx.clearRect(0,0,baseW,baseH);
+    updateShapePropPanel();  // Rev.14.5: 박스 선택 후에도 단일 선택이면 패널 표시
   } else if (dragState && dragState.type === 'move') {
     preCtx.clearRect(0,0,baseW,baseH);  // 스냅 표시 제거
     updateToolStatus();
