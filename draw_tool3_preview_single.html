@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>tool3 v7.0.2 (통합본) - 선택 STL · STL/OBJ 가져오기</title>
+<title>tool3 v7.1.4 (통합본) - 정확 지름표시</title>
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
@@ -190,8 +190,8 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
 <body>
 
 <header>
-  <h1>📐 tool3 v7.0.2</h1>
-  <span class="ver">v7.0.2 - 선택 부품만 STL · STL/OBJ 가져오기 · draw_tool가져오기 삭제</span>
+  <h1>📐 tool3 v7.1.4</h1>
+  <span class="ver">v7.1.4 - 원형 정확 지름(⌀30) · 측정도 BB기반 보정</span>
   <span class="mode-badge" id="modeBadge">스케처 모드</span>
   <span class="stat" id="statText">준비됨</span>
 </header>
@@ -352,6 +352,9 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
     <button id="btnEditMode" onclick="toggleEditMode()" class="warn" title="편집 모드 (Tab): 점/선/면 선택해서 이동 — 단일 메시 부품 선택 후 사용">✏️ 편집(Tab)</button>
     <button id="btnEdgeOutline" onclick="toggleEdgeOutline()" class="success" title="입체도형 외곽 모서리 선 표시 켜기/끄기">🔲 외곽선 ON</button>
     <button id="btnVertexSnap" onclick="toggleVertexSnap()" class="success" title="버텍스 스냅: 이동 시 다른 도형의 모서리/코너에 달라붙음">🧲 버텍스스냅 ON</button>
+    <button id="btnMeasure" onclick="toggleMeasureMode()" title="치수 측정: 두 점을 클릭해 거리 측정 (정점에 스냅, 화면에 치수 표시)">📏 치수 측정</button>
+    <button id="btnMeasureDia" onclick="setMeasureSubMode('dia')" style="display:none" title="지름 측정: 원통/구/회전체의 둥근 면을 클릭하면 지름(⌀) 표시">⌀ 지름</button>
+    <button onclick="clearMeasurements()" title="화면의 모든 치수선 지우기">🧹 치수 지움</button>
     <label style="font-size:11px;color:#ccc;margin-left:6px" title="이동 핸들/드래그 시 지정 단위로 끊어서 이동">📏 이동단위
       <select id="moveSnapSel" onchange="onMoveSnapChange()" style="font-size:11px;padding:2px 4px">
         <option value="0">없음</option>
@@ -985,6 +988,7 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
   <div class="modal">
     <h3>⌨️ 이동 · 크기 · 회전 입력</h3>
     <div class="info-box">선택된 부품: <b id="posSizePartName">-</b></div>
+    <div id="posSizeSummary" style="font-size:12px;color:#ffc;margin:-2px 0 6px;font-weight:bold"></div>
     <fieldset style="border:1px solid #444; padding:8px; margin:6px 0;">
       <legend style="color:#4a6fa5; font-size:11px;">위치 (Position, mm)</legend>
       <div class="modal-row"><label>X</label><input type="number" id="psPosX" value="0" step="1"></div>
@@ -1310,6 +1314,8 @@ const state = {
   showEdges: true,  // v6.6: 입체도형 외곽 모서리 선 표시
   showDimLabels: false, // v6.7: 치수 태그(H/D/W) 표시 여부 (기본 끔)
   vertexSnap: true, // v6.7: 버텍스 스냅(이동 시 코너 일치하면 달라붙음)
+  measureMode: false, // v7.1: 치수 측정 모드
+  measureFirst: null, // 측정 첫 점(월드 Vector3)
   pixelsPerMm: 4,
   panX: 0,
   panY: 0,
@@ -1782,7 +1788,7 @@ function serializePart(p){
     };
   }
 
-  // v7.0.2: 가져온 메시는 geometry 정점 배열을 직접 저장
+  // v7.1.4: 가져온 메시는 geometry 정점 배열을 직접 저장
   if(p.type === 'imported_mesh' && p.mesh && p.mesh.geometry){
     const pos = p.mesh.geometry.attributes.position;
     const arr = Array.from(pos.array);
@@ -1834,7 +1840,7 @@ function deserializePart(pdata){
     part._isHole = true;
     applyHoleMaterial(part);
   }
-  // v7.0.2: 재질 복원 (구멍이 아닐 때만 — 구멍은 빨간 반투명 유지)
+  // v7.1.4: 재질 복원 (구멍이 아닐 때만 — 구멍은 빨간 반투명 유지)
   if(part && pdata.material && !pdata._isHole){
     part.material = pdata.material;
     const preset = MATERIAL_PRESETS[pdata.material];
@@ -2074,7 +2080,7 @@ function initThree(){
   dirLight2.position.set(-100, -100, -150);
   scene.add(dirLight2);
 
-  // v7.0.2: 금속/크롬 반사용 절차적 환경맵 (위=밝음, 아래=어두움 그라데이션)
+  // v7.1.4: 금속/크롬 반사용 절차적 환경맵 (위=밝음, 아래=어두움 그라데이션)
   try {
     const cnv = document.createElement('canvas');
     cnv.width = 64; cnv.height = 256;
@@ -2308,6 +2314,12 @@ const boxSelState = {
 function setupRaycastClick(dom){
   dom.addEventListener('pointerdown', (e) => {
     if(e.button !== 0) return;
+    // v7.1: 치수 측정 모드 — 클릭으로 점 찍기 (orbit/선택보다 우선)
+    if(state.measureMode){
+      handleMeasureClick(e);
+      e.stopPropagation();
+      return;
+    }
     // v2.6: 워크플레인 픽 모드 - 다음 클릭은 면 지정 또는 해제
     if(state.workPlanePickMode){
       const hit = pickFaceForWorkPlane(e);
@@ -3378,7 +3390,7 @@ function removePartFromScene(part){
   }
 }
 
-// v7.0.2: 재질 프리셋 (roughness/metalness/투명도/측면)
+// v7.1.4: 재질 프리셋 (roughness/metalness/투명도/측면)
 const MATERIAL_PRESETS = {
   plastic_matte:  {roughness:0.85, metalness:0.0,  clear:0},
   plastic_glossy: {roughness:0.25, metalness:0.0,  clear:0.3},
@@ -4016,7 +4028,7 @@ function doSvgRevolve(){
   let main = _svgRevData[0];
   _svgRevData.forEach(poly => { if(poly.length > main.length) main = poly; });
 
-  // v7.0.2: SWEEP — 단면의 한쪽 끝을 회전축에 "묶어" 경로 따라 회전
+  // v7.1.4: SWEEP — 단면의 한쪽 끝을 회전축에 "묶어" 경로 따라 회전
   //   기준 A: 왼쪽 끝(minX)을 축에 붙임 → 단면이 오른쪽으로 펼쳐짐
   //   기준 B: 오른쪽 끝(maxX)을 축에 붙임 → 단면을 좌우반전, 반대 방향으로 펼쳐짐
   //   • p.x → 반경방향(축에서 거리, 0 이상), p.y → 높이방향 (Y 뒤집기)
@@ -4052,7 +4064,7 @@ function doSvgRevolve(){
 
   const angleRad = angleDeg * Math.PI / 180;
   const startRad = startAngleDeg * Math.PI / 180;
-  // v7.0.2: 묶는 끝(단면 x의 최솟값)이 경로 반지름 innerR에 정확히 닿도록.
+  // v7.1.4: 묶는 끝(단면 x의 최솟값)이 경로 반지름 innerR에 정확히 닿도록.
   //   innerR=0이면 묶는 끝이 중심축(반지름 0)에 붙어 가운데 구멍이 없음.
   let minPx = Infinity;
   profile.forEach(p=>{ if(p.x < minPx) minPx = p.x; });
@@ -4067,7 +4079,7 @@ function doSvgRevolve(){
     mesh: mesh, _isHole: (mode === 'hole'),
     params: {
       mode, sketchHeight, innerD, seg, startAngleDeg, angleDeg, pathR, dir,
-      sweep: true, // v7.0.2: sweep 방식 표시 (복원 구분)
+      sweep: true, // v7.1.4: sweep 방식 표시 (복원 구분)
       profile: profile.map(v => ({x: v.x, y: v.y}))
     }
   };
@@ -4131,7 +4143,7 @@ function revolveProfileSweep(profile, segments, startAngle, totalAngle, closeEnd
   return geom;
 }
 
-// v7.0.2: SWEEP 방식 — SVG 닫힌 단면을 원형 경로(고리)를 따라 이동시켜 도넛/튜브 생성
+// v7.1.4: SWEEP 방식 — SVG 닫힌 단면을 원형 경로(고리)를 따라 이동시켜 도넛/튜브 생성
 //   단면 좌표(cx,cy)는 단면 로컬평면, 경로 반지름 R, 각도만큼 sweep.
 //   각 링의 단면은 경로 접선에 수직(반경방향+높이방향)으로 배치.
 //   profile: [{x,y}] 단면 폴리곤(로컬 mm, 단면 중심이 원점 근처), R: 경로 반지름
@@ -4214,13 +4226,13 @@ function rebuildSvgRevolve(pdata){
   const startRad = (p.startAngleDeg || 0) * Math.PI / 180;
   let geom;
   if(p.sweep){
-    // v7.0.2: sweep(도넛/파이프) 방식 복원
+    // v7.1.4: sweep(도넛/파이프) 방식 복원
     let pathR = p.pathR;
     if(pathR === undefined){
       let minPx = Infinity; profile.forEach(o=>{ if(o.x<minPx) minPx=o.x; });
-      pathR = (p.innerD ? p.innerD/2 : 0) - minPx; // v7.0.2: innerR - minPx
+      pathR = (p.innerD ? p.innerD/2 : 0) - minPx; // v7.1.4: innerR - minPx
     }
-    const signed = angleRad; // v7.0.2: 방향은 profile 좌우반전으로 이미 반영됨
+    const signed = angleRad; // v7.1.4: 방향은 profile 좌우반전으로 이미 반영됨
     geom = sweepProfileTorus(profile.map(o=>({x:o.x,y:o.y})), p.seg || 24, startRad, signed, pathR, angleDeg < 359.5);
   } else {
     // 구버전 lathe 방식 복원
@@ -4232,7 +4244,7 @@ function rebuildSvgRevolve(pdata){
   return {...pdata, mesh};
 }
 
-// v7.0.2: 가져온 메시 복원 (저장된 정점 배열로 geometry 재생성)
+// v7.1.4: 가져온 메시 복원 (저장된 정점 배열로 geometry 재생성)
 function rebuildImportedMesh(pdata){
   const p = pdata.params || {};
   if(!p.positions || p.positions.length === 0) return null;
@@ -4256,10 +4268,16 @@ function addPrimitive(kind){
   const mat = makeMaterial(defaultColor, 1);
   const mesh = new THREE.Mesh(geom, mat);
   const names = {box:'박스', cylinder:'원통', sphere:'구'};
+  // v7.1.4: 정의 치수 저장 (지름 표시에 활용, scale 곱해 실제값 계산)
+  const dimDefs = {
+    box:      {kind:'box', dia:null, baseDia:30, baseH:30},
+    cylinder: {kind:'cylinder', baseDia:30, baseH:30},
+    sphere:   {kind:'sphere', baseDia:30}
+  };
   const part = {
     id: state.partIdCounter++, name: names[kind] + '_' + state.partIdCounter,
     type: 'primitive_' + kind, color: defaultColor, opacity: 1, visible: true,
-    mesh: mesh, params: {palette: kind}
+    mesh: mesh, params: {palette: kind, dim: dimDefs[kind]}
   };
   state.parts.push(part);
   addPartToScene(part);
@@ -5256,6 +5274,35 @@ function openPosSizeModal(){
   document.getElementById('psSizeX').value = sz.x.toFixed(1);
   document.getElementById('psSizeY').value = sz.y.toFixed(1);
   document.getElementById('psSizeZ').value = sz.z.toFixed(1);
+  // v7.1.4: 타입별 치수 요약 (구→⌀, 원통→⌀×높이)
+  const summary = document.getElementById('posSizeSummary');
+  if(summary){
+    const t = target.type || '';
+    const dim = target.params && target.params.dim;
+    const sc = target.mesh.scale;
+    let txt = '';
+    if(dim && dim.kind === 'sphere'){
+      // 정의 지름 × 평균 scale (균등 스케일 가정), 보정은 BB로 교차검증
+      const d = dim.baseDia * ((sc.x+sc.y+sc.z)/3);
+      txt = '⌀ ' + d.toFixed(1) + ' mm (구)';
+    } else if(dim && dim.kind === 'cylinder'){
+      const d = dim.baseDia * ((sc.x+sc.z)/2);
+      const h = dim.baseH * sc.y;
+      txt = '⌀ ' + d.toFixed(1) + ' × 높이 ' + h.toFixed(1) + ' mm';
+    } else {
+      const mxA = Math.max(sz.x, sz.y, sz.z), mnA = Math.min(sz.x, sz.y, sz.z);
+      if(t === 'primitive_sphere' || (mxA>1e-6 && (mxA-mnA)/mxA < 0.08 && isSphereSurface(target.mesh, bb.getCenter(new THREE.Vector3())))){
+        txt = '⌀ ' + sz.x.toFixed(1) + ' mm (구)';
+      } else if(t === 'primitive_cylinder'){
+        txt = '⌀ ' + Math.max(sz.x, sz.z).toFixed(1) + ' × 높이 ' + sz.y.toFixed(1) + ' mm';
+      } else if(t === 'svgrevolve' || t === 'revolve'){
+        txt = '⌀ ' + Math.max(sz.x, sz.z).toFixed(1) + ' × 높이 ' + sz.y.toFixed(1) + ' mm (회전체)';
+      } else {
+        txt = sz.x.toFixed(1) + ' × ' + sz.y.toFixed(1) + ' × ' + sz.z.toFixed(1) + ' mm (W×H×D)';
+      }
+    }
+    summary.textContent = '📐 ' + txt;
+  }
   document.getElementById('psRotX').value = (target.mesh.rotation.x * 180/Math.PI).toFixed(1);
   document.getElementById('psRotY').value = (target.mesh.rotation.y * 180/Math.PI).toFixed(1);
   document.getElementById('psRotZ').value = (target.mesh.rotation.z * 180/Math.PI).toFixed(1);
@@ -5515,13 +5562,277 @@ function meshCornersWorld(mesh){
   ];
 }
 
-// v7.0.2: 3D 월드좌표 → 화면 픽셀 (스케치용 worldToScreen과 별개)
+// v7.1.4: 3D 월드좌표 → 화면 픽셀 (스케치용 worldToScreen과 별개)
 function worldToScreen3D(v){
   if(!renderer || !camera) return {x:0, y:0, z:2};
   const rect = renderer.domElement.getBoundingClientRect();
   const p = v.clone().project(camera);
   return {x: rect.left + (p.x+1)*0.5*rect.width, y: rect.top + (-p.y+1)*0.5*rect.height, z: p.z};
 }
+
+// ===== v7.1: 치수 측정 도구 =====
+const measureState = { lines: [], group: null, mode: 'dist' }; // mode: 'dist'(점-점) | 'dia'(지름)
+
+function toggleMeasureMode(){
+  state.measureMode = !state.measureMode;
+  state.measureFirst = null;
+  const btn = document.getElementById('btnMeasure');
+  if(btn){
+    btn.textContent = state.measureMode ? '📏 측정 ON' : '📏 치수 측정';
+    btn.className = state.measureMode ? 'success' : '';
+  }
+  const dBtn = document.getElementById('btnMeasureDia');
+  if(dBtn) dBtn.style.display = state.measureMode ? '' : 'none';
+  if(state.measureMode){
+    hideTransformHandles();
+    state.parts.forEach(p=>p._selected=false);
+    renderPartsList();
+    const tip = measureState.mode==='dia' ? '⌀ 지름 측정 — 원형 면을 클릭하세요' : '두 점을 클릭(정점에 스냅). ESC로 종료';
+    toast('📏 측정 모드 — ' + tip);
+    setStat('📏 측정 [' + (measureState.mode==='dia'?'지름':'거리') + '] — ' + tip);
+  } else {
+    toast('측정 모드 종료');
+  }
+}
+
+// 거리/지름 서브모드 전환 (⌀ 버튼 토글)
+function setMeasureSubMode(m){
+  // 이미 그 모드면 거리로 되돌림 (토글)
+  if(state.measureMode && measureState.mode === m && m === 'dia') m = 'dist';
+  measureState.mode = m;
+  state.measureFirst = null;
+  if(!state.measureMode) toggleMeasureMode();
+  const dBtn = document.getElementById('btnMeasureDia');
+  if(dBtn){ dBtn.className = (measureState.mode==='dia') ? 'success' : ''; }
+  if(measureState.mode==='dia'){
+    setStat('⌀ 지름 측정 — 원통/구/회전체의 둥근 면을 클릭하면 지름 표시');
+    toast('⌀ 지름 측정 모드');
+  } else {
+    setStat('📏 거리 측정 — 두 점을 클릭');
+    toast('📏 거리 측정 모드');
+  }
+}
+
+// 측정 점 픽킹: 정점(코너) 스냅 우선, 없으면 표면 레이캐스트 점
+function pickMeasurePoint(e){
+  const rect = renderer.domElement.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  // 1) 모든 부품 코너 중 화면상 12px 이내 가장 가까운 점
+  let best=null, bestD=14*14;
+  state.parts.forEach(p=>{
+    if(!p.mesh || p.visible===false) return;
+    meshCornersWorld(p.mesh).forEach(c=>{
+      const s = worldToScreen3D(c);
+      if(s.z>1) return;
+      const d=(s.x-rect.left-mx)*(s.x-rect.left-mx)+(s.y-rect.top-my)*(s.y-rect.top-my);
+      if(d<bestD){ bestD=d; best=c.clone(); }
+    });
+  });
+  if(best) return best;
+  // 2) 표면 레이캐스트
+  mouseVec.x=((e.clientX-rect.left)/rect.width)*2-1;
+  mouseVec.y=-((e.clientY-rect.top)/rect.height)*2+1;
+  raycaster.setFromCamera(mouseVec, camera);
+  const meshes=[];
+  state.parts.forEach(p=>{ if(p.mesh && p.visible!==false) p.mesh.traverse(o=>{ if(o.isMesh && !o.userData._isEdgeOutline) meshes.push(o); }); });
+  const hits = raycaster.intersectObjects(meshes, false);
+  if(hits.length) return hits[0].point.clone();
+  return null;
+}
+
+function handleMeasureClick(e){
+  // v7.1: 지름 측정 모드 — 클릭한 부품의 둥근 단면 지름 계산
+  if(measureState.mode === 'dia'){
+    const hit = pickMeasureSurface(e);
+    if(!hit){ toast('원형 면을 클릭하세요'); return; }
+    const dia = computeDiameterAt(hit.part, hit.point);
+    if(!dia){ toast('지름을 계산할 수 없습니다'); return; }
+    measureState.lines.push({a:dia.p1, b:dia.p2, dist:dia.dia, isDia:true});
+    rebuildMeasureLines();
+    setStat('⌀ 지름: ' + dia.dia.toFixed(2) + ' mm — 계속 측정하거나 ESC로 종료');
+    toast('⌀ ' + dia.dia.toFixed(2) + ' mm');
+    return;
+  }
+  const pt = pickMeasurePoint(e);
+  if(!pt){ toast('점을 찾지 못했습니다 (부품 표면이나 모서리를 클릭)'); return; }
+  if(!state.measureFirst){
+    state.measureFirst = pt;
+    setStat('📏 첫 점 지정 — 두 번째 점을 클릭하세요');
+    toast('첫 점 지정');
+  } else {
+    const a = state.measureFirst, b = pt;
+    const dist = a.distanceTo(b);
+    measureState.lines.push({a:a.clone(), b:b.clone(), dist});
+    state.measureFirst = null;
+    rebuildMeasureLines();
+    setStat('📏 거리: ' + dist.toFixed(2) + ' mm — 계속 측정하거나 ESC로 종료');
+    toast('📏 ' + dist.toFixed(2) + ' mm');
+  }
+}
+
+// 표면 레이캐스트 → {part, point, mesh}
+function pickMeasureSurface(e){
+  const rect = renderer.domElement.getBoundingClientRect();
+  mouseVec.x=((e.clientX-rect.left)/rect.width)*2-1;
+  mouseVec.y=-((e.clientY-rect.top)/rect.height)*2+1;
+  raycaster.setFromCamera(mouseVec, camera);
+  const meshList=[]; const meshToPart=new Map();
+  state.parts.forEach(p=>{
+    if(p.mesh && p.visible!==false) p.mesh.traverse(o=>{ if(o.isMesh && !o.userData._isEdgeOutline){ meshList.push(o); meshToPart.set(o, p); } });
+  });
+  const hits = raycaster.intersectObjects(meshList, false);
+  if(!hits.length) return null;
+  return {part: meshToPart.get(hits[0].object) || null, point: hits[0].point.clone(), mesh: hits[0].object};
+}
+
+// v7.1.4: 메시 정점들이 중심에서 등거리(구면)인지 검사
+function isSphereSurface(mesh, center){
+  let geom = null;
+  mesh.traverse(o=>{ if(o.isMesh && !o.userData._isEdgeOutline && !geom) geom = o.geometry; });
+  if(!geom || !geom.attributes || !geom.attributes.position) return false;
+  const pos = geom.attributes.position;
+  // 박스류(코너만 등거리)는 정점이 적음 → 구는 정점이 많아야 함
+  if(pos.count < 50) return false;
+  mesh.updateMatrixWorld(true);
+  const mat = mesh.matrixWorld;
+  const n = Math.min(pos.count, 200); // 샘플 200개
+  const step = Math.max(1, Math.floor(pos.count / n));
+  let sum=0, sum2=0, cnt=0;
+  const v = new THREE.Vector3();
+  for(let i=0;i<pos.count;i+=step){
+    v.fromBufferAttribute(pos, i).applyMatrix4(mat);
+    const r = v.distanceTo(center);
+    sum += r; sum2 += r*r; cnt++;
+  }
+  if(cnt < 20) return false;
+  const mean = sum/cnt;
+  const variance = sum2/cnt - mean*mean;
+  const cv = Math.sqrt(Math.max(0,variance)) / mean; // 변동계수
+  return cv < 0.03; // 반지름 편차 3% 미만이면 구면
+}
+
+// 클릭점이 속한 부품의 지름 계산
+//   구: 중심-표면 거리(어디든 일정) / 원통·회전체: 축까지 수평거리 × 2
+function computeDiameterAt(part, point){
+  if(!part || !part.mesh) return null;
+  part.mesh.updateMatrixWorld(true);
+  const bb = new THREE.Box3().setFromObject(part.mesh);
+  const center = bb.getCenter(new THREE.Vector3());
+  const size = bb.getSize(new THREE.Vector3());
+
+  // v7.1.4: 구 판별 — 타입이 구이거나, 정점들이 중심에서 등거리(구면)면 구로 처리
+  //   (구는 어느 표면을 클릭해도 지름이 일정해야 함)
+  const mx = Math.max(size.x, size.y, size.z), mn = Math.min(size.x, size.y, size.z);
+  let isSphere = (part.type === 'primitive_sphere');
+  if(!isSphere && mx > 1e-6 && (mx - mn) / mx < 0.08){
+    // BB가 정육면체에 가까움 → 정점들이 중심 등거리인지 확인 (구면 검증)
+    isSphere = isSphereSurface(part.mesh, center);
+  }
+  if(isSphere){
+    // v7.1.4: 구 지름 = BB 최대 치수 (표면 레이캐스트 점은 메시 근사라 부정확 → BB가 정확)
+    const dia = Math.max(size.x, size.y, size.z);
+    if(dia < 1e-3) return null;
+    // 지름선: 클릭점 방향으로 중심 통과하는 선 (시각용)
+    const dir = point.clone().sub(center);
+    if(dir.lengthSq() < 1e-6) dir.set(1,0,0);
+    dir.normalize().multiplyScalar(dia/2);
+    const p1 = center.clone().add(dir);
+    const p2 = center.clone().sub(dir);
+    return {dia, p1, p2, axis: 'sphere'};
+  }
+
+  // 회전축을 부품의 가장 긴 축으로 추정 (보통 Y=세로)
+  // 클릭점에서 "축"까지 수평거리. 축은 center를 지나는 세로(Y)선으로 가정.
+  // 점을 XZ평면(축에 수직)으로 투영해 중심까지 거리 = 반지름
+  const dx = point.x - center.x, dz = point.z - center.z;
+  let r = Math.hypot(dx, dz);
+  let axis = 'y';
+  // 만약 XZ 반지름이 너무 작으면(축이 Y가 아닐 수 있음) X축/Z축 기준도 시도
+  const rX = Math.hypot(point.y - center.y, point.z - center.z); // X축 둘레
+  const rZ = Math.hypot(point.x - center.x, point.y - center.y); // Z축 둘레
+  // 셋 중, 그 축 방향 크기가 가장 크고 단면이 원형(나머지 두 치수가 비슷)인 축 선택
+  const cand = [
+    {axis:'y', r:r,  along:size.y, d1:size.x, d2:size.z},
+    {axis:'x', r:rX, along:size.x, d1:size.y, d2:size.z},
+    {axis:'z', r:rZ, along:size.z, d1:size.x, d2:size.y}
+  ];
+  // 단면이 원형에 가까운(d1≈d2) 축 우선
+  cand.sort((p,q)=> Math.abs(p.d1-p.d2) - Math.abs(q.d1-q.d2));
+  const chosen = cand[0];
+  r = chosen.r; axis = chosen.axis;
+  if(r < 1e-3) return null;
+  // v7.1.4: 지름 = BB 단면 치수(축에 수직인 두 축의 큰 값) — 메시 근사 오차 제거해 정확
+  const dia = Math.max(chosen.d1, chosen.d2);
+  // 지름선 양 끝점 (클릭점 평면에서 축을 가로지름, 시각용)
+  let p1, p2;
+  if(axis==='y'){
+    const ang = Math.atan2(dz, dx); const rr = dia/2;
+    p1 = new THREE.Vector3(center.x+Math.cos(ang)*rr, point.y, center.z+Math.sin(ang)*rr);
+    p2 = new THREE.Vector3(center.x-Math.cos(ang)*rr, point.y, center.z-Math.sin(ang)*rr);
+  } else if(axis==='x'){
+    const dy=point.y-center.y, dz2=point.z-center.z; const ang=Math.atan2(dz2,dy); const rr=dia/2;
+    p1 = new THREE.Vector3(point.x, center.y+Math.cos(ang)*rr, center.z+Math.sin(ang)*rr);
+    p2 = new THREE.Vector3(point.x, center.y-Math.cos(ang)*rr, center.z-Math.sin(ang)*rr);
+  } else {
+    const dx2=point.x-center.x, dy=point.y-center.y; const ang=Math.atan2(dy,dx2); const rr=dia/2;
+    p1 = new THREE.Vector3(center.x+Math.cos(ang)*rr, center.y+Math.sin(ang)*rr, point.z);
+    p2 = new THREE.Vector3(center.x-Math.cos(ang)*rr, center.y-Math.sin(ang)*rr, point.z);
+  }
+  return {dia, p1, p2, axis};
+}
+
+// 치수선(선 + 화살표 + 라벨) 3D 표시
+function rebuildMeasureLines(){
+  if(measureState.group){ scene.remove(measureState.group); measureState.group.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material)o.material.dispose(); }); }
+  const grp = new THREE.Group();
+  measureState.lines.forEach((m, idx)=>{
+    // 치수선 (노란 선)
+    const g = new THREE.BufferGeometry().setFromPoints([m.a, m.b]);
+    const line = new THREE.Line(g, new THREE.LineBasicMaterial({color:0xffcc00, depthTest:false}));
+    line.renderOrder = 3000;
+    grp.add(line);
+    // 양 끝 점 마커
+    [m.a, m.b].forEach(pt=>{
+      const dot = new THREE.Mesh(new THREE.SphereGeometry(1.2,8,6), new THREE.MeshBasicMaterial({color:0xffcc00, depthTest:false}));
+      dot.position.copy(pt); dot.renderOrder=3001; grp.add(dot);
+    });
+    // 라벨 (스프라이트 텍스트)
+    const mid = m.a.clone().add(m.b).multiplyScalar(0.5);
+    const labelTxt = (m.isDia ? '⌀ ' : '') + m.dist.toFixed(2) + ' mm';
+    const sprite = makeTextSprite(labelTxt);
+    if(sprite){ sprite.position.copy(mid); grp.add(sprite); }
+  });
+  scene.add(grp);
+  measureState.group = grp;
+}
+
+// 텍스트 스프라이트 생성 (치수 라벨용)
+function makeTextSprite(text){
+  const cnv = document.createElement('canvas');
+  const fs = 48; cnv.width = 256; cnv.height = 64;
+  const ctx = cnv.getContext('2d');
+  ctx.fillStyle = 'rgba(20,20,20,0.85)';
+  ctx.fillRect(0,0,256,64);
+  ctx.strokeStyle = '#ffcc00'; ctx.lineWidth = 3; ctx.strokeRect(2,2,252,60);
+  ctx.font = 'bold ' + fs + 'px sans-serif';
+  ctx.fillStyle = '#ffcc00';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(text, 128, 34);
+  const tex = new THREE.CanvasTexture(cnv);
+  const mat = new THREE.SpriteMaterial({map: tex, depthTest: false});
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.set(20, 5, 1); // mm 단위 크기
+  sprite.renderOrder = 3002;
+  return sprite;
+}
+
+function clearMeasurements(){
+  measureState.lines = [];
+  state.measureFirst = null;
+  rebuildMeasureLines();
+  toast('치수 모두 지움');
+}
+
 
 // 이동 후보 부품들(moveGroup)의 코너가 다른 부품 코너에 스냅되는 월드 offset 반환(없으면 null)
 function computeVertexSnap(moveParts, excludeSet, force){
@@ -6062,7 +6373,7 @@ function updatePartColor(){
   }
   renderPartsList();
   toast('🎨 색상 적용: ' + newColor);
-  pushHistory(); // v7.0.2: 색상 변경 되돌리기 지원
+  pushHistory(); // v7.1.4: 색상 변경 되돌리기 지원
   // v3.8: 색상 피커 강제 닫기 - input 요소를 새로 만들어 교체
   //   비동기로 실행해서 onchange 처리가 완전히 끝난 뒤 교체되도록 함
   setTimeout(() => {
@@ -6094,7 +6405,7 @@ function updatePartOpacity(){
   }
 }
 
-// v7.0.2: 재질(표면 질감) 프리셋 적용 — 색/투명도는 유지하고 roughness/metalness만 교체
+// v7.1.4: 재질(표면 질감) 프리셋 적용 — 색/투명도는 유지하고 roughness/metalness만 교체
 function updatePartMaterial(){
   const p = state.parts.find(x => x.id === state.selectedPartId);
   const sel = document.getElementById('propPartMaterial');
@@ -6558,7 +6869,7 @@ function rebuildSpring(pdata){
   return {...pdata, mesh};
 }
 
-// v7.0.2: STL 출력 정비 — 삼각형 배열을 받아 정점 병합(weld) + 중복/퇴화 삼각형 제거
+// v7.1.4: STL 출력 정비 — 삼각형 배열을 받아 정점 병합(weld) + 중복/퇴화 삼각형 제거
 //   tris: [[Vector3,Vector3,Vector3], ...] (월드 좌표)
 //   반환: {tris: 정리된 삼각형, stats: {welded, removed, boundary, nonManifold}}
 function cleanTrianglesForSTL(tris){
@@ -6590,7 +6901,7 @@ function cleanTrianglesForSTL(tris){
 
 function exportSTL(){
   if(state.parts.length === 0){toast('내보낼 부품이 없습니다'); return}
-  // v7.0.2: 선택된 부품만 내보내기 (다중 선택 우선, 없으면 단일 선택)
+  // v7.1.4: 선택된 부품만 내보내기 (다중 선택 우선, 없으면 단일 선택)
   let targets = state.parts.filter(p => p._selected);
   if(targets.length === 0 && state.selectedPartId){
     const sp = state.parts.find(p => p.id === state.selectedPartId);
@@ -6627,7 +6938,7 @@ function exportSTL(){
     });
   });
   
-  // v7.0.2: 정점 병합 + 중복/퇴화 제거 + watertight 검사
+  // v7.1.4: 정점 병합 + 중복/퇴화 제거 + watertight 검사
   const cleaned = cleanTrianglesForSTL(triangles);
   const useTris = cleaned.tris;
   const st = cleaned.stats;
@@ -7010,8 +7321,8 @@ const editMode = {
   dragStart: null,       // {x,y}
   dragStartPos: null,    // Map<idx, Vector3>
   dragPlane: null,
-  axis: null,            // v7.0.2: 'x'|'y'|'z'|null — 블렌더식 축 제한
-  numBuf: '',            // v7.0.2: 숫자 입력 버퍼
+  axis: null,            // v7.1.4: 'x'|'y'|'z'|null — 블렌더식 축 제한
+  numBuf: '',            // v7.1.4: 숫자 입력 버퍼
   _moveCenter: null,     // 선택 정점 월드 중심
   userEdges: [],         // v6.9: 사용자가 F/E로 만든 엣지 [[ai,bi],...]
   edgeLines: null,       // v6.9: userEdges 시각화 LineSegments
@@ -7509,7 +7820,7 @@ function editMoveApply(e){
 
 // v6.9: 편집 모드 정점 스냅 — 선택 정점 중 하나가 비선택 정점에 화면상 가까우면
 //   그 차이를 로컬 offset으로 반환 (없으면 null)
-// v7.0.2: 편집 모드 스냅 — 선택 정점이 (비선택)버텍스 또는 엣지에 화면상 가까우면
+// v7.1.4: 편집 모드 스냅 — 선택 정점이 (비선택)버텍스 또는 엣지에 화면상 가까우면
 //   그 위치(로컬)로 가는 offset 반환. 버텍스 우선, 없으면 엣지 수직투영점.
 function computeEditSnap(){
   const part = editMode.part;
@@ -7657,7 +7968,7 @@ function blenderApply(){
   const num = blenderOp.numBuf !== '' && blenderOp.numBuf !== '-' ? parseFloat(blenderOp.numBuf) : null;
   const cur = blenderOp._lastMouse || blenderOp.startMouse;
 
-  // v7.0.2: 블렌더 좌표(Z=높이, Y=앞뒤) → 이 도구 three.js(Y=높이, Z=앞뒤)로 변환
+  // v7.1.4: 블렌더 좌표(Z=높이, Y=앞뒤) → 이 도구 three.js(Y=높이, Z=앞뒤)로 변환
   //   블렌더 X→X, 블렌더 Y(앞뒤)→Z, 블렌더 Z(높이)→Y
   const ax3 = ax === 'y' ? 'z' : (ax === 'z' ? 'y' : ax); // 실제 적용 축
 
@@ -7805,7 +8116,7 @@ document.addEventListener('keydown', (e)=>{
   if(editMode.active){
     if(editMode.dragging){
       const k = e.key.toLowerCase();
-      // v7.0.2: 블렌더식 축 제한 (X/Y/Z) + 숫자 입력
+      // v7.1.4: 블렌더식 축 제한 (X/Y/Z) + 숫자 입력
       if(k === 'x' || k === 'y' || k === 'z'){
         editMode.axis = (editMode.axis === k) ? null : k; // 같은 축 다시 누르면 해제
         editMode.numBuf = '';
@@ -7893,6 +8204,11 @@ document.addEventListener('keydown', (e)=>{
     }
   }
   if(e.key === 'Escape'){
+    // v7.1: 측정 모드 우선 종료
+    if(state.measureMode){
+      if(state.measureFirst){ state.measureFirst = null; setStat('📏 첫 점 취소 — 다시 첫 점을 클릭'); return; }
+      toggleMeasureMode(); return;
+    }
     // v2.6: 워크플레인 픽 모드 또는 활성 워크플레인 우선 해제
     if(state.workPlanePickMode || state.workPlane){
       clearWorkPlane();
@@ -8035,7 +8351,7 @@ function init(){
   renderPartsList();
   updateInfo();
   redrawSketch();
-  setStat('tool3 v7.0.2 준비됨 · 선택부품 STL · STL/OBJ 가져오기');
+  setStat('tool3 v7.1.4 준비됨 · 원형 정확 지름표시(정의치수 기반)');
   // v2.2: 항상 3D 모드로 시작 (draw_tool import도 3D 바닥에 표시)
   switchMode('model');
   try {
@@ -8046,7 +8362,7 @@ function init(){
   // v4.6: 초기(빈) 상태를 history[0]로 시드 → 첫 도형까지 완전히 되돌리기 가능
   if(state.history.length === 0) pushHistory();
 }
-// v7.0.2: 3D 메시 파일 가져오기 (STL 바이너리/아스키, OBJ)
+// v7.1.4: 3D 메시 파일 가져오기 (STL 바이너리/아스키, OBJ)
 function importMeshFile(event){
   const file = event.target.files[0];
   if(!file) return;
