@@ -33,12 +33,6 @@ let zoom = 0.23;
 // Rev.11.24: 눈금자(그리드) 표시
 let gridOn = false;
 let gridSpacingMm = 10;   // 격자 간격 (mm)
-// Rev.13.3: 라이브 치수 모드 (작업면 클릭 후 마우스 이동 거리·각도 실시간 표시)
-let liveDimMode = false;
-let liveDimBase = null;   // 기준점 {x,y} (px 좌표). null이면 첫 클릭 대기
-// Rev.13.4: 라이브 치수 중 L키 → 직교 기준선 작도 서브모드
-let liveDimLineMode = false;  // 기준선 작도 중
-let liveDimAxisLock = null;   // 'x'(수평) | 'y'(수직) | null(자동판정)
 let bgImage = null;
 let bgImageOpacity = 1.0; // 배경 이미지 불투명도 (0~1)
 let bgImageScale = 1.0;   // Rev.11.10: 배경 이미지 자체 확대/축소 (도면 맞춤용)
@@ -98,6 +92,11 @@ let offsetTwinCandidates = [];     // (미사용: Rev.11.27부터 3개 모두 �
 //   offsetTwinTarget : 거리두기 대상으로 클릭한 선 도형
 let offsetTwinPickMode = false;    // 좌/우 선택 진행 모드
 let offsetTwinTarget = null;       // 선택된 대상 선 도형
+// Rev.13.3: 베이스선 복제 모드 - 선 클릭 후 방향별 치수 입력으로 평행선 생성
+let baseLineMode = false;          // 베이스선 복제 ON/OFF
+let baseLineTarget = null;         // 클릭된 기준 선 도형
+let baseLineOrient = null;         // 'h'(가로) | 'v'(세로) | 'o'(기타)
+let baseLineDir = null;            // 선택된 방향 'up'|'down'|'left'|'right'
 // Rev.12.7: 꼭지점커팅 - 선의 가까운 꼭지점에서 지정 치수(mm)만큼 선을 따라 이동한 지점에서 분할
 let vertexCutMode = false;         // 꼭지점커팅 모드 ON/OFF
 let vertexCutDist = 10;            // 자를 거리(mm)
@@ -1098,12 +1097,6 @@ drawCanvas.addEventListener('mousemove', e => {
   const unit = calibSet ? `${mmX}, ${mmY} mm` : `${p.x}, ${p.y} px`;
   document.getElementById('statusCoord').textContent = unit + (p.snapped ? ' 🧲' : '');
 
-  // Rev.13.3: 라이브 치수 모드 - 기준점→마우스 거리·각도 실시간 표시
-  if (liveDimMode){
-    drawLiveDimPreview(p);
-    return;
-  }
-
   // Rev.12.6: 거리두기 좌/우 미리보기 (대상 선 선택 후)
   if (offsetTwinPickMode && offsetTwinTarget){
     drawOffsetTwinPreview(p);
@@ -1439,48 +1432,8 @@ drawCanvas.addEventListener('mousedown', e => {
   // Rev.11.26: 휠 클릭(가운데 버튼)은 패닝 전용 → 작도/선택 처리 안 함
   if (e.button === 1) return;
 
-  // Rev.13.3: 라이브 치수 모드 - 좌클릭 = 기준점 설정/갱신
-  if (liveDimMode && e.button === 0){
-    const p = getCanvasPoint(e);
-    // Rev.13.4: 기준선 작도 중이면 좌클릭 = 직교 선 확정 → 정치수 입력
-    if (liveDimLineMode && liveDimBase){
-      const end = liveDimOrthoEnd(p);
-      if (Math.hypot(end.x - liveDimBase.x, end.y - liveDimBase.y) < 1){
-        document.getElementById('statusHint').textContent = '⚠ 길이가 0입니다 · 다시 위치를 잡으세요';
-        e.preventDefault(); return;
-      }
-      const newLn = {
-        id: ++shapeIdSeq, type: 'line',
-        p1: { x: liveDimBase.x, y: liveDimBase.y },
-        p2: { x: end.x, y: end.y },
-        stroke: document.getElementById('strokeColor').value,
-        strokeWidth: parseInt(document.getElementById('strokeWidth').value) || 1
-      };
-      shapes.push(newLn);
-      redoStack = []; pushHistory();
-      redrawDraw(); updateCount();
-      // 작도 서브모드 종료 (라이브치수 모드는 유지). 다음 기준점은 그린 선 끝점으로 이어가기 좋게 갱신
-      liveDimLineMode = false;
-      liveDimAxisLock = null;
-      liveDimBase = { x: end.x, y: end.y };
-      preCtx.clearRect(0,0,baseW,baseH);
-      const _id = newLn.id;
-      setTimeout(() => openLineDimModal(_id), 0); // 정치수 입력
-      document.getElementById('statusHint').textContent =
-        '📏 기준선 작도 완료 · 정치수 입력 (Enter=적용) · 끝점이 새 기준점이 됨';
-      e.preventDefault();
-      return;
-    }
-    liveDimBase = { x: p.x, y: p.y };
-    drawLiveDimPreview(p);
-    document.getElementById('statusHint').textContent =
-      '📏 기준점 설정됨 · 마우스 이동=거리/각도 · L=직교 기준선 작도 · 재클릭=기준점 갱신 · Esc=종료';
-    e.preventDefault();
-    return;
-  }
-
   // Rev.12.7: 거리두기/꼭지점커팅 픽 모드 중에는 select 드래그(박스·이동) 시작 안 함 (click 으로만 처리)
-  if ((offsetTwinPickMode || vertexCutMode) && e.button === 0) return;
+  if ((offsetTwinPickMode || vertexCutMode || baseLineMode) && e.button === 0) return;
 
   // Rev.11.39: 이동(Grab) 모드 - 좌클릭 = 확정
   if (grabMode){
@@ -1767,6 +1720,11 @@ drawCanvas.addEventListener('click', e => {
     const pOt = getCanvasPoint(e);
     if (handleOffsetTwinPickClick(pOt)) return;
   }
+  // Rev.13.3: 베이스선 복제 모드 (select 도구 상태에서 동작)
+  if (baseLineMode) {
+    const pBl = getCanvasPoint(e);
+    if (handleBaseLineClick(pBl)) return;
+  }
   // Rev.12.7: 꼭지점커팅 모드 (select 도구 상태에서 동작)
   if (vertexCutMode) {
     const pVc = getCanvasPoint(e);
@@ -1895,32 +1853,6 @@ window.addEventListener('keydown', e => {
     (document.activeElement.tagName === 'INPUT' ||
      document.activeElement.tagName === 'TEXTAREA' ||
      document.activeElement.tagName === 'SELECT');
-
-  // Rev.13.4: 라이브 치수 모드 - L=직교 기준선 작도 시작, X/Y=축 고정/해제
-  if (liveDimMode && !focusInInput && !e.ctrlKey && !e.altKey){
-    const k = e.key.toLowerCase();
-    if (k === 'l'){
-      if (!liveDimBase){
-        document.getElementById('statusHint').textContent = '⚠ 먼저 작업면을 클릭해 기준점을 찍으세요';
-      } else {
-        liveDimLineMode = true;
-        liveDimAxisLock = null;
-        document.getElementById('statusHint').textContent =
-          '📏 기준선 작도: 마우스 좌우/상하로 X·Y 자동판정 · X/Y키=축고정 · 클릭=확정 후 정치수 · Esc=취소';
-        if (lastMousePoint) drawLiveDimPreview(lastMousePoint);
-      }
-      e.preventDefault();
-      return;
-    }
-    if (liveDimLineMode && (k === 'x' || k === 'y')){
-      // 같은 축 다시 누르면 자동판정으로 해제, 아니면 해당 축 고정
-      liveDimAxisLock = (liveDimAxisLock === k) ? null : k;
-      if (lastMousePoint) drawLiveDimPreview(lastMousePoint);
-      e.preventDefault();
-      return;
-    }
-  }
-
   if (tool === 'axis' && axisFirstPoint && !focusInInput && !e.ctrlKey && !e.altKey) {
     // 숫자, 소수점, 백스페이스
     if (/^[0-9.]$/.test(e.key)) {
@@ -1952,26 +1884,6 @@ window.addEventListener('keydown', e => {
   }
 
   if (e.key === 'Escape') {
-    // Rev.13.4: 기준선 작도 중이면 작도만 취소 (라이브치수 모드는 유지)
-    if (liveDimMode && liveDimLineMode){
-      liveDimLineMode = false;
-      liveDimAxisLock = null;
-      if (lastMousePoint) drawLiveDimPreview(lastMousePoint);
-      else preCtx.clearRect(0,0,baseW,baseH);
-      document.getElementById('statusHint').textContent = '📏 기준선 작도 취소 (라이브치수 유지) · L=다시 작도 · Esc=모드종료';
-      return;
-    }
-    // Rev.13.3: 라이브 치수 모드 우선 종료
-    if (liveDimMode){
-      liveDimMode = false;
-      liveDimBase = null;
-      document.getElementById('headerBtnLiveDim').classList.remove('active');
-      drawCanvas.style.cursor = 'default';
-      preCtx.clearRect(0,0,baseW,baseH);
-      redrawDraw();
-      document.getElementById('statusHint').textContent = '📏 라이브치수 종료';
-      return;
-    }
     // Rev.12.6: 거리두기 좌/우 선택 모드 우선 취소
     if (offsetTwinPickMode){
       cancelOffsetTwinPick();
@@ -1982,6 +1894,12 @@ window.addEventListener('keydown', e => {
     if (vertexCutMode){
       cancelVertexCut();
       document.getElementById('statusHint').textContent = '⊣ 꼭지점커팅 종료';
+      return;
+    }
+    // Rev.13.3: 베이스선 복제 모드 종료
+    if (baseLineMode){
+      cancelBaseLineMode();
+      document.getElementById('statusHint').textContent = '📋 베이스선 복제 종료';
       return;
     }
     // Rev.11.39: 이동(Grab) 모드 우선 취소 (원위치 복원)
@@ -2214,6 +2132,194 @@ function handleOffsetTwinPickClick(p){
     newId ? `✓ 거리두기 완료: ${offsetTwinDist}mm 평행선 1개 생성` : '거리두기 실패';
   // 한 번 더 만들 수 있도록 대상은 유지(다른 쪽도 클릭 가능). 모드는 계속.
   return true;
+}
+
+// ===== Rev.13.3: 베이스선 복제 =====
+// 선의 방향 판정: 가로('h') / 세로('v') / 기타('o')
+function baseLineDetectOrient(ln){
+  const dx = Math.abs(ln.p2.x - ln.p1.x);
+  const dy = Math.abs(ln.p2.y - ln.p1.y);
+  if (dx >= dy * 3) return 'h';   // 거의 수평
+  if (dy >= dx * 3) return 'v';   // 거의 수직
+  return 'o';
+}
+
+function startBaseLineMode(){
+  baseLineMode = true;
+  baseLineTarget = null;
+  baseLineOrient = null;
+  baseLineDir = null;
+  selectTool('select');
+  drawCanvas.style.cursor = 'crosshair';
+  document.getElementById('headerBtnBaseLine')?.classList.add('active');
+  closeBaseLinePop();
+  document.getElementById('statusHint').textContent =
+    '📋 베이스선 복제: 복제할 기준 선(가로/세로)을 클릭하세요 (Esc=종료)';
+}
+
+function cancelBaseLineMode(){
+  baseLineMode = false;
+  baseLineTarget = null;
+  baseLineOrient = null;
+  baseLineDir = null;
+  preCtx.clearRect(0, 0, baseW, baseH);
+  drawCanvas.style.cursor = 'default';
+  document.getElementById('headerBtnBaseLine')?.classList.remove('active');
+  closeBaseLinePop();
+}
+
+// 베이스선 모드 클릭 처리. 처리했으면 true
+function handleBaseLineClick(p){
+  if (!baseLineMode) return false;
+  const hit = hitTest(p);
+  const s = hit ? shapes.find(x => x.id === hit) : null;
+  if (s && s.type === 'line'){
+    baseLineTarget = s;
+    baseLineOrient = baseLineDetectOrient(s);
+    // 미리보기 강조
+    preCtx.clearRect(0,0,baseW,baseH);
+    const Z = zoom || 1;
+    preCtx.save();
+    preCtx.strokeStyle = '#e67e22';
+    preCtx.lineWidth = 3 / Z;
+    preCtx.setLineDash([8/Z, 4/Z]);
+    preCtx.beginPath(); preCtx.moveTo(s.p1.x, s.p1.y); preCtx.lineTo(s.p2.x, s.p2.y); preCtx.stroke();
+    preCtx.restore();
+    openBaseLinePop(s);
+  } else {
+    document.getElementById('statusHint').textContent =
+      '📋 베이스선: 선(line)을 클릭하세요. (사각형/원/호 불가)';
+  }
+  return true;
+}
+
+// 클릭한 선의 X좌표(세로선 기준) 또는 Y좌표(가로선 기준) mm값 추정
+function baseLineRefX(ln){ return ((ln.p1.x + ln.p2.x) / 2) * mmPerPixel; }
+function baseLineRefY(ln){ return ((ln.p1.y + ln.p2.y) / 2) * mmPerPixel; }
+
+function openBaseLinePop(ln){
+  const orient = baseLineOrient;
+  const typeEl = document.getElementById('baseLineType');
+  typeEl.textContent = (orient === 'h') ? '(가로선 → 상/하)' :
+                       (orient === 'v') ? '(세로선 → 좌/우)' : '(사선)';
+  // 방향 버튼 활성/비활성: 가로선=상/하, 세로선=좌/우
+  const allow = (orient === 'h') ? ['up','down'] : (orient === 'v') ? ['left','right'] : ['up','down','left','right'];
+  document.querySelectorAll('.baseDirBtn').forEach(b => {
+    const ok = allow.includes(b.dataset.dir);
+    b.disabled = !ok;
+    b.style.opacity = ok ? '1' : '0.3';
+    b.style.cursor = ok ? 'pointer' : 'not-allowed';
+  });
+  // 입력칸 초기화
+  ['baseDist','baseSealCur','basePhi'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  document.getElementById('baseSealOn').checked = false;
+  document.getElementById('baseSealRow').style.display = 'none';
+  document.getElementById('baseSealHint').style.display = 'none';
+  document.getElementById('baseNormalRow').style.display = 'flex';
+  // 씰 파이 토글은 세로선에서만 노출
+  document.getElementById('baseSealWrap').style.display = (orient === 'v') ? 'block' : 'none';
+  if (orient === 'v'){
+    const xMm = baseLineRefX(ln);
+    document.getElementById('baseSealCur').placeholder = `현재Ø(자동≈${(Math.abs(xMm)).toFixed(1)})`;
+  }
+  document.getElementById('basePreviewTxt').textContent = '';
+  // 기본 방향 자동 선택 (가로=상, 세로=좌)
+  baseLineSelectDir(orient === 'h' ? 'up' : orient === 'v' ? 'left' : 'up');
+
+  const pop = document.getElementById('baseLinePop');
+  pop.style.display = 'block';
+  const mx = (ln.p1.x + ln.p2.x)/2, my = (ln.p1.y + ln.p2.y)/2;
+  const sc = worldToScreen(mx, my);
+  const pw = pop.offsetWidth || 250, ph = pop.offsetHeight || 200;
+  let left = sc.x + 16, top = sc.y + 16;
+  if (left + pw > window.innerWidth - 8) left = sc.x - pw - 16;
+  if (top + ph > window.innerHeight - 8) top = window.innerHeight - ph - 8;
+  if (left < 8) left = 8;
+  if (top < 8) top = 8;
+  pop.style.left = left + 'px';
+  pop.style.top = top + 'px';
+  const inp = document.getElementById('baseDist');
+  setTimeout(() => { inp.focus(); inp.select(); }, 30);
+  document.getElementById('statusHint').textContent =
+    `📋 기준선 선택됨 ${typeEl.textContent} · 방향 선택 후 수치 입력 → Enter/생성 · Esc=종료`;
+}
+
+// 방향 버튼 선택 표시
+function baseLineSelectDir(dir){
+  baseLineDir = dir;
+  document.querySelectorAll('.baseDirBtn').forEach(b => {
+    const on = (b.dataset.dir === dir) && !b.disabled;
+    b.style.background = on ? '#e67e22' : '#1f1f1f';
+    b.style.color = on ? '#fff' : '#ccc';
+    b.style.borderColor = on ? '#e67e22' : '#555';
+  });
+}
+
+function closeBaseLinePop(){
+  const pop = document.getElementById('baseLinePop');
+  if (pop) pop.style.display = 'none';
+}
+
+// 기준선을 dxPx, dyPx 만큼 평행이동한 복제선 생성
+function baseLineMakeCopy(dxPx, dyPx){
+  const ln = baseLineTarget;
+  if (!ln) return false;
+  const cp = {
+    id: ++shapeIdSeq, type: 'line',
+    p1: { x: ln.p1.x + dxPx, y: ln.p1.y + dyPx },
+    p2: { x: ln.p2.x + dxPx, y: ln.p2.y + dyPx },
+    stroke: ln.stroke,
+    strokeWidth: ln.strokeWidth
+  };
+  if (ln.layer) cp.layer = ln.layer;
+  if (ln.lineType) cp.lineType = ln.lineType;
+  shapes.push(cp);
+  redoStack = []; pushHistory();
+  if (typeof redrawFills === 'function') redrawFills();
+  redrawDraw(); updateCount();
+  return cp.id;
+}
+
+// 통합 생성 처리 (선택된 방향 + 수치 / 씰 파이 모드)
+function baseLineGenerate(){
+  if (!baseLineTarget){ document.getElementById('statusHint').textContent = '📋 먼저 기준 선을 클릭하세요'; return; }
+  const getVal = id => { const v = parseFloat(document.getElementById(id).value); return isFinite(v) ? v : null; };
+  const sealOn = (baseLineOrient === 'v') && document.getElementById('baseSealOn').checked;
+  let dxPx = 0, dyPx = 0, msg = '';
+
+  if (sealOn){
+    // 씰 파이 모드: 방향은 파이 대소로 자동 결정 (큰값=좌측)
+    const phi = getVal('basePhi');
+    if (phi === null){ document.getElementById('statusHint').textContent = '⚠ 목표 파이(Ø)를 입력하세요'; return; }
+    let cur = getVal('baseSealCur');
+    if (cur === null) cur = Math.abs(baseLineRefX(baseLineTarget));
+    const radDiffMm = (phi - cur) / 2;
+    if (Math.abs(radDiffMm) < 1e-6){ document.getElementById('statusHint').textContent = '⚠ 현재Ø와 목표Ø가 같습니다'; return; }
+    const px = Math.abs(radDiffMm) / mmPerPixel;
+    dxPx = (phi > cur) ? -px : +px;
+    msg = `⌀ 씰 Ø${cur}→Ø${phi} → ${(phi>cur?'좌측':'우측')} ${Math.abs(radDiffMm).toFixed(2)}mm(반지름차) 세로선`;
+  } else {
+    const dir = baseLineDir;
+    if (!dir){ document.getElementById('statusHint').textContent = '⚠ 방향(상/하/좌/우)을 선택하세요'; return; }
+    const mm = getVal('baseDist');
+    if (!(mm > 0)){ document.getElementById('statusHint').textContent = '⚠ 0보다 큰 거리(mm)를 입력하세요'; return; }
+    const px = mm / mmPerPixel;
+    if (dir === 'up')    { dyPx = -px; msg = `⬆ 상측 ${mm}mm 가로선`; }
+    else if (dir==='down'){ dyPx = +px; msg = `⬇ 하측 ${mm}mm 가로선`; }
+    else if (dir==='left'){ dxPx = -px; msg = `⬅ 좌측 ${mm}mm 세로선`; }
+    else if (dir==='right'){ dxPx = +px; msg = `➡ 우측 ${mm}mm 세로선`; }
+  }
+
+  const id = baseLineMakeCopy(dxPx, dyPx);
+  // 기준선 강조 다시 그리기
+  const ln = baseLineTarget, Z = zoom || 1;
+  preCtx.clearRect(0,0,baseW,baseH);
+  preCtx.save();
+  preCtx.strokeStyle = '#e67e22'; preCtx.lineWidth = 3/Z; preCtx.setLineDash([8/Z,4/Z]);
+  preCtx.beginPath(); preCtx.moveTo(ln.p1.x, ln.p1.y); preCtx.lineTo(ln.p2.x, ln.p2.y); preCtx.stroke();
+  preCtx.restore();
+  document.getElementById('basePreviewTxt').textContent = id ? ('✓ ' + msg + ' 생성') : '생성 실패';
+  document.getElementById('statusHint').textContent = id ? ('✓ ' + msg + ' 생성') : '생성 실패';
 }
 
 // Rev.12.6: 거리두기 좌/우 미리보기 (점선)
@@ -8636,6 +8742,44 @@ document.getElementById('lineDimFixEnd').addEventListener('change', () => {
   if (lineDimTargetId != null) openLineDimModal(lineDimTargetId);
 });
 
+// Rev.13.3: 베이스선 복제 버튼/팝업 바인딩
+document.getElementById('headerBtnBaseLine').addEventListener('click', () => {
+  if (baseLineMode) cancelBaseLineMode();
+  else startBaseLineMode();
+});
+document.getElementById('btnBaseLineClose').addEventListener('click', () => {
+  closeBaseLinePop();
+  baseLineTarget = null; baseLineOrient = null; baseLineDir = null;
+  preCtx.clearRect(0,0,baseW,baseH);
+  if (baseLineMode) document.getElementById('statusHint').textContent =
+    '📋 베이스선 복제: 다음 기준 선을 클릭하세요 (Esc=종료)';
+});
+document.getElementById('btnBaseLineGo').addEventListener('click', () => baseLineGenerate());
+// 방향 버튼 선택
+document.querySelectorAll('.baseDirBtn').forEach(btn => {
+  btn.addEventListener('click', () => { if (!btn.disabled) baseLineSelectDir(btn.dataset.dir); });
+});
+// 씰 파이 토글
+document.getElementById('baseSealOn').addEventListener('change', e => {
+  const on = e.target.checked;
+  document.getElementById('baseSealRow').style.display = on ? 'flex' : 'none';
+  document.getElementById('baseSealHint').style.display = on ? 'block' : 'none';
+  // 파이 모드에선 방향버튼/거리칸 비활성(방향은 파이값으로 자동결정)
+  document.getElementById('baseNormalRow').style.opacity = on ? '0.4' : '1';
+  document.getElementById('baseDist').disabled = on;
+  document.querySelectorAll('.baseDirBtn').forEach(b => { b.style.opacity = on ? '0.3' : (b.disabled ? '0.3' : '1'); });
+  if (on) setTimeout(() => { const i = document.getElementById('basePhi'); i.focus(); }, 20);
+});
+// 입력칸 Enter=생성 / Esc=종료
+['baseDist','baseSealCur','basePhi'].forEach(id => {
+  document.getElementById(id).addEventListener('keydown', e => {
+    if (e.key === 'Enter'){ e.preventDefault(); baseLineGenerate(); }
+    else if (e.key === 'Escape'){ e.preventDefault(); cancelBaseLineMode();
+      document.getElementById('statusHint').textContent = '📋 베이스선 복제 종료'; }
+    e.stopPropagation();
+  });
+});
+
 // Rev.11.66: 선택된 점들을 선택 순서대로 즉시 연결 (점 2개 이상 선택 후 F)
 //   2개 → 선 1개, 3개 이상 → 연쇄 연결(폴리라인식). 사용된 점은 선으로 흡수(삭제).
 //   반환: 연결 처리했으면 true
@@ -9021,162 +9165,17 @@ document.getElementById('headerBtnLiveSnap').addEventListener('click', () => {
   updateLiveSnapButton();
 });
 
-// Rev.13.3: 라이브 치수 토글
-document.getElementById('headerBtnLiveDim').addEventListener('click', () => {
-  liveDimMode = !liveDimMode;
-  liveDimBase = null;
-  liveDimLineMode = false;
-  liveDimAxisLock = null;
-  const btn = document.getElementById('headerBtnLiveDim');
-  btn.classList.toggle('active', liveDimMode);
-  if (liveDimMode){
-    drawCanvas.style.cursor = 'crosshair';
+// Rev.11.24: 눈금자(그리드) 토글
+document.getElementById('headerBtnGrid').addEventListener('click', () => {
+  gridOn = !gridOn;
+  const btn = document.getElementById('headerBtnGrid');
+  btn.classList.toggle('active', gridOn); // Rev.11.54
+  if (gridOn){
     document.getElementById('statusHint').textContent =
-      '📏 라이브치수 ON: 작업면 클릭=기준점 · 마우스이동=거리/각도 · L=직교 기준선 작도 · Esc=종료';
-  } else {
-    document.getElementById('statusHint').textContent = '📏 라이브치수 OFF';
+      `📐 눈금자 ON: 격자 ${gridSpacingMm}mm 간격 (굵은선 ${gridSpacingMm*5}mm)`;
   }
-  preCtx.clearRect(0,0,baseW,baseH);
-  redrawDraw();
+  redrawBg();
 });
-
-// Rev.13.3: 라이브 치수 미리보기 그리기 (기준점 → 현재 마우스)
-// Rev.13.4: 기준선 작도 - 마우스 위치로부터 직교(X/Y) 잠금된 끝점 계산
-//   liveDimAxisLock이 정해지지 않았으면 ΔX/ΔY 크기로 자동 판정
-function liveDimOrthoEnd(cur){
-  const bx = liveDimBase.x, by = liveDimBase.y;
-  const dxPx = cur.x - bx, dyPx = cur.y - by;
-  let axis = liveDimAxisLock;
-  if (!axis){
-    axis = (Math.abs(dxPx) >= Math.abs(dyPx)) ? 'x' : 'y';
-  }
-  if (axis === 'x') return { x: cur.x, y: by, axis };   // 수평선 (Y 고정)
-  return { x: bx, y: cur.y, axis };                      // 수직선 (X 고정)
-}
-
-function drawLiveDimPreview(cur){
-  preCtx.clearRect(0,0,baseW,baseH);
-
-  // Rev.13.4: 기준선 작도 서브모드 - 직교 잠금 선 미리보기
-  if (liveDimLineMode && liveDimBase){
-    const Z = zoom || 1;
-    const end = liveDimOrthoEnd(cur);
-    const bx = liveDimBase.x, by = liveDimBase.y;
-    const dpx = end.x - bx, dpy = end.y - by;
-    const lenPx = Math.hypot(dpx, dpy);
-    const lenMm = lenPx * mmPerPixel;
-    const useMm = !!calibSet;
-    const distTxt = useMm ? `${lenMm.toFixed(2)} mm` : `${lenPx.toFixed(1)} px`;
-    const axisTxt = (end.axis === 'x') ? 'X축(수평)' : 'Y축(수직)';
-    preCtx.save();
-    // 미리보기 선 (현재 선색)
-    preCtx.strokeStyle = document.getElementById('strokeColor').value || '#16e0b0';
-    preCtx.lineWidth = (parseInt(document.getElementById('strokeWidth').value)||1) / Z;
-    preCtx.beginPath(); preCtx.moveTo(bx, by); preCtx.lineTo(end.x, end.y); preCtx.stroke();
-    // 끝점/시작점 마커
-    const mr = 5 / Z;
-    preCtx.fillStyle = '#2ecc71';
-    preCtx.beginPath(); preCtx.arc(bx, by, mr, 0, Math.PI*2); preCtx.fill();
-    preCtx.fillStyle = '#f1c40f';
-    preCtx.beginPath(); preCtx.arc(end.x, end.y, mr, 0, Math.PI*2); preCtx.fill();
-    // 라벨
-    const label = `${distTxt}  [${axisTxt}]`;
-    const midX = (bx + end.x) / 2, midY = (by + end.y) / 2;
-    preCtx.font = `bold ${14/Z}px 'Malgun Gothic', sans-serif`;
-    preCtx.textBaseline = 'middle';
-    const tw = preCtx.measureText(label).width;
-    const padX = 6/Z, padY = 4/Z, lineH = 18/Z;
-    preCtx.fillStyle = 'rgba(0,0,0,0.82)';
-    preCtx.fillRect(midX + 8/Z, midY - lineH - padY, tw + padX*2, lineH + padY*2);
-    preCtx.fillStyle = '#fff';
-    preCtx.fillText(label, midX + 8/Z + padX, midY - padY);
-    preCtx.restore();
-    const lockTxt = liveDimAxisLock ? ` (잠금:${axisTxt})` : ' (자동)';
-    document.getElementById('statusHint').textContent =
-      `📏 기준선 ${axisTxt} ${distTxt}${lockTxt} · 클릭=확정 후 정치수 입력 · X/Y=축고정 · Esc=취소`;
-    return;
-  }
-
-  if (!liveDimBase){
-    // 기준점 미설정: 현재 마우스 위치에 십자 마커만
-    const Z = zoom || 1;
-    const r = 8 / Z;
-    preCtx.save();
-    preCtx.strokeStyle = '#f1c40f';
-    preCtx.lineWidth = 1.5 / Z;
-    preCtx.beginPath();
-    preCtx.moveTo(cur.x - r, cur.y); preCtx.lineTo(cur.x + r, cur.y);
-    preCtx.moveTo(cur.x, cur.y - r); preCtx.lineTo(cur.x, cur.y + r);
-    preCtx.stroke();
-    preCtx.restore();
-    return;
-  }
-  const Z = zoom || 1;
-  const bx = liveDimBase.x, by = liveDimBase.y;
-  const dxPx = cur.x - bx, dyPx = cur.y - by;
-  const lenPx = Math.hypot(dxPx, dyPx);
-  const lenMm = lenPx * mmPerPixel;
-  const dxMm  = dxPx * mmPerPixel;
-  const dyMm  = -dyPx * mmPerPixel; // 화면 y는 아래가 +, 도면 y는 위가 +
-  const angDeg = (Math.atan2(-dyPx, dxPx) * 180 / Math.PI + 360) % 360;
-
-  preCtx.save();
-  // 기준선
-  preCtx.strokeStyle = '#2ecc71';
-  preCtx.lineWidth = 2 / Z;
-  preCtx.beginPath();
-  preCtx.moveTo(bx, by); preCtx.lineTo(cur.x, cur.y);
-  preCtx.stroke();
-
-  // ΔX / ΔY 보조선 (점선 직각 삼각형)
-  preCtx.setLineDash([6/Z, 4/Z]);
-  preCtx.lineWidth = 1 / Z;
-  preCtx.strokeStyle = '#ff9b3d';
-  preCtx.beginPath(); preCtx.moveTo(bx, by); preCtx.lineTo(cur.x, by); preCtx.stroke();
-  preCtx.strokeStyle = '#3dc8ff';
-  preCtx.beginPath(); preCtx.moveTo(cur.x, by); preCtx.lineTo(cur.x, cur.y); preCtx.stroke();
-  preCtx.setLineDash([]);
-
-  // 기준점 마커
-  const mr = 5 / Z;
-  preCtx.fillStyle = '#2ecc71';
-  preCtx.beginPath(); preCtx.arc(bx, by, mr, 0, Math.PI*2); preCtx.fill();
-  // 현재점 마커
-  preCtx.fillStyle = '#f1c40f';
-  preCtx.beginPath(); preCtx.arc(cur.x, cur.y, mr, 0, Math.PI*2); preCtx.fill();
-
-  // 각도 호 (기준점 기준, 0° = +X 방향)
-  const arcR = Math.min(40/Z, lenPx*0.4);
-  if (arcR > 4/Z){
-    preCtx.strokeStyle = '#e74c3c';
-    preCtx.lineWidth = 1.5 / Z;
-    preCtx.beginPath();
-    // canvas arc 각도는 시계방향(+y 아래) → -angDeg 사용
-    preCtx.arc(bx, by, arcR, 0, -angDeg*Math.PI/180, true);
-    preCtx.stroke();
-  }
-
-  // 라벨 (거리/각도) — 중점 부근
-  const useMm = !!calibSet;
-  const distTxt = useMm ? `${lenMm.toFixed(2)} mm` : `${lenPx.toFixed(1)} px`;
-  const label = `${distTxt}  ∠${angDeg.toFixed(1)}°`;
-  const midX = (bx + cur.x) / 2;
-  const midY = (by + cur.y) / 2;
-  preCtx.font = `bold ${14/Z}px 'Malgun Gothic', sans-serif`;
-  preCtx.textBaseline = 'middle';
-  const tw = preCtx.measureText(label).width;
-  const padX = 6/Z, padY = 4/Z, lineH = 18/Z;
-  preCtx.fillStyle = 'rgba(0,0,0,0.78)';
-  preCtx.fillRect(midX + 8/Z, midY - lineH - padY, tw + padX*2, lineH + padY*2);
-  preCtx.fillStyle = '#fff';
-  preCtx.fillText(label, midX + 8/Z + padX, midY - lineH/2 - padY + lineH/2);
-  preCtx.restore();
-
-  // 상태바 동시 표시
-  document.getElementById('statusHint').textContent =
-    `📏 거리 ${distTxt} · 각도 ${angDeg.toFixed(1)}° · ΔX ${useMm?dxMm.toFixed(2)+'mm':dxPx+'px'} · ΔY ${useMm?dyMm.toFixed(2)+'mm':(-dyPx)+'px'}`;
-}
-
 function updateLiveSnapButton() {
   const btn = document.getElementById('headerBtnLiveSnap');
   if (!btn) return;
