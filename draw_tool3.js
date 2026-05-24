@@ -2910,6 +2910,7 @@ function doSvgRevolve(){
   const seg = parseInt(document.getElementById('svgRevSeg').value) || 24;
   const startAngleDeg = parseFloat(document.getElementById('svgRevStartAngle').value) || 0;
   const angleDeg = parseFloat(document.getElementById('svgRevAngle').value) || 360;
+  const dir = (document.getElementById('svgRevDir') && document.getElementById('svgRevDir').value) || 'ccw';
   const color = document.getElementById('svgRevColor').value;
   let name = document.getElementById('svgRevPartName').value.trim();
   if(!name) name = 'SVG회전체_' + state.partIdCounter;
@@ -2928,7 +2929,7 @@ function doSvgRevolve(){
   let main = _svgRevData[0];
   _svgRevData.forEach(poly => { if(poly.length > main.length) main = poly; });
 
-  // v6.9.3: SWEEP 방식 — SVG 단면을 원형 경로를 따라 이동시켜 도넛/튜브 생성
+  // v6.9.4: SWEEP 방식 — SVG 단면을 원형 경로를 따라 이동시켜 도넛/튜브 생성
   //   SVG를 "정면 단면"으로 삼아 중심 정렬 (단면 자체 중심이 원점)
   //   • p.x → 반경방향 오프셋(중심 기준), p.y → 높이방향 (Y 뒤집기)
   //   • 경로 반지름 R = 내부지름/2 + 단면 반경
@@ -2964,12 +2965,13 @@ function doSvgRevolve(){
 
   const angleRad = angleDeg * Math.PI / 180;
   const startRad = startAngleDeg * Math.PI / 180;
-  // v6.9.3: 경로 반지름 R = 내부지름/2 + 단면의 안쪽 끝 보정
-  //   단면 x 최소값(가장 안쪽)이 -R 안쪽으로 들어가지 않도록 R을 충분히 키움
+  // v6.9.4: 회전 방향 — 오른쪽(시계)=음수, 왼쪽(반시계)=양수
+  const signedAngle = (dir === 'cw') ? -angleRad : angleRad;
+  // v6.9.4: 경로 반지름 R = 내부지름/2 + 단면의 안쪽 끝 보정
   let minPx = Infinity;
   profile.forEach(p=>{ if(p.x < minPx) minPx = p.x; });
   const pathR = innerR + Math.abs(minPx) + 2; // 내부 구멍 확보
-  const geom = sweepProfileTorus(profile, seg, startRad, angleRad, pathR, angleDeg < 359.5);
+  const geom = sweepProfileTorus(profile, seg, startRad, signedAngle, pathR, angleDeg < 359.5);
   const mat = makeMaterial(color, mode === 'hole' ? 0.4 : 1);
   const mesh = new THREE.Mesh(geom, mat);
 
@@ -2978,8 +2980,8 @@ function doSvgRevolve(){
     color: color, opacity: (mode === 'hole' ? 0.4 : 1), visible: true,
     mesh: mesh, _isHole: (mode === 'hole'),
     params: {
-      mode, sketchHeight, innerD, seg, startAngleDeg, angleDeg, pathR,
-      sweep: true, // v6.9.3: sweep 방식 표시 (복원 구분)
+      mode, sketchHeight, innerD, seg, startAngleDeg, angleDeg, pathR, dir,
+      sweep: true, // v6.9.4: sweep 방식 표시 (복원 구분)
       profile: profile.map(v => ({x: v.x, y: v.y}))
     }
   };
@@ -3043,7 +3045,7 @@ function revolveProfileSweep(profile, segments, startAngle, totalAngle, closeEnd
   return geom;
 }
 
-// v6.9.3: SWEEP 방식 — SVG 닫힌 단면을 원형 경로(고리)를 따라 이동시켜 도넛/튜브 생성
+// v6.9.4: SWEEP 방식 — SVG 닫힌 단면을 원형 경로(고리)를 따라 이동시켜 도넛/튜브 생성
 //   단면 좌표(cx,cy)는 단면 로컬평면, 경로 반지름 R, 각도만큼 sweep.
 //   각 링의 단면은 경로 접선에 수직(반경방향+높이방향)으로 배치.
 //   profile: [{x,y}] 단면 폴리곤(로컬 mm, 단면 중심이 원점 근처), R: 경로 반지름
@@ -3063,27 +3065,38 @@ function sweepProfileTorus(profile, segments, startAngle, totalAngle, pathR, clo
       positions.push(radial*cos, p.y, radial*sin);
     }
   }
-  // 옆면(튜브 외피)
+  // 옆면(튜브 외피) — 음수각도(시계방향)면 winding 반전해 법선이 바깥으로
+  const flip = totalAngle < 0;
   for(let s=0;s<segments;s++){
     const b0=s*n, b1=(s+1)*n;
     for(let i=0;i<n;i++){
       const i2=(i+1)%n;
       const A=b0+i, B=b0+i2, C=b1+i2, D=b1+i;
-      indices.push(A,B,D);
-      indices.push(B,C,D);
+      if(!flip){
+        indices.push(A,B,D);
+        indices.push(B,C,D);
+      } else {
+        indices.push(A,D,B);
+        indices.push(B,D,C);
+      }
     }
   }
   // 열린 sweep(360 미만)일 때 양 끝 단면 막기
-  if(closeEnds && totalAngle < Math.PI*2 - 1e-6){
+  if(closeEnds && Math.abs(totalAngle) < Math.PI*2 - 1e-6){
     const contour = profile.map(p=>new THREE.Vector2(p.x, p.y));
     let faces=[];
     try { faces = THREE.ShapeUtils.triangulateShape(contour, []); } catch(_) { faces=[]; }
     if(faces.length===0){ for(let i=1;i<n-1;i++) faces.push([0,i,i+1]); }
     faces.forEach(f=>{
       const [a,b,c]=f;
-      indices.push(a,b,c);
       const off=segments*n;
-      indices.push(off+a, off+c, off+b);
+      if(!flip){
+        indices.push(a,b,c);
+        indices.push(off+a, off+c, off+b);
+      } else {
+        indices.push(a,c,b);
+        indices.push(off+a, off+b, off+c);
+      }
     });
   }
   const geom=new THREE.BufferGeometry();
@@ -3115,13 +3128,14 @@ function rebuildSvgRevolve(pdata){
   const startRad = (p.startAngleDeg || 0) * Math.PI / 180;
   let geom;
   if(p.sweep){
-    // v6.9.3: sweep(도넛/파이프) 방식 복원
+    // v6.9.4: sweep(도넛/파이프) 방식 복원
     let pathR = p.pathR;
     if(pathR === undefined){
       let minPx = Infinity; profile.forEach(o=>{ if(o.x<minPx) minPx=o.x; });
       pathR = (p.innerD ? p.innerD/2 : 0) + Math.abs(minPx) + 2;
     }
-    geom = sweepProfileTorus(profile.map(o=>({x:o.x,y:o.y})), p.seg || 24, startRad, angleRad, pathR, angleDeg < 359.5);
+    const signed = (p.dir === 'cw') ? -angleRad : angleRad; // v6.9.4: 방향
+    geom = sweepProfileTorus(profile.map(o=>({x:o.x,y:o.y})), p.seg || 24, startRad, signed, pathR, angleDeg < 359.5);
   } else {
     // 구버전 lathe 방식 복원
     geom = revolveProfileSweep(profile.map(o=>({x:o.x, y:o.y})), p.seg || 24, startRad, angleRad, angleDeg < 359.5);
@@ -4401,7 +4415,7 @@ function meshCornersWorld(mesh){
   ];
 }
 
-// v6.9.3: 3D 월드좌표 → 화면 픽셀 (스케치용 worldToScreen과 별개)
+// v6.9.4: 3D 월드좌표 → 화면 픽셀 (스케치용 worldToScreen과 별개)
 function worldToScreen3D(v){
   if(!renderer || !camera) return {x:0, y:0, z:2};
   const rect = renderer.domElement.getBoundingClientRect();
@@ -5812,8 +5826,8 @@ const editMode = {
   dragStart: null,       // {x,y}
   dragStartPos: null,    // Map<idx, Vector3>
   dragPlane: null,
-  axis: null,            // v6.9.3: 'x'|'y'|'z'|null — 블렌더식 축 제한
-  numBuf: '',            // v6.9.3: 숫자 입력 버퍼
+  axis: null,            // v6.9.4: 'x'|'y'|'z'|null — 블렌더식 축 제한
+  numBuf: '',            // v6.9.4: 숫자 입력 버퍼
   _moveCenter: null,     // 선택 정점 월드 중심
   userEdges: [],         // v6.9: 사용자가 F/E로 만든 엣지 [[ai,bi],...]
   edgeLines: null,       // v6.9: userEdges 시각화 LineSegments
@@ -6311,7 +6325,7 @@ function editMoveApply(e){
 
 // v6.9: 편집 모드 정점 스냅 — 선택 정점 중 하나가 비선택 정점에 화면상 가까우면
 //   그 차이를 로컬 offset으로 반환 (없으면 null)
-// v6.9.3: 편집 모드 스냅 — 선택 정점이 (비선택)버텍스 또는 엣지에 화면상 가까우면
+// v6.9.4: 편집 모드 스냅 — 선택 정점이 (비선택)버텍스 또는 엣지에 화면상 가까우면
 //   그 위치(로컬)로 가는 offset 반환. 버텍스 우선, 없으면 엣지 수직투영점.
 function computeEditSnap(){
   const part = editMode.part;
@@ -6459,7 +6473,7 @@ function blenderApply(){
   const num = blenderOp.numBuf !== '' && blenderOp.numBuf !== '-' ? parseFloat(blenderOp.numBuf) : null;
   const cur = blenderOp._lastMouse || blenderOp.startMouse;
 
-  // v6.9.3: 블렌더 좌표(Z=높이, Y=앞뒤) → 이 도구 three.js(Y=높이, Z=앞뒤)로 변환
+  // v6.9.4: 블렌더 좌표(Z=높이, Y=앞뒤) → 이 도구 three.js(Y=높이, Z=앞뒤)로 변환
   //   블렌더 X→X, 블렌더 Y(앞뒤)→Z, 블렌더 Z(높이)→Y
   const ax3 = ax === 'y' ? 'z' : (ax === 'z' ? 'y' : ax); // 실제 적용 축
 
@@ -6607,7 +6621,7 @@ document.addEventListener('keydown', (e)=>{
   if(editMode.active){
     if(editMode.dragging){
       const k = e.key.toLowerCase();
-      // v6.9.3: 블렌더식 축 제한 (X/Y/Z) + 숫자 입력
+      // v6.9.4: 블렌더식 축 제한 (X/Y/Z) + 숫자 입력
       if(k === 'x' || k === 'y' || k === 'z'){
         editMode.axis = (editMode.axis === k) ? null : k; // 같은 축 다시 누르면 해제
         editMode.numBuf = '';
@@ -6837,7 +6851,7 @@ function init(){
   renderPartsList();
   updateInfo();
   redrawSketch();
-  setStat('tool3 v6.9.3 준비됨 · SVG회전기=단면이 원경로 따라 도넛 sweep');
+  setStat('tool3 v6.9.4 준비됨 · SVG회전기 sweep 방향선택(왼쪽/오른쪽)');
   // v2.2: 항상 3D 모드로 시작 (draw_tool import도 3D 바닥에 표시)
   switchMode('model');
   try {
