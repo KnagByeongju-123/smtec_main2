@@ -2112,8 +2112,7 @@ function handleOffsetTwinPickClick(p){
   if (!offsetTwinPickMode) return false;
   if (!offsetTwinTarget){
     // 1단계: 기준 선 선택
-    const hit = hitTest(p);
-    const s = hit ? shapes.find(x => x.id === hit) : null;
+    const s = hitTest(p);   // hitTest는 도형 객체를 반환
     if (s && s.type === 'line'){
       offsetTwinTarget = s;
       document.getElementById('statusHint').textContent =
@@ -2171,8 +2170,7 @@ function cancelBaseLineMode(){
 // 베이스선 모드 클릭 처리. 처리했으면 true
 function handleBaseLineClick(p){
   if (!baseLineMode) return false;
-  const hit = hitTest(p);
-  const s = hit ? shapes.find(x => x.id === hit) : null;
+  const s = hitTest(p);   // hitTest는 도형 객체를 반환
   if (s && s.type === 'line'){
     baseLineTarget = s;
     baseLineOrient = baseLineDetectOrient(s);
