@@ -3955,8 +3955,10 @@ function commitFilletAt(mp){
   redoStack = []; pushHistory();
   preCtx.clearRect(0,0,baseW,baseH);
   redrawDraw(); updateCount();
-  document.getElementById('statusHint').textContent = `◜ 모서리 Ø${(rMm*2)}mm (R${rMm}mm) 생성 완료`;
+  document.getElementById('statusHint').textContent = `◜ 모서리 Ø${(rMm*2)}mm (R${rMm}mm) 생성 완료 · 선택 모드로 전환`;
   filletPreview = null;
+  filletState = null;
+  if (typeof selectTool === 'function') selectTool('select');  // Rev.16.25: 1회성 - 확정 후 선택 모드
   return true;
 }
 
@@ -4109,7 +4111,9 @@ function handleFilletOnRect(rect, p) {
   redoStack = []; pushHistory();
   redrawDraw();
   updateCount();
-  document.getElementById('statusHint').textContent = `◜ 사각형 [${best.label}] 모서리 Ø${(rMm*2)}mm (R${rMm}mm) 적용 완료`;
+  document.getElementById('statusHint').textContent = `◜ 사각형 [${best.label}] 모서리 Ø${(rMm*2)}mm (R${rMm}mm) 적용 완료 · 선택 모드로 전환`;
+  filletState = null;
+  if (typeof selectTool === 'function') selectTool('select');  // Rev.16.25: 1회성
 }
 
 // 반지름이 이미 정해진 상태에서 두 선에 라운드 적용 (prompt 생략)
@@ -9882,186 +9886,39 @@ function connectSelectedPoints(){
 }
 
 // ===== Rev.14.7: 도면 정리 (끝점 맞물림 + 일직선 병합) =====
+// ===== Rev.16.26: 도면 정리 - 점 + 지정 길이 이하 짧은 선 전체 삭제 =====
 function cleanupDrawing(){
-  const tolMm = parseFloat(document.getElementById('cleanupTolInput').value) || 0.5;
-  const tolPx = tolMm / mmPerPixel;
+  const minLenMm = parseFloat(document.getElementById('cleanupTolInput').value) || 1;
+  const minLenPx = minLenMm / mmPerPixel;
 
-  // 대상: 선(line)만. 선택된 게 있으면 선택 선만, 없으면 전체 선
-  let targetLines = shapes.filter(s => s.type === 'line');
-  if (selectedIds.size > 0){
-    const selLines = targetLines.filter(s => selectedIds.has(s.id));
-    if (selLines.length >= 1) targetLines = selLines;
+  // 대상: 선택된 도형이 있으면 그 안에서만, 없으면 전체
+  const hasSel = selectedIds && selectedIds.size > 0;
+  const inScope = (s) => !hasSel || selectedIds.has(s.id);
+
+  const removeIds = [];
+  for (const s of shapes){
+    if (!inScope(s)) continue;
+    if (s.type === 'point'){
+      removeIds.push(s.id);
+    } else if (s.type === 'line' && s.p1 && s.p2){
+      const len = Math.hypot(s.p2.x - s.p1.x, s.p2.y - s.p1.y);
+      if (len <= minLenPx) removeIds.push(s.id);
+    }
   }
-  if (targetLines.length === 0){
-    document.getElementById('statusHint').textContent = '🧹 정리할 선이 없습니다';
+
+  if (removeIds.length === 0){
+    document.getElementById('statusHint').textContent =
+      `🧹 삭제할 점/짧은 선이 없습니다 (기준 ${minLenMm}mm 이하)`;
     return;
   }
 
-  // --- 1단계: 끝점 맞물림 (각도 보존 교점 방식) ---
-  //  허용오차 안에서 만나야 할 끝점들을 그룹으로 묶고:
-  //   - 2개(두 선의 코너): 각 선의 방향을 유지한 무한직선의 교점으로 모음 → 각도 보존
-  //   - 거의 평행(교점 없음/너무 멈): 평균점으로 폴백
-  //   - 3개 이상(여러 선 합류): 평균점 사용
-  const endpoints = [];
-  targetLines.forEach(ln => {
-    endpoints.push({ ln, key: 'p1' });
-    endpoints.push({ ln, key: 'p2' });
-  });
-  // 두 무한직선(점 a 방향 da, 점 b 방향 db)의 교점. 평행이면 null
-  const lineIntersect = (a, da, b, db) => {
-    const den = da.x * db.y - da.y * db.x;
-    if (Math.abs(den) < 1e-9) return null;          // 평행
-    const t = ((b.x - a.x) * db.y - (b.y - a.y) * db.x) / den;
-    return { x: a.x + da.x * t, y: a.y + da.y * t };
-  };
-  // 끝점 ep의 "반대쪽 끝점"과 방향벡터 반환
-  const otherEndAndDir = (ep) => {
-    const here = ep.ln[ep.key];
-    const there = ep.ln[ep.key === 'p1' ? 'p2' : 'p1'];
-    const dx = here.x - there.x, dy = here.y - there.y;   // there→here 방향
-    const L = Math.hypot(dx, dy) || 1;
-    return { anchor: there, dir: { x: dx / L, y: dy / L }, here };
-  };
-  const used = new Array(endpoints.length).fill(false);
-  let weldCount = 0;
-  for (let i = 0; i < endpoints.length; i++){
-    if (used[i]) continue;
-    const group = [i];
-    const ai = endpoints[i].ln[endpoints[i].key];
-    for (let j = i+1; j < endpoints.length; j++){
-      if (used[j]) continue;
-      if (endpoints[j].ln === endpoints[i].ln) continue;   // 같은 선의 양끝은 한 그룹에 안 묶음
-      const bj = endpoints[j].ln[endpoints[j].key];
-      if (Math.hypot(ai.x - bj.x, ai.y - bj.y) <= tolPx){
-        group.push(j); used[j] = true;
-      }
-    }
-    used[i] = true;
-    if (group.length < 2) continue;
-
-    let target = null;
-    if (group.length === 2){
-      // 코너: 두 선의 방향 유지 교점
-      const e1 = otherEndAndDir(endpoints[group[0]]);
-      const e2 = otherEndAndDir(endpoints[group[1]]);
-      const ix = lineIntersect(e1.anchor, e1.dir, e2.anchor, e2.dir);
-      if (ix){
-        // 교점이 원래 끝점에서 허용오차의 5배 이내일 때만 채택 (평행에 가까우면 폭주 방지)
-        const far = Math.max(
-          Math.hypot(ix.x - e1.here.x, ix.y - e1.here.y),
-          Math.hypot(ix.x - e2.here.x, ix.y - e2.here.y)
-        );
-        if (far <= tolPx * 5) target = ix;
-      }
-    }
-    if (!target){
-      // 폴백: 평균점 (3개 이상 합류 or 평행 코너)
-      let sx = 0, sy = 0;
-      group.forEach(gi => { const pt = endpoints[gi].ln[endpoints[gi].key]; sx += pt.x; sy += pt.y; });
-      target = { x: sx / group.length, y: sy / group.length };
-    }
-    group.forEach(gi => { const e = endpoints[gi]; e.ln[e.key] = { x: target.x, y: target.y }; });
-    weldCount += group.length - 1;
-  }
-
-  // --- 1.5단계: 끝점 → 가까운 다른 선분 위로 스냅 (끝-끝이 아닌 끝-몸통 연결) ---
-  // 한 선의 끝점이 다른 선의 몸통에 허용오차 안으로 가까우면 그 선 위 최근접점으로 끌어붙임
-  const closestOnSeg = (p, a, b) => {
-    const abx = b.x - a.x, aby = b.y - a.y;
-    const L2 = abx*abx + aby*aby;
-    if (L2 < 1e-9) return { x: a.x, y: a.y, t: 0 };
-    let t = ((p.x - a.x)*abx + (p.y - a.y)*aby) / L2;
-    t = Math.max(0, Math.min(1, t));
-    return { x: a.x + abx*t, y: a.y + aby*t, t };
-  };
-  let snapCount = 0;
-  endpoints.forEach(ep => {
-    const p = ep.ln[ep.key];
-    let best = null, bestD = tolPx;
-    targetLines.forEach(other => {
-      if (other === ep.ln) return;            // 자기 선 제외
-      const cp = closestOnSeg(p, other.p1, other.p2);
-      const d = Math.hypot(p.x - cp.x, p.y - cp.y);
-      // 끝점에 너무 가까운 경우(이미 1단계서 처리)나 t가 끝(0/1)인 경우는 제외, 몸통일 때만
-      if (d < bestD && cp.t > 0.001 && cp.t < 0.999){ bestD = d; best = cp; }
-    });
-    if (best){ ep.ln[ep.key] = { x: best.x, y: best.y }; snapCount++; }
-  });
-
-  // --- 2단계: 일직선 병합 (공유 끝점에서 거의 같은 방향인 두 선을 하나로) ---
-  const angTolDeg = 1.0;  // 각도 허용오차(도)
-  const sameAng = (l1, l2) => {
-    const a1 = Math.atan2(l1.p2.y - l1.p1.y, l1.p2.x - l1.p1.x);
-    const a2 = Math.atan2(l2.p2.y - l2.p1.y, l2.p2.x - l2.p1.x);
-    let d = Math.abs(a1 - a2) * 180 / Math.PI;
-    d = d % 180;            // 방향 무관(반대방향도 일직선)
-    if (d > 90) d = 180 - d;
-    return d <= angTolDeg;
-  };
-  const ptEq = (a, b) => Math.hypot(a.x - b.x, a.y - b.y) <= 1e-6;
-  let mergeCount = 0;
-  let changed = true;
-  while (changed){
-    changed = false;
-    const lines = shapes.filter(s => s.type === 'line' &&
-      (selectedIds.size === 0 || targetLines.includes(s) || true)); // 전체 선 대상으로 병합
-    for (let i = 0; i < lines.length && !changed; i++){
-      for (let j = i+1; j < lines.length && !changed; j++){
-        const A = lines[i], B = lines[j];
-        if (!sameAng(A, B)) continue;
-        // 공유 끝점 찾기
-        let shared = null, aOther = null, bOther = null;
-        if (ptEq(A.p1, B.p1)){ shared = A.p1; aOther = A.p2; bOther = B.p2; }
-        else if (ptEq(A.p1, B.p2)){ shared = A.p1; aOther = A.p2; bOther = B.p1; }
-        else if (ptEq(A.p2, B.p1)){ shared = A.p2; aOther = A.p1; bOther = B.p2; }
-        else if (ptEq(A.p2, B.p2)){ shared = A.p2; aOther = A.p1; bOther = B.p1; }
-        if (!shared) continue;
-        // 공유점이 두 선 사이에 있어야 일직선 병합 (양 끝이 서로 반대편)
-        const v1x = aOther.x - shared.x, v1y = aOther.y - shared.y;
-        const v2x = bOther.x - shared.x, v2y = bOther.y - shared.y;
-        const dot = v1x*v2x + v1y*v2y;
-        if (dot > 0) continue;  // 같은 쪽으로 뻗으면(겹침) 병합 안 함
-        // A를 aOther~bOther로 확장, B 삭제
-        A.p1 = { x: aOther.x, y: aOther.y };
-        A.p2 = { x: bOther.x, y: bOther.y };
-        const bi = shapes.findIndex(s => s.id === B.id);
-        if (bi >= 0) shapes.splice(bi, 1);
-        selectedIds.delete(B.id);
-        mergeCount++;
-        changed = true;
-      }
-    }
-  }
-
+  shapes = shapes.filter(s => !removeIds.includes(s.id));
+  if (selectedIds) selectedIds.clear();
   redoStack = []; pushHistory();
   if (typeof redrawFills === 'function') redrawFills();
   redrawDraw(); updateCount();
-  if (typeof updateShapePropPanel === 'function') updateShapePropPanel();
-
-  // Rev.15.1: 아무것도 정리 안 됐으면 가장 가까운 미연결 끝점 쌍 거리를 측정해 안내
-  if (weldCount === 0 && mergeCount === 0 && snapCount === 0){
-    let minGap = Infinity;
-    for (let i = 0; i < endpoints.length; i++){
-      const ai = endpoints[i].ln[endpoints[i].key];
-      for (let j = i+1; j < endpoints.length; j++){
-        if (endpoints[i].ln === endpoints[j].ln) continue; // 같은 선의 양끝 제외
-        const bj = endpoints[j].ln[endpoints[j].key];
-        const d = Math.hypot(ai.x - bj.x, ai.y - bj.y);
-        if (d > 1e-6 && d < minGap) minGap = d;
-      }
-    }
-    if (isFinite(minGap)){
-      const gapMm = (minGap * mmPerPixel).toFixed(2);
-      document.getElementById('statusHint').textContent =
-        `🧹 정리할 게 없습니다. 가장 가까운 떨어진 끝점 간격 ≈ ${gapMm}mm · 허용오차를 ${gapMm}mm 이상으로 올려보세요`;
-    } else {
-      document.getElementById('statusHint').textContent =
-        `🧹 정리할 게 없습니다 (끝점이 이미 맞물려 있거나 대상 선이 1개)`;
-    }
-    return;
-  }
   document.getElementById('statusHint').textContent =
-    `🧹 정리 완료: 끝점맞물림 ${weldCount} · 선위스냅 ${snapCount} · 일직선병합 ${mergeCount} (허용오차 ${tolMm}mm)`;
+    `🧹 정리 완료: 점/짧은 선 ${removeIds.length}개 삭제 (${minLenMm}mm 이하${hasSel ? ', 선택 영역' : ', 전체'})`;
 }
 
 document.getElementById('headerBtnCleanup').addEventListener('click', cleanupDrawing);
