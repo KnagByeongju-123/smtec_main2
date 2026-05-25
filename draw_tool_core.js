@@ -1666,6 +1666,7 @@ drawCanvas.addEventListener('mousedown', e => {
         // 빈 영역 → 박스 선택 모드 대기 (5px 이상 움직여야 실제 활성화)
         // 즉, 살짝 클릭은 도구의 일반 클릭으로 처리됨
         dragState = { type: 'box', boxStart: p, fromOtherTool: true, active: false };
+        window._lastBoxRect = null;
         return; // preventDefault 안 함 → click 이벤트도 같이 발생
       }
       // 도형 위에서는 기존 도구의 동작에 맡김
@@ -1746,6 +1747,7 @@ drawCanvas.addEventListener('mousedown', e => {
     }
     if (!e.shiftKey) { selectedIds.clear(); selectedFillIds.clear(); updateSelStat(); redrawDraw(); redrawFills(); updateShapePropPanel(); }
     dragState = { type: 'box', boxStart: p };
+    window._lastBoxRect = null;
   }
 });
 
@@ -1843,6 +1845,7 @@ drawCanvas.addEventListener('mouseup', e => {
       const p = getCanvasPoint(e);
       boxSelect(dragState.boxStart, p, e.shiftKey);
       preCtx.clearRect(0,0,baseW,baseH);
+      window._lastBoxRect = null;
       updateShapePropPanel();  // Rev.14.5
       suppressNextClick = true; // click 이벤트 차단
     }
@@ -1855,6 +1858,7 @@ drawCanvas.addEventListener('mouseup', e => {
   if (dragState && dragState.type === 'box') {
     boxSelect(dragState.boxStart, p, e.shiftKey);
     preCtx.clearRect(0,0,baseW,baseH);
+    window._lastBoxRect = null;
     updateShapePropPanel();  // Rev.14.5: 박스 선택 후에도 단일 선택이면 패널 표시
   } else if (dragState && dragState.type === 'move') {
     preCtx.clearRect(0,0,baseW,baseH);  // 스냅 표시 제거
@@ -2989,7 +2993,13 @@ function drawSnapIndicator() {
 
 function drawBoxSelectPreview(p1, p2) {
   const Z = zoom || 1;
-  preCtx.clearRect(0,0,baseW,baseH);
+  // Rev.16.21: 성능 - 전체(baseW×baseH) clear 대신 직전 그린 영역만 지움
+  if (window._lastBoxRect){
+    const r = window._lastBoxRect, pad = 8/Z;
+    preCtx.clearRect(r.x - pad, r.y - pad, r.w + pad*2, r.h + pad*2);
+  } else {
+    preCtx.clearRect(0,0,baseW,baseH);
+  }
   preCtx.save();
   preCtx.strokeStyle = '#9b59b6';
   preCtx.fillStyle = 'rgba(155, 89, 182, 0.15)';
@@ -2999,6 +3009,7 @@ function drawBoxSelectPreview(p1, p2) {
   preCtx.fillRect(x, y, w, h);
   preCtx.strokeRect(x, y, w, h);
   preCtx.restore();
+  window._lastBoxRect = { x, y, w, h };
 }
 
 // ====== 캘리브레이션 (v5.0) ======
