@@ -451,6 +451,7 @@ function selectTool(toolName){
   const obtn = document.getElementById('headerBtnOutline');
   if (obtn) obtn.classList.remove('active');
   filletState = null; offsetState = null; dimState = null; breakState = null;
+  filletPreview = null;  // Rev.16.27: 도구 전환 시 필렛 미리보기 확실히 종료
   preCtx.clearRect(0,0,baseW,baseH);
   redrawDraw();
   updateToolStatus();
