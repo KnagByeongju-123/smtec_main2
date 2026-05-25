@@ -217,6 +217,7 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
       <div class="menu-item" onclick="setTool('rect')"><span class="ico">⬜</span>사각형<span class="shortcut">R</span></div>
       <div class="menu-item" onclick="setTool('circle')"><span class="ico">⭕</span>원<span class="shortcut">C</span></div>
       <div class="menu-item" onclick="setTool('arc')"><span class="ico">⌒</span>호<span class="shortcut">A</span></div>
+      <div class="menu-item" onclick="setTool('fillet')"><span class="ico">⌣R</span>필렛<span class="shortcut">F</span></div>
       <div class="menu-sep"></div>
       <div class="menu-item" onclick="setTool('select')"><span class="ico">👆</span>선택<span class="shortcut">S</span></div>
       <div class="menu-item" onclick="deleteSelected()"><span class="ico">🗑️</span>삭제<span class="shortcut">Del</span></div>
@@ -304,6 +305,7 @@ footer .coord{color:#0f0;font-family:Consolas,monospace}
     <button id="btn-rect" onclick="setTool('rect')" title="사각형 (R)">⬜</button>
     <button id="btn-circle" onclick="setTool('circle')" title="원 (C)">⭕</button>
     <button id="btn-arc" onclick="setTool('arc')" title="호 (A)">⌒</button>
+    <button id="btn-fillet" onclick="setTool('fillet')" title="필렛 (F) - 드래그로 선 2개 선택 후 R 입력">⌣R</button>
     <button id="btn-select" onclick="setTool('select')" title="선택 (S)">👆</button>
   </div>
   <div class="group sketch-only">
@@ -1520,6 +1522,14 @@ function drawPreview(){
       skCtx.arc(c.x, c.y, r, -endA, -d.startAngle, true);
       skCtx.stroke();
     }
+  } else if(d.type === 'fillet'){
+    const p1 = worldToScreen(d.start.x, d.start.y);
+    const p2 = worldToScreen(d.current.x, d.current.y);
+    skCtx.strokeStyle = '#ffaa00';
+    skCtx.lineWidth = 1;
+    skCtx.beginPath();
+    skCtx.rect(Math.min(p1.x,p2.x), Math.min(p1.y,p2.y), Math.abs(p2.x-p1.x), Math.abs(p2.y-p1.y));
+    skCtx.stroke();
   }
   skCtx.setLineDash([]);
 }
@@ -1544,11 +1554,17 @@ skCanvas.addEventListener('mousedown', (e)=>{
     return;
   }
   
+  if(state.tool === 'fillet'){
+    state.drawing = {type:'fillet', start: wp, current: wp};
+    redrawSketch();
+    return;
+  }
+
   if(state.tool === 'select'){
     selectShapeAt(wp, e.shiftKey);
     return;
   }
-  
+
   if(state.tool === 'line'){
     if(!state.drawing){
       state.drawing = {type:'line', start: wp, current: wp};
@@ -1644,9 +1660,154 @@ skCanvas.addEventListener('mousemove', (e)=>{
   }
 });
 
-skCanvas.addEventListener('mouseup', ()=>{
-  if(isPanning){isPanning = false; panStart = null; skCanvas.style.cursor = ''}
+skCanvas.addEventListener('mouseup', (e)=>{
+  if(isPanning){isPanning = false; panStart = null; skCanvas.style.cursor = ''; return;}
+  if(state.mode === 'sketch' && state.tool === 'fillet' && state.drawing && state.drawing.type === 'fillet'){
+    const d = state.drawing;
+    state.drawing = null;
+    const bx1 = Math.min(d.start.x, d.current.x);
+    const bx2 = Math.max(d.start.x, d.current.x);
+    const by1 = Math.min(d.start.y, d.current.y);
+    const by2 = Math.max(d.start.y, d.current.y);
+    // 박스에 걸친 line 형상 수집
+    const hits = [];
+    state.shapes.forEach((s, idx) => {
+      if(s.type !== 'line') return;
+      const inBox = (x,y) => x >= bx1 && x <= bx2 && y >= by1 && y <= by2;
+      if(inBox(s.x1,s.y1) || inBox(s.x2,s.y2) ||
+         segIntersectsBox(s, bx1,by1,bx2,by2)){
+        hits.push({idx, s});
+      }
+    });
+    if(hits.length < 2){ toast('선택 박스 안에 선이 2개 이상 필요합니다'); redrawSketch(); return; }
+    // 가장 가까운 2개만 사용
+    const L1 = hits[0].s, L2 = hits[1].s;
+    const ix = lineLineIntersect(L1, L2);
+    if(!ix){ toast('두 선이 평행하거나 교점이 없습니다'); redrawSketch(); return; }
+    const rStr = prompt('필렛 반지름(mm)을 입력하세요', '5');
+    if(rStr === null){ redrawSketch(); return; }
+    const R = parseFloat(rStr);
+    if(isNaN(R) || R <= 0){ toast('유효한 반지름을 입력하세요'); redrawSketch(); return; }
+    applyFillet(hits[0], hits[1], ix, R);
+    redrawSketch();
+  }
 });
+
+// 선이 박스와 교차하는지 검사
+function segIntersectsBox(s, bx1,by1,bx2,by2){
+  // 클리핑 알고리즘 대신 간단하게: 박스의 4변과 교차하는지
+  const segs = [
+    {x1:bx1,y1:by1,x2:bx2,y2:by1},{x1:bx2,y1:by1,x2:bx2,y2:by2},
+    {x1:bx2,y1:by2,x2:bx1,y2:by2},{x1:bx1,y1:by2,x2:bx1,y2:by1}
+  ];
+  return segs.some(b => segSegIntersect(s.x1,s.y1,s.x2,s.y2, b.x1,b.y1,b.x2,b.y2) !== null);
+}
+
+// 두 선분 교점 (null=없음)
+function segSegIntersect(ax,ay,bx,by, cx,cy,dx,dy){
+  const d1x=bx-ax,d1y=by-ay, d2x=dx-cx,d2y=dy-cy;
+  const cross = d1x*d2y - d1y*d2x;
+  if(Math.abs(cross)<1e-10) return null;
+  const t = ((cx-ax)*d2y - (cy-ay)*d2x) / cross;
+  const u = ((cx-ax)*d1y - (cy-ay)*d1x) / cross;
+  if(t<-1e-6||t>1+1e-6||u<-1e-6||u>1+1e-6) return null;
+  return {x: ax+t*d1x, y: ay+t*d1y, t, u};
+}
+
+// 두 직선(선분 무한 연장) 교점
+function lineLineIntersect(L1, L2){
+  return segSegIntersect(
+    L1.x1,L1.y1,L1.x2,L1.y2,
+    L2.x1,L2.y1,L2.x2,L2.y2
+  ) || lineInfiniteIntersect(L1,L2);
+}
+function lineInfiniteIntersect(L1,L2){
+  const d1x=L1.x2-L1.x1, d1y=L1.y2-L1.y1;
+  const d2x=L2.x2-L2.x1, d2y=L2.y2-L2.y1;
+  const cross=d1x*d2y-d1y*d2x;
+  if(Math.abs(cross)<1e-10) return null;
+  const t=((L2.x1-L1.x1)*d2y-(L2.y1-L1.y1)*d2x)/cross;
+  return {x:L1.x1+t*d1x, y:L1.y1+t*d1y, t, u:0};
+}
+
+// 필렛 실제 적용
+function applyFillet(h1, h2, ix, R){
+  const L1=h1.s, L2=h2.s;
+  // 각 선의 방향벡터 단위화
+  const ux1=L1.x2-L1.x1, uy1=L1.y2-L1.y1, len1=Math.hypot(ux1,uy1);
+  const ux2=L2.x2-L2.x1, uy2=L2.y2-L2.y1, len2=Math.hypot(ux2,uy2);
+  if(len1<1e-6||len2<1e-6) return;
+  // 교점에서 각 선 방향으로 트리밍 거리 d = R/tan(θ/2)
+  const dot=(ux1*ux2+uy1*uy2)/(len1*len2);
+  const ang=Math.acos(Math.max(-1,Math.min(1,Math.abs(dot))));
+  const halfAng=Math.PI/2 - ang/2;
+  if(Math.abs(Math.tan(halfAng))<1e-6) return;
+  const dist=R/Math.tan(Math.PI/2-ang/2);
+  if(isNaN(dist)||!isFinite(dist)||dist<1e-6) return;
+
+  // 교점에서 각 선 위의 트리밍 점 (교점 쪽을 향한 방향으로 dist만큼)
+  // → 각 선의 끝점 중 교점에 더 가까운 쪽을 기준으로 방향 결정
+  function trimPt(L, ix, d){
+    const dx=L.x2-L.x1, dy=L.y2-L.y1, ln=Math.hypot(dx,dy);
+    const udx=dx/ln, udy=dy/ln;
+    // 교점이 선의 어느 방향에 가까운지: 끝점 중 교점에 더 가까운 쪽
+    const d1=Math.hypot(ix.x-L.x1,ix.y-L.y1);
+    const d2=Math.hypot(ix.x-L.x2,ix.y-L.y2);
+    // 교점 방향으로 d만큼 이동
+    if(d1<d2){ // x1쪽이 교점에 가까움 → x1방향(음수)
+      return {x:ix.x+udx*d, y:ix.y+udy*d};
+    } else {
+      return {x:ix.x-udx*d, y:ix.y-udy*d};
+    }
+  }
+  const T1=trimPt(L1,ix,dist);
+  const T2=trimPt(L2,ix,dist);
+
+  // 필렛 호의 중심 계산: T1, T2에서 각 선의 법선 방향으로 R만큼
+  // 중심 = T1에서 L1의 법선방향 R, T2에서 L2의 법선방향 R → 교점 찾기
+  const n1x=-(L1.y2-L1.y1)/len1, n1y=(L1.x2-L1.x1)/len1;
+  const n2x=-(L2.y2-L2.y1)/len2, n2y=(L2.x2-L2.x1)/len2;
+  // 두 후보 (±R) 중 교점에 가까운 방향 선택
+  function findCenter(T1,n1x,n1y,T2,n2x,n2y,R){
+    const candidates=[[1,1],[1,-1],[-1,1],[-1,-1]];
+    let best=null, bestD=Infinity;
+    candidates.forEach(([s1,s2])=>{
+      const cx1=T1.x+s1*n1x*R, cy1=T1.y+s1*n1y*R;
+      const cx2=T2.x+s2*n2x*R, cy2=T2.y+s2*n2y*R;
+      const d=Math.hypot(cx1-cx2,cy1-cy2);
+      if(d<bestD){bestD=d; best={x:(cx1+cx2)/2,y:(cy1+cy2)/2};}
+    });
+    return best;
+  }
+  const C=findCenter(T1,n1x,n1y,T2,n2x,n2y,R);
+  if(!C) return;
+
+  // 호 시작/끝 각도
+  const aStart=Math.atan2(T1.y-C.y,T1.x-C.x);
+  const aEnd  =Math.atan2(T2.y-C.y,T2.x-C.x);
+
+  // 선 트리밍: 교점 대신 T1, T2 까지만
+  // L1의 교점에 더 가까운 끝을 T1로 교체
+  function trimLine(L, ix, Tnew){
+    const d1=Math.hypot(ix.x-L.x1,ix.y-L.y1);
+    const d2=Math.hypot(ix.x-L.x2,ix.y-L.y2);
+    if(d1<d2){ L.x1=Tnew.x; L.y1=Tnew.y; }
+    else      { L.x2=Tnew.x; L.y2=Tnew.y; }
+  }
+  pushHistory();
+  trimLine(L1,ix,T1);
+  trimLine(L2,ix,T2);
+
+  // 호 추가
+  state.shapes.push({
+    type:'arc', cx:C.x, cy:C.y, r:R,
+    startAngle:aStart, endAngle:aEnd,
+    color: L1.color||'#000000',
+    lineWidth: L1.lineWidth||2
+  });
+  updateInfo();
+  toast('✅ 필렛 R'+R+'mm 적용됨');
+}
 
 // 캔버스 밖으로 마우스가 나가도 패닝이 이어지도록 window에서 추적 (CAD 표준)
 window.addEventListener('mousemove', (e)=>{
@@ -1731,7 +1892,7 @@ function setTool(t){
   });
   const btn = document.getElementById('btn-' + t);
   if(btn) btn.classList.add('active');
-  const names = {line:'선', rect:'사각형', circle:'원', arc:'호', select:'선택'};
+  const names = {line:'선', rect:'사각형', circle:'원', arc:'호', select:'선택', fillet:'필렛'};
   document.getElementById('footTool').textContent = names[t] || t;
   document.getElementById('curTool').textContent = names[t] || t;
   setStat('도구: ' + (names[t]||t));
@@ -4022,7 +4183,7 @@ function doSvgRevolve(){
   }));
   const svgH = Math.max(1e-6, maxY - minY);
   const scale = sketchHeight / svgH; // SVG 세로 → sketchHeight mm
-  const innerR = innerD / 2;
+  const innerR = innerD; // 내부 지름 입력값을 그대로 반경으로 사용 (입력값=지름이므로 /2 불필요)
 
   // 가장 점이 많은(주) 윤곽을 단면으로 사용
   let main = _svgRevData[0];
@@ -6957,11 +7118,15 @@ function exportSTL(){
   });
   stl += 'endsolid Catia3D\n';
   
+  const defaultName = 'Catia3D_' + new Date().toISOString().slice(0,10).replace(/-/g,'');
+  const inputName = prompt('STL 파일명을 입력하세요 (.stl 자동 추가)', defaultName);
+  if(inputName === null) return;
+  const fileName = (inputName.trim() || defaultName).replace(/\.stl$/i,'') + '.stl';
   const blob = new Blob([stl], {type: 'application/octet-stream'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `Catia3D_${Date.now()}.stl`;
+  a.download = fileName;
   a.click();
   URL.revokeObjectURL(url);
 
@@ -8290,6 +8455,7 @@ document.addEventListener('keydown', (e)=>{
     else if(e.key === 'r' || e.key === 'R') setTool('rect');
     else if(e.key === 'c' || e.key === 'C') setTool('circle');
     else if(e.key === 'a' || e.key === 'A') setTool('arc');
+    else if(e.key === 'f' || e.key === 'F') setTool('fillet');
     else if(e.key === 's' || e.key === 'S') setTool('select');
     else if(e.key === 'g' || e.key === 'G') toggleGrid();
   }

@@ -499,6 +499,14 @@ function drawPreview(){
       skCtx.arc(c.x, c.y, r, -endA, -d.startAngle, true);
       skCtx.stroke();
     }
+  } else if(d.type === 'fillet'){
+    const p1 = worldToScreen(d.start.x, d.start.y);
+    const p2 = worldToScreen(d.current.x, d.current.y);
+    skCtx.strokeStyle = '#ffaa00';
+    skCtx.lineWidth = 1;
+    skCtx.beginPath();
+    skCtx.rect(Math.min(p1.x,p2.x), Math.min(p1.y,p2.y), Math.abs(p2.x-p1.x), Math.abs(p2.y-p1.y));
+    skCtx.stroke();
   }
   skCtx.setLineDash([]);
 }
@@ -523,6 +531,12 @@ skCanvas.addEventListener('mousedown', (e)=>{
     return;
   }
   
+  if(state.tool === 'fillet'){
+    state.drawing = {type:'fillet', start: wp, current: wp};
+    redrawSketch();
+    return;
+  }
+
   if(state.tool === 'select'){
     selectShapeAt(wp, e.shiftKey);
     return;
@@ -623,9 +637,117 @@ skCanvas.addEventListener('mousemove', (e)=>{
   }
 });
 
-skCanvas.addEventListener('mouseup', ()=>{
-  if(isPanning){isPanning = false; panStart = null; skCanvas.style.cursor = ''}
+skCanvas.addEventListener('mouseup', (e)=>{
+  if(isPanning){isPanning = false; panStart = null; skCanvas.style.cursor = ''; return;}
+  if(state.mode === 'sketch' && state.tool === 'fillet' && state.drawing && state.drawing.type === 'fillet'){
+    const d = state.drawing;
+    state.drawing = null;
+    const bx1 = Math.min(d.start.x, d.current.x);
+    const bx2 = Math.max(d.start.x, d.current.x);
+    const by1 = Math.min(d.start.y, d.current.y);
+    const by2 = Math.max(d.start.y, d.current.y);
+    const hits = [];
+    state.shapes.forEach((s, idx) => {
+      if(s.type !== 'line') return;
+      const inBox = (x,y) => x >= bx1 && x <= bx2 && y >= by1 && y <= by2;
+      if(inBox(s.x1,s.y1) || inBox(s.x2,s.y2) || segIntersectsBox(s, bx1,by1,bx2,by2)){
+        hits.push({idx, s});
+      }
+    });
+    if(hits.length < 2){ toast('선택 박스 안에 선이 2개 이상 필요합니다'); redrawSketch(); return; }
+    const ix = lineLineIntersect(hits[0].s, hits[1].s);
+    if(!ix){ toast('두 선이 평행하거나 교점이 없습니다'); redrawSketch(); return; }
+    const rStr = prompt('필렛 반지름(mm)을 입력하세요', '5');
+    if(rStr === null){ redrawSketch(); return; }
+    const R = parseFloat(rStr);
+    if(isNaN(R) || R <= 0){ toast('유효한 반지름을 입력하세요'); redrawSketch(); return; }
+    applyFillet(hits[0], hits[1], ix, R);
+    redrawSketch();
+  }
 });
+
+function segIntersectsBox(s, bx1,by1,bx2,by2){
+  const segs = [
+    {x1:bx1,y1:by1,x2:bx2,y2:by1},{x1:bx2,y1:by1,x2:bx2,y2:by2},
+    {x1:bx2,y1:by2,x2:bx1,y2:by2},{x1:bx1,y1:by2,x2:bx1,y2:by1}
+  ];
+  return segs.some(b => segSegIntersect(s.x1,s.y1,s.x2,s.y2, b.x1,b.y1,b.x2,b.y2) !== null);
+}
+function segSegIntersect(ax,ay,bx,by, cx,cy,dx,dy){
+  const d1x=bx-ax,d1y=by-ay, d2x=dx-cx,d2y=dy-cy;
+  const cross = d1x*d2y - d1y*d2x;
+  if(Math.abs(cross)<1e-10) return null;
+  const t = ((cx-ax)*d2y - (cy-ay)*d2x) / cross;
+  const u = ((cx-ax)*d1y - (cy-ay)*d1x) / cross;
+  if(t<-1e-6||t>1+1e-6||u<-1e-6||u>1+1e-6) return null;
+  return {x: ax+t*d1x, y: ay+t*d1y, t, u};
+}
+function lineLineIntersect(L1, L2){
+  return segSegIntersect(L1.x1,L1.y1,L1.x2,L1.y2, L2.x1,L2.y1,L2.x2,L2.y2)
+      || lineInfiniteIntersect(L1,L2);
+}
+function lineInfiniteIntersect(L1,L2){
+  const d1x=L1.x2-L1.x1, d1y=L1.y2-L1.y1;
+  const d2x=L2.x2-L2.x1, d2y=L2.y2-L2.y1;
+  const cross=d1x*d2y-d1y*d2x;
+  if(Math.abs(cross)<1e-10) return null;
+  const t=((L2.x1-L1.x1)*d2y-(L2.y1-L1.y1)*d2x)/cross;
+  return {x:L1.x1+t*d1x, y:L1.y1+t*d1y, t, u:0};
+}
+function applyFillet(h1, h2, ix, R){
+  const L1=h1.s, L2=h2.s;
+  const ux1=L1.x2-L1.x1, uy1=L1.y2-L1.y1, len1=Math.hypot(ux1,uy1);
+  const ux2=L2.x2-L2.x1, uy2=L2.y2-L2.y1, len2=Math.hypot(ux2,uy2);
+  if(len1<1e-6||len2<1e-6) return;
+  const dot=(ux1*ux2+uy1*uy2)/(len1*len2);
+  const ang=Math.acos(Math.max(-1,Math.min(1,Math.abs(dot))));
+  const dist=R/Math.tan(Math.PI/2-ang/2);
+  if(isNaN(dist)||!isFinite(dist)||dist<1e-6) return;
+  function trimPt(L, ix, d){
+    const dx=L.x2-L.x1, dy=L.y2-L.y1, ln=Math.hypot(dx,dy);
+    const udx=dx/ln, udy=dy/ln;
+    const d1=Math.hypot(ix.x-L.x1,ix.y-L.y1);
+    const d2=Math.hypot(ix.x-L.x2,ix.y-L.y2);
+    if(d1<d2){ return {x:ix.x+udx*d, y:ix.y+udy*d}; }
+    else      { return {x:ix.x-udx*d, y:ix.y-udy*d}; }
+  }
+  const T1=trimPt(L1,ix,dist);
+  const T2=trimPt(L2,ix,dist);
+  const n1x=-(L1.y2-L1.y1)/len1, n1y=(L1.x2-L1.x1)/len1;
+  const n2x=-(L2.y2-L2.y1)/len2, n2y=(L2.x2-L2.x1)/len2;
+  function findCenter(T1,n1x,n1y,T2,n2x,n2y,R){
+    const candidates=[[1,1],[1,-1],[-1,1],[-1,-1]];
+    let best=null, bestD=Infinity;
+    candidates.forEach(([s1,s2])=>{
+      const cx1=T1.x+s1*n1x*R, cy1=T1.y+s1*n1y*R;
+      const cx2=T2.x+s2*n2x*R, cy2=T2.y+s2*n2y*R;
+      const d=Math.hypot(cx1-cx2,cy1-cy2);
+      if(d<bestD){bestD=d; best={x:(cx1+cx2)/2,y:(cy1+cy2)/2};}
+    });
+    return best;
+  }
+  const C=findCenter(T1,n1x,n1y,T2,n2x,n2y,R);
+  if(!C) return;
+  const aStart=Math.atan2(T1.y-C.y,T1.x-C.x);
+  const aEnd  =Math.atan2(T2.y-C.y,T2.x-C.x);
+  function trimLine(L, ix, Tnew){
+    const d1=Math.hypot(ix.x-L.x1,ix.y-L.y1);
+    const d2=Math.hypot(ix.x-L.x2,ix.y-L.y2);
+    if(d1<d2){ L.x1=Tnew.x; L.y1=Tnew.y; }
+    else      { L.x2=Tnew.x; L.y2=Tnew.y; }
+  }
+  pushHistory();
+  trimLine(L1,ix,T1);
+  trimLine(L2,ix,T2);
+  state.shapes.push({
+    type:'arc', cx:C.x, cy:C.y, r:R,
+    startAngle:aStart, endAngle:aEnd,
+    color: L1.color||'#000000',
+    lineWidth: L1.lineWidth||2
+  });
+  updateInfo();
+  toast('✅ 필렛 R'+R+'mm 적용됨');
+}
 
 // 캔버스 밖으로 마우스가 나가도 패닝이 이어지도록 window에서 추적 (CAD 표준)
 window.addEventListener('mousemove', (e)=>{
@@ -710,7 +832,7 @@ function setTool(t){
   });
   const btn = document.getElementById('btn-' + t);
   if(btn) btn.classList.add('active');
-  const names = {line:'선', rect:'사각형', circle:'원', arc:'호', select:'선택'};
+  const names = {line:'선', rect:'사각형', circle:'원', arc:'호', select:'선택', fillet:'필렛'};
   document.getElementById('footTool').textContent = names[t] || t;
   document.getElementById('curTool').textContent = names[t] || t;
   setStat('도구: ' + (names[t]||t));
@@ -7273,6 +7395,7 @@ document.addEventListener('keydown', (e)=>{
     else if(e.key === 'r' || e.key === 'R') setTool('rect');
     else if(e.key === 'c' || e.key === 'C') setTool('circle');
     else if(e.key === 'a' || e.key === 'A') setTool('arc');
+    else if(e.key === 'f' || e.key === 'F') setTool('fillet');
     else if(e.key === 's' || e.key === 'S') setTool('select');
     else if(e.key === 'g' || e.key === 'G') toggleGrid();
   }
