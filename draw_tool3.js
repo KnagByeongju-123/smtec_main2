@@ -3001,7 +3001,7 @@ function doSvgRevolve(){
   }));
   const svgH = Math.max(1e-6, maxY - minY);
   const scale = sketchHeight / svgH; // SVG 세로 → sketchHeight mm
-  const innerR = innerD / 2;
+  const innerR = innerD; // 내부 지름 입력값을 그대로 반경으로 사용 (입력값=지름이므로 /2 불필요)
 
   // 가장 점이 많은(주) 윤곽을 단면으로 사용
   let main = _svgRevData[0];
@@ -5936,11 +5936,15 @@ function exportSTL(){
   });
   stl += 'endsolid Catia3D\n';
   
+  const defaultName = 'Catia3D_' + new Date().toISOString().slice(0,10).replace(/-/g,'');
+  const inputName = prompt('STL 파일명을 입력하세요 (.stl 자동 추가)', defaultName);
+  if(inputName === null) return;
+  const fileName = (inputName.trim() || defaultName).replace(/\.stl$/i,'') + '.stl';
   const blob = new Blob([stl], {type: 'application/octet-stream'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `Catia3D_${Date.now()}.stl`;
+  a.download = fileName;
   a.click();
   URL.revokeObjectURL(url);
 
@@ -7609,3 +7613,4 @@ function fitSketchToShapes(){
 }
 
 window.addEventListener('load', init);
+
