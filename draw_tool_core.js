@@ -151,6 +151,8 @@ let liveSnapMode = false;
 
 // B/D안 도구 상태 (Rev.9.0)
 let filletState = null;
+// Rev.16.24: 필렛 방향 인터랙티브 선택 - 두 선 선택+지름 입력 후, 마우스로 코너 방향 결정→좌클릭 확정
+let filletPreview = null;  // {L1, L2, ix, rPx, rMm} 방향 미리보기 진행 중
 let offsetState = null;
 let dimState = null;
 
@@ -1114,6 +1116,12 @@ drawCanvas.addEventListener('mousemove', e => {
   const unit = calibSet ? `${mmX}, ${mmY} mm` : `${p.x}, ${p.y} px`;
   document.getElementById('statusCoord').textContent = unit + (p.snapped ? ' 🧲' : '');
 
+  // Rev.16.24: 필렛 방향 미리보기 (지름 입력 후 진행 중)
+  if (filletPreview){
+    drawFilletPreview(p);
+    return;
+  }
+
   // Rev.16.14: 쓸어 지우기 미리보기 - 경로(빨강) + 삭제예정 선(빨강 굵게)
   if (swipeEraseMode){
     if (swipeErasing){
@@ -1478,6 +1486,15 @@ drawCanvas.addEventListener('mousemove', e => {
 drawCanvas.addEventListener('mousedown', e => {
   // Rev.11.26: 휠 클릭(가운데 버튼)은 패닝 전용 → 작도/선택 처리 안 함
   if (e.button === 1) return;
+
+  // Rev.16.24: 필렛 방향 미리보기 중 - 좌클릭=확정, 우클릭=취소
+  if (filletPreview){
+    const p = getCanvasPoint(e);
+    if (e.button === 0){ commitFilletAt(p); }
+    else if (e.button === 2){ cancelFilletPreview(); }
+    e.preventDefault();
+    return;
+  }
 
   // Rev.12.7: 거리두기 픽 모드 중에는 select 드래그(박스·이동) 시작 안 함 (click 으로만 처리)
   if ((offsetTwinPickMode || baseLineMode) && e.button === 0) return;
@@ -1886,6 +1903,8 @@ drawCanvas.addEventListener('mouseup', e => {
 let suppressNextClick = false;
 
 drawCanvas.addEventListener('click', e => {
+  // Rev.16.24: 필렛 방향 미리보기 중에는 click 무시 (mousedown에서 처리)
+  if (filletPreview) return;
   // Rev.16.14: 쓸어 지우기 모드는 mousedown/up에서 처리하므로 click 무시
   if (swipeEraseMode) return;
   // Rev.16.11: 대각선 모드는 mousedown에서 처리하므로 click은 무시 (select 동작 방지)
@@ -2082,6 +2101,11 @@ window.addEventListener('keydown', e => {
     if (grabMode){
       exitGrabMode(false);
       document.getElementById('statusHint').textContent = '↔ 이동 취소 (원위치)';
+      return;
+    }
+    // Rev.16.24: 필렛 방향 미리보기 취소
+    if (filletPreview){
+      cancelFilletPreview();
       return;
     }
     // Rev.16.14: 쓸어 지우기 모드 종료
@@ -3179,6 +3203,61 @@ function resetCalibration() {
   updateCalibStat();
 }
 
+// Rev.16.23: 사용자 단위 배율 변경 (1mm당 px). 기존 도형의 실치수(mm)는 유지.
+function applyUnitScale(newPxPerMm){
+  newPxPerMm = parseFloat(newPxPerMm);
+  if (!isFinite(newPxPerMm) || newPxPerMm <= 0) return;
+  const oldPxPerMm = 1 / mmPerPixel;
+  if (Math.abs(newPxPerMm - oldPxPerMm) < 1e-6) return;
+  const k = newPxPerMm / oldPxPerMm;   // 좌표 확대비
+
+  // 모든 도형 좌표를 k배 (실치수 mm 유지)
+  for (const s of shapes){
+    if (typeof scaleShapeUniform === 'function') scaleShapeUniform(s, k);
+  }
+  // 채움(fill) 등 별도 배열이 있으면 함께
+  if (typeof fills !== 'undefined' && Array.isArray(fills)){
+    for (const f of fills){ if (typeof scaleShapeUniform === 'function') scaleShapeUniform(f, k); }
+  }
+
+  // 작업영역도 k배 (실치수 유지) - 단, 줌 100%에서 흐트러짐 없도록 16384 한계 내로
+  baseW = Math.round(baseW * k);
+  baseH = Math.round(baseH * k);
+
+  // 비율 갱신
+  mmPerPixel = 1 / newPxPerMm;
+
+  // 화면 표시 크기 유지를 위해 줌을 1/k배
+  zoom = zoom / k;
+  const zEl = document.getElementById('zoom');
+  if (zEl){
+    let zp = Math.round(zoom * 100);
+    zp = Math.max(parseInt(zEl.min), Math.min(parseInt(zEl.max), zp));
+    zEl.value = zp;
+    zoom = zp / 100;
+    const zv = document.getElementById('zoomVal'); if (zv) zv.textContent = zp + '%';
+  }
+
+  redoStack = []; pushHistory();
+  setCanvasSize(baseW, baseH);
+  updateCalibStat();
+  if (typeof redrawFills === 'function') redrawFills();
+  redrawDraw(); updateCount();
+  document.getElementById('statusHint').textContent =
+    `📏 단위 배율 변경: 1mm = ${newPxPerMm}px · 작업영역 ${(baseW*mmPerPixel).toFixed(0)}×${(baseH*mmPerPixel).toFixed(0)}mm · 기존 도형 실치수 유지`;
+}
+document.getElementById('unitScaleSel').addEventListener('change', e => {
+  applyUnitScale(e.target.value);
+});
+// 현재 mmPerPixel에 맞춰 드롭다운 표시 동기화 (로드/파일열기 후 호출)
+function syncUnitScaleSel(){
+  const sel = document.getElementById('unitScaleSel');
+  if (!sel) return;
+  const pxPerMm = Math.round(1 / mmPerPixel);
+  const opt = [...sel.options].find(o => parseInt(o.value) === pxPerMm);
+  if (opt) sel.value = String(pxPerMm);
+}
+
 // ====== B안: 편집 명령 (Rev.9.0) ======
 
 // 직선-직선 교점 (무한 직선)
@@ -3740,121 +3819,154 @@ function findVertexAt(p, tolerance) {
 
 // 두 직선에 라운드 적용 - 공통 함수
 function applyFilletToTwoLines(L1, L2, click1, click2) {
-  console.log('🔧 [Fillet] 시작:', {L1_id: L1.id, L2_id: L2.id, click1, click2});
-
   // 두 무한 직선 교점
   const ix = lineLineIntersection(L1.p1, L1.p2, L2.p1, L2.p2);
   if (!ix) {
     alert('두 선이 평행이라 라운드를 만들 수 없습니다.');
-    console.warn('🔧 [Fillet] 두 선 평행');
     redrawDraw();
     return false;
   }
-  console.log('🔧 [Fillet] 교점:', ix);
-  
-  // 반지름 입력
-  const rStr = prompt(`모서리 라운드 반지름(mm)을 입력하세요:\n(예: 5 또는 10)\n\n현재 캘리브: ${calibSet ? '1px = '+mmPerPixel.toFixed(3)+'mm' : '미설정 (1:1)'}`, '5');
+  // 지름 입력 (R은 지름 Ø)
+  const rStr = prompt(`모서리 라운드 지름 Ø(mm)을 입력하세요:\n(예: 10 또는 20 · 수식가능)\n\n현재 캘리브: ${calibSet ? '1mm = '+(1/mmPerPixel).toFixed(1)+'px' : '미설정 (1:1)'}`, '10');
   if (!rStr) { redrawDraw(); return false; }
-  const rMm = parseFloat(rStr);
-  if (isNaN(rMm) || rMm <= 0) { alert('잘못된 반지름.'); redrawDraw(); return false; }
+  const dMm = evalExpr(rStr);
+  if (isNaN(dMm) || dMm <= 0) { alert('잘못된 지름.'); redrawDraw(); return false; }
+  const rMm = dMm / 2;
   const r = rMm / mmPerPixel;
-  console.log('🔧 [Fillet] r(mm)=' + rMm + ', r(px)=' + r);
-  
-  // 각 선에 대해: 교점에서 클릭점 방향(=살릴 방향)의 단위벡터
-  // 클릭점이 선 위에 있으니, 가까운 끝점을 살리고 반대편을 자른다.
-  function lineEndpointToCutKey(line, clickPt, ix) {
-    const d1 = Math.hypot(clickPt.x - line.p1.x, clickPt.y - line.p1.y);
-    const d2 = Math.hypot(clickPt.x - line.p2.x, clickPt.y - line.p2.y);
-    const keepKey = d1 < d2 ? 'p1' : 'p2';
-    const cutKey  = keepKey === 'p1' ? 'p2' : 'p1';
-    const keep = line[keepKey];
-    const dx = keep.x - ix.x, dy = keep.y - ix.y;
-    const len = Math.hypot(dx, dy);
-    if (len < 1e-6) {
-      // 교점이 살릴 끝점과 일치 (선이 교점에서 끝남) → 다른 끝점 방향 사용
-      const other = line[cutKey];
-      const ox = other.x - ix.x, oy = other.y - ix.y;
-      const oLen = Math.hypot(ox, oy);
-      if (oLen < 1e-6) return null; // 선분이 점에 가까움
-      // 살리는 방향을 반대편으로 (교점 → 다른 끝점)
-      return {ux: -ox/oLen, uy: -oy/oLen, keepKey, cutKey, keepLen: 0};
-    }
-    return {ux: dx/len, uy: dy/len, keepKey, cutKey, keepLen: len};
-  }
-  
-  const e1 = lineEndpointToCutKey(L1, click1, ix);
-  const e2 = lineEndpointToCutKey(L2, click2, ix);
-  if (!e1 || !e2) {
-    console.warn('🔧 [Fillet] 단위벡터 계산 실패');
-    redrawDraw(); return false;
-  }
-  console.log('🔧 [Fillet] L1 keep방향:', e1, 'L2 keep방향:', e2);
-  
-  // 두 단위벡터 사이 각도
-  const dot = e1.ux * e2.ux + e1.uy * e2.uy;
+
+  // 인터랙티브 방향 선택 모드로 진입: 마우스 위치로 4코너 중 결정, 좌클릭 확정
+  filletPreview = { L1, L2, ix, rPx: r, rMm };
+  filletState = null;
+  document.getElementById('statusHint').textContent =
+    `◜ 필렛 Ø${dMm}mm: 마우스로 라운드 넣을 코너 방향을 정하고 좌클릭 · 우클릭/Esc=취소`;
+  // 초기 미리보기 (두 선 클릭 위치 평균 쪽)
+  const mx = (click1.x + click2.x)/2, my = (click1.y + click2.y)/2;
+  drawFilletPreview({ x: mx, y: my });
+  return true;
+}
+
+// Rev.16.24: 교점 기준 각 선의 ± 방향 단위벡터 구하기
+function filletLineDirs(line, ix){
+  // 선의 양 끝점 방향 단위벡터 (교점에서 p1쪽, p2쪽)
+  const d1 = { x: line.p1.x - ix.x, y: line.p1.y - ix.y };
+  const d2 = { x: line.p2.x - ix.x, y: line.p2.y - ix.y };
+  const l1 = Math.hypot(d1.x, d1.y), l2 = Math.hypot(d2.x, d2.y);
+  const dirs = [];
+  if (l1 > 1e-6) dirs.push({ ux:d1.x/l1, uy:d1.y/l1, key:'p1', len:l1 });
+  if (l2 > 1e-6) dirs.push({ ux:d2.x/l2, uy:d2.y/l2, key:'p2', len:l2 });
+  return dirs;
+}
+
+// Rev.16.24: 마우스 위치(mp)에 가장 부합하는 방향(각 선의 keep 방향) 선택 → 필렛 계산 결과 반환(없으면 null)
+function computeFilletForMouse(mp){
+  if (!filletPreview) return null;
+  const { L1, L2, ix, rPx } = filletPreview;
+  // 마우스 방향 단위벡터 (교점→마우스)
+  const mdx = mp.x - ix.x, mdy = mp.y - ix.y;
+  const mlen = Math.hypot(mdx, mdy);
+  if (mlen < 1e-6) return null;
+  const mux = mdx/mlen, muy = mdy/mlen;
+
+  // 각 선에서 마우스 방향과 내적이 큰(=같은 쪽) 방향을 keep으로 선택
+  const dirs1 = filletLineDirs(L1, ix);
+  const dirs2 = filletLineDirs(L2, ix);
+  if (!dirs1.length || !dirs2.length) return null;
+  const pick = (dirs) => dirs.reduce((best,d) => {
+    const dot = d.ux*mux + d.uy*muy;
+    return (!best || dot > best.dot) ? {d, dot} : best;
+  }, null).d;
+  const e1 = pick(dirs1), e2 = pick(dirs2);
+
+  const dot = e1.ux*e2.ux + e1.uy*e2.uy;
   const ang = Math.acos(Math.max(-1, Math.min(1, dot)));
-  console.log('🔧 [Fillet] 두 방향 사이각 = ' + (ang*180/Math.PI).toFixed(1) + '°');
-  if (ang < 0.01 || ang > Math.PI - 0.01) {
-    alert('두 선이 거의 평행이거나 일직선입니다.\n각도: ' + (ang*180/Math.PI).toFixed(1) + '°');
-    redrawDraw(); return false;
+  if (ang < 0.01 || ang > Math.PI - 0.01) return null;
+
+  const d = rPx / Math.tan(ang/2);
+  // 길이 초과 체크 (keepLen = 해당 방향 끝점까지 거리)
+  if ((d > e1.len + 0.5) || (d > e2.len + 0.5)) {
+    return { tooBig:true, needMm:(d*mmPerPixel), maxMm:(Math.min(e1.len,e2.len)*mmPerPixel) };
   }
-  
-  // d = r / tan(ang/2): 교점에서 t1, t2까지의 거리
-  const d = r / Math.tan(ang/2);
-  console.log('🔧 [Fillet] 단축 거리 d=' + d.toFixed(2) + 'px (선1 keepLen=' + e1.keepLen.toFixed(1) + ', 선2 keepLen=' + e2.keepLen.toFixed(1) + ')');
-  
-  if (d > e1.keepLen + 0.5 && e1.keepLen > 0.5 || d > e2.keepLen + 0.5 && e2.keepLen > 0.5) {
-    alert(`반지름이 너무 큽니다.\n필요 거리: ${(d*mmPerPixel).toFixed(1)}mm\n선 길이가 부족합니다 (최소 ${(Math.min(e1.keepLen,e2.keepLen)*mmPerPixel).toFixed(1)}mm).\n\n작은 R로 다시 시도하세요.`);
-    redrawDraw(); return false;
-  }
-  
-  const t1 = {x: ix.x + e1.ux * d, y: ix.y + e1.uy * d};
-  const t2 = {x: ix.x + e2.ux * d, y: ix.y + e2.uy * d};
-  
-  // 호 중심: 각 이등분선 방향
+  const t1 = { x: ix.x + e1.ux*d, y: ix.y + e1.uy*d };
+  const t2 = { x: ix.x + e2.ux*d, y: ix.y + e2.uy*d };
   const bisX = e1.ux + e2.ux, bisY = e1.uy + e2.uy;
   const bisLen = Math.hypot(bisX, bisY);
-  if (bisLen < 1e-6) { alert('계산 오류'); redrawDraw(); return false; }
-  const distC = r / Math.sin(ang/2);
-  const cx = ix.x + (bisX/bisLen) * distC;
-  const cy = ix.y + (bisY/bisLen) * distC;
-  console.log('🔧 [Fillet] t1=', t1, 't2=', t2, 'center=', {cx, cy});
-  
-  // L1, L2 단축
-  L1[e1.cutKey] = {x: Math.round(t1.x), y: Math.round(t1.y)};
-  L2[e2.cutKey] = {x: Math.round(t2.x), y: Math.round(t2.y)};
-  
-  // 호의 양 끝점에서의 각도 (호 중심 기준)
+  if (bisLen < 1e-6) return null;
+  const distC = rPx / Math.sin(ang/2);
+  const cx = ix.x + (bisX/bisLen)*distC;
+  const cy = ix.y + (bisY/bisLen)*distC;
   const a1 = Math.atan2(t1.y - cy, t1.x - cx);
   const a2 = Math.atan2(t2.y - cy, t2.x - cx);
-
-  // 코너 라운드는 항상 짧은 쪽 호 (각도 < π)
-  // Canvas arc(cx,cy,r,startAng,endAng,anticlockwise)
-  //   anticlockwise=false (기본): 각도 값이 증가하는 방향으로 그림 (canvas 좌표에서 시계방향)
-  //   anticlockwise=true: 각도 값이 감소하는 방향
-  // 짧은 호를 그리려면:
-  //   - diff > 0 (endAng > startAng 정규화) → 각도 증가가 짧음 → anticlockwise=false (ccw=false)
-  //   - diff < 0 (endAng < startAng) → 각도 감소가 짧음 → anticlockwise=true (ccw=true)
   let diff = a2 - a1;
   while (diff > Math.PI) diff -= 2*Math.PI;
   while (diff < -Math.PI) diff += 2*Math.PI;
-  const ccw = diff < 0;  // 부호 정정 (이전: diff > 0 이었음)
-  console.log('🔧 [Fillet] a1=' + (a1*180/Math.PI).toFixed(1) + '°, a2=' + (a2*180/Math.PI).toFixed(1) + '°, diff=' + (diff*180/Math.PI).toFixed(1) + '° → ccw=' + ccw);
-  
+  const ccw = diff < 0;
+  // cut 방향 = keep의 반대 끝점
+  const cut1 = e1.key === 'p1' ? 'p2' : 'p1';
+  const cut2 = e2.key === 'p1' ? 'p2' : 'p1';
+  return { t1, t2, cx, cy, a1, a2, ccw, cut1, cut2, r:rPx };
+}
+
+// Rev.16.24: 필렛 방향 미리보기 그리기
+function drawFilletPreview(mp){
+  if (!filletPreview || !preCtx) return;
+  const Z = zoom || 1;
+  preCtx.clearRect(0,0,baseW,baseH);
+  const res = computeFilletForMouse(mp);
+  preCtx.save();
+  if (res && !res.tooBig){
+    // 단축될 두 선 + 호 미리보기
+    const { L1, L2, ix } = filletPreview;
+    preCtx.strokeStyle = '#ffcc00'; preCtx.lineWidth = 2/Z; preCtx.setLineDash([]);
+    // 호
+    preCtx.beginPath();
+    preCtx.arc(res.cx, res.cy, res.r, res.a1, res.a2, res.ccw);
+    preCtx.stroke();
+    // 단축 후 선 끝(접점) 표시
+    preCtx.fillStyle = '#ffcc00';
+    [res.t1, res.t2].forEach(t => { preCtx.beginPath(); preCtx.arc(t.x,t.y,4/Z,0,Math.PI*2); preCtx.fill(); });
+    document.getElementById('statusHint').textContent =
+      `◜ 필렛 Ø${(filletPreview.rMm*2)}mm: 이 코너로 좌클릭 확정 · 우클릭/Esc=취소`;
+  } else if (res && res.tooBig){
+    document.getElementById('statusHint').textContent =
+      `◜ 지름이 큼: 필요 ${res.needMm.toFixed(1)}mm > 선길이 ${res.maxMm.toFixed(1)}mm. 다른 코너 또는 작은 Ø`;
+  }
+  preCtx.restore();
+}
+
+// Rev.16.24: 필렛 확정 (좌클릭)
+function commitFilletAt(mp){
+  if (!filletPreview) return false;
+  const res = computeFilletForMouse(mp);
+  if (!res || res.tooBig){
+    document.getElementById('statusHint').textContent = '◜ 이 방향은 적용 불가. 다른 코너로 이동 후 좌클릭하세요.';
+    return false;
+  }
+  const { L1, L2, rMm } = filletPreview;
+  L1[res.cut1] = { x: Math.round(res.t1.x), y: Math.round(res.t1.y) };
+  L2[res.cut2] = { x: Math.round(res.t2.x), y: Math.round(res.t2.y) };
   shapes.push({
-    id: ++shapeIdSeq, type: 'arc',
-    cx: cx, cy: cy, r: r,
-    startAngle: a1, endAngle: a2, ccw: ccw,
-    p1: {x: Math.round(t1.x), y: Math.round(t1.y)},
-    p2: {x: Math.round(t2.x), y: Math.round(t2.y)},
+    id: ++shapeIdSeq, type:'arc',
+    cx: res.cx, cy: res.cy, r: res.r,
+    startAngle: res.a1, endAngle: res.a2, ccw: res.ccw,
+    p1: { x: Math.round(res.t1.x), y: Math.round(res.t1.y) },
+    p2: { x: Math.round(res.t2.x), y: Math.round(res.t2.y) },
     stroke: L1.stroke, strokeWidth: L1.strokeWidth
   });
-  console.log('🔧 [Fillet] ✅ 호 추가 완료, shapes 총=' + shapes.length);
-  
   redoStack = []; pushHistory();
+  preCtx.clearRect(0,0,baseW,baseH);
+  redrawDraw(); updateCount();
+  document.getElementById('statusHint').textContent = `◜ 모서리 Ø${(rMm*2)}mm (R${rMm}mm) 생성 완료`;
+  filletPreview = null;
+  return true;
+}
+
+// Rev.16.24: 필렛 미리보기 취소
+function cancelFilletPreview(){
+  if (!filletPreview) return false;
+  filletPreview = null;
+  preCtx.clearRect(0,0,baseW,baseH);
   redrawDraw();
-  updateCount();
-  document.getElementById('statusHint').textContent = `◜ 모서리 R${rMm}mm 생성 완료`;
+  document.getElementById('statusHint').textContent = '◜ 필렛 취소됨';
   return true;
 }
 
@@ -3894,14 +4006,15 @@ function handleFilletOnRect(rect, p) {
     return;
   }
 
-  // 반지름 입력
+  // 지름 입력
   const rStr = prompt(
-    `사각형 모서리 [${best.label}]에 라운드 적용\n\n반지름(mm) 입력:\n현재 캘리브: ${calibSet ? '1px = '+mmPerPixel.toFixed(3)+'mm' : '미설정 (1:1)'}`,
-    '5'
+    `사각형 모서리 [${best.label}]에 라운드 적용\n\n지름 Ø(mm) 입력 (반지름의 2배):\n현재 캘리브: ${calibSet ? '1mm = '+(1/mmPerPixel).toFixed(1)+'px' : '미설정 (1:1)'}`,
+    '10'
   );
   if (!rStr) return;
-  const rMm = parseFloat(rStr);
-  if (isNaN(rMm) || rMm <= 0) { alert('잘못된 반지름.'); return; }
+  const dMm = evalExpr(rStr);
+  if (isNaN(dMm) || dMm <= 0) { alert('잘못된 지름.'); return; }
+  const rMm = dMm / 2;
   const r = rMm / mmPerPixel;
 
   const maxR = Math.min(w, h) / 2;
@@ -3996,7 +4109,7 @@ function handleFilletOnRect(rect, p) {
   redoStack = []; pushHistory();
   redrawDraw();
   updateCount();
-  document.getElementById('statusHint').textContent = `◜ 사각형 [${best.label}] 모서리 R${rMm}mm 적용 완료`;
+  document.getElementById('statusHint').textContent = `◜ 사각형 [${best.label}] 모서리 Ø${(rMm*2)}mm (R${rMm}mm) 적용 완료`;
 }
 
 // 반지름이 이미 정해진 상태에서 두 선에 라운드 적용 (prompt 생략)
@@ -4489,7 +4602,7 @@ function applyFilletNoPrompt(L1, L2, click1, click2, r, rMm) {
   redoStack = []; pushHistory();
   redrawDraw();
   updateCount();
-  document.getElementById('statusHint').textContent = `◜ 모서리 R${rMm}mm 생성 완료`;
+  document.getElementById('statusHint').textContent = `◜ 모서리 Ø${(rMm*2)}mm (R${rMm}mm) 생성 완료`;
   return true;
 }
 
@@ -8745,6 +8858,7 @@ function loadProjectData(data){
   // 단위/작업영역/줌
   if (typeof data.mmPerPixel === 'number' && data.mmPerPixel > 0) mmPerPixel = data.mmPerPixel;
   if (typeof data.calibSet === 'boolean') calibSet = data.calibSet;
+  if (typeof syncUnitScaleSel === 'function') syncUnitScaleSel();
   if (typeof data.zoom === 'number' && data.zoom > 0){
     zoom = data.zoom;
     const zi = document.getElementById('zoom');
