@@ -28,8 +28,8 @@ const fillCtx = fillCanvas.getContext('2d');
 const drawCtx = drawCanvas.getContext('2d');
 const preCtx = previewCanvas.getContext('2d');
 
-let baseW = 15000, baseH = 8400;  // Rev.16.19: 16:9, 1mm=100px 기준 150mm×84mm (줌 100%까지 선명)
-let zoom = 0.08;
+let baseW = 16000, baseH = 9000;  // Rev.16.22: 16:9, 1mm=300px 기준 약 53mm×30mm (5cm 미만 제품, 줌 100%까지 선명)
+let zoom = 0.06;
 // Rev.11.24: 눈금자(그리드) 표시
 let gridOn = false;
 let gridSpacingMm = 10;   // 격자 간격 (mm)
@@ -129,7 +129,7 @@ let detectedArcs = [];      // 배경에서 검출된 호/원 후보
 
 // 캘리브레이션 상태 (v5.0)
 // Rev.12.4: 기본 단위계 1mm = 75px (mmPerPixel=1/75).
-let mmPerPixel = 1/100;
+let mmPerPixel = 1/300;
 let calibSet = true;
 let calibFirstPoint = null;
 
@@ -3172,9 +3172,9 @@ function updateCalibStat() {
 
 // 배경 새로 로드 시 캘리브 리셋
 function resetCalibration() {
-  // Rev.12.4: 기본 1mm = 75px 유지 (calibSet true)
+  // Rev.16.22: 기본 1mm = 300px 유지 (calibSet true)
   calibSet = true;
-  mmPerPixel = 1/75;
+  mmPerPixel = 1/300;
   calibFirstPoint = null;
   updateCalibStat();
 }
