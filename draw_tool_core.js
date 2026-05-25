@@ -28,8 +28,8 @@ const fillCtx = fillCanvas.getContext('2d');
 const drawCtx = drawCanvas.getContext('2d');
 const preCtx = previewCanvas.getContext('2d');
 
-let baseW = 12800, baseH = 7200;  // Rev.13.8: 16:9 가로형 작업영역
-let zoom = 0.23;
+let baseW = 8000, baseH = 4480;  // Rev.16.18: 16:9, 1mm=40px 기준 200mm×112mm 작업영역 (흐트러짐 방지: 100%줌에서도 8192 이하)
+let zoom = 0.25;
 // Rev.11.24: 눈금자(그리드) 표시
 let gridOn = false;
 let gridSpacingMm = 10;   // 격자 간격 (mm)
@@ -129,7 +129,7 @@ let detectedArcs = [];      // 배경에서 검출된 호/원 후보
 
 // 캘리브레이션 상태 (v5.0)
 // Rev.12.4: 기본 단위계 1mm = 75px (mmPerPixel=1/75).
-let mmPerPixel = 1/75;
+let mmPerPixel = 1/40;
 let calibSet = true;
 let calibFirstPoint = null;
 
@@ -181,8 +181,8 @@ function setCanvasSize(w, h) {
   // Rev.12.0: 캔버스 내부 해상도 안전 상한 — 초과 시 하얀 화면(렌더 실패) 방지.
   //   브라우저 캔버스 한계(변 길이/총 면적)를 넘지 않도록 내부 해상도 배율을 낮춤.
   //   CSS 표시 크기(style)는 그대로 두고 backing store만 줄여 디테일만 약간 감소.
-  const MAX_SIDE = 8192;          // 한 변 최대 px
-  const MAX_AREA = 24000000;      // 총 면적 최대 (약 2400만 px, 보수적)
+  const MAX_SIDE = 16384;         // Rev.16.18: 한 변 최대 px (최신 브라우저 한계 현실화)
+  const MAX_AREA = 160000000;     // 총 면적 최대 (약 1.6억 px) - 확대 시 흐트러짐 방지
   let res = 1;                    // backing store 해상도 배율
   if (dw > MAX_SIDE) res = Math.min(res, MAX_SIDE / dw);
   if (dh > MAX_SIDE) res = Math.min(res, MAX_SIDE / dh);
