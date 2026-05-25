@@ -28,8 +28,8 @@ const fillCtx = fillCanvas.getContext('2d');
 const drawCtx = drawCanvas.getContext('2d');
 const preCtx = previewCanvas.getContext('2d');
 
-let baseW = 8000, baseH = 4480;  // Rev.16.18: 16:9, 1mm=40px 기준 200mm×112mm 작업영역 (흐트러짐 방지: 100%줌에서도 8192 이하)
-let zoom = 0.25;
+let baseW = 15000, baseH = 8400;  // Rev.16.19: 16:9, 1mm=100px 기준 150mm×84mm (줌 100%까지 선명)
+let zoom = 0.08;
 // Rev.11.24: 눈금자(그리드) 표시
 let gridOn = false;
 let gridSpacingMm = 10;   // 격자 간격 (mm)
@@ -129,7 +129,7 @@ let detectedArcs = [];      // 배경에서 검출된 호/원 후보
 
 // 캘리브레이션 상태 (v5.0)
 // Rev.12.4: 기본 단위계 1mm = 75px (mmPerPixel=1/75).
-let mmPerPixel = 1/40;
+let mmPerPixel = 1/100;
 let calibSet = true;
 let calibFirstPoint = null;
 
@@ -2471,13 +2471,23 @@ function closeBaseLinePop(){
 }
 
 // 기준선을 dxPx, dyPx 만큼 평행이동한 복제선 생성
+// Rev.16.20: 복제선을 교차하는(수직방향) 베이스 선들 사이에 딱 맞게 길이 자동 조정
 function baseLineMakeCopy(dxPx, dyPx){
   const ln = baseLineTarget;
   if (!ln) return false;
+  let p1 = { x: ln.p1.x + dxPx, y: ln.p1.y + dyPx };
+  let p2 = { x: ln.p2.x + dxPx, y: ln.p2.y + dyPx };
+
+  // 복제선이 거의 수직/수평이면, 교차하는 반대축 선들 사이로 양끝을 맞춤 (체크 시)
+  const fitChk = document.getElementById('baseFitLen');
+  if (!fitChk || fitChk.checked){
+    const fitted = fitLineToCrossingBase(p1, p2, ln.id);
+    if (fitted){ p1 = fitted.p1; p2 = fitted.p2; }
+  }
+
   const cp = {
     id: ++shapeIdSeq, type: 'line',
-    p1: { x: ln.p1.x + dxPx, y: ln.p1.y + dyPx },
-    p2: { x: ln.p2.x + dxPx, y: ln.p2.y + dyPx },
+    p1, p2,
     stroke: ln.stroke,
     strokeWidth: ln.strokeWidth
   };
@@ -2490,10 +2500,62 @@ function baseLineMakeCopy(dxPx, dyPx){
   return cp.id;
 }
 
+// Rev.16.20: 거의 수직(세로)/수평(가로)인 선을, 그와 교차하는 반대축 선들 중
+//   양 끝을 감싸는 가장 가까운 두 경계선에 닿도록 길이를 맞춤. 못 찾으면 null.
+function fitLineToCrossingBase(p1, p2, excludeId){
+  const dx = p2.x - p1.x, dy = p2.y - p1.y;
+  const len = Math.hypot(dx, dy);
+  if (len < 1e-6) return null;
+  const TOL = 2; // 방향 판정 허용(px)
+  const isV = Math.abs(dx) <= TOL;  // 세로선
+  const isH = Math.abs(dy) <= TOL;  // 가로선
+  if (!isV && !isH) return null;    // 사선은 건드리지 않음
+
+  if (isV){
+    const x = (p1.x + p2.x)/2;
+    const yMin = Math.min(p1.y, p2.y), yMax = Math.max(p1.y, p2.y);
+    // 이 세로선의 x를 가로지르는 '가로선'들의 y 수집
+    const ys = [];
+    for (const s of shapes){
+      if (s.type !== 'line' || s.id === excludeId) continue;
+      const sdx = s.p2.x - s.p1.x, sdy = s.p2.y - s.p1.y;
+      if (Math.abs(sdy) > TOL) continue;       // 가로선만
+      const sx0 = Math.min(s.p1.x, s.p2.x), sx1 = Math.max(s.p1.x, s.p2.x);
+      if (x < sx0 - 1 || x > sx1 + 1) continue; // x가 그 가로선 범위 안
+      ys.push((s.p1.y + s.p2.y)/2);
+    }
+    if (ys.length < 2) return null;
+    // 선 중심 기준 위/아래로 가장 가까운 경계
+    const cy = (yMin + yMax)/2;
+    const above = ys.filter(v => v <= cy).sort((a,b)=>b-a)[0];  // 위(작은 y) 중 가장 큰
+    const below = ys.filter(v => v >= cy).sort((a,b)=>a-b)[0];  // 아래(큰 y) 중 가장 작은
+    if (above === undefined || below === undefined) return null;
+    return { p1:{x, y:above}, p2:{x, y:below} };
+  } else {
+    const y = (p1.y + p2.y)/2;
+    const xMin = Math.min(p1.x, p2.x), xMax = Math.max(p1.x, p2.x);
+    const xs = [];
+    for (const s of shapes){
+      if (s.type !== 'line' || s.id === excludeId) continue;
+      const sdx = s.p2.x - s.p1.x, sdy = s.p2.y - s.p1.y;
+      if (Math.abs(sdx) > TOL) continue;       // 세로선만
+      const sy0 = Math.min(s.p1.y, s.p2.y), sy1 = Math.max(s.p1.y, s.p2.y);
+      if (y < sy0 - 1 || y > sy1 + 1) continue;
+      xs.push((s.p1.x + s.p2.x)/2);
+    }
+    if (xs.length < 2) return null;
+    const cx = (xMin + xMax)/2;
+    const left = xs.filter(v => v <= cx).sort((a,b)=>b-a)[0];
+    const right = xs.filter(v => v >= cx).sort((a,b)=>a-b)[0];
+    if (left === undefined || right === undefined) return null;
+    return { p1:{x:left, y}, p2:{x:right, y} };
+  }
+}
+
 // 통합 생성 처리 (선택된 방향 + 수치 / 씰 파이 모드)
 function baseLineGenerate(){
   if (!baseLineTarget){ document.getElementById('statusHint').textContent = '📋 먼저 기준 선을 클릭하세요'; return; }
-  const getVal = id => { const v = parseFloat(document.getElementById(id).value); return isFinite(v) ? v : null; };
+  const getVal = id => { const v = evalExpr(document.getElementById(id).value); return isFinite(v) ? v : null; };
   const sealOn = (baseLineOrient === 'v') && document.getElementById('baseSealOn').checked;
   let dxPx = 0, dyPx = 0, msg = '';
 
