@@ -11639,9 +11639,10 @@ function showHelpInCmd() {
 const cmdInput = document.getElementById('cmdInput');
 
 cmdInput.addEventListener('keydown', e => {
-  if (e.key === 'Enter' || e.key === ' ') {
-    // v11.7: 캐드 스타일 - 스페이스바도 Enter와 완전 동일하게 동작
-    //   (입력값이 있으면 명령 실행, 비어있으면 마지막 명령 반복)
+  // Rev.16.41: 한글(IME) 조합 중에는 명령 처리 안 함 (조합 깨짐 방지)
+  if (e.isComposing || e.keyCode === 229) return;
+  if (e.key === 'Enter') {
+    // Rev.16.41: 한글 명령은 공백을 포함하므로 스페이스 실행 제거, Enter로만 실행
     e.preventDefault();
     const v = cmdInput.value;
     if (v.trim()) {

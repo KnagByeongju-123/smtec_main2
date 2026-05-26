@@ -1,0 +1,1460 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>도면 작도기 Rev.16.41</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Malgun Gothic', sans-serif; background: #2b2b2b; color: #eee; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  
+  header { background: #1f497d; padding: 8px 16px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  
+  /* 드롭다운 메뉴바 (Rev.7.7) */
+  .menubar { display: flex; background: #2b2b2b; border-bottom: 1px solid #444; padding: 0 8px; align-items: stretch; }
+  .menu { position: relative; user-select: none; }
+  .menu-title { padding: 7px 14px; color: #ddd; font-size: 12px; font-weight: bold; cursor: pointer; transition: background 0.1s; }
+  .menu-title:hover, .menu.open .menu-title { background: #4a6fa5; color: #fff; }
+  .menu-title .arrow { font-size: 9px; margin-left: 4px; opacity: 0.7; }
+  .menu-dropdown { display: none; position: absolute; top: 100%; left: 0; min-width: 240px; background: #2b2b2b; border: 1px solid #555; box-shadow: 0 4px 12px rgba(0,0,0,0.5); z-index: 600; padding: 4px 0; }
+  .menu.open .menu-dropdown { display: block; }
+  .menu-item { padding: 7px 16px; color: #ddd; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; }
+  .menu-item:hover { background: #4a6fa5; color: #fff; }
+  .menu-item.active { background: #d9534f; color: #fff; }
+  .menu-item .ico { width: 18px; text-align: center; }
+  .menu-item .shortcut { margin-left: auto; color: #888; font-size: 10px; }
+  .menu-item.disabled { color: #555; cursor: not-allowed; }
+  .menu-item.disabled:hover { background: transparent; color: #555; }
+  .menu-sep { height: 1px; background: #444; margin: 4px 8px; }
+  .menu-section { padding: 4px 16px; font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 1px; }
+  /* Rev.11.4: 접기 가능한 메뉴 섹션 */
+  .menu-section.collapsible {
+    cursor: pointer;
+    user-select: none;
+    background: rgba(74,111,165,0.08);
+    border-left: 2px solid #4a6fa5;
+    padding: 6px 16px 6px 14px;
+    font-weight: bold;
+    color: #aac;
+    display: flex; align-items: center; gap: 6px;
+    transition: background 0.15s;
+  }
+  .menu-section.collapsible:hover { background: rgba(74,111,165,0.25); color: #fff; }
+  .menu-section.collapsible::before {
+    content: '▼';
+    font-size: 9px;
+    color: #4a6fa5;
+    transition: transform 0.15s;
+    display: inline-block;
+  }
+  .menu-section.collapsible.collapsed::before { content: '▶'; }
+  .menu-item.collapsed-by-section { display: none !important; }
+  .menu-sep.collapsed-by-section { display: none !important; }
+  
+  /* 메뉴바 위에 색상/설정 인라인 표시 */
+  .inline-controls { display: flex; align-items: center; gap: 8px; margin-left: auto; padding: 0 12px; }
+  .inline-controls label { font-size: 11px; color: #aaa; }
+  .inline-controls input[type="color"] { width: 24px; height: 22px; }
+  .inline-controls input[type="number"] { width: 40px; padding: 3px 5px; background: #1f1f1f; color: #fff; border: 1px solid #666; border-radius: 3px; font-size: 11px; }
+  .inline-controls input[type="range"] { width: 80px; }
+  .inline-controls .badge { padding: 2px 8px; border-radius: 10px; font-size: 10px; background: #555; color: #fff; }
+  .inline-controls .badge.on { background: #d9534f; cursor: pointer; }
+  .inline-controls .badge.snap { background: #9b59b6; cursor: pointer; }
+  
+  /* AutoCAD 명령창 (Rev.9.1) */
+  .cmd-bar { background: #1a1a1a; border-top: 1px solid #444; padding: 4px 8px; display: flex; flex-direction: column; gap: 2px; max-height: 120px; }
+  .cmd-history { max-height: 60px; overflow-y: auto; font-family: 'Consolas', 'Courier New', monospace; font-size: 11px; color: #aaa; padding: 2px 6px; background: #0d0d0d; border: 1px solid #2a2a2a; }
+  .cmd-history .cmd-line { padding: 1px 0; }
+  .cmd-history .cmd-line.user { color: #fff; }
+  .cmd-history .cmd-line.system { color: #ffd966; }
+  .cmd-history .cmd-line.error { color: #e74c3c; }
+  .cmd-history .cmd-line.prompt { color: #aac8ff; }
+  .cmd-input-row { display: flex; align-items: center; gap: 6px; }
+  .cmd-prompt { color: #f39c12; font-family: 'Consolas', 'Courier New', monospace; font-size: 12px; font-weight: bold; min-width: 110px; }
+  .cmd-input { flex: 1; padding: 4px 8px; background: #000; color: #0f0; border: 1px solid #555; border-radius: 3px; font-family: 'Consolas', 'Courier New', monospace; font-size: 12px; outline: none; }
+  .cmd-input:focus { border-color: #f39c12; }
+  .cmd-hint { color: #666; font-size: 10px; }
+  header h1 { font-size: 16px; font-weight: bold; }
+  header .ver { font-size: 11px; color: #aac8ff; }
+  header .cvstat { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: #555; }
+  header .cvstat.ready { background: #28a745; }
+  header .snapstat { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: #555; }
+  header .snapstat.ready { background: #f39c12; }
+  
+  .toolbar { background: #3a3a3a; padding: 6px 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; border-bottom: 1px solid #555; }
+  /* Rev.11.51: 상단 도구 버튼 바 (그리기 / 편집 구분) */
+  .toolstrip { background:#262626; border-bottom:1px solid #444; padding:5px 10px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .toolstrip.collapsed { display:none; }
+  .ts-group { display:flex; align-items:center; gap:3px; padding:3px 8px; border-radius:6px; flex-wrap:wrap; }
+  .ts-group.draw { background:rgba(74,111,165,0.12); border:1px solid rgba(74,111,165,0.4); }
+  .ts-group.edit { background:rgba(230,126,34,0.12); border:1px solid rgba(230,126,34,0.4); }
+  /* Rev.11.53: 추가 그룹 색상 구분 */
+  .ts-group.file { background:rgba(120,130,140,0.14); border:1px solid rgba(120,130,140,0.45); }
+  .ts-group.dim  { background:rgba(39,174,96,0.12);  border:1px solid rgba(39,174,96,0.45); }
+  .ts-group.snap { background:rgba(155,89,182,0.13); border:1px solid rgba(155,89,182,0.45); }
+  .ts-label.file { color:#aab2ba; }
+  .ts-label.dim  { color:#5fcf8a; }
+  .ts-label.snap { color:#c08fda; }
+  .ts-label { font-size:10px; color:#999; font-weight:bold; margin-right:4px; letter-spacing:.5px; white-space:nowrap; }
+  .ts-label.draw { color:#7da4e0; }
+  .ts-label.edit { color:#e89a5c; }
+  /* Rev.11.52: 이미지 스타일 - 아이콘 + 라벨(2글자 세로 줄바꿈) + 약어 우측 배지 */
+  .ts-btn { position:relative; padding:4px 5px; min-height:40px; background:#3a3a3a; color:#eee; border:1px solid #555; border-radius:5px; cursor:pointer; display:inline-flex; align-items:center; gap:4px; transition:.1s; }
+  .ts-btn:hover { background:#4a6fa5; border-color:#6a8fc5; }
+  .ts-btn.active { background:#d9534f; border-color:#e57373; color:#fff; }
+  /* Rev.11.53: 그룹별 hover 색 구분 */
+  .ts-group.draw .ts-btn:hover { background:#4a6fa5; border-color:#6a8fc5; }
+  .ts-group.edit .ts-btn:hover { background:#c8721f; border-color:#e0902f; }
+  .ts-group.file .ts-btn:hover { background:#5a6570; border-color:#7a8590; }
+  .ts-group.dim  .ts-btn:hover { background:#1f8a4c; border-color:#2faf66; }
+  .ts-group.snap .ts-btn:hover { background:#7d4296; border-color:#9b59b6; }
+  .ts-btn:disabled { opacity:0.4; cursor:not-allowed; }
+  .ts-btn .ico { font-size:16px; line-height:1; }
+  .ts-btn .lbl { font-size:11.5px; line-height:1.1; text-align:left; white-space:nowrap; font-weight:600; }
+  .ts-btn .sc { font-size:9px; color:#bbb; background:rgba(0,0,0,0.4); padding:1px 4px; border-radius:6px; align-self:center; margin-left:1px; }
+  .ts-btn.active .sc { color:#fff; background:rgba(0,0,0,0.3); }
+  .ts-sep { width:1px; height:40px; background:#555; margin:0 3px; }
+  .group { display: flex; align-items: center; gap: 4px; padding: 3px 8px; background: #2b2b2b; border-radius: 5px; border: 1px solid #555; }
+  .group label { font-size: 11px; color: #ccc; }
+  
+  button { padding: 5px 9px; background: #4a6fa5; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 11px; font-weight: bold; }
+  button:hover { background: #5a82bd; }
+  button:disabled { background: #555; cursor: not-allowed; opacity: 0.6; }
+  button.active { background: #d9534f; }
+  button.danger { background: #c9302c; }
+  button.success { background: #28a745; }
+  button.snap { background: #9b59b6; }
+  button.snap.active { background: #d9534f; }
+  button.fill { background: #e67e22; }
+  button.big3d { background: #8e44ad; padding: 8px 16px; font-size: 13px; }
+  button.big3d:hover { background: #a55ec1; }
+  
+  input[type="file"] { font-size: 10px; color: #ccc; }
+  input[type="number"], input[type="text"], select { padding: 3px 5px; background: #1f1f1f; color: #fff; border: 1px solid #666; border-radius: 3px; font-size: 11px; }
+  input[type="color"] { width: 26px; height: 22px; border: 1px solid #666; border-radius: 3px; cursor: pointer; background: #1f1f1f; }
+  input[type="range"] { width: 80px; }
+  
+  .canvas-wrap { flex: 1; position: relative; overflow: auto; background: #1a1a1a; padding: 20px; }
+  .canvas-wrap.checker { background: 
+    repeating-conic-gradient(#333 0% 25%, #3a3a3a 0% 50%) 50% / 20px 20px; }
+  .canvas-stack {
+    position: relative;
+    background: var(--canvas-bg, #000000);
+    outline: 2px solid #4a6fa5;
+    box-shadow: 0 0 0 1px #2a2a2a, 0 4px 24px rgba(0,0,0,0.7);
+  }
+  canvas { display: block; position: absolute; left: 0; top: 0; }
+  #bgCanvas { z-index: 1; }
+  #fillCanvas { z-index: 2; pointer-events: none; }
+  #drawCanvas { z-index: 3; cursor: crosshair; }
+  #previewCanvas { z-index: 4; pointer-events: none; }
+  
+  footer { background: #1a1a1a; padding: 6px 12px; font-size: 11px; color: #aaa; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; border-top: 1px solid #444; }
+  
+  .badge { display: inline-block; padding: 2px 8px; background: #4a6fa5; border-radius: 10px; font-size: 11px; }
+  .badge.tool-select { background: #9b59b6; }
+  .badge.tool-line { background: #4a6fa5; }
+  .badge.tool-rect { background: #16a085; }
+  .badge.tool-circle { background: #27ae60; }
+  .badge.tool-arc { background: #f39c12; }
+  .badge.tool-fill { background: #e67e22; }
+  .badge.tool-calib { background: #16a085; }
+  .badge.tool-axis { background: #8e44ad; }
+  .hint { color: #ffd966; font-size: 11px; }
+  
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: none; align-items: center; justify-content: center; z-index: 1000; }
+  .modal-overlay.show { display: flex; }
+  .modal { background: #2b2b2b; padding: 24px; border-radius: 8px; min-width: 420px; max-width: 90vw; border: 1px solid #555; max-height: 90vh; overflow-y: auto; }
+  .modal h3 { margin-bottom: 16px; color: #aac8ff; }
+  .modal .row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .modal label { min-width: 140px; font-size: 13px; }
+  .modal .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+  .modal .section { margin-bottom: 16px; padding: 12px; background: #1f1f1f; border-radius: 6px; border: 1px solid #444; }
+  .modal .section h4 { color: #ffd966; margin-bottom: 10px; font-size: 13px; }
+  .modal .hint-text { font-size: 11px; color: #aaa; margin-top: 4px; }
+  
+  .checkbox-group { display: flex; align-items: center; gap: 6px; }
+  .checkbox-group input[type="checkbox"] { width: 16px; height: 16px; }
+  
+  #loadingOverlay { position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 9999; display: none; align-items: center; justify-content: center; flex-direction: column; gap: 16px; color: white; }
+  #loadingOverlay.show { display: flex; }
+  .spinner { width: 50px; height: 50px; border: 5px solid #555; border-top: 5px solid #f39c12; border-radius: 50%; animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ===== OSNAP 다이얼로그 (Rev.10.8) - AutoCAD 스타일 ===== */
+  .osnap-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 8000; display: none; align-items: center; justify-content: center; }
+  .osnap-overlay.show { display: flex; }
+  .osnap-dlg { background: #2f2f2f; border: 1px solid #555; border-radius: 6px; min-width: 460px; max-width: 580px; color: #ddd; box-shadow: 0 8px 32px rgba(0,0,0,0.6); }
+  .osnap-hdr { background: #1f497d; color: #fff; padding: 8px 14px; display: flex; justify-content: space-between; align-items: center; border-radius: 6px 6px 0 0; }
+  .osnap-hdr h3 { font-size: 13px; font-weight: bold; }
+  .osnap-hdr .close-x { cursor: pointer; font-size: 18px; padding: 0 6px; }
+  .osnap-hdr .close-x:hover { color: #f39c12; }
+  .osnap-body { padding: 14px 16px; }
+  .osnap-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 12px; }
+  .osnap-row input[type="checkbox"] { width: 14px; height: 14px; cursor: pointer; accent-color: #4a6fa5; }
+  .osnap-row label { cursor: pointer; user-select: none; flex: 1; display: flex; align-items: center; gap: 6px; }
+  .osnap-row .sym { display: inline-block; width: 18px; text-align: center; color: #aac8ff; font-weight: bold; font-size: 13px; }
+  .osnap-master { padding: 8px 12px; background: #1a1a1a; border-bottom: 1px solid #444; display: flex; align-items: center; gap: 16px; }
+  .osnap-master .item { display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; }
+  .osnap-master input[type="checkbox"] { width: 14px; height: 14px; accent-color: #4a6fa5; }
+  .osnap-grid-title { font-size: 11px; font-weight: bold; color: #f39c12; margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px solid #444; }
+  .osnap-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; padding: 6px 0; }
+  .osnap-side-btns { display: flex; flex-direction: column; gap: 6px; padding-top: 6px; }
+  .osnap-side-btns button { padding: 6px 12px; background: #4a6fa5; color: #fff; border: none; border-radius: 3px; cursor: pointer; font-size: 11px; font-weight: bold; }
+  .osnap-side-btns button:hover { background: #5a82bd; }
+  .osnap-side-btns button.danger { background: #888; }
+  .osnap-side-btns button.danger:hover { background: #aaa; }
+  .osnap-hint { font-size: 11px; color: #f39c12; background: #1a1a1a; border-left: 3px solid #f39c12; padding: 8px 12px; margin: 8px 0; line-height: 1.5; }
+  .osnap-hint b { color: #fff; }
+  .osnap-footer { padding: 10px 16px; border-top: 1px solid #444; display: flex; justify-content: flex-end; gap: 8px; background: #262626; border-radius: 0 0 6px 6px; }
+  .osnap-footer button { padding: 7px 18px; background: #4a6fa5; color: #fff; border: none; border-radius: 3px; cursor: pointer; font-size: 12px; font-weight: bold; }
+  .osnap-footer button:hover { background: #5a82bd; }
+  .osnap-footer button.secondary { background: #555; }
+  .osnap-footer button.secondary:hover { background: #666; }
+  .osnap-row.disabled { opacity: 0.35; }
+  .osnap-row.disabled input { pointer-events: none; }
+  .osnap-row.disabled label { pointer-events: none; }
+  .osnap-twocol { display: grid; grid-template-columns: 1fr auto; gap: 12px; padding: 8px 0 0; }
+
+  /* ===== 선택 액션 바 (Rev.10.11) ===== */
+  #selActionBar {
+    position: absolute;
+    background: rgba(43,43,43,0.96);
+    border: 1px solid #888;
+    border-radius: 6px;
+    padding: 6px;
+    display: none;
+    gap: 4px;
+    z-index: 500;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.5);
+    backdrop-filter: blur(4px);
+  }
+  #selActionBar.show { display: flex; }
+  #selActionBar .sab-count {
+    padding: 4px 10px;
+    background: #1f497d;
+    color: #fff;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: bold;
+    display: flex; align-items: center; gap: 4px;
+  }
+  #selActionBar button {
+    padding: 5px 10px;
+    background: #4a6fa5;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: bold;
+    font-family: inherit;
+    display: flex; align-items: center; gap: 4px;
+  }
+  #selActionBar button:hover { background: #5a82bd; }
+  #selActionBar button.danger { background: #c9302c; }
+  #selActionBar button.danger:hover { background: #d9534f; }
+  #selActionBar button.warn { background: #e67e22; }
+  #selActionBar button.warn:hover { background: #f39c12; }
+  #selActionBar button.muted { background: #555; }
+  #selActionBar button.muted:hover { background: #777; }
+
+  /* Rev.11.9: 이동 거리 입력 패널 */
+  #moveDeltaPanel {
+    display: none;
+    position: fixed; top: 90px; right: 20px; z-index: 1200;
+    background: #2b2b2b; border: 1px solid #f39c12; border-radius: 8px;
+    padding: 10px 12px; box-shadow: 0 4px 16px rgba(0,0,0,.6);
+    min-width: 160px;
+  }
+  #moveDeltaPanel.show { display: block; }
+  #moveDeltaPanel .mdp-title { color: #f39c12; font-size: 12px; font-weight: bold; margin-bottom: 8px; }
+  #moveDeltaPanel .mdp-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+  #moveDeltaPanel .mdp-row label { width: 24px; color: #ccc; font-size: 12px; font-weight: bold; }
+  #moveDeltaPanel .mdp-row input { flex: 1; width: 0; min-width: 0; padding: 4px 6px; font-size: 13px;
+    background: #1a1a1a; color: #fff; border: 1px solid #555; border-radius: 4px; }
+  #moveDeltaPanel .mdp-row input:focus { border-color: #f39c12; outline: none; }
+  #moveDeltaPanel .mdp-actions { display: flex; gap: 4px; margin-top: 8px; }
+  #moveDeltaPanel .mdp-actions button { flex: 1; padding: 5px; font-size: 12px; border: none; border-radius: 4px; cursor: pointer; color: #fff; }
+  #moveDeltaPanel .mdp-apply { background: #3a7c3a; }
+  #moveDeltaPanel .mdp-apply:hover { background: #4a9c4a; }
+  #moveDeltaPanel .mdp-close { background: #555; }
+  #moveDeltaPanel .mdp-close:hover { background: #777; }
+  #moveDeltaPanel .mdp-hint { font-size: 10px; color: #888; margin-top: 6px; line-height: 1.4; }
+
+  /* Rev.11.35: 상단 헤더 버튼 공통 클릭/호버 효과 (흰 테두리 + 약간 밝게 + 눌림 줌아웃) */
+  header button.hbtn {
+    border: 2px solid transparent;
+    transition: filter 0.12s ease, transform 0.1s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+  }
+  header button.hbtn:hover {
+    filter: brightness(1.18);
+    border-color: rgba(255,255,255,0.6);
+    box-shadow: 0 0 6px rgba(255,255,255,0.35);
+  }
+  header button.hbtn:active {
+    filter: brightness(1.35);
+    transform: scale(0.92);
+    border-color: #fff;
+    box-shadow: 0 0 10px rgba(255,255,255,0.7);
+  }
+  /* 클릭 직후 잠깐 눌린 피드백 (JS로 .clicked 부여, 0.18초 후 제거) */
+  header button.hbtn.clicked {
+    filter: brightness(1.35);
+    transform: scale(0.92);
+    border-color: #fff;
+    box-shadow: 0 0 10px rgba(255,255,255,0.7);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>📐 도면 작도기 Rev.16.41</h1>
+  <span class="ver">단위 1mm=300px</span>
+  <span class="cvstat" id="cvStat">OpenCV 로딩 중...</span>
+  <span class="snapstat" id="snapStat">스냅: 비활성 (배경 없음)</span>
+  <span class="snapstat" id="calibStat" style="background:#e67e22;">📏 1mm = 300.0px</span>
+  <select id="unitScaleSel" title="단위 배율: 1mm 당 픽셀 수 (변경 시 기존 도형의 실치수 mm는 유지됩니다)" style="margin-left:6px; background:#1f1f1f; color:#fff; border:1px solid #27ae60; border-radius:5px; padding:3px 6px; font-size:11px; cursor:pointer;">
+    <option value="50">1mm=50px</option>
+    <option value="100">1mm=100px</option>
+    <option value="150">1mm=150px</option>
+    <option value="200">1mm=200px</option>
+    <option value="300" selected>1mm=300px</option>
+  </select>
+</header>
+
+<!-- 드롭다운 메뉴바 (Rev.7.7) -->
+<!-- 기존 코드 호환용 숨김 더미 버튼들 -->
+<div style="display:none;">
+  <button id="btnClearBg"></button>
+  <button id="btnContinuous"></button>
+  <button id="btnSnap"></button>
+  <button id="btnContinueFromSel"></button>
+  <button id="btnConnectSel"></button>
+  <button id="btnResetAxis"></button>
+  <button id="btnSave3D"></button>
+  <!-- v11.6: 3D 메뉴 제거에 따른 JS 호환용 더미 버튼 -->
+  <button id="btnGen3D"></button>
+  <button id="btnPreview3D"></button>
+  <button id="menuResetAxis"></button>
+  <button id="menuSave3D"></button>
+</div>
+
+<div class="menubar">
+  <!-- 파일 메뉴 -->
+  <div class="menu" data-menu="file">
+    <div class="menu-title">📁 파일 <span class="arrow">▼</span></div>
+    <div class="menu-dropdown">
+      <div class="menu-section">배경</div>
+      <label class="menu-item" style="cursor:pointer;">
+        <span class="ico">📷</span> 배경 이미지 열기...
+        <input type="file" id="imgFile" accept="image/*" style="display:none;">
+      </label>
+      <div class="menu-item" id="menuClearBg"><span class="ico">❌</span> 배경 이미지 제거</div>
+      <div class="menu-sep"></div>
+      <div class="menu-section">프로젝트 (작업 저장/열기)</div>
+      <div class="menu-item" id="btnSaveProject"><span class="ico">📁</span> 도면 저장 (.json)<span class="shortcut">Ctrl+S</span></div>
+      <div class="menu-item" id="btnOpenProject"><span class="ico">📂</span> 도면 열기 (.json)<span class="shortcut">Ctrl+O</span>
+        <input type="file" id="projFile" accept=".json,application/json" style="display:none;">
+      </div>
+      <div class="menu-sep"></div>
+      <div class="menu-section">내보내기</div>
+      <div class="menu-item" id="btnSave"><span class="ico">💾</span> 2D 내보내기 (SVG / PNG)</div>
+      <div class="menu-item" id="btnSave3D"><span class="ico">🧊</span> 3D 저장 (STL / OBJ / PLY)</div>
+      <div class="menu-sep"></div>
+      <div class="menu-section">편집</div>
+      <div class="menu-item" id="btnUndo"><span class="ico">↶</span> 실행 취소 <span class="shortcut">Ctrl+Z</span></div>
+      <div class="menu-item" id="btnRedo"><span class="ico">↷</span> 다시 실행 <span class="shortcut">Ctrl+Y</span></div>
+      <div class="menu-item" id="btnDelSel"><span class="ico">🗑</span> 선택 도형 삭제 <span class="shortcut">Del</span></div>
+      <div class="menu-item" id="btnClearAll"><span class="ico">🗑</span> 모두 지우기</div>
+    </div>
+  </div>
+  
+  <!-- 2D 메뉴 -->
+  <div class="menu" data-menu="2d">
+    <div class="menu-title">📐 2D <span class="arrow">▼</span></div>
+    <div class="menu-dropdown">
+      <div class="menu-section">그리기 도구</div>
+      <div class="menu-item" id="menuBaseLines"><span class="ico">📐</span> 도면베이스 (기준선 배치)<span class="shortcut">BASE</span></div>
+      <div class="menu-item tool-menu-item" data-tool="select"><span class="ico">🔲</span> 선택<span class="shortcut">S</span></div>
+      <div class="menu-item tool-menu-item active" data-tool="line"><span class="ico">／</span> 선<span class="shortcut">L</span></div>
+      <div class="menu-item tool-menu-item" data-tool="rect"><span class="ico">▭</span> 사각형<span class="shortcut">REC</span></div>
+      <div class="menu-item tool-menu-item" data-tool="circle"><span class="ico">○</span> 원<span class="shortcut">C</span></div>
+      <div class="menu-item tool-menu-item" data-tool="arc"><span class="ico">⌒</span> 라운드(호)<span class="shortcut">A</span></div>
+      <div class="menu-sep"></div>
+      <div class="menu-section">채우기 / 측정</div>
+      <div class="menu-item tool-menu-item" data-tool="fill"><span class="ico">🎨</span> 영역 채움<span class="shortcut">H</span></div>
+      <div class="menu-item tool-menu-item" data-tool="calib"><span class="ico">📏</span> 캘리브레이션<span class="shortcut">M</span></div>
+      <div class="menu-sep"></div>
+      <div class="menu-section" style="display:none">편집 명령 (B안)</div>
+      <div class="menu-item tool-menu-item" data-tool="trim" style="display:none"><span class="ico">✂</span> 트리밍 (Trim)<span class="shortcut">T</span></div>
+      <div class="menu-item tool-menu-item" data-tool="extend" style="display:none"><span class="ico">↔</span> 연장 (Extend)<span class="shortcut">E</span></div>
+      <div class="menu-item tool-menu-item" data-tool="fillet"><span class="ico">◜</span> 모서리 라운드 (Fillet)<span class="shortcut">R</span></div>
+      <div class="menu-item tool-menu-item" data-tool="chamfer"><span class="ico">⌐</span> 챔퍼 / C면취 (Chamfer)<span class="shortcut">CH</span></div>
+      <div class="menu-item tool-menu-item" data-tool="tangent"><span class="ico">⌒</span> 호-직선 접선 연결<span class="shortcut">TAN</span></div>
+      <div class="menu-item tool-menu-item" data-tool="offset" style="display:none"><span class="ico">∥</span> 오프셋 (Offset)<span class="shortcut">O</span></div>
+      <div class="menu-item tool-menu-item" data-tool="break" style="display:none"><span class="ico">✄</span> 분할 (Break)<span class="shortcut">BR</span></div>
+      <div class="menu-item tool-menu-item" data-tool="breakAtPoint" style="display:none"><span class="ico">⋮</span> 점에서 분할 (Break at Point)<span class="shortcut">BAT</span></div>
+      <div class="menu-item" onclick="handleDistanceCopyCommand()"><span class="ico">⇉</span> 거리복사 (Distance Copy)<span class="shortcut">DC</span></div>
+      <div class="menu-item" id="menuBreakAll" style="display:none"><span class="ico">⊞</span> 교차점 일괄 분할 (Break All)<span class="shortcut">BRA</span></div>
+      <div class="menu-sep"></div>
+      <div class="menu-section">치수 (D안)</div>
+      <div class="menu-item tool-menu-item" data-tool="dimLinear"><span class="ico">↦</span> 선형 치수 (수평/수직)</div>
+      <div class="menu-item tool-menu-item" data-tool="dimAligned"><span class="ico">⤡</span> 평행 치수 (점-점)</div>
+      <div class="menu-item tool-menu-item" data-tool="dimRadius"><span class="ico">R</span> 반지름 치수</div>
+      <div class="menu-item tool-menu-item" data-tool="dimDiameter"><span class="ico">⌀</span> 직경 치수</div>
+      <div class="menu-item tool-menu-item" data-tool="dimAngle"><span class="ico">∠</span> 각도 치수</div>
+      <div class="menu-sep"></div>
+      <div class="menu-section">편집 보조</div>
+      <div class="menu-item" id="menuContinueFromSel"><span class="ico">▶</span> 끝점에서 이어 그리기</div>
+      <div class="menu-item" id="menuConnectSel"><span class="ico">🔗</span> 선택된 선들 연결</div>
+    </div>
+  </div>
+  
+  <!-- 3D 메뉴 (v11.6에서 제거됨 - 회전체/생성/미리보기는 다른 UI에서 호출) -->
+
+  <!-- 설정 메뉴 -->
+  <div class="menu" data-menu="settings">
+    <div class="menu-title">⚙ 설정 <span class="arrow">▼</span></div>
+    <div class="menu-dropdown">
+      <div class="menu-item" id="menuOsnapDlg" style="background:rgba(74,111,165,0.2); font-weight:bold;"><span class="ico">🧲</span> 객체 스냅 설정...<span class="shortcut">F3</span></div>
+      <div class="menu-sep"></div>
+      <div class="menu-section">스냅 / 보조</div>
+      <div class="menu-item" id="menuSnap"><span class="ico">🧲</span> 스냅 ON/OFF <span class="shortcut" id="menuSnapState">OFF</span></div>
+      <div class="menu-item" id="menuContinuous"><span class="ico">⛓</span> 연속선 ON/OFF <span class="shortcut" id="menuContState">OFF</span></div>
+      <div class="menu-item" style="cursor:default;">
+        <span class="ico">📏</span> 스냅 반경(px):
+        <input type="number" id="snapRadius" value="15" min="3" max="50" style="width:50px; margin-left:auto;">
+      </div>
+      <div class="menu-sep"></div>
+      <div class="menu-section">정밀 스냅 (캐드)</div>
+      <div class="menu-item" id="menuSnapTangent"><span class="ico">⊙</span> 접점 (Tangent) <span class="shortcut" id="snapTanState">ON</span></div>
+      <div class="menu-item" id="menuSnapPerp"><span class="ico">⊥</span> 수선 (Perpendicular) <span class="shortcut" id="snapPerpState">ON</span></div>
+      <div class="menu-item" id="menuSnapParallel"><span class="ico">∥</span> 평행 (Parallel) <span class="shortcut" id="snapParaState">ON</span></div>
+      <div class="menu-item" id="menuSnapExtension"><span class="ico">⤳</span> 연장선 (Extension) <span class="shortcut" id="snapExtState">ON</span></div>
+      <div class="menu-sep"></div>
+      <div class="menu-section">표시</div>
+      <div class="menu-item" style="cursor:default;">
+        <span class="ico">🎨</span> 배경색:
+        <input type="color" id="canvasBgColor" value="#000000" style="margin-left:auto; width:30px; height:22px;">
+      </div>
+      <div class="menu-item" id="menuBgPreset" style="cursor:default; font-size:10px; padding:4px 16px; gap:4px; flex-wrap:wrap;">
+        <span style="color:#888;">빠른선택:</span>
+        <span class="bg-preset" data-color="#ffffff" style="display:inline-block; width:20px; height:20px; background:#fff; border:1px solid #888; cursor:pointer; border-radius:2px;" title="흰색"></span>
+        <span class="bg-preset" data-color="#f5f5f5" style="display:inline-block; width:20px; height:20px; background:#f5f5f5; border:1px solid #888; cursor:pointer; border-radius:2px;" title="밝은회색"></span>
+        <span class="bg-preset" data-color="#2b2b2b" style="display:inline-block; width:20px; height:20px; background:#2b2b2b; border:1px solid #888; cursor:pointer; border-radius:2px;" title="어두운회색"></span>
+        <span class="bg-preset" data-color="#000000" style="display:inline-block; width:20px; height:20px; background:#000; border:1px solid #888; cursor:pointer; border-radius:2px;" title="검정"></span>
+        <span class="bg-preset" data-color="#f0e6d2" style="display:inline-block; width:20px; height:20px; background:#f0e6d2; border:1px solid #888; cursor:pointer; border-radius:2px;" title="아이보리(도면용)"></span>
+        <span class="bg-preset" data-color="#1a1f2e" style="display:inline-block; width:20px; height:20px; background:#1a1f2e; border:1px solid #888; cursor:pointer; border-radius:2px;" title="캐드 다크블루"></span>
+        <span class="bg-preset" data-color="checker" style="display:inline-block; width:20px; height:20px; background:repeating-conic-gradient(#555 0% 25%, #666 0% 50%) 50% / 6px 6px; border:1px solid #888; cursor:pointer; border-radius:2px;" title="체크무늬(투명 표시)"></span>
+      </div>
+      <div class="menu-item" style="cursor:default;">
+        <span class="ico">🔍</span> 확대비율:
+        <input type="range" id="zoom" min="3" max="110" value="6" style="margin-left:auto; width:90px;">
+        <span id="zoomVal" style="font-size:10px; min-width:34px;">6%</span>
+      </div>
+      <div class="menu-item" id="menuZoomPreset" style="cursor:default; font-size:10px; padding:4px 16px; gap:4px; flex-wrap:wrap;">
+        <span style="color:#888;">빠른배율:</span>
+        <span class="zoom-preset" data-zoom="100" style="cursor:pointer; padding:2px 6px; background:#3a3a3a; border-radius:3px;">100%</span>
+        <span class="zoom-preset" data-zoom="200" style="cursor:pointer; padding:2px 6px; background:#3a3a3a; border-radius:3px;">200%</span>
+      </div>
+      <div class="menu-item" style="cursor:default;">
+        <span class="ico">🖼️</span> 배경 투명도:
+        <input type="range" id="bgOpacity" min="0" max="100" value="100" style="margin-left:auto; width:90px;">
+        <span id="bgOpacityVal" style="font-size:10px; min-width:34px;">100%</span>
+      </div>
+      <div class="menu-sep"></div>
+      <div class="menu-section">배경 이미지 맞춤</div>
+      <div class="menu-item" style="cursor:default;">
+        <span class="ico">🔎</span> 배경 크기:
+        <input type="range" id="bgScale" min="10" max="400" value="100" style="margin-left:auto; width:90px;">
+        <span id="bgScaleVal" style="font-size:10px; min-width:34px;">100%</span>
+      </div>
+      <div class="menu-item" style="cursor:default;">
+        <span class="ico">↔️</span> 배경 X:
+        <input type="range" id="bgOffsetX" min="-1000" max="1000" value="0" style="margin-left:auto; width:90px;">
+        <span id="bgOffsetXVal" style="font-size:10px; min-width:34px;">0</span>
+      </div>
+      <div class="menu-item" style="cursor:default;">
+        <span class="ico">↕️</span> 배경 Y:
+        <input type="range" id="bgOffsetY" min="-1000" max="1000" value="0" style="margin-left:auto; width:90px;">
+        <span id="bgOffsetYVal" style="font-size:10px; min-width:34px;">0</span>
+      </div>
+      <div class="menu-item" id="menuBgReset" style="cursor:pointer;"><span class="ico">↩️</span> 배경 위치/크기 초기화</div>
+    </div>
+  </div>
+  
+  <!-- 우측 인라인 컨트롤 (현재 도구의 색상/두께) -->
+  <div class="inline-controls">
+    <label>선:</label>
+    <input type="color" id="strokeColor" value="#ffffff" title="선 색상">
+    <input type="number" id="strokeWidth" value="1" min="1" max="30" title="선 두께">
+    <label>채움:</label>
+    <input type="color" id="fillColor" value="#3498db" title="채움 색상">
+    <span class="fill-preset" data-color="#ffaa00" style="display:inline-block; width:18px; height:18px; background:#ffaa00; border:1px solid #888; cursor:pointer; border-radius:2px;" title="주황"></span>
+    <span class="fill-preset" data-color="#e74c3c" style="display:inline-block; width:18px; height:18px; background:#e74c3c; border:1px solid #888; cursor:pointer; border-radius:2px;" title="빨강"></span>
+    <span class="fill-preset" data-color="#3498db" style="display:inline-block; width:18px; height:18px; background:#3498db; border:1px solid #888; cursor:pointer; border-radius:2px;" title="파랑"></span>
+    <span class="fill-preset" data-color="#2ecc71" style="display:inline-block; width:18px; height:18px; background:#2ecc71; border:1px solid #888; cursor:pointer; border-radius:2px;" title="초록"></span>
+    <span class="fill-preset" data-color="#9b59b6" style="display:inline-block; width:18px; height:18px; background:#9b59b6; border:1px solid #888; cursor:pointer; border-radius:2px;" title="보라"></span>
+    <span class="fill-preset" data-color="#f1c40f" style="display:inline-block; width:18px; height:18px; background:#f1c40f; border:1px solid #888; cursor:pointer; border-radius:2px;" title="노랑"></span>
+    <span class="fill-preset" data-color="#95a5a6" style="display:inline-block; width:18px; height:18px; background:#95a5a6; border:1px solid #888; cursor:pointer; border-radius:2px;" title="회색"></span>
+    <input type="range" id="fillAlpha" min="0" max="100" value="50" title="채움 투명도">
+    <span id="fillAlphaVal" style="font-size:10px; min-width:26px;">50%</span>
+    <select id="hatchPattern" title="해치 패턴" style="font-size:11px; padding:2px;">
+      <option value="solid">■ 단색</option>
+      <option value="lines45">／ 빗금45°</option>
+      <option value="lines135">＼ 빗금135°</option>
+      <option value="cross">＃ 격자</option>
+      <option value="dots">⋮⋮ 도트</option>
+      <option value="ansi31">≡ ANSI31</option>
+    </select>
+    <span class="badge snap" id="badgeSnap" title="스냅 토글">🧲 OFF</span>
+    <span class="badge on" id="badgeCont" style="background:#555;" title="연속선 토글">⛓ OFF</span>
+    <span class="badge" id="badgeTool">선</span>
+  </div>
+
+  <!-- tool3 탭: 3D 모델러 (draw_tool3.html) -->
+  <div class="menu" data-menu="tool3" id="menuTool3" style="margin-left:auto;" title="tool3 - 3D 모델러로 이동 (새 탭)">
+    <div class="menu-title" id="tool3Title" style="color:#bbb; border-left:1px solid #444; padding-left:14px;">
+      🧊 tool3 <span style="font-size:9px; color:#888; margin-left:2px;">↗</span>
+    </div>
+  </div>
+
+  <!-- Tinkercad 탭: 메뉴바 맨 우측, 차분한 톤 -->
+  <div class="menu" data-menu="tinkercad" id="menuC3D" title="Tinkercad 대시보드로 이동 (새 탭)">
+    <div class="menu-title" id="c3dTitle" style="color:#bbb; border-left:1px solid #444; padding-left:14px;">
+      🔧 Tinkercad <span style="font-size:9px; color:#888; margin-left:2px;">↗</span>
+    </div>
+  </div>
+</div>
+
+<!-- Rev.16.41: 도구바 접기/펼치기 토글 -->
+<div id="toolStripToggle" style="display:flex; align-items:center; gap:8px; padding:3px 10px; background:#222; border-bottom:1px solid #444; cursor:pointer; user-select:none;">
+  <span id="toolStripToggleIcon" style="font-size:13px; color:#f39c12;">▶</span>
+  <span style="font-size:12px; color:#ccc; font-weight:bold;">도구 모음</span>
+  <span style="font-size:10px; color:#777;">(클릭하여 펼치기/접기 · 공간 확보)</span>
+</div>
+
+<!-- Rev.11.51: 상단 도구 버튼 바 (그리기 / 편집 구분) -->
+<div class="toolstrip collapsed" id="toolStrip">
+  <!-- 파일/실행 그룹 -->
+  <div class="ts-group file">
+    <span class="ts-label file">📁 파일</span>
+    <button id="headerBtnHelp" class="ts-btn" title="도움말 (F1)"><span class="ico">❓</span><span class="lbl">도움말</span></button>
+    <button class="ts-btn ts-act" data-act="open"><span class="ico">📷</span><span class="lbl">배경</span></button>
+    <button class="ts-btn ts-act" data-act="save"><span class="ico">💾</span><span class="lbl">저장</span><span class="sc">^S</span></button>
+    <button class="ts-btn ts-act" data-act="undo"><span class="ico">↶</span><span class="lbl">취소</span><span class="sc">^Z</span></button>
+    <button class="ts-btn ts-act" data-act="redo"><span class="ico">↷</span><span class="lbl">재실행</span><span class="sc">^Y</span></button>
+    <button class="ts-btn ts-act" data-act="clearall"><span class="ico">🧹</span><span class="lbl">전체삭제</span></button>
+  </div>
+  <!-- 작성(그리기) 그룹: 버튼 클릭 후 작도 -->
+  <div class="ts-group draw">
+    <span class="ts-label draw" title="버튼 클릭 후 캔버스에서 작도합니다">✏ 작성</span>
+    <button class="ts-btn tool-strip-btn active" data-tool="select"><span class="ico">🔲</span><span class="lbl">선택</span><span class="sc">S</span></button>
+    <button class="ts-btn tool-strip-btn" data-tool="line"><span class="ico">／</span><span class="lbl">선</span><span class="sc">L</span></button>
+    <button class="ts-btn tool-strip-btn" data-tool="rect"><span class="ico">▭</span><span class="lbl">사각형</span><span class="sc">REC</span></button>
+    <button class="ts-btn tool-strip-btn" data-tool="circle"><span class="ico">○</span><span class="lbl">원</span><span class="sc">C</span></button>
+    <button class="ts-btn tool-strip-btn" data-tool="arc"><span class="ico">⌒</span><span class="lbl">호</span><span class="sc">A</span></button>
+    <button class="ts-btn tool-strip-btn" data-tool="fill"><span class="ico">🎨</span><span class="lbl">채움</span><span class="sc">H</span></button>
+    <button class="ts-btn tool-strip-btn" data-tool="calib"><span class="ico">📏</span><span class="lbl">캘리브</span><span class="sc">M</span></button>
+    <span class="ts-sep"></span>
+    <button id="headerBtnPoint" class="ts-btn" title="버텍스(점) 찍기 - 좌표를 클릭해 점 1개 생성"><span class="ico">•</span><span class="lbl">점</span></button>
+    <button id="headerBtnPenInput" class="ts-btn" title="텍스트입력 한붓그리기: 씰/일반 모드를 정하고 좌/우/상/하/도 명령으로 이어그리기. 각 점에 0,1,2... 자동 번호"><span class="ico">⌨</span><span class="lbl">텍스트입력</span></button>
+    <button id="headerBtnConnect" class="ts-btn" title="연결(F) - 두 점을 클릭하면 선 1개 생성" style="display:none"><span class="ico">🔗</span><span class="lbl">연결</span><span class="sc">F</span></button>
+    <button id="headerBtnExtrude" class="ts-btn" title="연장(Extrude/E) - 선택한 점/선을 드래그해서 선/면 만들기" style="display:none"><span class="ico">⬄</span><span class="lbl">연장</span></button>
+    <button id="headerBtnOffsetTwin" class="ts-btn" title="거리두기 - 클릭 후 기준 선을 클릭하고, 마우스를 좌/우로 옮겨 그 쪽에 평행선 1개 생성 (Esc=취소)"><span class="ico">⫴</span><span class="lbl">거리두기</span></button>
+    <input type="number" id="offsetTwinDistInput" value="0.6" step="0.01" min="0" style="width:48px; padding:3px 5px; background:#1f1f1f; color:#fff; border:1px solid #d35400; border-radius:4px; font-size:11px;" title="거리두기 간격(mm)">
+  </div>
+  <!-- 편집 그룹: 대상 선택 후 버튼 클릭 -->
+  <div class="ts-group edit">
+    <span class="ts-label edit" title="대상을 선택한 후 버튼을 클릭하세요">✂ 편집</span>
+    <button class="ts-btn tool-strip-btn" data-tool="trim" title="트림 (T)" style="display:none"><span class="ico">✂</span><span class="lbl">트림</span></button>
+    <button class="ts-btn tool-strip-btn" data-tool="extend" title="연장 (E)" style="display:none"><span class="ico">↔</span><span class="lbl">연장</span></button>
+    <button class="ts-btn tool-strip-btn" data-tool="fillet" title="필렛 (R)"><span class="ico">◜</span><span class="lbl">필렛</span></button>
+    <button class="ts-btn tool-strip-btn" data-tool="chamfer" title="챔퍼/C면취 (CH)"><span class="ico">⌐</span><span class="lbl">챔퍼</span></button>
+    <input type="number" id="chamferCInput" value="5" step="0.01" min="0.01" style="width:48px; padding:3px 5px; background:#1f1f1f; color:#fff; border:1px solid #e67e22; border-radius:4px; font-size:11px;" title="챔퍼 C값(mm)">
+    <span style="font-size:10px; color:#e67e22;">C</span>
+    <button class="ts-btn tool-strip-btn" data-tool="tangent" title="호-직선 접선 연결 (TAN)"><span class="ico">⌒</span><span class="lbl">접선</span></button>
+    <button class="ts-btn tool-strip-btn" data-tool="offset" title="오프셋 (O)" style="display:none"><span class="ico">∥</span><span class="lbl">오프셋</span></button>
+    <button class="ts-btn tool-strip-btn" data-tool="break" title="분할 (BR)" style="display:none"><span class="ico">✄</span><span class="lbl">분할</span></button>
+    <span class="ts-sep"></span>
+    <button class="ts-btn edit-act-btn" data-edit="copy" title="복사 (CO)"><span class="ico">⧉</span><span class="lbl">복사</span></button>
+    <button class="ts-btn edit-act-btn" data-edit="move" title="이동 (M)"><span class="ico">✥</span><span class="lbl">이동</span></button>
+    <button class="ts-btn edit-act-btn" data-edit="rotate" title="회전 (RO)" style="display:none"><span class="ico">↻</span><span class="lbl">회전</span></button>
+    <button class="ts-btn edit-act-btn" data-edit="mirror" title="대칭 (MI)" style="display:none"><span class="ico">◫</span><span class="lbl">대칭</span></button>
+    <button class="ts-btn edit-act-btn" data-edit="array" title="배열 (AR)" style="display:none"><span class="ico">⊞</span><span class="lbl">배열</span></button>
+    <button class="ts-btn edit-act-btn" data-edit="distcopy" title="거리복사 (DC)"><span class="ico">⇉</span><span class="lbl">거리</span></button>
+    <span class="ts-sep"></span>
+    <button class="ts-btn edit-act-btn" data-edit="delete" title="삭제 (Del)"><span class="ico">🗑</span><span class="lbl">삭제</span></button>
+    <span class="ts-sep"></span>
+    <button id="headerBtnBreakAll" class="ts-btn" title="교차점 분할 - 선택한 선들이 겹치거나 교차하는 지점에서 모두 잘라 분리 (선택 없으면 전체 선)"><span class="ico">⊞</span><span class="lbl">교차</span></button>
+    <button id="headerBtnSubdivide" class="ts-btn" title="분할(Subdivide) - 선 클릭 → 휠로 분할 수 조절 → 좌클릭 적용"><span class="ico">✂</span><span class="lbl">N등분</span></button>
+    <button id="headerBtnDiagX" class="ts-btn" title="대각선(교점): Shift+드래그로 시작 교점 최대2개 선택 → Shift+드래그로 끝 교점 선택 → 확인 팝업 → 대각선 생성. 휠=선택범위, 우클릭/Esc=취소"><span class="ico">╲</span><span class="lbl">대각선</span></button>
+    <button id="headerBtnSwipeErase" class="ts-btn" title="쓸어 지우기: 드래그로 경로를 그으면 그 경로가 가로지른 선들 중 드래그 방향과 각도차가 설정값 이상인 선만 삭제 (직각·대각선 정리용). 우클릭/Esc=종료"><span class="ico">🧹</span><span class="lbl">쓸기</span></button>
+    <input type="number" id="swipeAngleInput" value="30" min="0" max="90" step="1" style="width:42px; padding:3px 5px; background:#1f1f1f; color:#fff; border:1px solid #e67e22; border-radius:4px; font-size:11px;" title="삭제 각도 임계값(°): 드래그 방향과 이 각도 이상 어긋난 선만 삭제">
+    <span style="font-size:10px; color:#e89a5c;">°</span>
+    <span class="ts-sep"></span>
+    <button id="alignLeft" class="ts-btn" title="왼쪽 정렬"><span class="ico">⬅</span></button>
+    <button id="alignCenterH" class="ts-btn" title="수평 가운데 정렬"><span class="ico">↔</span></button>
+    <button id="alignRight" class="ts-btn" title="오른쪽 정렬"><span class="ico">➡</span></button>
+    <button id="alignTop" class="ts-btn" title="위쪽 정렬"><span class="ico">⬆</span></button>
+    <button id="alignCenterV" class="ts-btn" title="수직 가운데 정렬"><span class="ico">↕</span></button>
+    <button id="alignBottom" class="ts-btn" title="아래쪽 정렬"><span class="ico">⬇</span></button>
+    <span class="ts-sep"></span>
+    <button id="headerBtnCleanup" class="ts-btn" title="정리: 점(point)과 지정 길이 이하의 짧은 선들을 한 번에 삭제. 선택된 도형이 있으면 그 안에서만, 없으면 전체 대상"><span class="ico">🧹</span><span class="lbl">정리</span></button>
+    <input type="number" id="cleanupTolInput" value="1" step="0.1" min="0.01" style="width:50px; padding:3px 5px; background:#1f1f1f; color:#fff; border:1px solid #e67e22; border-radius:4px; font-size:11px;" title="이 길이(mm) 이하의 선과 모든 점을 삭제 (예: 1 = 1mm 이하 짧은 선 제거)">
+    <span style="font-size:10px; color:#e89a5c;">mm</span>
+    <button id="headerBtnMerge" class="ts-btn" title="그룹화(Join): 선택한 여러 선을 하나의 폴리라인 도형으로 묶음 (블렌더 J처럼 - 이어지는 끝점은 연결, 안 이어져도 하나로 묶음)"><span class="ico">🔗</span><span class="lbl">그룹</span></button>
+    <button id="headerBtnUngroup" class="ts-btn" title="분리(Ungroup): 선택한 폴리라인을 다시 개별 선들로 분해"><span class="ico">✂</span><span class="lbl">분리</span></button>
+    <button id="headerBtnOutline" class="ts-btn" title="외곽선 만들기: 닫힌 영역 안을 클릭하면 그 영역의 경계를 따라 닫힌 폴리라인(외곽선) 자동 생성 (채움 대신 선만)"><span class="ico">🖊</span><span class="lbl">외곽선</span></button>
+  </div>
+  <!-- 치수 그룹 -->
+  <div class="ts-group dim">
+    <span class="ts-label dim">📐 치수</span>
+    <button class="ts-btn tool-strip-btn" data-tool="dimLinear"><span class="ico">↦</span><span class="lbl">선형</span></button>
+    <button class="ts-btn tool-strip-btn" data-tool="dimAligned"><span class="ico">⤡</span><span class="lbl">평행</span></button>
+    <button class="ts-btn tool-strip-btn" data-tool="dimRadius"><span class="ico">⌒</span><span class="lbl">반지름</span></button>
+    <button class="ts-btn tool-strip-btn" data-tool="dimDiameter"><span class="ico">⌀</span><span class="lbl">직경</span></button>
+    <button class="ts-btn tool-strip-btn" data-tool="dimAngle"><span class="ico">∠</span><span class="lbl">각도</span></button>
+    <span style="font-size:10px; color:#5fcf8a; margin-left:2px;">글자</span>
+    <input type="number" id="dimFontSizeInput" value="12" min="4" max="200" step="1"
+      style="width:44px; padding:3px 5px; background:#1f1f1f; color:#fff; border:1px solid #27ae60; border-radius:4px; font-size:11px;"
+      title="치수 글자 크기(px) — 새로 찍는 치수에 적용">
+  </div>
+  <!-- 스냅/보조 그룹 (토글) -->
+  <div class="ts-group snap">
+    <span class="ts-label snap">🧲 스냅</span>
+    <button class="ts-btn ts-act" data-act="snap"><span class="ico">🧲</span><span class="lbl">스냅</span></button>
+    <button class="ts-btn ts-act" data-act="cont"><span class="ico">⛓</span><span class="lbl">연속선</span></button>
+    <button class="ts-btn ts-act" data-act="osnap"><span class="ico">⊙</span><span class="lbl">객체스냅</span><span class="sc">F3</span></button>
+    <button id="headerBtnLiveSnap" class="ts-btn" title="마우스가 도형 근처에 갈 때 자동 흡착"><span class="ico">🧲</span><span class="lbl">라이브</span></button>
+    <button id="headerBtnGrid" class="ts-btn" title="눈금자(격자) 표시 ON/OFF"><span class="ico">📐</span><span class="lbl">눈금자</span></button>
+    <button id="headerBtnBaseLine" class="ts-btn" title="베이스선 복제: 선 클릭 후 상/하/좌/우 치수 입력으로 평행선 생성 (씰: 파이 입력 지원)"><span class="ico">📋</span><span class="lbl">베이스선</span></button>
+    <button id="headerBtnBaseRect" class="ts-btn" title="베이스(사각형): 제품 가로/세로 사이즈를 입력하면 사각형(4개 선)을 적정 위치에 미리 작도. 세로는 좌측선/씰파이 입력 지원"><span class="ico">▭</span><span class="lbl">베이스</span></button>
+  </div>
+</div>
+
+<div class="canvas-wrap" id="canvasWrap">
+  <div class="canvas-stack" id="canvasStack">
+    <canvas id="bgCanvas"></canvas>
+    <canvas id="fillCanvas"></canvas>
+    <canvas id="drawCanvas"></canvas>
+    <canvas id="previewCanvas"></canvas>
+  </div>
+
+  <!-- Rev.11.14: 선택 액션 바 제거됨. 단축키로 대체 (삭제=Del, 해제=Esc, 복붙=Ctrl+C/V, 속성=우측 패널) -->
+
+  <!-- Rev.11.9: 이동 거리 입력 패널 (복제/이동 후 정밀 이동) -->
+  <div id="moveDeltaPanel">
+    <div class="mdp-title">↔️ 이동 거리 (mm, 1/100)</div>
+    <div class="mdp-row">
+      <label>ΔX</label>
+      <input type="text" id="mdpDX" value="0.00" onkeydown="if(event.key==='Enter'){applyMoveDelta();}">
+    </div>
+    <div class="mdp-row">
+      <label>ΔY</label>
+      <input type="text" id="mdpDY" value="0.00" onkeydown="if(event.key==='Enter'){applyMoveDelta();}">
+    </div>
+    <div class="mdp-actions">
+      <button class="mdp-apply" onclick="applyMoveDelta()">✓ 적용</button>
+      <button class="mdp-close" onclick="closeMoveDeltaPanel()">✕ 닫기</button>
+    </div>
+    <div class="mdp-hint">드래그=실시간 / Enter=적용<br>수식 가능: 100.52-100.23</div>
+  </div>
+</div>
+
+<!-- Rev.11.58: 거리복사 입력 모달 (prompt 대체) -->
+<div id="distCopyModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:9999; align-items:center; justify-content:center;">
+  <div style="background:#2b2b2b; border:1px solid #555; border-radius:10px; padding:20px 24px; min-width:320px; box-shadow:0 8px 30px rgba(0,0,0,0.6);">
+    <div style="font-size:15px; font-weight:bold; color:#fff; margin-bottom:14px;">⇉ 거리복사</div>
+    <div style="margin-bottom:12px;">
+      <label style="display:block; font-size:12px; color:#bbb; margin-bottom:5px;">간격 거리 (mm, 콤마로 여러 개)</label>
+      <input type="text" id="dcGaps" value="10,20,30" style="width:100%; padding:7px 9px; background:#1f1f1f; color:#fff; border:1px solid #666; border-radius:5px; font-size:13px;" placeholder="예: 10,25,40">
+      <div style="font-size:10px; color:#888; margin-top:4px;">원본에서 각 거리만큼 떨어진 위치에 복사</div>
+    </div>
+    <div style="margin-bottom:14px; padding:8px 10px; background:#1f1f1f; border-radius:6px;">
+      <label style="display:flex; align-items:center; gap:8px; font-size:12px; color:#ddd; cursor:pointer;">
+        <input type="checkbox" id="dcKeepAngle" checked style="width:16px; height:16px; cursor:pointer;">
+        각도 유지(평행 복사) — 소재 두께선
+      </label>
+      <div style="font-size:10px; color:#888; margin-top:4px; padding-left:24px;">원본 선과 같은 기울기로, 선에 수직으로 간격만큼 떨어뜨림<br>해제 시: 수평/수직선으로 펴서 복사(1.5배)</div>
+    </div>
+    <div style="margin-bottom:16px;">
+      <label style="display:block; font-size:12px; color:#bbb; margin-bottom:5px;">복사 방향</label>
+      <div style="display:flex; gap:6px;">
+        <button type="button" class="dc-dir" data-dir="U" style="flex:1; padding:8px; background:#3a3a3a; color:#fff; border:1px solid #666; border-radius:5px; cursor:pointer;">⬆ 위</button>
+        <button type="button" class="dc-dir" data-dir="D" style="flex:1; padding:8px; background:#3a3a3a; color:#fff; border:1px solid #666; border-radius:5px; cursor:pointer;">⬇ 아래</button>
+        <button type="button" class="dc-dir" data-dir="L" style="flex:1; padding:8px; background:#3a3a3a; color:#fff; border:1px solid #666; border-radius:5px; cursor:pointer;">⬅ 왼쪽</button>
+        <button type="button" class="dc-dir" data-dir="R" style="flex:1; padding:8px; background:#3a3a3a; color:#fff; border:1px solid #666; border-radius:5px; cursor:pointer;">➡ 오른쪽</button>
+      </div>
+    </div>
+    <div style="display:flex; gap:8px; justify-content:flex-end;">
+      <button type="button" onclick="closeDistCopyModal()" style="padding:8px 16px; background:#555; color:#fff; border:none; border-radius:5px; cursor:pointer;">취소</button>
+      <button type="button" id="dcRunBtn" onclick="runDistCopy()" style="padding:8px 16px; background:#27ae60; color:#fff; border:none; border-radius:5px; cursor:pointer; font-weight:bold;">✓ 실행</button>
+    </div>
+  </div>
+</div>
+
+<!-- 명령창 (Rev.16.41: 텍스트로 도면 그리기 - 화면 하단 표시, 한글 입력 허용) -->
+<div class="cmd-bar" style="position:fixed; left:0; right:0; bottom:0; z-index:2500; background:#1a1a1a; border-top:1px solid #444; padding:5px 10px; display:flex; flex-direction:column; gap:3px;">
+  <div class="cmd-history" id="cmdHistory" style="max-height:60px; overflow-y:auto; font-size:11px; color:#9bbf6a; font-family:monospace; line-height:1.4;">
+  </div>
+  <div class="cmd-input-row" style="display:flex; align-items:center; gap:6px;">
+    <span class="cmd-prompt" id="cmdPrompt" style="color:#f39c12; font-weight:bold; font-size:12px;">명령: </span>
+    <input type="text" id="cmdInput" class="cmd-input" autocomplete="off" spellcheck="false" style="flex:1; background:#000; color:#fff; border:1px solid #555; border-radius:4px; padding:5px 8px; font-size:13px; font-family:monospace;" placeholder="예: 사각형 40 25  ·  원 20  ·  가로선 100  ·  LINE 0 0 100 0  (Enter 실행)">
+    <span class="cmd-hint" id="cmdHint" style="font-size:10px; color:#888;">↑↓ 이력</span>
+  </div>
+</div>
+
+<footer>
+  <span>
+    <span class="badge tool-line" id="statusTool">선</span>
+    <span class="hint" id="statusHint">첫 클릭 → 두 번째 클릭으로 직선 / Shift: 직각 / ESC: 취소</span>
+  </span>
+  <span>도형: <span id="statusCount">0</span> | 채움: <span id="fillCount">0</span> | 선택: <span id="statusSel">0</span> | <span id="statusCoord">-</span></span>
+</footer>
+
+<!-- 자동검출 모달 -->
+<!-- 캘리브레이션 모달 -->
+<div class="modal-overlay" id="calibModal">
+  <div class="modal">
+    <h3>📏 실측 치수 캘리브레이션</h3>
+    
+    <div class="section">
+      <h4>방금 클릭한 두 점 사이의 실제 치수를 입력하세요</h4>
+      <div class="row">
+        <label>화면상 거리:</label>
+        <span id="calibPixelDist" style="color:#ffd966; font-weight:bold;">- px</span>
+      </div>
+      <div class="row">
+        <label>실제 치수 (mm):</label>
+        <input type="number" id="calibRealMm" value="100" min="0.01" step="0.01" style="flex:1; font-size:14px; font-weight:bold;" autofocus>
+      </div>
+      <div class="hint-text">
+        예: 도면의 100mm 치수선 양 끝을 클릭했다면 100 입력<br>
+        → 이미지가 자동으로 1:1 실측 비율에 맞게 표시되며, 모든 좌표가 mm 단위로 변환됨
+      </div>
+    </div>
+    
+    <div class="section">
+      <h4>이미지 자동 리사이즈</h4>
+      <div class="row">
+        <div class="checkbox-group">
+          <input type="checkbox" id="calibAutoResize" checked>
+          <label for="calibAutoResize" style="min-width:auto;">캘리브레이션 후 이미지를 1mm = 1px 비율로 리사이즈</label>
+        </div>
+      </div>
+      <div class="hint-text">
+        ✓ 체크: 이미지 크기 자동 조정 (1mm = 1px) → 좌표가 직접 mm 값과 같음 (권장)<br>
+        ✗ 해제: 이미지 크기 유지 → 좌표는 px이지만 표시는 mm로 변환됨
+      </div>
+    </div>
+    
+    <div class="actions">
+      <button id="btnCalibCancel">취소</button>
+      <button class="success" id="btnCalibApply">적용</button>
+    </div>
+  </div>
+</div>
+
+<!-- Rev.12.1: 선 길이/각도/상대거리 입력 팝업 (선 끝점 위치 표시) -->
+<div id="lineDimPop" style="display:none; position:fixed; z-index:3000; background:#2b2b2b; border:1px solid #4a6fa5; border-radius:8px; box-shadow:0 6px 24px rgba(0,0,0,0.6); padding:10px 12px; min-width:240px;">
+  <div style="font-size:12px; color:#aac8ff; font-weight:bold; margin-bottom:8px;">📏 선 길이 / 각도 / 상대거리</div>
+  <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
+    <span style="font-size:11px; color:#bbb; width:48px;">실제길이</span>
+    <input type="number" id="lineDimInput" value="" min="0.001" step="0.01"
+           style="width:96px; font-size:14px; font-weight:bold; padding:4px 6px; background:#1f1f1f; color:#fff; border:1px solid #555; border-radius:4px;">
+    <span style="font-size:12px; color:#ccc;">mm</span>
+  </div>
+  <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
+    <span style="font-size:11px; color:#bbb; width:48px;">각도</span>
+    <input type="number" id="lineAngInput" value="" step="0.1"
+           style="width:96px; font-size:14px; font-weight:bold; padding:4px 6px; background:#1f1f1f; color:#fff; border:1px solid #555; border-radius:4px;">
+    <span style="font-size:12px; color:#ccc;">°</span>
+  </div>
+  <div style="height:1px; background:#444; margin:6px 0;"></div>
+  <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
+    <span style="font-size:11px; color:#bbb; width:48px;">ΔX (가로)</span>
+    <input type="number" id="lineDXInput" value="" step="0.01"
+           style="width:96px; font-size:14px; font-weight:bold; padding:4px 6px; background:#1f1f1f; color:#fff; border:1px solid #555; border-radius:4px;">
+    <span style="font-size:12px; color:#ccc;">mm</span>
+  </div>
+  <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
+    <span style="font-size:11px; color:#bbb; width:48px;">ΔY (세로)</span>
+    <input type="number" id="lineDYInput" value="" step="0.01"
+           style="width:96px; font-size:14px; font-weight:bold; padding:4px 6px; background:#1f1f1f; color:#fff; border:1px solid #555; border-radius:4px;">
+    <span style="font-size:12px; color:#ccc;">mm</span>
+  </div>
+  <div style="font-size:10px; color:#888; margin-bottom:4px;">ΔX: 오른쪽 +, ΔY: 위쪽 + · 한 칸 수정하면 나머지 자동 변동</div>
+  <div style="font-size:10px; color:#888; margin-bottom:6px; line-height:1.5;">
+    현재 <span id="lineDimCurrent" style="color:#ffd966; font-weight:bold;">-</span><br>
+    각도: 0°=오른쪽, 반시계 +. Enter=적용 / Esc=취소
+  </div>
+  <div style="display:flex; align-items:center; gap:6px; margin-bottom:8px;">
+    <span style="font-size:11px; color:#999;">고정:</span>
+    <select id="lineDimFixEnd" style="flex:1; font-size:11px; background:#1f1f1f; color:#fff; border:1px solid #555; border-radius:4px; padding:2px;">
+      <option value="start">시작점 고정</option>
+      <option value="end">끝점 고정</option>
+    </select>
+  </div>
+  <div style="display:flex; gap:6px; justify-content:flex-end;">
+    <button id="btnLineDimSkip" style="font-size:11px; padding:4px 10px; background:#444; color:#ddd; border:none; border-radius:4px; cursor:pointer;">취소</button>
+    <button id="btnLineDimApply" style="font-size:11px; padding:4px 12px; background:#2e8b57; color:#fff; border:none; border-radius:4px; cursor:pointer; font-weight:bold;">적용</button>
+  </div>
+</div>
+
+<!-- Rev.13.3: 베이스선 복제 팝업 (선 클릭 후 방향별 치수 입력으로 평행선 생성) -->
+<div id="baseLinePop" style="display:none; position:fixed; z-index:3000; background:#2b2b2b; border:1px solid #e67e22; border-radius:8px; box-shadow:0 6px 24px rgba(0,0,0,0.6); padding:10px 12px; min-width:250px;">
+  <div style="font-size:12px; color:#f0a868; font-weight:bold; margin-bottom:8px;">📋 베이스선 복제 <span id="baseLineType" style="color:#ffd966;"></span></div>
+
+  <!-- 방향 선택 버튼 (선 방향에 따라 활성/비활성) -->
+  <div style="display:flex; gap:5px; margin-bottom:8px;">
+    <button class="baseDirBtn" data-dir="up"    style="flex:1; padding:6px 0; font-size:13px; background:#1f1f1f; color:#ccc; border:1px solid #555; border-radius:4px; cursor:pointer;">⬆ 상</button>
+    <button class="baseDirBtn" data-dir="down"  style="flex:1; padding:6px 0; font-size:13px; background:#1f1f1f; color:#ccc; border:1px solid #555; border-radius:4px; cursor:pointer;">⬇ 하</button>
+    <button class="baseDirBtn" data-dir="left"  style="flex:1; padding:6px 0; font-size:13px; background:#1f1f1f; color:#ccc; border:1px solid #555; border-radius:4px; cursor:pointer;">⬅ 좌</button>
+    <button class="baseDirBtn" data-dir="right" style="flex:1; padding:6px 0; font-size:13px; background:#1f1f1f; color:#ccc; border:1px solid #555; border-radius:4px; cursor:pointer;">➡ 우</button>
+  </div>
+
+  <!-- 일반 수치 입력 -->
+  <div id="baseNormalRow" style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
+    <span style="font-size:11px; color:#bbb; width:44px;">거리</span>
+    <input type="text" id="baseDist" inputmode="text" placeholder="mm (수식가능 예:12+3)"
+           style="flex:1; font-size:15px; font-weight:bold; padding:5px 6px; background:#1f1f1f; color:#fff; border:1px solid #555; border-radius:4px;">
+    <span style="font-size:12px; color:#ccc;">mm</span>
+  </div>
+  <div style="display:flex; align-items:center; gap:5px; margin-bottom:6px;">
+    <input type="checkbox" id="baseFitLen" checked>
+    <label for="baseFitLen" style="font-size:11px; color:#bbb; cursor:pointer;">베이스에 맞춰 길이 자동조정 (교차하는 선까지)</label>
+  </div>
+
+  <!-- 씰 파이 모드 토글 (세로선에서만 노출) -->
+  <div id="baseSealWrap" style="display:none;">
+    <label style="display:flex; align-items:center; gap:6px; margin:6px 0 4px; font-size:11px; color:#e08; cursor:pointer;">
+      <input type="checkbox" id="baseSealOn" style="width:14px; height:14px;">
+      <span style="color:#f0788c; font-weight:bold;">⌀ 씰 파이(Ø) 모드</span>
+    </label>
+    <div id="baseSealRow" style="display:none; align-items:center; gap:5px; margin-bottom:4px;">
+      <input type="number" id="baseSealCur" step="0.01" placeholder="현재Ø"
+             style="width:74px; font-size:13px; padding:5px 6px; background:#1f1f1f; color:#fff; border:1px solid #c0392b; border-radius:4px;">
+      <span style="font-size:12px; color:#888;">→</span>
+      <input type="number" id="basePhi" step="0.01" placeholder="목표Ø"
+             style="width:74px; font-size:14px; font-weight:bold; padding:5px 6px; background:#1f1f1f; color:#fff; border:1px solid #c0392b; border-radius:4px;">
+    </div>
+    <div id="baseSealHint" style="display:none; font-size:10px; color:#888; margin-bottom:4px;">목표Ø가 크면 좌측(−X)으로 이동 · 이동량=|목표Ø−현재Ø|/2(반지름차) · 현재Ø 비우면 선 X좌표 자동추정</div>
+  </div>
+
+  <!-- Rev.14.9: 독립 거리두기 (베이스선 방향과 별개) -->
+  <div style="height:1px; background:#9b59b6; opacity:0.5; margin:8px 0;"></div>
+  <div style="font-size:11px; color:#c08fda; font-weight:bold; margin-bottom:5px;">⫴ 거리두기 (베이스선과 별개)</div>
+  <div style="display:flex; gap:5px; margin-bottom:6px;">
+    <button class="baseOffDirBtn" data-dir="up"    style="flex:1; padding:5px 0; font-size:12px; background:#1f1f1f; color:#ccc; border:1px solid #6a4a7a; border-radius:4px; cursor:pointer;">⬆ 상</button>
+    <button class="baseOffDirBtn" data-dir="down"  style="flex:1; padding:5px 0; font-size:12px; background:#1f1f1f; color:#ccc; border:1px solid #6a4a7a; border-radius:4px; cursor:pointer;">⬇ 하</button>
+    <button class="baseOffDirBtn" data-dir="left"  style="flex:1; padding:5px 0; font-size:12px; background:#1f1f1f; color:#ccc; border:1px solid #6a4a7a; border-radius:4px; cursor:pointer;">⬅ 좌</button>
+    <button class="baseOffDirBtn" data-dir="right" style="flex:1; padding:5px 0; font-size:12px; background:#1f1f1f; color:#ccc; border:1px solid #6a4a7a; border-radius:4px; cursor:pointer;">➡ 우</button>
+  </div>
+  <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
+    <span style="font-size:11px; color:#bbb; width:44px;">거리</span>
+    <input type="number" id="baseOffDist" step="0.01" value="0.5" placeholder="mm"
+           style="flex:1; font-size:14px; font-weight:bold; padding:5px 6px; background:#1f1f1f; color:#fff; border:1px solid #9b59b6; border-radius:4px;">
+    <span style="font-size:12px; color:#ccc;">mm</span>
+    <button id="btnBaseOffGo" style="font-size:11px; padding:5px 10px; background:#7d4296; color:#fff; border:none; border-radius:4px; cursor:pointer; font-weight:bold;">거리두기</button>
+  </div>
+  <div style="font-size:10px; color:#888; margin-bottom:4px;">클릭한 기준선에 직접 적용 · 방향은 위 베이스선과 독립</div>
+
+  <div id="basePreviewTxt" style="font-size:11px; color:#ffd966; min-height:14px; margin-bottom:6px;"></div>
+
+  <div style="display:flex; gap:6px; justify-content:flex-end;">
+    <button id="btnBaseLineClose" style="font-size:11px; padding:5px 10px; background:#444; color:#ddd; border:none; border-radius:4px; cursor:pointer;">닫기</button>
+    <button id="btnBaseLineGo" style="font-size:11px; padding:5px 14px; background:#2e8b57; color:#fff; border:none; border-radius:4px; cursor:pointer; font-weight:bold;">생성</button>
+  </div>
+  <div style="font-size:10px; color:#888; margin-top:6px;">방향 선택 → 수치 입력 → <b>Enter</b>/생성 · 원본 유지, 연속 생성 · <b>Esc</b>=종료</div>
+</div>
+
+<!-- Rev.12.5: 도면베이스 (기준선 배치) 모달 -->
+<div class="modal-overlay" id="baseModal">
+  <div class="modal" style="min-width:460px;">
+    <h3>📐 도면베이스 (기준선 배치)</h3>
+    <div class="hint-text" style="margin-bottom:10px;">
+      원형 제품 단면 작도용 기준선을 배치합니다. 거리=중심에서의 반경 위치(세로선), 높이=바닥에서의 높이(가로선).<br>
+      값은 콤마(,)로 여러 개 입력. 예: <b>40, 30, 12.5</b>
+    </div>
+
+    <div class="section">
+      <h4>↔ 거리 (지름 파이값, mm) — 세로선</h4>
+      <div class="row">
+        <label>거리 값들:</label>
+        <input type="text" id="baseDistVals" value="80, 60, 30" style="flex:1;" placeholder="예: 80, 60, 30 (파이값)">
+      </div>
+      <div class="checkbox-group" style="margin-top:4px;">
+        <input type="checkbox" id="baseDistIsDiameter" checked>
+        <label for="baseDistIsDiameter" style="min-width:auto;">지름(파이)으로 입력 → 중심에서 ÷2 (반경) 위치에 배치</label>
+      </div>
+      <div class="hint-text">중심선 기준 좌측으로 세로선을 긋습니다. 거리(1)이 가장 바깥(첫 번째).</div>
+    </div>
+
+    <div class="section">
+      <h4>↕ 높이 (mm) — 가로선</h4>
+      <div class="row">
+        <label>높이 값들:</label>
+        <input type="text" id="baseHeightVals" value="0, 5, 10, 15" style="flex:1;" placeholder="예: 0, 5, 10, 15">
+      </div>
+      <div class="hint-text">바닥(높이 0)부터 위로 가로선을 긋습니다. 첫 값이 작업면(바닥).</div>
+    </div>
+
+    <div class="section">
+      <h4>옵션</h4>
+      <div class="checkbox-group">
+        <input type="checkbox" id="baseDrawCenter" checked>
+        <label for="baseDrawCenter" style="min-width:auto;">중심선(세로) 표시</label>
+      </div>
+      <div class="checkbox-group" style="margin-top:4px;">
+        <input type="checkbox" id="baseClearOld">
+        <label for="baseClearOld" style="min-width:auto;">기존 기준선 먼저 삭제</label>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button id="btnBaseCancel">취소</button>
+      <button class="success" id="btnBaseApply">기준선 배치</button>
+    </div>
+  </div>
+</div>
+
+<!-- Rev.16.6: 베이스(사각형) 모달 - 제품 사이즈 입력 → 적정 위치에 사각형(4선) 작도 -->
+<div class="modal-overlay" id="baseRectModal">
+  <div class="modal" style="min-width:480px;">
+    <h3>▭ 베이스 (제품 사각형 배치)</h3>
+    <div class="hint-text" style="margin-bottom:10px;">
+      제품 사이즈(가로·세로)를 입력하면 4개의 선으로 이루어진 사각형을 작업영역 적정 위치에 미리 작도합니다.<br>
+      가로는 폭만 입력하면 되고, <b>세로</b>는 좌측선 위치 또는 씰 파이(Ø) 모드로 좌측선을 지정할 수 있습니다.
+    </div>
+
+    <div class="section">
+      <h4>↔ 가로 (폭, mm)</h4>
+      <div class="row">
+        <label>가로 폭:</label>
+        <input type="text" id="baseRectW" inputmode="text" style="flex:1;" placeholder="예: 100 또는 25+25">
+      </div>
+      <div class="hint-text">사각형의 좌우 폭. 좌측선에서 오른쪽으로 이 폭만큼 우측선을 긋습니다.</div>
+    </div>
+
+    <div class="section">
+      <h4>↕ 세로 (높이, mm)</h4>
+      <div class="row">
+        <label>세로 높이:</label>
+        <input type="text" id="baseRectH" inputmode="text" style="flex:1;" placeholder="예: 60 또는 30+30">
+      </div>
+      <div class="hint-text">사각형의 상하 높이. 바닥선에서 위로 이 높이만큼 윗선을 긋습니다.</div>
+    </div>
+
+    <div class="section">
+      <h4>◧ 세로 - 좌측선 기준</h4>
+      <div class="checkbox-group" style="margin-bottom:8px;">
+        <input type="checkbox" id="baseRectSealOn">
+        <label for="baseRectSealOn" style="min-width:auto;"><b style="color:#f0788c;">⌀ 씰 파이(Ø) 모드</b> — 현재Ø→목표Ø 반지름차로 좌측선 위치 결정</label>
+      </div>
+
+      <!-- 일반: 좌측선 X 위치 직접 입력 -->
+      <div class="row" id="baseRectLeftRow">
+        <label>좌측선 X (mm):</label>
+        <input type="text" id="baseRectLeftX" inputmode="text" style="flex:1;" placeholder="비우면 중앙 자동 · 수식가능(예: 12+3)">
+      </div>
+
+      <!-- 씰 파이: 현재Ø → 목표Ø -->
+      <div class="row" id="baseRectSealRow" style="display:none;">
+        <label>현재Ø → 목표Ø:</label>
+        <div style="display:flex; align-items:center; gap:6px; flex:1;">
+          <input type="text" id="baseRectSealCur" inputmode="text" placeholder="현재Ø"
+                 style="width:90px; border:1px solid #c0392b;">
+          <span style="color:#888;">→</span>
+          <input type="text" id="baseRectSealPhi" inputmode="text" placeholder="목표Ø"
+                 style="width:90px; border:1px solid #c0392b;">
+        </div>
+      </div>
+      <div class="hint-text" id="baseRectSealHint" style="display:none;">
+        목표Ø가 크면 좌측선을 더 좌측(−X)으로 이동 · 이동량 = |목표Ø−현재Ø|/2 (반지름차).<br>
+        기준 좌측선 X는 위 "좌측선 X"값(비우면 중앙 기준)에서 반지름차만큼 이동합니다.
+      </div>
+    </div>
+
+    <div class="section">
+      <h4>옵션</h4>
+      <div class="checkbox-group">
+        <input type="checkbox" id="baseRectGuide" checked>
+        <label for="baseRectGuide" style="min-width:auto;">기준선(가이드)으로 작도 — 파란색, guide 속성</label>
+      </div>
+      <div class="checkbox-group" style="margin-top:4px;">
+        <input type="checkbox" id="baseRectGroup">
+        <label for="baseRectGroup" style="min-width:auto;">4개 선을 하나의 폴리라인으로 묶기</label>
+      </div>
+    </div>
+
+    <div id="baseRectPreview" style="font-size:11px; color:#ffd966; padding:6px; background:#000; border-radius:4px; margin-bottom:10px; min-height:16px;">-</div>
+
+    <div class="actions">
+      <button id="btnBaseRectCancel">취소</button>
+      <button class="success" id="btnBaseRectApply">사각형 배치</button>
+    </div>
+  </div>
+</div>
+
+<!-- 3D 생성 모달 -->
+<div class="modal-overlay" id="gen3DModal">
+  <div class="modal" style="min-width: 600px;">
+    <h3>🧊 회전체 3D 생성</h3>
+    
+    <div class="section">
+      <h4>회전 설정</h4>
+      <div class="row">
+        <label>분할 수 (세그먼트):</label>
+        <input type="number" id="genSegments" value="64" min="8" max="360" style="flex:1;">
+      </div>
+      <div class="hint-text">36=10°마다, 64=5.6°마다, 128=2.8°마다 (많을수록 부드러움, 파일 크기 증가)</div>
+      
+      <div class="row">
+        <label>회전 각도 (°):</label>
+        <input type="number" id="genAngle" value="360" min="10" max="360" style="flex:1;">
+      </div>
+      <div class="hint-text">360=완전한 회전체, 180=반쪽만 (단면 확인용)</div>
+      
+      <div class="row">
+        <label>대상 도형:</label>
+        <select id="genTarget" style="flex:1;">
+          <option value="selected">선택된 도형만</option>
+          <option value="oneSide" selected>축 한쪽(왼쪽/오른쪽 자동)</option>
+          <option value="all">전체 도형</option>
+        </select>
+      </div>
+      
+      <div class="row">
+        <div class="checkbox-group">
+          <input type="checkbox" id="genClosed" checked>
+          <label for="genClosed" style="min-width:auto;">상단/하단 캡 닫기 (실린더형 마감)</label>
+        </div>
+      </div>
+      
+      <div class="row">
+        <div class="checkbox-group">
+          <input type="checkbox" id="genSampling" checked>
+          <label for="genSampling" style="min-width:auto;">곡선 자동 샘플링 (호/원/타원을 직선으로 분할)</label>
+        </div>
+      </div>
+      <div class="row">
+        <label>샘플 밀도 (mm):</label>
+        <input type="number" id="genSampleStep" value="0.5" min="0.1" max="10" step="0.1" style="flex:1;">
+      </div>
+    </div>
+    
+    <div class="section">
+      <h4>저장 형식</h4>
+      <div class="row">
+        <label>형식:</label>
+        <select id="gen3DFormat" style="flex:1;">
+          <option value="stl">STL (3D프린터 표준) ★권장</option>
+          <option value="obj">OBJ (다목적, 머터리얼 지원)</option>
+          <option value="ply">PLY (3D 스캔 표준)</option>
+        </select>
+      </div>
+      <div class="row">
+        <label>STL 형식:</label>
+        <select id="genStlBinary" style="flex:1;">
+          <option value="ascii">ASCII (텍스트, 호환성↑)</option>
+          <option value="binary" selected>Binary (용량↓, 권장)</option>
+        </select>
+      </div>
+    </div>
+    
+    <div class="section">
+      <h4>예상 결과</h4>
+      <div id="genPreviewInfo" style="font-size:12px; color:#ffd966;">
+        삼각형 수: -<br>
+        파일 크기: -<br>
+      </div>
+    </div>
+    
+    <div class="actions">
+      <button id="btnGen3DCancel">취소</button>
+      <button class="snap" id="btnGen3DPreview" style="background:#8e44ad;">👁 미리보기</button>
+      <button class="success" id="btnGen3DSave">💾 3D 파일 저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- 3D 미리보기 모달 -->
+<div class="modal-overlay" id="preview3DModal">
+  <div class="modal" style="min-width: 700px; min-height: 600px;">
+    <h3>🧊 3D 회전체 미리보기 (마우스 드래그=회전, 휠=줌)</h3>
+    <div style="width:100%; height:500px; background:#1a1a1a; border-radius:6px; position:relative;">
+      <canvas id="preview3DCanvas" style="width:100%; height:100%; cursor:grab;"></canvas>
+      <div id="preview3DInfo" style="position:absolute; top:8px; left:8px; font-size:11px; color:#aac8ff; background:rgba(0,0,0,0.6); padding:4px 8px; border-radius:4px;"></div>
+    </div>
+    <div class="actions">
+      <button id="btnPrev3DClose">닫기</button>
+      <button class="success" id="btnPrev3DSave">💾 이 모델 저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- 도움말 모달 (Rev.9.2) -->
+<div class="modal-overlay" id="helpModal">
+  <div class="modal" style="max-width:900px; max-height:85vh; overflow-y:auto;">
+    <h3>❓ 도움말 - 버튼 · 단축키 · 명령어</h3>
+    
+    <div style="font-size:12px; color:#bbb; line-height:1.5;">
+      <h4 style="color:#f39c12; margin:12px 0 6px;">🔘 상단 버튼</h4>
+      <table style="width:100%; border-collapse:collapse; font-size:12px;">
+        <tr style="background:#2a2030;"><td style="padding:4px 8px;"><b>🔲 선택</b></td><td style="padding:4px 8px;">선택 도구 (도형 클릭/드래그로 선택·이동)</td></tr>
+        <tr style="background:#1f1f1f;"><td style="padding:4px 8px;"><b>• 점</b></td><td style="padding:4px 8px;">버텍스(점) 찍기 모드 — 좌표를 클릭해 점 생성</td></tr>
+        <tr><td style="padding:4px 8px;"><b>／ 선</b></td><td style="padding:4px 8px;">선 그리기 — 시작점·끝점 클릭</td></tr>
+        <tr style="background:#1f1f1f;"><td style="padding:4px 8px;"><b>🔗 연결</b></td><td style="padding:4px 8px;">두 점(점/끝점)을 클릭해 선 1개 생성 — 1회성 (점은 흡수됨)</td></tr>
+        <tr><td style="padding:4px 8px;"><b>⬄ 연장</b></td><td style="padding:4px 8px;">선택한 점→선, 선→면으로 끌어 만들기 (원본 대체)</td></tr>
+        <tr style="background:#1f1f1f;"><td style="padding:4px 8px;"><b>⫴ 거리두기</b></td><td style="padding:4px 8px;">클릭 → 기준 선 클릭 → 마우스를 좌/우로 옮겨 그 쪽에 평행선 1개 생성(설정 mm). 반대쪽도 한 번 더 클릭하면 추가 / Esc=종료</td></tr>
+        <tr style="background:#1f1f1f;"><td style="padding:4px 8px;"><b>🧲 라이브스냅</b></td><td style="padding:4px 8px;">도형 근처 자동 흡착 ON/OFF</td></tr>
+        <tr><td style="padding:4px 8px;"><b>📐 눈금자</b></td><td style="padding:4px 8px;">mm 격자/눈금 표시 ON/OFF</td></tr>
+        <tr style="background:#1f1f1f;"><td style="padding:4px 8px;"><b>📋 베이스선</b></td><td style="padding:4px 8px;">도면 작업 전 기준선 깔기. 선 클릭 → 팝업 하나에서 방향(가로선=상/하, 세로선=좌/우) 선택 + 거리(mm) 입력+Enter로 동일 평행선 복제(원본 유지, 연속). 씰: 세로선에서 'Ø 모드' 체크 → 현재Ø→목표Ø 입력 시 반지름차((목표−현재)/2)만큼, 목표가 크면 좌측(−X)에 생성. <b>⫴ 거리두기</b>: 같은 팝업 하단에서 베이스선과 <b>별개의 방향(상/하/좌/우)</b>·거리(mm)로 클릭한 기준선에 평행선 생성 / Esc=종료</td></tr>
+        <tr><td style="padding:4px 8px;"><b>⟷ 양방향연장</b></td><td style="padding:4px 8px;">선을 선택(클릭)하면 우측 속성 패널에 '양방향 연장' 입력칸 표시. 한쪽당 +mm 입력+Enter/[연장] → 같은 각도 유지한 채 중심 고정으로 양쪽 균등 연장(총 길이 +2×값, 음수=축소)</td></tr>
+        <tr style="background:#1f1f1f;"><td style="padding:4px 8px;"><b>⬅ ↔ ➡ ⬆ ↕ ⬇</b></td><td style="padding:4px 8px;">정렬 — 2개 이상 선택 후 좌/수평중앙/우/상/수직중앙/하 맞춤</td></tr>
+        <tr style="background:#1f1f1f;"><td style="padding:4px 8px;"><b>✂ 분할</b></td><td style="padding:4px 8px;">선 클릭 → 휠로 분할 수 조절 → 좌클릭 적용 (블렌더 방식)</td></tr>
+        <tr style="background:#1f1f1f;"><td style="padding:4px 8px;"><b>🧹 정리</b></td><td style="padding:4px 8px;">점(point)과 지정 길이(mm) 이하의 짧은 선들을 한 번에 삭제. 작도 중 생긴 자투리 선·점 정리용. 옆 입력칸이 기준 길이(예: 1 = 1mm 이하 삭제). 선택된 도형이 있으면 그 안에서만, 없으면 전체가 대상</td></tr>
+        <tr><td style="padding:4px 8px;"><b>🔗 그룹화</b></td><td style="padding:4px 8px;">블렌더 J(Join)처럼 선택한 여러 선(2개 이상)을 <b>하나의 폴리라인 도형</b>으로 묶음. 이어지는 끝점은 자동 연결, 안 이어진 갈래가 있어도 한 폴리라인에 모두 담음(실패 없음). 시작=끝이면 닫힌 도형. 묶은 폴리라인은 일반 도형처럼 선택·이동·회전·배율·대칭 모두 가능</td></tr>
+        <tr style="background:#1f1f1f;"><td style="padding:4px 8px;"><b>✂ 분리</b></td><td style="padding:4px 8px;">선택한 폴리라인을 다시 <b>개별 선들로 분해</b>(그룹화 반대). 인접 점쌍마다 선 1개, 닫힌 폴리라인은 닫힘선까지 포함. 분해된 선들은 자동 선택됨</td></tr>
+        <tr style="background:#1f1f1f;"><td style="padding:4px 8px;"><b>🖊 외곽선</b></td><td style="padding:4px 8px;">영역 경계를 외곽선(닫힌 폴리라인)으로 추출. <b>픽셀 계단/미세 단차는 자동 정리</b> — 직선 구간은 직선 피팅, 코너는 인접 직선 교점으로 재계산(각도 임계 8°). 방법: ①선들로 둘러싼 닫힌 영역 클릭 → 외곽선(원본 선 유지). ②권장: 🎨채움으로 영역 확정 → <b>채움을 드래그로 옆으로 이동(원본과 분리)</b> → 🖊외곽선으로 이동된 채움 클릭 → 그 자리에 외곽선 생성(채움 삭제). 채움은 select 도구로 클릭·드래그 이동 가능. 연속 클릭=다중, Esc=종료</td></tr>
+      </table>
+
+      <h4 style="color:#f39c12; margin:14px 0 6px;">⌨ 단축키</h4>
+      <table style="width:100%; border-collapse:collapse; font-size:12px;">
+        <tr style="background:#2a2030;"><td style="padding:4px 8px; width:120px;"><b>S</b></td><td style="padding:4px 8px;">선택 도구</td></tr>
+        <tr style="background:#1f1f1f;"><td style="padding:4px 8px;"><b>L</b></td><td style="padding:4px 8px;">선</td></tr>
+        <tr><td style="padding:4px 8px;"><b>R</b></td><td style="padding:4px 8px;">사각형</td></tr>
+        <tr style="background:#1f1f1f;"><td style="padding:4px 8px;"><b>C</b></td><td style="padding:4px 8px;">원</td></tr>
+        <tr><td style="padding:4px 8px;"><b>A</b></td><td style="padding:4px 8px;">라운드(호)</td></tr>
+        <tr style="background:#1f1f1f;"><td style="padding:4px 8px;"><b>R / ER</b></td><td style="padding:4px 8px;">모서리 라운드(Fillet)</td></tr>
+        <tr><td style="padding:4px 8px;"><b>F</b></td><td style="padding:4px 8px;">연결 (두 점 클릭 → 선 1개)</td></tr>
+        <tr style="background:#1f1f1f;"><td style="padding:4px 8px;"><b>H</b></td><td style="padding:4px 8px;">영역 채움</td></tr>
+        <tr><td style="padding:4px 8px;"><b>E</b></td><td style="padding:4px 8px;">연장(Extrude) — 점→선, 선→면 (X/Y축 제한)</td></tr>
+        <tr><td style="padding:4px 8px;"><b>Del</b></td><td style="padding:4px 8px;">선택 도형 삭제</td></tr>
+        <tr style="background:#1f1f1f;"><td style="padding:4px 8px;"><b>Esc</b></td><td style="padding:4px 8px;">선택 해제 / 모드·작도 취소</td></tr>
+        <tr><td style="padding:4px 8px;"><b>Ctrl+C / V</b></td><td style="padding:4px 8px;">도형 복사 / 제자리 붙여넣기 (같은 위치에 복사본)</td></tr>
+        <tr style="background:#1f1f1f;"><td style="padding:4px 8px;"><b>G</b></td><td style="padding:4px 8px;">이동(Grab) — 선택 후 G → 마우스로 이동, <b>X</b>=X축만 / <b>Y</b>=Y축만 / 좌클릭=확정 / Esc=취소</td></tr>
+        <tr><td style="padding:4px 8px;"><b>E</b></td><td style="padding:4px 8px;">연장(Extrude) — 진행 중 <b>X</b>=X축만 / <b>Y</b>=Y축만 연장</td></tr>
+        <tr style="background:#1f1f1f;"><td style="padding:4px 8px;"><b>Shift+Ctrl+E</b></td><td style="padding:4px 8px;">제자리 복제 (같은 자리에 복제 후 이동)</td></tr>
+        <tr><td style="padding:4px 8px;"><b>Ctrl+Z / Y</b></td><td style="padding:4px 8px;">실행 취소 / 다시 실행</td></tr>
+        <tr style="background:#1f1f1f;"><td style="padding:4px 8px;"><b>Ctrl+A</b></td><td style="padding:4px 8px;">전체 선택</td></tr>
+        <tr><td style="padding:4px 8px;"><b>Ctrl+S</b></td><td style="padding:4px 8px;">저장</td></tr>
+        <tr style="background:#1f1f1f;"><td style="padding:4px 8px;"><b>Shift+드래그</b></td><td style="padding:4px 8px;">수평/수직으로만 이동·작도</td></tr>
+        <tr><td style="padding:4px 8px;"><b>휠 클릭 드래그</b></td><td style="padding:4px 8px;">화면 이동(패닝) — 캐드 표준</td></tr>
+        <tr style="background:#1f1f1f;"><td style="padding:4px 8px;"><b>우클릭 드래그</b></td><td style="padding:4px 8px;">화면 이동(패닝) / 점·연결·연장 모드 종료</td></tr>
+        <tr style="background:#1f1f1f;"><td style="padding:4px 8px;"><b>마우스 휠</b></td><td style="padding:4px 8px;">확대/축소 (마우스 위치 기준)</td></tr>
+      </table>
+
+      <h4 style="color:#f39c12; margin:14px 0 6px;">✏ 명령창 명령어 (글자 입력 후 Enter)</h4>
+      <table style="width:100%; border-collapse:collapse; font-size:12px;">
+        <tr style="background:#1f2a30;"><td style="padding:4px 8px;"><b>점 X,Y</b></td><td style="padding:4px 8px;">좌표 (X,Y)mm에 점 찍고 번호 부여. 예: <b>점 -100,100</b></td></tr>
+        <tr style="background:#1f2a30;"><td style="padding:4px 8px;"><b>씰 점 D,Y</b></td><td style="padding:4px 8px;">씰 좌표 점: 지름 D → 좌측 X=−D/2, Y 그대로. 예: <b>씰 점 110,100</b> → (−55,100)</td></tr>
+        <tr style="background:#1f2a30;"><td style="padding:4px 8px;"><b>씰 좌/우 D</b></td><td style="padding:4px 8px;">씰 이동: D=목표 지름, 이동=|D−현재|/2. '씰' 접두 있을 때만. 예: <b>씰 좌 130</b></td></tr>
+        <tr style="background:#1f2a30;"><td style="padding:4px 8px;"><b>연결 1 2</b></td><td style="padding:4px 8px;">1번·2번 직선 연결 (또는 <b>선 1 2</b>)</td></tr>
+        <tr style="background:#1f2a30;"><td style="padding:4px 8px;"><b>알 3 0.1</b></td><td style="padding:4px 8px;">3번 교점에서 만나는 두 선에 지름 0.1 필렛</td></tr>
+        <tr style="background:#1f2a30;"><td style="padding:4px 8px;"><b>모따기 3 0.5</b></td><td style="padding:4px 8px;">3번 교점에서 만나는 두 선에 C0.5 모따기(챔퍼)</td></tr>
+        <tr style="background:#1f2a30;"><td style="padding:4px 8px;"><b>연장 1 2 30</b></td><td style="padding:4px 8px;">1-2 선에서 2번 쪽(뒤 번호)을 30mm 연장</td></tr>
+        <tr style="background:#1f2a30;"><td style="padding:4px 8px;"><b>삭제 1 2 / 삭제 3</b></td><td style="padding:4px 8px;">1-2 선 삭제 / 3번 점 삭제</td></tr>
+        <tr style="background:#1f2a30;"><td style="padding:4px 8px;"><b>이동 1 우 10</b></td><td style="padding:4px 8px;">1번 점을 우 10mm 이동 (연결된 선도 함께). 씰: <b>이동 1 씰 좌 130</b></td></tr>
+        <tr style="background:#1f2a30;"><td style="padding:4px 8px;"><b>거리두기 2 3 위 0.6</b></td><td style="padding:4px 8px;">2-3 선을 위/아래로 0.6mm 평행복제 (새 선 끝점 번호 부여)</td></tr>
+        <tr style="background:#1f2a30;"><td style="padding:4px 8px; width:120px;" colspan="2"><b style="color:#5bc8e8;">━ 한붓그리기 (점번호 0,1,2... 자동) ━</b></td></tr>
+        <tr style="background:#1f2a30;"><td style="padding:4px 8px;"><b>시작 X Y</b></td><td style="padding:4px 8px;">시작점 0번을 (X,Y)mm로 설정. 0,0=작업영역 중앙, 위=+Y. 예: <b>시작 100 1</b> (씰 반경 시작)</td></tr>
+        <tr style="background:#1f2a30;"><td style="padding:4px 8px;"><b>우/좌/상/하 D</b></td><td style="padding:4px 8px;">현재 점에서 그 방향 D mm 선 긋고 새 번호. (씰 모드: 좌/우 D=목표 지름, 이동=|D−현재|/2)</td></tr>
+        <tr style="background:#1f2a30;"><td style="padding:4px 8px;"><b>각 A D</b></td><td style="padding:4px 8px;">각도 A°(수평0°, 반시계+) 방향 D mm. 예: <b>각 45 100</b></td></tr>
+        <tr style="background:#1f2a30;"><td style="padding:4px 8px;"><b>교점</b></td><td style="padding:4px 8px;">선 그릴 때 교차점 자동 번호 부여됨. 이 명령은 기존 모든 교차점 일괄 번호 부여(수동)</td></tr>
+        <tr style="background:#1f2a30;"><td style="padding:4px 8px;"><b>3 우 50</b></td><td style="padding:4px 8px;">번호 3에서 분기 시작 (앞에 번호 붙이면 그 점부터)</td></tr>
+        <tr style="background:#1f2a30;"><td style="padding:4px 8px;"><b>선택 10</b></td><td style="padding:4px 8px;">현재 점을 10번으로 이동 (이후 번호 없이 거기서 이어그리기)</td></tr>
+        <tr style="background:#1f2a30;"><td style="padding:4px 8px;"><b>선 1 4</b></td><td style="padding:4px 8px;">두 점(1번, 4번)을 직접 연결</td></tr>
+        <tr style="background:#1f2a30;"><td style="padding:4px 8px;"><b>거리두기 위/아래 D</b></td><td style="padding:4px 8px;">마지막 선을 화면상 위/아래로 D mm 평행복제</td></tr>
+        <tr style="background:#1f2a30;"><td style="padding:4px 8px;"><b>닫기 / 백 / 점초기화</b></td><td style="padding:4px 8px;">닫기=현재 점→0번 선 · <b>백</b>=직전 1회 취소 · 점초기화=번호 리셋</td></tr>
+        <tr style="background:#23301f;"><td style="padding:4px 8px;"><b>사각형 W H</b></td><td style="padding:4px 8px;">가로 W · 세로 H mm 사각형(4선). 예: <b>사각형 40 25</b> · BASE/REC도 동일 · 수식가능(40+5)</td></tr>
+        <tr style="background:#23301f;"><td style="padding:4px 8px;"><b>원 D / 원 X Y D</b></td><td style="padding:4px 8px;">지름 D mm 원 (중앙). 좌표 지정: <b>원 -50 50 5</b> = (−50,50)에 Ø5</td></td></tr>
+        <tr style="background:#23301f;"><td style="padding:4px 8px;"><b>가로선 L / 세로선 L</b></td><td style="padding:4px 8px;">길이 L mm 가로/세로선 (작업영역 중앙). 예: <b>가로선 100</b></td></tr>
+        <tr style="background:#23301f;"><td style="padding:4px 8px;"><b>LINE x1 y1 x2 y2</b></td><td style="padding:4px 8px;">두 점(mm)을 잇는 선. 예: <b>LINE 0 0 100 0</b></td></tr>
+        <tr style="background:#2a2030;"><td style="padding:4px 8px;"><b>DI</b></td><td style="padding:4px 8px;">캘리브레이션 (실제 거리 기준 설정 — 가장 먼저)</td></tr>
+        <tr style="background:#1f1f1f;"><td style="padding:4px 8px;"><b>TR</b></td><td style="padding:4px 8px;">트리밍 (교차하는 선 자르기)</td></tr>
+        <tr><td style="padding:4px 8px;"><b>EX</b></td><td style="padding:4px 8px;">선 연장(다른 도형까지)</td></tr>
+        <tr style="background:#1f1f1f;"><td style="padding:4px 8px;"><b>R / ER</b></td><td style="padding:4px 8px;">모서리 라운드(Fillet)</td></tr>
+        <tr><td style="padding:4px 8px;"><b>F</b></td><td style="padding:4px 8px;">연결 (점/끝점 두 개 클릭 → 선 1개)</td></tr>
+        <tr style="background:#1f1f1f;"><td style="padding:4px 8px;"><b>O</b></td><td style="padding:4px 8px;">오프셋(평행 복사)</td></tr>
+        <tr style="background:#1f1f1f;"><td style="padding:4px 8px;"><b>H / BPOLY</b></td><td style="padding:4px 8px;">영역 채움 / 모든 영역 자동 채움</td></tr>
+        <tr><td style="padding:4px 8px;"><b>DIM / DAL / DRA</b></td><td style="padding:4px 8px;">선형 / 평행 / 반지름 치수</td></tr>
+        <tr style="background:#1f1f1f;"><td style="padding:4px 8px;"><b>CO</b></td><td style="padding:4px 8px;">복사</td></tr>
+        <tr><td style="padding:4px 8px;"><b>LA</b></td><td style="padding:4px 8px;">레이어 관리</td></tr>
+        <tr style="background:#1f1f1f;"><td style="padding:4px 8px;"><b>OS</b></td><td style="padding:4px 8px;">객체 스냅 ON/OFF</td></tr>
+        <tr><td style="padding:4px 8px;"><b>?</b></td><td style="padding:4px 8px;">전체 명령 목록 표시</td></tr>
+      </table>
+
+      <p style="margin:14px 0 0; color:#888;">※ 단위: 1mm = 300px, 좌표·치수는 1/100mm 표시. 마우스 휠로 확대/축소(마우스 위치 기준). 이동 거리 입력란에는 <b>100.52-100.23</b> 같은 수식도 가능.</p>
+    </div>
+
+    <div class="actions" style="border-top:1px solid #444; padding-top:12px; margin-top:12px;">
+      <button id="btnHelpClose">닫기</button>
+    </div>
+  </div>
+</div>
+
+<!-- 저장 모달 -->
+<div class="modal-overlay" id="saveModal">
+  <div class="modal">
+    <h3>💾 도면 저장 설정</h3>
+    <div class="row"><label>파일명:</label><input type="text" id="saveName" value="도면" style="flex:1;"></div>
+    <div class="row"><label>저장 형식:</label>
+      <select id="saveFormat" style="flex:1;">
+        <option value="svg">SVG (벡터 - 3D프린터/레이저커터/캐드용 ★권장)</option>
+        <option value="dxf">DXF (캐드용 - AutoCAD 등에서 열기/DWG 변환)</option>
+        <option value="png">PNG (래스터 - 엑셀/문서 삽입용, 투명배경)</option>
+      </select>
+    </div>
+    <div class="row" id="rowSaveScale"><label>저장 비율 (PNG):</label>
+      <select id="saveScale" style="flex:1;">
+        <option value="1">원본 크기 (100%)</option>
+        <option value="2">2배 (200%, 고해상도)</option>
+        <option value="3">3배 (300%, 인쇄용)</option>
+        <option value="0.5">절반 (50%)</option>
+        <option value="custom">사용자 지정...</option>
+      </select>
+    </div>
+    <div class="row" id="customScaleRow" style="display:none;"><label>배율 입력:</label><input type="number" id="customScale" value="1" min="0.1" max="10" step="0.1" style="flex:1;"></div>
+    <div class="row"><label>크롭:</label>
+      <select id="saveCrop" style="flex:1;">
+        <option value="content">도형 영역만 자동 자르기 (권장)</option>
+        <option value="canvas">전체 캔버스 크기 그대로</option>
+      </select>
+    </div>
+    <div class="row" id="rowPngBg"><label>PNG 배경:</label>
+      <select id="pngBg" style="flex:1;">
+        <option value="transparent">투명 (엑셀/문서 삽입용)</option>
+        <option value="white">흰색</option>
+        <option value="current">현재 화면 배경색 사용</option>
+        <option value="custom">사용자 지정...</option>
+      </select>
+      <input type="color" id="pngBgCustom" value="#ffffff" style="display:none; margin-left:6px;">
+    </div>
+    <div class="row" id="rowSvgUnit"><label>SVG 단위:</label>
+      <select id="svgUnit" style="flex:1;">
+        <option value="mm">mm (밀리미터 - 캐드/3D프린터/레이저 표준)</option>
+        <option value="px">px (픽셀)</option>
+      </select>
+    </div>
+    <div class="row" id="rowSvgStrokeMm">
+      <div class="checkbox-group">
+        <input type="checkbox" id="svgStrokeMm" checked>
+        <label for="svgStrokeMm" style="min-width:auto;">선 두께를 0.1mm로 통일 (레이저 커팅용)</label>
+      </div>
+    </div>
+    <div class="actions">
+      <button id="btnCancelSave">취소</button>
+      <button class="success" id="btnDoSave">저장</button>
+    </div>
+  </div>
+</div>
+
+<div id="loadingOverlay">
+  <div class="spinner"></div>
+  <div id="loadingText" style="font-size:14px;">처리 중...</div>
+</div>
+
+<!-- 도형 속성 편집 패널 (Rev.7.4 통합) -->
+<div id="shapePropPanel" style="display:none; position:fixed; right:12px; top:120px; background:#1f1f1f; border:2px solid #f39c12; border-radius:6px; padding:12px 14px; z-index:400; box-shadow:0 4px 12px rgba(0,0,0,0.5); min-width:280px; max-width:300px;">
+  <div style="font-size:13px; color:#f39c12; margin-bottom:10px; font-weight:bold;" id="propPanelTitle">📐 도형 속성 편집</div>
+  
+  <!-- 도형 종류별 컨테이너 -->
+  <div id="propLineFields" style="display:none;">
+    <div style="font-size:11px; color:#aaa; margin-bottom:4px;">시작점 (mm)</div>
+    <div style="display:flex; gap:6px; margin-bottom:8px;">
+      <input type="number" id="lineX1" step="0.1" style="width:50%; padding:4px;" placeholder="X1">
+      <input type="number" id="lineY1" step="0.1" style="width:50%; padding:4px;" placeholder="Y1">
+    </div>
+    <div style="font-size:11px; color:#aaa; margin-bottom:4px;">끝점 (mm)</div>
+    <div style="display:flex; gap:6px; margin-bottom:8px;">
+      <input type="number" id="lineX2" step="0.1" style="width:50%; padding:4px;" placeholder="X2">
+      <input type="number" id="lineY2" step="0.1" style="width:50%; padding:4px;" placeholder="Y2">
+    </div>
+    <div style="font-size:11px; color:#aaa; margin-bottom:4px;">길이 (mm) / 각도 (°)</div>
+    <div style="display:flex; gap:6px; margin-bottom:8px;">
+      <input type="number" id="lineLen" step="0.1" style="width:50%; padding:4px;" placeholder="길이">
+      <input type="number" id="lineAng" step="1" style="width:50%; padding:4px;" placeholder="각도">
+    </div>
+    <div style="font-size:11px; color:#aaa; margin-bottom:4px;">상대 이동거리 ΔX / ΔY (mm) — 끝점을 시작점 기준으로 이동</div>
+    <div style="display:flex; gap:6px; margin-bottom:8px;">
+      <input type="number" id="lineDX" step="0.1" style="width:50%; padding:4px;" placeholder="ΔX">
+      <input type="number" id="lineDY" step="0.1" style="width:50%; padding:4px;" placeholder="ΔY">
+    </div>
+    <div style="height:1px; background:#3498db; opacity:0.4; margin:8px 0;"></div>
+    <div style="font-size:11px; color:#7ec8f0; margin-bottom:4px;">⟷ 양방향 연장 — 같은 각도로 양쪽 균등 (한쪽당 +mm, 음수=축소)</div>
+    <div style="display:flex; gap:6px; margin-bottom:8px; align-items:center;">
+      <input type="number" id="lineExtEach" step="0.1" style="flex:1; padding:4px;" placeholder="한쪽당 +mm">
+      <button id="btnLineExtApply" onclick="if(window.applyLineExtend)window.applyLineExtend()" style="background:#3498db; padding:4px 10px;">연장</button>
+    </div>
+  </div>
+  
+  <div id="propRectFields" style="display:none;">
+    <div style="font-size:11px; color:#aaa; margin-bottom:4px;">좌상단 (mm)</div>
+    <div style="display:flex; gap:6px; margin-bottom:8px;">
+      <input type="number" id="rectX" step="0.1" style="width:50%; padding:4px;" placeholder="X">
+      <input type="number" id="rectY" step="0.1" style="width:50%; padding:4px;" placeholder="Y">
+    </div>
+    <div style="font-size:11px; color:#aaa; margin-bottom:4px;">크기 (가로 × 세로, mm)</div>
+    <div style="display:flex; gap:6px; margin-bottom:8px;">
+      <input type="number" id="rectW" step="0.1" style="width:50%; padding:4px;" placeholder="가로">
+      <input type="number" id="rectH" step="0.1" style="width:50%; padding:4px;" placeholder="세로">
+    </div>
+  </div>
+  
+  <div id="propCircleFields" style="display:none;">
+    <div style="font-size:11px; color:#aaa; margin-bottom:4px;">중심점 (mm)</div>
+    <div style="display:flex; gap:6px; margin-bottom:8px;">
+      <input type="number" id="circleCx" step="0.1" style="width:50%; padding:4px;" placeholder="X">
+      <input type="number" id="circleCy" step="0.1" style="width:50%; padding:4px;" placeholder="Y">
+    </div>
+    <div style="font-size:11px; color:#aaa; margin-bottom:4px;">반지름 / 직경 (mm)</div>
+    <div style="display:flex; gap:6px; margin-bottom:8px;">
+      <input type="number" id="circleR" step="0.1" style="width:50%; padding:4px;" placeholder="R">
+      <input type="number" id="circleD" step="0.1" style="width:50%; padding:4px;" placeholder="D">
+    </div>
+  </div>
+  
+  <div id="propArcFields" style="display:none;">
+    <div style="font-size:11px; color:#aaa; margin-bottom:4px;">중심점 (mm)</div>
+    <div style="display:flex; gap:6px; margin-bottom:8px;">
+      <input type="number" id="arcCenterX" step="0.1" style="width:50%; padding:4px;" placeholder="X">
+      <input type="number" id="arcCenterY" step="0.1" style="width:50%; padding:4px;" placeholder="Y">
+    </div>
+    <div style="font-size:11px; color:#aaa; margin-bottom:4px;">반지름 (mm)</div>
+    <input type="number" id="arcRadius" step="0.1" style="width:100%; padding:4px; margin-bottom:8px;" placeholder="R">
+    <div style="font-size:11px; color:#aaa; margin-bottom:4px;">시작 각도 (°)</div>
+    <input type="number" id="arcStartDeg" step="1" style="width:100%; padding:4px; margin-bottom:8px;" placeholder="0~360">
+    <div style="font-size:11px; color:#aaa; margin-bottom:4px;">끝 각도 (°)</div>
+    <input type="number" id="arcEndDeg" step="1" style="width:100%; padding:4px; margin-bottom:8px;" placeholder="0~360">
+    <div style="font-size:11px; color:#aaa; margin-bottom:4px;">스윕(회전) 방향</div>
+    <select id="arcCcw" style="width:100%; padding:4px; margin-bottom:8px;">
+      <option value="false">시계방향 (CW, 기본)</option>
+      <option value="true">반시계방향 (CCW)</option>
+    </select>
+  </div>
+  
+  <div id="propInfo" style="font-size:11px; color:#ffd966; margin-bottom:6px; padding:6px; background:#000; border-radius:4px;">
+    -
+  </div>
+  
+  <div style="display:flex; gap:6px;">
+    <button id="btnPropApply" style="flex:1; background:#27ae60;">적용</button>
+    <button id="btnPropClose" style="flex:1; background:#4a6fa5;">닫기</button>
+  </div>
+  
+  <div style="font-size:10px; color:#888; margin-top:8px; line-height:1.4;" id="propHint">
+    💡 값 변경 후 Enter 또는 [적용] 버튼
+  </div>
+</div>
+
+<script>
+  function onOpenCvReady() {
+    document.getElementById('cvStat').textContent = '✓ OpenCV 준비완료';
+    document.getElementById('cvStat').classList.add('ready');
+  }
+</script>
+<script async src="https://docs.opencv.org/4.8.0/opencv.js" onload="cv['onRuntimeInitialized'] = onOpenCvReady;"></script>
+
+<!-- ===== 분리된 메인 스크립트 (편집 용이) ===== -->
+<!-- 1편: 전역상태·캔버스/렌더링·마우스/키보드 이벤트·기본도구 -->
+<script src="draw_tool_core.js"></script>
+<!-- 2편: 복사/이동/회전/대칭/배열, 폴리라인/타원/텍스트, 레이어/해치, DXF/패닝/측정, OSNAP -->
+<script src="draw_tool_tools.js"></script>
+
+<!-- ===== OSNAP 다이얼로그 (Rev.10.8) ===== -->
+<div class="osnap-overlay" id="osnapDlg">
+  <div class="osnap-dlg">
+    <div class="osnap-hdr">
+      <h3>🧲 객체 스냅 설정</h3>
+      <span class="close-x" onclick="closeOsnapDlg()">✕</span>
+    </div>
+    <div class="osnap-master">
+      <div class="item">
+        <input type="checkbox" id="osnapMaster" onchange="onOsnapMasterToggle()">
+        <label for="osnapMaster"><b>객체 스냅 켜기</b> (F3)</label>
+      </div>
+    </div>
+    <div class="osnap-body">
+      <div class="osnap-twocol">
+        <div>
+          <div class="osnap-grid-title">📍 점 스냅 (Point Snap)</div>
+          <div class="osnap-grid">
+            <div class="osnap-row">
+              <input type="checkbox" id="os_endpoint" class="os-cb">
+              <label for="os_endpoint"><span class="sym">□</span>끝점 (Endpoint)</label>
+            </div>
+            <div class="osnap-row">
+              <input type="checkbox" id="os_midpoint" class="os-cb">
+              <label for="os_midpoint"><span class="sym">△</span>중간점 (Midpoint)</label>
+            </div>
+            <div class="osnap-row">
+              <input type="checkbox" id="os_center" class="os-cb">
+              <label for="os_center"><span class="sym">○</span>중심 (Center)</label>
+            </div>
+            <div class="osnap-row">
+              <input type="checkbox" id="os_quadrant" class="os-cb">
+              <label for="os_quadrant"><span class="sym">◇</span>사분점 (Quadrant)</label>
+            </div>
+            <div class="osnap-row">
+              <input type="checkbox" id="os_corner" class="os-cb">
+              <label for="os_corner"><span class="sym">▢</span>코너 (Corner)</label>
+            </div>
+            <div class="osnap-row">
+              <input type="checkbox" id="os_intersection" class="os-cb">
+              <label for="os_intersection"><span class="sym">×</span>교차점 (Intersection)</label>
+            </div>
+          </div>
+
+          <div class="osnap-grid-title" style="margin-top:10px;">📐 정밀 스냅 (Precision)</div>
+          <div class="osnap-grid">
+            <div class="osnap-row">
+              <input type="checkbox" id="os_tangent" class="os-cb">
+              <label for="os_tangent"><span class="sym">⊙</span>접점 (Tangent)</label>
+            </div>
+            <div class="osnap-row">
+              <input type="checkbox" id="os_perpendicular" class="os-cb">
+              <label for="os_perpendicular"><span class="sym">⊥</span>수선 (Perpendicular)</label>
+            </div>
+            <div class="osnap-row">
+              <input type="checkbox" id="os_parallel" class="os-cb">
+              <label for="os_parallel"><span class="sym">∥</span>평행 (Parallel)</label>
+            </div>
+            <div class="osnap-row">
+              <input type="checkbox" id="os_extension" class="os-cb">
+              <label for="os_extension"><span class="sym">⤳</span>연장선 (Extension)</label>
+            </div>
+          </div>
+
+          <div class="osnap-grid-title" style="margin-top:10px;">🪄 라이브 스냅</div>
+          <div class="osnap-grid">
+            <div class="osnap-row">
+              <input type="checkbox" id="os_onshape" class="os-cb">
+              <label for="os_onshape"><span class="sym">∼</span>선/원 위 임의점 (On Shape)</label>
+            </div>
+          </div>
+        </div>
+        <div class="osnap-side-btns">
+          <button onclick="osnapSelectAll(true)">모두 선택</button>
+          <button class="danger" onclick="osnapSelectAll(false)">모두 해제</button>
+        </div>
+      </div>
+
+      <div class="osnap-hint">
+        <b>💡 안내:</b><br>
+        • "객체 스냅 켜기"를 ON으로 해야 점 스냅이 작동합니다<br>
+        • 정밀 스냅(접점/수선/평행/연장)은 작도 중일 때만 활성화됩니다<br>
+        • 스냅 반경(px): <input type="number" id="os_radius" min="3" max="50" value="15" style="width:50px; padding:2px 4px; background:#1a1a1a; color:#fff; border:1px solid #666;">
+      </div>
+    </div>
+    <div class="osnap-footer">
+      <button class="secondary" onclick="closeOsnapDlg()">취소</button>
+      <button onclick="applyOsnapDlg()">확인</button>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
