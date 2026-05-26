@@ -84,6 +84,11 @@ let swipeEraseMode = false;       // 쓸어 지우기 모드 ON/OFF
 let swipeErasing = false;         // 드래그 중 여부
 let swipePath = [];               // 드래그 경로 점들 [{x,y}]
 let swipeAngleThresh = 30;        // 삭제 각도 임계값(도)
+// Rev.16.29: 한붓그리기 점번호 시스템 (좌/우/상/하/도 명령으로 이어그리기)
+let penPoints = [];               // [{x,y}] P0,P1,P2... 픽셀 좌표
+let penLabelIds = [];             // 각 점 라벨(text 도형) id (지우기용)
+let penCur = -1;                  // 현재 점 인덱스 (이 점에서 다음 선 시작)
+let penSealMode = false;          // Rev.16.30: 씰 모드(좌/우 숫자=목표 지름, 이동=|목표-현재|/2)
 // Rev.16.9~16.10: 대각선(교점) 모드 - 범위 안 교점을 드래그로 선택(최대2), 2쌍 동시 대각 연결
 let diagXMode = false;            // 대각선-교점 모드 ON/OFF
 let diagXRadius = 40;             // 짧은 클릭 시 교점 탐지 반경 (px, 고정)
@@ -3250,6 +3255,19 @@ function applyUnitScale(newPxPerMm){
 document.getElementById('unitScaleSel').addEventListener('change', e => {
   applyUnitScale(e.target.value);
 });
+// Rev.16.40: 도구바 접기/펼치기 토글
+(function(){
+  const tg = document.getElementById('toolStripToggle');
+  const ts = document.getElementById('toolStrip');
+  const ic = document.getElementById('toolStripToggleIcon');
+  if (!tg || !ts) return;
+  tg.addEventListener('click', () => {
+    const collapsed = ts.classList.toggle('collapsed');
+    if (ic) ic.textContent = collapsed ? '▶' : '▼';
+    // 캔버스 크기 재계산 (영역 변동 반영)
+    if (typeof setCanvasSize === 'function') setCanvasSize(baseW, baseH);
+  });
+})();
 // 현재 mmPerPixel에 맞춰 드롭다운 표시 동기화 (로드/파일열기 후 호출)
 function syncUnitScaleSel(){
   const sel = document.getElementById('unitScaleSel');
@@ -10880,6 +10898,594 @@ function cmdLog(text, cls) {
   while (hist.children.length > 200) hist.removeChild(hist.firstChild);
 }
 
+// Rev.16.28: 치수 인자형 그리기 명령 파서. 처리하면 true 반환.
+// 지원:
+//   BASE W H            → W×H mm 사각형(4선) 작업영역 중앙 배치 (가로 세로)
+//   사각형 W H / REC W H → 동일
+//   LINE x1 y1 x2 y2    → (x1,y1)-(x2,y2) mm 선
+//   원 D / CIRCLE D      → 지름 D mm 원 (작업영역 중앙)
+//   HLINE L / 가로선 L   → 길이 L mm 가로선 (중앙)
+//   VLINE L / 세로선 L   → 길이 L mm 세로선 (중앙)
+// Rev.16.29: 한붓그리기 점번호 시스템
+//   시작 X Y / START X Y → P0를 (X,Y)mm로 설정 (없으면 0,0=중앙)
+//   우/좌/상/하 D        → 현재 점에서 D mm 이동하며 선, 끝점에 새 번호
+//   도 A D / ANG A D     → 각도 A도(반시계,0=우) 방향 D mm
+//   P3 우 50             → P3에서 분기 시작 후 이동
+//   선 P1 P4 / LINK P1 P4→ 두 점 직접 연결
+//   닫기 / CLOSE         → 현재 점에서 P0로 선 긋기
+//   점초기화 / PRESET     → 점번호 시스템 리셋
+function penWorldOrigin(){ return { x: baseW/2, y: baseH/2 }; }   // 0,0 = 작업영역 중앙
+// mm(위=+Y 도면좌표) → 픽셀(아래=+Y). 원점은 중앙
+function penMmToPx(xmm, ymm){
+  const o = penWorldOrigin();
+  return { x: o.x + xmm/mmPerPixel, y: o.y - ymm/mmPerPixel };
+}
+function penPxToMm(px, py){
+  const o = penWorldOrigin();
+  return { x: (px - o.x)*mmPerPixel, y: -(py - o.y)*mmPerPixel };
+}
+function penAddPoint(px, py){
+  // Rev.16.34: 이미 같은 위치에 번호 점이 있으면 그 번호를 현재점으로 (중복 생성 방지)
+  const tolPx = 1/mmPerPixel * 0.05;
+  for (let i=0;i<penPoints.length;i++){
+    if (Math.hypot(penPoints[i].x-px, penPoints[i].y-py) < tolPx){ penCur = i; return i; }
+  }
+  const idx = penPoints.length;
+  penPoints.push({ x:px, y:py });
+  penCur = idx;
+  // 점 마커
+  shapes.push({ id:++shapeIdSeq, type:'point', p1:{x:px,y:py}, stroke:'#16e0b0', strokeWidth:1, penIdx:idx });
+  // 라벨 Pn
+  const lbId = ++shapeIdSeq;
+  shapes.push({ id:lbId, type:'text', pos:{x:px + 8/(zoom||1), y:py - 22/(zoom||1)}, text:''+idx, sizePx: 16/(zoom||1), stroke:'#16e0b0', layer:(currentLayer||'default'), penLabel:idx });
+  penLabelIds[idx] = lbId;
+  return idx;
+}
+function penAddLine(x1,y1,x2,y2){
+  const sw = parseInt(document.getElementById('strokeWidth').value) || 1;
+  const stroke = document.getElementById('strokeColor').value || '#ffffff';
+  const newLine = { id:++shapeIdSeq, type:'line', p1:{x:x1,y:y1}, p2:{x:x2,y:y2}, stroke, strokeWidth:sw, layer:(currentLayer||'default') };
+  shapes.push(newLine);
+  // Rev.16.34: 새 선이 기존 선들과 만나는 교차점 자동 번호 부여
+  penAutoIntersect(newLine);
+}
+// Rev.16.34: 주어진 선과 기존 다른 선들의 교차점을 찾아 자동으로 번호 점 추가
+function penAutoIntersect(newLine){
+  const tolPx = 1/mmPerPixel * 0.05;  // 0.05mm 이내 중복 무시
+  const dup = (x,y) => penPoints.some(p => Math.hypot(p.x-x, p.y-y) < tolPx);
+  for (const s of shapes){
+    if (s === newLine || s.type !== 'line' || !s.p1 || !s.p2) continue;
+    const ix = lineSegmentIntersection(newLine.p1, newLine.p2, s.p1, s.p2);
+    if (ix && !dup(ix.x, ix.y)){
+      penAddPoint(ix.x, ix.y);  // 교점에 번호 부여
+    }
+  }
+}
+function penFinish(msg){
+  redoStack = []; pushHistory();
+  if (typeof redrawFills === 'function') redrawFills();
+  redrawDraw(); updateCount();
+  cmdLog('  '+msg, 'system');
+  document.getElementById('statusHint').textContent = msg;
+}
+function tryPenCommand(cmdStr){
+  const toks = cmdStr.replace(/,/g,' ').split(/\s+/).filter(Boolean);
+  if (!toks.length) return false;
+
+  // 점번호 초기화
+  if (toks[0] === '점초기화' || toks[0] === 'PRESET' || toks[0] === '리셋'){
+    penPoints = []; penLabelIds = []; penCur = -1;
+    document.getElementById('statusHint').textContent = '✎ 한붓그리기 점번호 초기화됨';
+    cmdLog('  점번호 초기화', 'system');
+    return true;
+  }
+
+  // Rev.16.35: 백 - 직전 작업 1회 취소 (undo)
+  if (toks[0] === '백' || toks[0] === 'BACK' || toks[0] === 'UNDO'){
+    if (typeof undo === 'function') undo();
+    // 마지막 점이 사라졌으면 penCur/penPoints 동기화
+    penSyncFromShapes();
+    document.getElementById('statusHint').textContent = '↩ 백: 직전 작업 취소';
+    cmdLog('  백(취소)', 'system');
+    return true;
+  }
+
+  // Rev.16.38: 선택 N - 현재 점을 N번으로 이동 (이후 거기서 이어그리기)
+  if ((toks[0] === '선택' || toks[0] === 'SEL' || toks[0] === 'SELECT') && toks.length >= 2){
+    const idx = parsePenIdx(toks[1]);
+    if (idx == null || !penPoints[idx]){
+      document.getElementById('statusHint').textContent = `선택 실패: ${toks[1]}번 점이 없습니다`;
+      return true;
+    }
+    penCur = idx;
+    const m = penPxToMm(penPoints[idx].x, penPoints[idx].y);
+    penFinish(`▸ 현재 점 = ${idx}번 (${Math.round(m.x*10)/10}, ${Math.round(m.y*10)/10})mm · 여기서 이어그리기`);
+    return true;
+  }
+
+  // Rev.16.39: 삭제 - 삭제 1 2 (1-2 선 삭제) / 삭제 3 (3번 점 삭제)
+  if (toks[0] === '삭제' || toks[0] === 'DEL' || toks[0] === 'DELETE' || toks[0] === 'ERASE'){
+    if (toks.length >= 3 && parsePenIdx(toks[1]) != null && parsePenIdx(toks[2]) != null){
+      // 선 삭제 (두 점이 끝점인 선)
+      const i1 = parsePenIdx(toks[1]), i2 = parsePenIdx(toks[2]);
+      const ln = penFindLineByEndpoints(i1, i2);
+      if (!ln){ document.getElementById('statusHint').textContent = `삭제 실패: ${i1}-${i2} 선이 없음`; return true; }
+      shapes = shapes.filter(s => s.id !== ln.id);
+      penFinish(`🗑 ${i1}-${i2} 선 삭제`);
+      return true;
+    } else if (toks.length >= 2 && parsePenIdx(toks[1]) != null){
+      // 점 삭제 (점 마커 + 라벨)
+      const idx = parsePenIdx(toks[1]);
+      if (!penPoints[idx]){ document.getElementById('statusHint').textContent = `삭제 실패: ${idx}번 점이 없음`; return true; }
+      const removeIds = [];
+      for (const s of shapes){
+        if (s.type === 'point' && s.penIdx === idx) removeIds.push(s.id);
+        if (s.type === 'text' && s.penLabel === idx) removeIds.push(s.id);
+      }
+      shapes = shapes.filter(s => !removeIds.includes(s.id));
+      penPoints[idx] = undefined;  // 번호는 빈 자리로 둠 (다른 번호 안 밀림)
+      penLabelIds[idx] = undefined;
+      penFinish(`🗑 ${idx}번 점 삭제 (연결선은 유지)`);
+      return true;
+    }
+    return false;
+  }
+
+  // Rev.16.39: 이동 - 이동 1 우 10 (1번 점을 우 10mm, 연결된 선 끝점도 함께)
+  if (toks[0] === '이동' || toks[0] === 'MOVE'){
+    const idx = parsePenIdx(toks[1]);
+    if (idx == null || !penPoints[idx]) return false;
+    let moff = 2;
+    let useSealM = false;
+    if (toks[moff] === '씰'){ useSealM = true; moff++; }
+    const mdir = toks[moff];
+    const mval = evalExpr(toks[moff+1]);
+    if (!['우','좌','상','하','R','L','U','D'].includes(mdir) || !isFinite(mval)) return false;
+    const old = penPoints[idx];
+    let ndx=0, ndy=0;
+    if (useSealM && (mdir==='우'||mdir==='좌'||mdir==='R'||mdir==='L')){
+      // 씰: mval=목표지름, 이동=|목표-현재|/2
+      const curXmm = penPxToMm(old.x, old.y).x;
+      const moveMm = Math.abs(mval - curXmm)/2;
+      ndx = ((mdir==='좌'||mdir==='L') ? -1 : 1) * moveMm / mmPerPixel;
+    } else {
+      const dpx = mval/mmPerPixel;
+      if (mdir==='우'||mdir==='R') ndx = dpx;
+      else if (mdir==='좌'||mdir==='L') ndx = -dpx;
+      else if (mdir==='상'||mdir==='U') ndy = -dpx;
+      else if (mdir==='하'||mdir==='D') ndy = dpx;
+    }
+    const nx = old.x + ndx, ny = old.y + ndy;
+    const tol = 1/mmPerPixel * 0.1;
+    // 이 점에 연결된 선 끝점들도 함께 이동
+    for (const s of shapes){
+      if (s.type !== 'line' || !s.p1 || !s.p2) continue;
+      if (Math.hypot(s.p1.x-old.x, s.p1.y-old.y) < tol){ s.p1.x = nx; s.p1.y = ny; }
+      if (Math.hypot(s.p2.x-old.x, s.p2.y-old.y) < tol){ s.p2.x = nx; s.p2.y = ny; }
+    }
+    // 점 마커 + 라벨 갱신
+    for (const s of shapes){
+      if (s.type === 'point' && s.penIdx === idx){ s.p1.x = nx; s.p1.y = ny; }
+    }
+    penPoints[idx] = { x:nx, y:ny };
+    penUpdateLabel(idx, nx, ny);
+    penFinish(`✥ ${idx}번 점 ${useSealM?'씰 ':''}${mdir} ${mval}${useSealM?'(지름)':'mm'} 이동`);
+    return true;
+  }
+
+  // Rev.16.31: 교점 번호 - 현재 모든 선의 교차점을 찾아 번호 부여
+  if (toks[0] === '교점' || toks[0] === 'INTERSECT' || toks[0] === 'IX'){
+    const lines = shapes.filter(s => s.type === 'line' && s.p1 && s.p2);
+    if (lines.length < 2){
+      document.getElementById('statusHint').textContent = '교점: 선이 2개 이상 필요합니다';
+      return true;
+    }
+    // 모든 선쌍의 교차점(선분 내부) 수집, 중복 제거
+    const found = [];
+    const isDup = (x,y) => found.some(p => Math.hypot(p.x-x, p.y-y) < 1/mmPerPixel*0.05) // 0.05mm 이내 중복
+                        || penPoints.some(p => Math.hypot(p.x-x, p.y-y) < 1/mmPerPixel*0.05);
+    for (let i=0;i<lines.length;i++){
+      for (let j=i+1;j<lines.length;j++){
+        const ix = lineSegmentIntersection(lines[i].p1, lines[i].p2, lines[j].p1, lines[j].p2);
+        if (ix && !isDup(ix.x, ix.y)){ found.push({x:ix.x, y:ix.y}); }
+      }
+    }
+    if (found.length === 0){
+      document.getElementById('statusHint').textContent = '교점: 새로운 교차점이 없습니다';
+      return true;
+    }
+    const first = penPoints.length;
+    found.forEach(p => penAddPoint(p.x, p.y));
+    penFinish(`✕ 교점 ${found.length}개에 번호 부여 (${first}~${penPoints.length-1})`);
+    return true;
+  }
+
+  // Rev.16.32: 좌표 점 찍기 - 점 X,Y  (0,0=중앙, 위=+Y)
+  if (toks[0] === '점' && toks.length >= 3){
+    const xmm = evalExpr(toks[1]), ymm = evalExpr(toks[2]);
+    if (!isFinite(xmm) || !isFinite(ymm)) return false;
+    const p = penMmToPx(xmm, ymm);
+    penAddPoint(p.x, p.y);
+    penFinish(`• ${penCur}번 점 = (${xmm}, ${ymm})mm`);
+    return true;
+  }
+
+  // Rev.16.32: 씰 좌표 점 - 씰 점 D,Y  (D=지름, 항상 좌측 X=-D/2, Y 그대로)
+  if (toks[0] === '씰' && toks[1] === '점' && toks.length >= 4){
+    const D = evalExpr(toks[2]), ymm = evalExpr(toks[3]);
+    if (!isFinite(D) || !isFinite(ymm)) return false;
+    const xmm = -Math.abs(D)/2;   // 좌측 전용
+    const p = penMmToPx(xmm, ymm);
+    penAddPoint(p.x, p.y);
+    penFinish(`⌀ ${penCur}번 씰점 = Ø${D} → 좌측 X=${xmm.toFixed(2)}, Y=${ymm}mm`);
+    return true;
+  }
+
+  // Rev.16.33: 연결 1 2  (1번과 2번 직선 연결, 공백 구분 / '선'도 동일)
+  if (toks[0] === '연결' || toks[0] === '선' || toks[0] === 'LINK'){
+    if (toks.length < 3) return false;
+    const i1 = parsePenIdx(toks[1]), i2 = parsePenIdx(toks[2]);
+    if (i1 == null || i2 == null || !penPoints[i1] || !penPoints[i2]) return false;
+    penAddLine(penPoints[i1].x, penPoints[i1].y, penPoints[i2].x, penPoints[i2].y);
+    penCur = i2;
+    penFinish(`／ ${i1}-${i2} 연결`);
+    return true;
+  }
+
+  // Rev.16.32: 필렛 - 알 3 0.1  (3번 교점에 지름 0.1 필렛)
+  if ((toks[0] === '알' || toks[0] === 'FILLET' || toks[0] === 'R') && toks.length >= 3){
+    const idx = parsePenIdx(toks[1]);
+    const dia = evalExpr(toks[2]);
+    if (idx == null || !penPoints[idx] || !isFinite(dia) || dia <= 0) return false;
+    const ok = penFilletAtPoint(penPoints[idx], dia);
+    if (!ok){ document.getElementById('statusHint').textContent = `필렛 실패: ${idx}번에서 만나는 두 선을 못 찾음`; return true; }
+    penFinish(`◜ ${idx}번 교점 Ø${dia} 필렛`);
+    return true;
+  }
+
+  // Rev.16.37: 모따기 - 모따기 10 0.5  (10번 교점에 C=0.5 모따기, 기존 챔퍼와 동일)
+  if ((toks[0] === '모따기' || toks[0] === 'CHAMFER' || toks[0] === 'CHA') && toks.length >= 3){
+    const idx = parsePenIdx(toks[1]);
+    const c = evalExpr(toks[2]);
+    if (idx == null || !penPoints[idx] || !isFinite(c) || c <= 0) return false;
+    const ok = penChamferAtPoint(penPoints[idx], c);
+    if (!ok){ document.getElementById('statusHint').textContent = `모따기 실패: ${idx}번에서 만나는 두 선을 못 찾음`; return true; }
+    penFinish(`╱ ${idx}번 교점 C${c} 모따기`);
+    return true;
+  }
+
+  // Rev.16.36: 연장 1 2 30 - 1-2 선에서 2번 쪽(뒤 번호)을 30mm 연장
+  if ((toks[0] === '연장' || toks[0] === 'EXTEND') && toks.length >= 4){
+    const i1 = parsePenIdx(toks[1]), i2 = parsePenIdx(toks[2]);
+    const dist = evalExpr(toks[3]);
+    if (i1 == null || i2 == null || !penPoints[i1] || !penPoints[i2] || !isFinite(dist)) return false;
+    const ln = penFindLineByEndpoints(i1, i2);
+    if (!ln){ document.getElementById('statusHint').textContent = `연장 실패: ${i1}-${i2}를 끝점으로 가진 선이 없음`; return true; }
+    // 1→2 방향 단위벡터로 2번 끝을 dist 연장
+    const a = penPoints[i1], b = penPoints[i2];
+    const len = Math.hypot(b.x-a.x, b.y-a.y);
+    if (len < 1e-6) return true;
+    const ux = (b.x-a.x)/len, uy = (b.y-a.y)/len;
+    const nx = b.x + ux*dist/mmPerPixel, ny = b.y + uy*dist/mmPerPixel;
+    // 선의 2번 끝점을 갱신 (어느 p가 2번인지 찾아서)
+    const which = (Math.hypot(ln.p1.x-b.x, ln.p1.y-b.y) < Math.hypot(ln.p2.x-b.x, ln.p2.y-b.y)) ? 'p1' : 'p2';
+    ln[which] = { x:nx, y:ny };
+    // 2번 점 좌표도 갱신
+    penPoints[i2] = { x:nx, y:ny };
+    // 라벨 위치도 이동
+    penUpdateLabel(i2, nx, ny);
+    penFinish(`↦ ${i1}-${i2} 선 ${i2}번 쪽 ${dist}mm 연장`);
+    return true;
+  }
+
+  // Rev.16.36: 거리두기 2 3 위 0.6 - 2-3 선을 위/아래로 평행복제 (새 선 끝점 번호 부여)
+  if ((toks[0] === '거리두기' || toks[0] === 'OFFSET') && toks.length >= 5
+      && parsePenIdx(toks[1]) != null && parsePenIdx(toks[2]) != null){
+    const i1 = parsePenIdx(toks[1]), i2 = parsePenIdx(toks[2]);
+    const ud = toks[3];
+    const dmm = evalExpr(toks[4]);
+    if (!penPoints[i1] || !penPoints[i2] || (ud!=='위'&&ud!=='아래') || !isFinite(dmm)) return false;
+    const ln = penFindLineByEndpoints(i1, i2);
+    if (!ln){ document.getElementById('statusHint').textContent = `거리두기 실패: ${i1}-${i2} 선이 없음`; return true; }
+    const dpx = dmm/mmPerPixel * (ud==='위' ? -1 : 1);  // 화면 위=Y감소
+    const nx1 = ln.p1.x, ny1 = ln.p1.y + dpx;
+    const nx2 = ln.p2.x, ny2 = ln.p2.y + dpx;
+    penAddLine(nx1, ny1, nx2, ny2);
+    penAddPoint(nx1, ny1);
+    penAddPoint(nx2, ny2);
+    penFinish(`⫴ ${i1}-${i2} 선 ${ud} ${dmm}mm 평행복제`);
+    return true;
+  }
+
+  // 시작점 지정: 시작 X Y
+  if ((toks[0] === '시작' || toks[0] === 'START') && toks.length >= 3){
+    const xmm = evalExpr(toks[1]), ymm = evalExpr(toks[2]);
+    if (!isFinite(xmm) || !isFinite(ymm)) return false;
+    const p = penMmToPx(xmm, ymm);
+    penAddPoint(p.x, p.y);
+    penFinish(`✎ 시작점 P0 = (${xmm}, ${ymm})mm`);
+    return true;
+  }
+
+  // 선 P1 P4 : 두 점 직접 연결
+  if ((toks[0] === '선' || toks[0] === 'LINK') && toks.length >= 3){
+    const i1 = parsePenIdx(toks[1]), i2 = parsePenIdx(toks[2]);
+    if (i1 == null || i2 == null || !penPoints[i1] || !penPoints[i2]) return false;
+    penAddLine(penPoints[i1].x, penPoints[i1].y, penPoints[i2].x, penPoints[i2].y);
+    penCur = i2;
+    penFinish(`✎ 선 P${i1}-P${i2} 연결`);
+    return true;
+  }
+
+  // 닫기 : 현재 점 → P0
+  if (toks[0] === '닫기' || toks[0] === 'CLOSE'){
+    if (penCur < 0 || !penPoints[0] || penCur === 0){ return false; }
+    penAddLine(penPoints[penCur].x, penPoints[penCur].y, penPoints[0].x, penPoints[0].y);
+    penFinish(`✎ 닫기: ${penCur} → 0`);
+    penCur = 0;
+    return true;
+  }
+
+  // [Pn] 방향 거리  /  방향 거리
+  let off = 0;
+  let startIdx = penCur;
+  const maybeIdx = parsePenIdx(toks[0]);
+  if (maybeIdx != null){
+    if (!penPoints[maybeIdx]) return false;
+    startIdx = maybeIdx;
+    off = 1;
+  }
+  // Rev.16.32: '씰' 접두 - 이 명령만 씰 계산 적용 (예: 씰 좌 130, 3 씰 좌 130)
+  let useSeal = false;
+  if (toks[off] === '씰'){ useSeal = true; off++; }
+  const dir = toks[off];
+  const dirSet = ['우','좌','상','하','R','L','U','D','각','도','ANG','거리두기'];
+  if (!dirSet.includes(dir)) return false;
+
+  // 시작점이 없으면 P0를 중앙(0,0)에 자동 생성
+  if (startIdx < 0 || !penPoints[startIdx]){
+    const o = penMmToPx(0,0);
+    penAddPoint(o.x, o.y);
+    startIdx = 0;
+  }
+  const sp = penPoints[startIdx];
+
+  // 거리두기 위/아래 D : 마지막 선 평행복제 (한붓그리기 흐름 밖)
+  if (dir === '거리두기'){
+    const ud = toks[off+1];
+    const dmm = evalExpr(toks[off+2]);
+    if ((ud !== '위' && ud !== '아래') || !isFinite(dmm)) return false;
+    // 마지막으로 그린 line 찾기
+    let last=null;
+    for (let i=shapes.length-1;i>=0;i--){ if (shapes[i].type==='line'){ last=shapes[i]; break; } }
+    if (!last) return false;
+    const dpx = dmm/mmPerPixel * (ud==='위'? -1 : 1);  // 화면상 위=Y감소
+    penAddLine(last.p1.x, last.p1.y+dpx, last.p2.x, last.p2.y+dpx);
+    penFinish(`✎ 거리두기 ${ud} ${dmm}mm 평행복제`);
+    return true;
+  }
+
+  // 각도: 도 A D
+  if (dir === '각' || dir === '도' || dir === 'ANG'){
+    const ang = evalExpr(toks[off+1]);
+    const dist = evalExpr(toks[off+2]);
+    if (!isFinite(ang) || !isFinite(dist)) return false;
+    const rad = ang * Math.PI/180;
+    const dx = Math.cos(rad)*dist/mmPerPixel;
+    const dy = -Math.sin(rad)*dist/mmPerPixel;  // 반시계 양수=화면 위
+    const nx = sp.x + dx, ny = sp.y + dy;
+    penAddLine(sp.x, sp.y, nx, ny);
+    penAddPoint(nx, ny);
+    penFinish(`✎ ${startIdx} → ${ang}° ${dist}mm → ${penCur}`);
+    return true;
+  }
+
+  // 좌우상하 거리
+  const dist = evalExpr(toks[off+1]);
+  if (!isFinite(dist)) return false;
+  let dx=0, dy=0;
+  const isLR = (dir==='우'||dir==='R'||dir==='좌'||dir==='L');
+
+  if (useSeal && isLR){
+    // Rev.16.30: 씰 모드 좌/우 - 숫자=목표 지름. 이동량 = |목표 - 현재지름값|/2
+    //   현재지름값 = 현재 X(mm, penPxToMm) ※ 부호 그대로 사용 (예: P0 X=100, 좌 130 → (130-100)/2=15 좌측)
+    const curXmm = penPxToMm(sp.x, sp.y).x;   // 현재 점의 X(mm) = 현재 지름값
+    const targetD = dist;                      // 목표 지름
+    const moveMm = Math.abs(targetD - curXmm) / 2;
+    const moveDir = (dir==='좌'||dir==='L') ? -1 : +1;  // 방향은 단어대로
+    dx = moveDir * moveMm / mmPerPixel;
+    const nx = sp.x + dx, ny = sp.y;
+    penAddLine(sp.x, sp.y, nx, ny);
+    penAddPoint(nx, ny);
+    const newXmm = penPxToMm(nx, ny).x;
+    penFinish(`⌀ 씰 ${startIdx} ${dir} 목표Ø${targetD} → ${moveMm.toFixed(2)}mm 이동 → X=${newXmm.toFixed(1)} (${penCur})`);
+    return true;
+  }
+
+  // 일반 이동 (씰 모드의 상/하 포함)
+  const dpx = dist/mmPerPixel;
+  if (dir==='우'||dir==='R') dx = dpx;
+  else if (dir==='좌'||dir==='L') dx = -dpx;
+  else if (dir==='상'||dir==='U') dy = -dpx;   // 화면 위=Y감소
+  else if (dir==='하'||dir==='D') dy = dpx;
+  const nx = sp.x + dx, ny = sp.y + dy;
+  penAddLine(sp.x, sp.y, nx, ny);
+  penAddPoint(nx, ny);
+  penFinish(`✎ ${startIdx} → ${dir} ${dist}mm → ${penCur}`);
+  return true;
+}
+// Rev.16.36: 두 점 번호(i1,i2)를 양 끝점으로 가진 선 찾기
+function penFindLineByEndpoints(i1, i2){
+  const a = penPoints[i1], b = penPoints[i2];
+  if (!a || !b) return null;
+  const tol = 1/mmPerPixel * 0.1;  // 0.1mm
+  for (const s of shapes){
+    if (s.type !== 'line' || !s.p1 || !s.p2) continue;
+    const m1 = (Math.hypot(s.p1.x-a.x,s.p1.y-a.y)<tol && Math.hypot(s.p2.x-b.x,s.p2.y-b.y)<tol);
+    const m2 = (Math.hypot(s.p1.x-b.x,s.p1.y-b.y)<tol && Math.hypot(s.p2.x-a.x,s.p2.y-a.y)<tol);
+    if (m1 || m2) return s;
+  }
+  return null;
+}
+// Rev.16.36: 점 번호 라벨 위치 갱신
+function penUpdateLabel(idx, px, py){
+  const lbId = penLabelIds[idx];
+  if (lbId == null) return;
+  const lb = shapes.find(s => s.id === lbId);
+  if (lb && lb.pos){ lb.pos.x = px + 8/(zoom||1); lb.pos.y = py - 22/(zoom||1); }
+}
+
+// "3" / "P3" → 3, 그 외 null
+function parsePenIdx(tok){
+  if (/^P\d+$/i.test(tok)) return parseInt(tok.slice(1));
+  if (/^\d+$/.test(tok)) return parseInt(tok);
+  return null;
+}
+
+// Rev.16.35: undo 후 현재 도면에 남은 점 라벨 기준으로 penPoints 재구성
+function penSyncFromShapes(){
+  // 남아있는 point 도형 중 penIdx 가진 것들로 penPoints 복원
+  const pts = [];
+  const labels = [];
+  for (const s of shapes){
+    if (s.type === 'point' && typeof s.penIdx === 'number'){
+      pts[s.penIdx] = { x:s.p1.x, y:s.p1.y };
+    }
+    if (s.type === 'text' && typeof s.penLabel === 'number'){
+      labels[s.penLabel] = s.id;
+    }
+  }
+  // 연속된 앞부분만 유효 (중간 빈 곳에서 끊김)
+  let n = 0;
+  while (pts[n] !== undefined) n++;
+  penPoints = pts.slice(0, n);
+  penLabelIds = labels.slice(0, n);
+  penCur = penPoints.length - 1;
+}
+
+// Rev.16.32: 지정 점(pt) 근처에서 끝점이 만나는 두 선을 찾아 지름 dia 필렛
+function penFilletAtPoint(pt, diaMm){
+  const tol = Math.max(2, 1/mmPerPixel*0.2);  // 0.2mm 또는 2px
+  const near = [];
+  for (const s of shapes){
+    if (s.type !== 'line' || !s.p1 || !s.p2) continue;
+    const d1 = Math.hypot(s.p1.x-pt.x, s.p1.y-pt.y);
+    const d2 = Math.hypot(s.p2.x-pt.x, s.p2.y-pt.y);
+    if (d1 <= tol || d2 <= tol){
+      // 교점에서 먼 끝점 = keep(살릴 방향) 클릭점으로 사용
+      const far = (d1 <= d2) ? s.p2 : s.p1;
+      near.push({ line:s, click:{x:far.x, y:far.y} });
+    }
+  }
+  if (near.length < 2) return false;
+  const L1 = near[0], L2 = near[1];
+  const rMm = diaMm/2;
+  const r = rMm / mmPerPixel;
+  return applyFilletNoPrompt(L1.line, L2.line, L1.click, L2.click, r, rMm);
+}
+
+// Rev.16.37: 지정 점에서 만나는 두 선을 찾아 C값 cMm 모따기 (기존 챔퍼 로직 사용)
+function penChamferAtPoint(pt, cMm){
+  const tol = Math.max(2, 1/mmPerPixel*0.2);
+  const near = [];
+  for (const s of shapes){
+    if (s.type !== 'line' || !s.p1 || !s.p2) continue;
+    const d1 = Math.hypot(s.p1.x-pt.x, s.p1.y-pt.y);
+    const d2 = Math.hypot(s.p2.x-pt.x, s.p2.y-pt.y);
+    if (d1 <= tol || d2 <= tol){
+      const far = (d1 <= d2) ? s.p2 : s.p1;
+      near.push({ line:s, click:{x:far.x, y:far.y} });
+    }
+  }
+  if (near.length < 2) return false;
+  return applyChamferToTwoLines(near[0].line, near[1].line, near[0].click, near[1].click, cMm);
+}
+
+// Rev.16.30: 텍스트입력(한붓그리기) 시작 - 씰/일반 모드 선택
+(function(){
+  const btn = document.getElementById('headerBtnPenInput');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    penSealMode = false;  // Rev.16.32: 전역 씰모드 폐지 (씰 계산은 '씰' 접두 명령으로만)
+    // 점번호 초기화
+    penPoints = []; penLabelIds = []; penCur = -1;
+    // 명령창 포커스
+    const ci = document.getElementById('cmdInput');
+    if (ci){ ci.focus(); ci.value = ''; }
+    document.getElementById('statusHint').textContent =
+      `⌨ 한붓그리기 시작: '시작 X Y' 또는 '점 X,Y'로 점 찍기 · 좌/우/상/하/각 이어그리기 · 씰은 '씰 점 D,Y' · 취소=백 또는 Ctrl+Z`;
+    cmdLog(`⌨ 한붓그리기 시작. 예: 점 -100,100 → 점 -100,110 → 연결 1 2 · 씰: 씰 점 110,100`, 'system');
+  });
+})();
+
+function tryDimCommand(cmdStr){
+  // Rev.16.29: 한붓그리기(점번호) 명령 우선 처리
+  if (tryPenCommand(cmdStr)) return true;
+  // 토큰 분리 (콤마/공백 혼용 허용)
+  const toks = cmdStr.replace(/,/g,' ').split(/\s+/).filter(Boolean);
+  if (toks.length < 2) return false;
+  const key = toks[0];
+  const nums = toks.slice(1).map(t => evalExpr(t));
+  if (nums.some(n => !isFinite(n))) return false;
+  const mm2px = mm => mm / mmPerPixel;
+  const cx = baseW/2, cy = baseH/2;
+  const sw = parseInt(document.getElementById('strokeWidth').value) || 1;
+  const stroke = document.getElementById('strokeColor').value || '#ffffff';
+  const mkLine = (x1,y1,x2,y2) => ({ id:++shapeIdSeq, type:'line', p1:{x:x1,y:y1}, p2:{x:x2,y:y2}, stroke, strokeWidth:sw, layer:(currentLayer||'default') });
+
+  function pushAnd(msg, arr){
+    arr.forEach(s => shapes.push(s));
+    redoStack = []; pushHistory();
+    if (typeof redrawFills === 'function') redrawFills();
+    redrawDraw(); updateCount();
+    cmdLog('  ' + msg, 'system');
+    document.getElementById('statusHint').textContent = msg;
+  }
+
+  if ((key === 'BASE' || key === '사각형' || key === 'REC' || key === 'RECT') && nums.length >= 2){
+    const w = mm2px(nums[0]), h = mm2px(nums[1]);
+    const xL = cx - w/2, xR = cx + w/2, yT = cy - h/2, yB = cy + h/2;
+    pushAnd(`▭ 사각형 ${nums[0]}×${nums[1]}mm 생성`, [
+      mkLine(xL,yT,xR,yT), mkLine(xL,yB,xR,yB), mkLine(xL,yT,xL,yB), mkLine(xR,yT,xR,yB)
+    ]);
+    return true;
+  }
+  if (key === 'LINE' && nums.length >= 4){
+    pushAnd(`／ 선 (${nums[0]},${nums[1]})-(${nums[2]},${nums[3]})mm 생성`,
+      [ mkLine(mm2px(nums[0]),mm2px(nums[1]),mm2px(nums[2]),mm2px(nums[3])) ]);
+    return true;
+  }
+  if ((key === 'HLINE' || key === '가로선') && nums.length >= 1){
+    const L = mm2px(nums[0]);
+    pushAnd(`― 가로선 ${nums[0]}mm 생성`, [ mkLine(cx-L/2,cy,cx+L/2,cy) ]);
+    return true;
+  }
+  if ((key === 'VLINE' || key === '세로선') && nums.length >= 1){
+    const L = mm2px(nums[0]);
+    pushAnd(`｜ 세로선 ${nums[0]}mm 생성`, [ mkLine(cx,cy-L/2,cx,cy+L/2) ]);
+    return true;
+  }
+  if ((key === 'CIRCLE' || key === '원' || key === 'CIR') && nums.length >= 1){
+    let ccx = cx, ccy = cy, dia = nums[0];
+    if (nums.length >= 3){
+      // 원 X Y D : 좌표 지정 (0,0=중앙, 위=+Y)
+      const o = { x: baseW/2, y: baseH/2 };
+      ccx = o.x + nums[0]/mmPerPixel;
+      ccy = o.y - nums[1]/mmPerPixel;
+      dia = nums[2];
+    }
+    const r = mm2px(dia)/2;  // 지름 → 반지름
+    shapes.push({ id:++shapeIdSeq, type:'circle',
+      p1:{x:ccx, y:ccy}, p2:{x:ccx+r, y:ccy},
+      stroke, strokeWidth:sw, layer:(currentLayer||'default') });
+    redoStack=[]; pushHistory(); redrawDraw(); updateCount();
+    const msg = (nums.length>=3) ? `○ 원 (${nums[0]},${nums[1]}) Ø${dia}mm 생성` : `○ 원 Ø${dia}mm 생성`;
+    cmdLog('  '+msg,'system'); document.getElementById('statusHint').textContent = msg;
+    return true;
+  }
+  return false;
+}
+
 function executeCommand(cmdStr) {
   cmdStr = cmdStr.trim().toUpperCase();
   if (!cmdStr) {
@@ -10907,7 +11513,10 @@ function executeCommand(cmdStr) {
     finishPolyline(true);
     return;
   }
-  
+
+  // Rev.16.28: 치수 인자형 그리기 명령 (말/텍스트로 도면 그리기)
+  if (tryDimCommand(cmdStr)) return;
+
   const def = CMD_DICT[cmdStr];
   if (!def) {
     cmdLog(`'${cmdStr}' 알 수 없는 명령. '?' 또는 HELP 입력하여 명령 목록 보기.`, 'error');
