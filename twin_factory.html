@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>트윈팩토리 3D v5.0 - OEE 설비종합효율</title>
+<title>트윈팩토리 3D v5.7 - 밝은 회색 바닥</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;}
@@ -72,7 +72,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 <body>
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🏭 트윈팩토리 3D<span class="v">v5.0</span></h1>
+    <h1>🏭 트윈팩토리 3D<span class="v">v5.7</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="upd">연결 중…</span> · <span id="cd">30</span>s</div>
   </div>
   <div class="sum">
@@ -246,8 +246,8 @@ function initThree(){
   renderer=new THREE.WebGLRenderer({canvas:cv,antialias:true});
   renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
   scene=new THREE.Scene();
-  scene.background=new THREE.Color(0x0c0f16);
-  scene.fog=new THREE.Fog(0x0c0f16, 60, 220);
+  scene.background=new THREE.Color(0x161b24);
+  scene.fog=new THREE.Fog(0x161b24, 70, 240);
   camera=new THREE.PerspectiveCamera(45,1,0.1,1000);
   raycaster=new THREE.Raycaster(); mouse=new THREE.Vector2();
   var amb=new THREE.AmbientLight(0xffffff,0.6); scene.add(amb);
@@ -273,6 +273,18 @@ function resize(){
 window.addEventListener('resize',resize);
 
 // 호기번호/상태 라벨 텍스처
+function makeReelLabel(pct){
+  var c=document.createElement('canvas'); c.width=160; c.height=80;
+  var g=c.getContext('2d');
+  g.fillStyle='rgba(15,20,30,0.85)'; roundRect(g,4,4,152,72,12); g.fill();
+  var col = pct<=20 ? '#ef4444' : pct<=40 ? '#f59e0b' : '#e0a44a';
+  g.strokeStyle=col; g.lineWidth=2; roundRect(g,4,4,152,72,12); g.stroke();
+  g.fillStyle='#cfd8e3'; g.font='600 18px sans-serif'; g.textAlign='center'; g.textBaseline='middle';
+  g.fillText('소재',80,24);
+  g.fillStyle=col; g.font='bold 34px sans-serif';
+  g.fillText(pct+'%',80,52);
+  var tex=new THREE.CanvasTexture(c); tex.minFilter=THREE.LinearFilter; return tex;
+}
 function makeLabel(no,sub,colorHex){
   var c=document.createElement('canvas'); c.width=256; c.height=128;
   var g=c.getContext('2d');
@@ -326,22 +338,22 @@ function buildScene(){
   var cx=maxX/2, cy=maxY/2;
   var floorW=maxX, floorH=maxY;  // m
 
-  // 바닥
+  // 바닥 — 고급 산업 콘크리트 톤(밝게, 가시성↑) + 약한 광택
   var floorGeo=new THREE.PlaneGeometry(floorW,floorH);
-  var floorMat=new THREE.MeshStandardMaterial({color:0x10151f,roughness:0.97,metalness:0});
+  var floorMat=new THREE.MeshStandardMaterial({color:0x4a525e,roughness:0.8,metalness:0.12});
   var floor=new THREE.Mesh(floorGeo,floorMat);
   floor.rotation.x=-Math.PI/2; floor.position.set(0,0.01,0);
   floorGroup.add(floor);
 
-  // 1m 격자 (연하게)
+  // 1m 격자 — 은은한 라인(밝은 바닥 위 부드럽게)
   var span=Math.max(floorW,floorH);
   var divisions=Math.max(4, Math.round(span/GRID_M));
-  var grid=new THREE.GridHelper(span, divisions, 0x3a4a6a, 0x232d44);
-  grid.position.y=0.02; grid.material.opacity=0.45; grid.material.transparent=true;
+  var grid=new THREE.GridHelper(span, divisions, 0x8a99b5, 0x5a6478);
+  grid.position.y=0.02; grid.material.opacity=0.4; grid.material.transparent=true;
   floorGroup.add(grid);
 
   // 바닥 외곽선 (테두리) — 두께/색상은 zone 설정값(없으면 기본)
-  var olColor=(zone.outline_color)||'#5b6fa0';
+  var olColor=(zone.outline_color)||'#7c93c4';
   var olW=(zone.outline_w_m!=null)?zone.outline_w_m:0.2;
   addOutline(floorW, floorH, olColor, olW);
 
@@ -353,16 +365,71 @@ function buildScene(){
     var bx=(it.mx+it.mw/2)-cx;
     var bz=(it.my+it.mh/2)-cy;
     var geo=new THREE.BoxGeometry(it.mw,hgt,it.mh);
-    var mat=new THREE.MeshStandardMaterial({color:col,roughness:0.32,metalness:0.7});
+    var running = d && d.machine_status==='N';
+    var mat=new THREE.MeshStandardMaterial({color:col,roughness:0.32,metalness:0.7,
+      transparent:true, opacity:running?0.78:0.32});  // 가동=불투명(금형 살짝 보임) / 비가동=투명
     var mesh=new THREE.Mesh(geo,mat);
     mesh.position.set(bx,hgt/2,bz);
     machineGroup.add(mesh);
+    // 가동 중이면 본체 내부에 프레스 금형(상형 왕복 + 하형 고정) 표시
+    if(running){
+      var iw=it.mw*0.5, idp=it.mh*0.5;             // 내부 금형 폭/깊이
+      // 하형(고정 베드) — 본체 하부
+      var lowerMat=new THREE.MeshStandardMaterial({color:0x9aa6b6,roughness:0.4,metalness:0.7});
+      var lowerH=Math.max(0.1,hgt*0.14);
+      var lower=new THREE.Mesh(new THREE.BoxGeometry(iw,lowerH,idp),lowerMat);
+      lower.position.set(bx, lowerH/2+hgt*0.08, bz);
+      machineGroup.add(lower);
+      // 상형(왕복) — 파란 금형
+      var upMat=new THREE.MeshStandardMaterial({color:0x4ea3ff,roughness:0.3,metalness:0.75});
+      var upH=Math.max(0.12,hgt*0.2);
+      var up=new THREE.Mesh(new THREE.BoxGeometry(iw*0.92,upH,idp*0.92),upMat);
+      var topY=hgt*0.68;                            // 상사점(본체 내부 상단, 천장 아래)
+      var botY=lower.position.y+lowerH/2+upH/2+0.02; // 하사점(하형 바로 위 = 맞닿음)
+      up.position.set(bx,topY,bz);
+      up.userData.press={topY:topY,botY:botY,phase:Math.random()*Math.PI*2,
+        spd:(d.actual_ct>0? Math.max(0.12, 1.2/d.actual_ct) : 0.4)};  // 1/5 속도
+      machineGroup.add(up);
+      // 소재 코일 릴 — 설비 옆에 세움, 잔량%만큼 코일 두께
+      var coilKg=Number(d.coil_weight)||0;
+      if(coilKg>0){
+        var unitG=Number(d.unit_per_qty)||0, actQ=Number(d.actual_qty)||0;
+        var usedKg=unitG>0?(unitG*actQ/1000):0;          // 소진량(kg)
+        var initKg=coilKg+usedKg;                         // 초기 추정(현재+소진)
+        var ratio=initKg>0?Math.max(0.05,Math.min(1,coilKg/initKg)):0.5;  // 잔량 비율
+        var hubR=Math.max(0.12,it.mw*0.12);               // 중심축(코어) 반지름
+        var fullR=Math.max(hubR+0.1,it.mw*0.38);          // 만량 시 외경
+        var coilR=hubR+(fullR-hubR)*ratio;                // 현재 외경(잔량 반영)
+        var reelMat=new THREE.MeshStandardMaterial({color:0xb8c0cc,roughness:0.5,metalness:0.6});
+        var coilMat=new THREE.MeshStandardMaterial({color:0xe0a44a,roughness:0.45,metalness:0.5}); // 코일(금속띠)
+        var coilW=Math.max(0.15,it.mh*0.28);              // 코일 폭(축방향)
+        var rx=bx + it.mw/2 + fullR + 0.15;               // 설비 오른쪽 옆
+        var ry=hgt*0.5;                                   // 높이
+        // 코일(원판) — 눕혀서 세로로 세움(축이 z방향)
+        var coil=new THREE.Mesh(new THREE.CylinderGeometry(coilR,coilR,coilW,28),coilMat);
+        coil.rotation.x=Math.PI/2;
+        coil.position.set(rx,ry,bz);
+        machineGroup.add(coil);
+        // 중심 코어
+        var hub=new THREE.Mesh(new THREE.CylinderGeometry(hubR,hubR,coilW+0.08,16),reelMat);
+        hub.rotation.x=Math.PI/2;
+        hub.position.set(rx,ry,bz);
+        machineGroup.add(hub);
+        // 잔량 % 라벨(릴 위)
+        var pctTex=makeReelLabel(Math.round(ratio*100));
+        var pctMat=new THREE.MeshBasicMaterial({map:pctTex,transparent:true,side:THREE.DoubleSide});
+        var pct=new THREE.Mesh(new THREE.PlaneGeometry(fullR*1.4,fullR*0.7),pctMat);
+        pct.position.set(rx,ry+fullR+0.35,bz);
+        pct.userData.billboard=true;
+        machineGroup.add(pct);
+      }
+    }
     // 앞면(정면) 상단 호기 라벨 — 정면을 향해 세움
     var tex=makeLabel(e.no,'',col);
     var lmat=new THREE.MeshBasicMaterial({map:tex,transparent:true,side:THREE.DoubleSide});
-    var lw=Math.min(it.mw*0.85, 1.2);            // 라벨 가로(m)
+    var lw=Math.min(it.mw*0.55, 0.8);            // 라벨 가로(m) — 축소
     var lab=new THREE.Mesh(new THREE.PlaneGeometry(lw, lw*0.5),lmat);
-    lab.position.set(bx, hgt*0.78, bz + it.mh/2 + 0.01);  // 앞면 상단에 살짝 띄움
+    lab.position.set(bx, hgt*0.82, bz + it.mh/2 + 0.01);  // 앞면 상단
     machineGroup.add(lab);
     // 점검 알림보드 — 설비 위 공중 간판
     var insp=inspByHo[ho]||{};
@@ -411,7 +478,17 @@ function updateCam(){
 
 function animate(){
   requestAnimationFrame(animate);
-  if(machineGroup){machineGroup.children.forEach(function(o){if(o.userData&&o.userData.billboard&&camera)o.lookAt(camera.position)})}
+  var t=Date.now()/1000;
+  if(machineGroup){machineGroup.children.forEach(function(o){
+    if(!o.userData)return;
+    if(o.userData.billboard&&camera)o.lookAt(camera.position);
+    var p=o.userData.press;
+    if(p){
+      // 0~1 사인 → 상사점~하사점 왕복 (아래로 찍고 올라옴)
+      var s=(1-Math.cos(t*p.spd*Math.PI*2+p.phase))/2;  // 0(top)~1(bot)
+      o.position.y=p.topY+(p.botY-p.topY)*s;
+    }
+  })}
   renderer.render(scene,camera);
 }
 
