@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>트윈팩토리 3D v4.9 - 대시보드 동일조회</title>
+<title>트윈팩토리 3D v5.0 - OEE 설비종합효율</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;}
@@ -72,7 +72,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 <body>
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🏭 트윈팩토리 3D<span class="v">v4.9</span></h1>
+    <h1>🏭 트윈팩토리 3D<span class="v">v5.0</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="upd">연결 중…</span> · <span id="cd">30</span>s</div>
   </div>
   <div class="sum">
@@ -81,6 +81,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
     <div class="sc"><span class="l" style="color:var(--red)">비가동</span><span class="v" id="sStop" style="color:var(--red)">-</span></div>
     <div class="sc"><span class="l" style="color:var(--amber)">임박</span><span class="v" id="sSoon" style="color:var(--amber)">-</span></div>
     <div class="sc"><span class="l">생산</span><span class="v" id="sQty">-</span></div>
+    <div class="sc"><span class="l">평균 OEE</span><span class="v" id="sOee">-</span></div>
   </div>
 </div>
 
@@ -209,6 +210,26 @@ async function loadMaster(){
 }
 function metaOf(e){var ho=parseInt(e.no,10),m=mmByHo[ho];return{maker:(m&&m.maker)?m.maker:(e.mk||''),ton:(m&&m.tonnage!=null)?m.tonnage:(e.t||null),customer:(m&&m.customer)?m.customer:''}}
 
+// OEE(설비종합효율) = 가동률 × 성능 × 양품률 (각 0~1)
+function calcOEE(d){
+  if(!d) return null;
+  var run=Number(d.run_min)||0, stop=Number(d.stop_min)||0;
+  var planned=run+stop;
+  var avail = planned>0 ? run/planned : null;
+  var tct=Number(d.target_ct)||0, act=Number(d.actual_ct)||0;
+  var perf = (tct>0&&act>0) ? Math.min(tct/act,1) : null;
+  var aq=Number(d.actual_qty)||0, ng=Number(d.ng_qty)||0;
+  var qual = aq>0 ? Math.max(0,(aq-ng)/aq) : null;
+  if(avail==null&&perf==null&&qual==null) return null;
+  var oee=(avail==null?1:avail)*(perf==null?1:perf)*(qual==null?1:qual);
+  return {oee:oee, avail:avail, perf:perf, qual:qual};
+}
+function oeeColor(v){
+  if(v==null) return 0x5b6678;
+  if(v>=0.85) return 0x22c55e;
+  if(v>=0.60) return 0xf59e0b;
+  return 0xef4444;
+}
 function statusColor(d){
   if(!d) return 0x5b6678;
   if(d.machine_status==='N'){var soon=d.remaining_minutes>0&&d.remaining_minutes<=30;return soon?0xf59e0b:0x86e36b}
@@ -504,6 +525,19 @@ function pick(clientX,clientY){
 }
 
 // ===== 모달 =====
+function oeeRow(d){
+  var o=calcOEE(d); if(!o) return '';
+  function pct(v){return v==null?'-':(v*100).toFixed(0)+'%'}
+  var col=oeeColor(o.oee);
+  var hex='#'+('000000'+col.toString(16)).slice(-6);
+  return '<div class="row" style="flex-direction:column;align-items:stretch">'
+    +'<div style="display:flex;justify-content:space-between"><span class="k">OEE (설비종합효율)</span>'
+    +'<span class="vv" style="color:'+hex+';font-size:16px">'+pct(o.oee)+'</span></div>'
+    +'<div class="prog"><div class="f" style="width:'+Math.min(o.oee*100,100)+'%;background:'+hex+'"></div></div>'
+    +'<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--sub);margin-top:4px">'
+    +'<span>가동률 '+pct(o.avail)+'</span><span>성능 '+pct(o.perf)+'</span><span>양품률 '+pct(o.qual)+'</span></div>'
+    +'</div>';
+}
 function inspRow(e,meta){
   var ho=parseInt(e.no,10), insp=inspByHo[ho]||{}, is300=(meta.ton||0)>=300;
   function badge(done){return done?'<span style="color:#22c55e;font-weight:700">✓ 완료</span>':'<span style="color:#ef4444;font-weight:700">! 미점검</span>'}
@@ -542,6 +576,7 @@ function openModal(e,d){
     body.innerHTML=
       inspRow(e,meta)+
       r('상태',run?'<span style="color:#22c55e">● 가동</span>':'<span style="color:#ef4444">■ '+stopName(d.machine_status)+'</span>')+
+      oeeRow(d)+
       r('고객사',d.customer||meta.customer||'-')+
       r('금형',d.current_mold||'-')+r('품번',d.current_item_code||'-')+r('품명',d.item_name||'-')+
       r('실적 / 가능',fmt(d.actual_qty)+' / '+fmt(d.target_qty))+
@@ -563,6 +598,13 @@ function updateSummary(){
   var soon=cachedData.filter(function(d){return d.machine_status==='N'&&d.remaining_minutes>0&&d.remaining_minutes<=30}).length;
   var qty=cachedData.reduce(function(s,d){return s+(d.actual_qty||0)},0);
   document.getElementById('sTotal').textContent=total;document.getElementById('sRun').textContent=run;document.getElementById('sStop').textContent=total-run;document.getElementById('sSoon').textContent=soon;document.getElementById('sQty').textContent=fmt(qty);
+  // 평균 OEE (계산 가능한 설비만)
+  var os=[]; cachedData.forEach(function(d){var o=calcOEE(d); if(o&&o.oee!=null)os.push(o.oee)});
+  var el=document.getElementById('sOee');
+  if(el){ if(os.length){var avg=os.reduce(function(a,b){return a+b},0)/os.length;
+    el.textContent=(avg*100).toFixed(0)+'%';
+    el.style.color=avg>=0.85?'#22c55e':avg>=0.60?'#f59e0b':'#ef4444';
+  } else { el.textContent='-'; el.style.color=''; } }
 }
 async function load(){
   await loadInspections();  // 점검 상태는 machine_status와 독립적으로 항상 로드
