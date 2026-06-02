@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>트윈팩토리 3D v9.2 - 호기번호 빌보드 표시</title>
+<title>트윈팩토리 3D v10.8 - 공장 격자 중앙배치</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;}
@@ -27,6 +27,10 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 .cbtn{width:42px;height:42px;border-radius:10px;background:var(--card);border:1px solid var(--border);color:var(--txt);font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center}
 .cbtn:active{background:var(--blue)}
 .cbtn.on{background:var(--blue);border-color:var(--blue)}
+#patrolPanel{position:fixed;left:10px;bottom:10px;z-index:60;background:rgba(15,20,30,0.92);border:1px solid #2a3550;border-radius:12px;padding:10px 12px;display:none;width:210px}
+#patrolPanel.show{display:block}
+#patrolPanel label{display:block;color:#cfd8e3;font-size:12px;margin:6px 0 2px}
+#patrolPanel input[type=range]{width:100%}
 .hint{position:absolute;bottom:8px;left:0;right:0;z-index:40;text-align:center;font-size:10px;color:var(--sub);pointer-events:none}
 .legend{position:absolute;bottom:24px;left:0;right:0;z-index:40;display:flex;gap:10px;justify-content:center;flex-wrap:wrap;font-size:11px;color:var(--sub);pointer-events:none}
 .lg{display:flex;align-items:center;gap:4px}.lg .d{width:12px;height:12px;border-radius:3px}
@@ -73,7 +77,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 <body>
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🏭 트윈팩토리 3D<span class="v">v9.2</span></h1>
+    <h1>🏭 트윈팩토리 3D<span class="v">v10.8</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="upd">연결 중…</span> · <span id="cd">30</span>s</div>
   </div>
   <div class="sum">
@@ -88,6 +92,22 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 
 <div class="tabs" id="tabs"></div>
 <canvas id="cv"></canvas>
+<div id="patrolPanel">
+  <div style="color:#9fb0d0;font-size:11px;margin-bottom:4px">현재 동: <span id="vZone">-</span></div>
+  <label>좌우 X <span id="vX">0</span></label>
+  <input type="range" id="sX" min="-80" max="40" step="0.5" value="0" oninput="patrolManual()">
+  <label>높이 <span id="vUp">30</span></label>
+  <input type="range" id="sUp" min="5" max="200" step="1" value="30" oninput="patrolManual()">
+  <label>거리(뒤) <span id="vBack">30</span></label>
+  <input type="range" id="sBack" min="5" max="260" step="1" value="30" oninput="patrolManual()">
+  <label>응시 Z <span id="vCz">0</span></label>
+  <input type="range" id="sCz" min="-100" max="60" step="0.5" value="0" oninput="patrolManual()">
+  <div style="margin-top:8px;display:flex;gap:6px">
+    <button onclick="patrolSave('patrol')" style="flex:1;background:#2f6df0;color:#fff;border:0;border-radius:6px;padding:7px 0;font-size:12px">패트롤 저장</button>
+    <button onclick="patrolSave('normal')" style="flex:1;background:#3a9b6e;color:#fff;border:0;border-radius:6px;padding:7px 0;font-size:12px">일반 저장</button>
+  </div>
+  <button onclick="patrolPanelClose()" style="width:100%;margin-top:5px;background:#39435c;color:#cfd8e3;border:0;border-radius:6px;padding:6px 0;font-size:12px">닫기</button>
+</div>
 <div class="ctrls">
   <button class="cbtn" onclick="zoomBy(0.85)" title="확대">＋</button>
   <button class="cbtn" onclick="zoomBy(1.18)" title="축소">－</button>
@@ -395,11 +415,12 @@ function buildScene(){
   floor.rotation.x=-Math.PI/2; floor.position.set(0,0.01,0);
   floorGroup.add(floor);
 
-  // 1m 격자 — 은은한 라인(밝은 바닥 위 부드럽게)
-  var span=Math.max(floorW,floorH);
-  var divisions=Math.max(4, Math.round(span/GRID_M));
-  var grid=new THREE.GridHelper(span, divisions, 0x8a99b5, 0x5a6478);
-  grid.position.y=0.02; grid.material.opacity=0.4; grid.material.transparent=true;
+  // 격자 — 1m × 1m 정사각 칸. 격자 중심을 씬 중앙(0,0)에 → 공장 바닥이 격자 중앙에 위치
+  var gN=Math.max(4, Math.ceil(Math.max(floorW,floorH)/GRID_M));
+  var gSize=gN*GRID_M;                          // 정사각 한 변(1m 칸 × gN)
+  var grid=new THREE.GridHelper(gSize, gN, 0x8a99b5, 0x5a6478);
+  grid.material.opacity=0.4; grid.material.transparent=true;
+  grid.position.set(0, 0.02, 0);
   floorGroup.add(grid);
 
   // 바닥 외곽선 (테두리) — 두께/색상은 zone 설정값(없으면 기본)
@@ -545,54 +566,82 @@ function addOutline(w,h,colorStr,tw){
 var patrolOn=false, patrolPath=[], patrolT=0, patrolSavedView=null;
 var patrolMidX=0, patrolMinZ=0, patrolMaxZ=0, patrolHalfW=10, patrolFloorW=20, patrolFloorH=20;
 function buildPatrolPath(){}
-function patrolFit(){
-  // 동 크기 비례 카메라값(C동에서 맞춘 비율로 고정) + z이동 범위
-  var z=ZONES.filter(function(zz){return zz.id===curZone})[0];
-  var mx=0,my=0; z.equip.forEach(function(e){var m=pxToM(e);mx=Math.max(mx,m.x+m.w);my=Math.max(my,m.y+m.h)});
-  var W=mx, H=my;
-  patrolCam={ x:W*(-0.662), up:W*2.855, back:W*3.76 };
-  // 사용자가 맞춘 응시점(H*-0.707)을 중심으로 작업장 세로 길이만큼 앞뒤로 훑기
-  var czMid = H*(-0.707);
-  var range = H*0.6;             // 훑는 폭(앞뒤로 ±range)
-  patrolCzStart = czMid - range;
-  patrolCzEnd   = czMid + range;
+var CAM_VIEWS={};   // {zone:{kind:{x,up,back,cz}}} — Supabase에서 로드
+async function loadCamViews(){
+  try{
+    var r=await fetch(SB_URL+'/rest/v1/twin_cam_view?select=zone,kind,x,up,back,cz',{headers:sbH});
+    if(!r.ok)return; var rows=await r.json();
+    var m={}; rows.forEach(function(o){ if(!m[o.zone])m[o.zone]={}; m[o.zone][o.kind]={x:o.x,up:o.up,back:o.back,cz:o.cz}; });
+    CAM_VIEWS=m;
+  }catch(e){}
 }
-var patrolCam={x:0,up:30,back:30}, patrolCzStart=-20, patrolCzEnd=20;
-function patrolApply(cz){
-  if(!patrolOn||!camera)return;
-  camera.position.set(patrolCam.x, patrolCam.up, cz-patrolCam.back);
-  camera.lookAt(patrolCam.x, 0, cz);
+function getView(zone,kind){ return (CAM_VIEWS[zone]&&CAM_VIEWS[zone][kind])||null; }
+function patrolFit(){
+  var v=getView(curZone,'patrol');
+  if(v){ setS('sX',v.x); setS('sUp',v.up); setS('sBack',v.back); setS('sCz',v.cz); }
+  else {
+    var z=ZONES.filter(function(zz){return zz.id===curZone})[0];
+    var mx=0,my=0; z.equip.forEach(function(e){var m=pxToM(e);mx=Math.max(mx,m.x+m.w);my=Math.max(my,m.y+m.h)});
+    setS('sX',mx*(-1.1141)); setS('sUp',mx*4.1780); setS('sBack',mx*5.5011); setS('sCz',my*(-0.8075));
+  }
+  var zl=document.getElementById('vZone'); if(zl)zl.textContent=curZone+'동';
+}
+function setS(id,v){var el=document.getElementById(id);if(el)el.value=v;}
+function pVal(id){var el=document.getElementById(id);return el?parseFloat(el.value):0;}
+function patrolApply(){
+  if(!camera)return;
+  var x=pVal('sX'), up=pVal('sUp'), back=pVal('sBack'), cz=pVal('sCz');
+  var lx=document.getElementById('vX'),lu=document.getElementById('vUp'),
+      lb=document.getElementById('vBack'),lc=document.getElementById('vCz');
+  if(lx)lx.textContent=Math.round(x); if(lu)lu.textContent=Math.round(up);
+  if(lb)lb.textContent=Math.round(back); if(lc)lc.textContent=Math.round(cz);
+  camera.position.set(x, up, cz-back);
+  camera.lookAt(x, 0, cz);
+}
+function patrolManual(){ patrolApply(); }
+async function patrolSave(kind){
+  var rec={zone:curZone,kind:kind,x:pVal('sX'),up:pVal('sUp'),back:pVal('sBack'),cz:pVal('sCz')};
+  try{
+    var r=await fetch(SB_URL+'/rest/v1/twin_cam_view?on_conflict=zone,kind',{
+      method:'POST',
+      headers:Object.assign({'Content-Type':'application/json',Prefer:'resolution=merge-duplicates'},sbH),
+      body:JSON.stringify(rec)
+    });
+    if(!r.ok){ alert('저장 실패: '+r.status+' '+(await r.text())); return; }
+    if(!CAM_VIEWS[curZone])CAM_VIEWS[curZone]={}; CAM_VIEWS[curZone][kind]={x:rec.x,up:rec.up,back:rec.back,cz:rec.cz};
+    alert(curZone+'동 '+(kind==='patrol'?'패트롤':'일반')+'화면 서버 저장됨');
+  }catch(e){ alert('저장 오류: '+e); }
+}
+function patrolPanelClose(){
+  var panel=document.getElementById('patrolPanel'); if(panel)panel.classList.remove('show');
+}
+function applyNormalView(){
+  var v=getView(curZone,'normal'); if(!v||!camera)return;
+  setS('sX',v.x); setS('sUp',v.up); setS('sBack',v.back); setS('sCz',v.cz);
+  camera.position.set(v.x, v.up, v.cz-v.back);
+  camera.lookAt(v.x, 0, v.cz);
 }
 function togglePatrol(){
   patrolOn=!patrolOn;
   var btn=document.getElementById('patrolBtn');
+  var panel=document.getElementById('patrolPanel');
   if(patrolOn){
     patrolSavedView={camRadius:camRadius,camTheta:camTheta,camPhi:camPhi,
       tx:camTarget.x,ty:camTarget.y,tz:camTarget.z};
-    patrolT=0;
     patrolFit();
     if(btn)btn.classList.add('on');
-    patrolApply(patrolCzStart);
+    if(panel)panel.classList.add('show');
+    patrolApply();
   }else{
     if(btn)btn.classList.remove('on');
-    // 복원하지 않고 현재 보던 화면 그대로 멈춤 (튐 방지)
+    if(panel)panel.classList.remove('show');
   }
 }
 function updatePatrol(dt){
   if(!patrolOn)return;
-  var ZONE_SEC=15;                 // 한 동 훑는 시간(초)
-  patrolT += dt / ZONE_SEC;
-  if(patrolT>=1){ patrolNextZone(); return; }
-  var cz = patrolCzStart + (patrolCzEnd-patrolCzStart)*patrolT;  // 앞→뒤 이동
-  patrolApply(cz);
+  patrolApply();
 }
-function patrolNextZone(){
-  curZone = (curZone==='B') ? 'C' : 'B';
-  buildTabs(); buildScene();
-  patrolFit();
-  patrolT=0;
-  patrolApply(patrolCzStart);
-}
+function patrolNextZone(){}
 
 function updateCam(){
   if(!camTarget||!camera)return;
@@ -819,7 +868,7 @@ function dimSection(part){
 
 function buildTabs(){
   var tb=document.getElementById('tabs');tb.innerHTML='';
-  ZONES.forEach(function(z){var t=document.createElement('div');t.className='tab'+(z.id===curZone?' active':'');t.innerHTML=z.name+'<span class="b">'+z.equip.length+'대</span>';t.onclick=function(){if(patrolOn)togglePatrol();curZone=z.id;buildTabs();buildScene()};tb.appendChild(t)});
+  ZONES.forEach(function(z){var t=document.createElement('div');t.className='tab'+(z.id===curZone?' active':'');t.innerHTML=z.name+'<span class="b">'+z.equip.length+'대</span>';t.onclick=function(){if(patrolOn)togglePatrol();curZone=z.id;buildTabs();buildScene();applyNormalView()};tb.appendChild(t)});
 }
 function updateSummary(){
   var total=cachedData.length,run=cachedData.filter(function(d){return d.machine_status==='N'}).length;
@@ -926,6 +975,7 @@ initThree();
 buildTabs();
 placeTabs();
 window.addEventListener('resize',placeTabs);
+loadCamViews().then(function(){ applyNormalView(); });
 loadMaster().then(load);
 setInterval(tick,1000);
 
