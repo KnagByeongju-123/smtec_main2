@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>트윈팩토리 3D v10.8 - 공장 격자 중앙배치</title>
+<title>트윈팩토리 3D v10.9 - 패트롤 자동순회+설정분리</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;}
@@ -77,7 +77,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 <body>
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🏭 트윈팩토리 3D<span class="v">v10.8</span></h1>
+    <h1>🏭 트윈팩토리 3D<span class="v">v10.9</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="upd">연결 중…</span> · <span id="cd">30</span>s</div>
   </div>
   <div class="sum">
@@ -113,7 +113,8 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
   <button class="cbtn" onclick="zoomBy(1.18)" title="축소">－</button>
   <button class="cbtn" onclick="resetView()" title="시점 초기화">⟲</button>
   <button class="cbtn" onclick="topView()" title="위에서 보기">⬇</button>
-  <button class="cbtn" id="patrolBtn" onclick="togglePatrol()" title="드론 순찰">🚁</button>
+  <button class="cbtn" id="patrolBtn" onclick="togglePatrol()" title="드론 순찰(자동순회)">🚁</button>
+  <button class="cbtn" onclick="camPanelOpen()" title="카메라 화면 설정/저장">🎥</button>
   <button class="cbtn" onclick="setupDimGas()" title="치수 새로고침">🩺</button>
   <button class="cbtn" onclick="edEnter()" title="설정(2D 배치 편집)">⚙</button>
 </div>
@@ -621,25 +622,46 @@ function applyNormalView(){
   camera.position.set(v.x, v.up, v.cz-v.back);
   camera.lookAt(v.x, 0, v.cz);
 }
+// 🎥 카메라 화면 설정 패널 열기(슬라이더+저장)
+function camPanelOpen(){
+  var panel=document.getElementById('patrolPanel'); if(!panel)return;
+  if(panel.classList.contains('show')){ panel.classList.remove('show'); return; }
+  patrolFit();           // 현재 동 patrol 저장값 또는 기본값을 슬라이더에 로드
+  patrolApply();         // 즉시 화면 반영
+  panel.classList.add('show');
+}
+// 🚁 자동순회: 저장된 동별 patrol 화면으로 일정 시간마다 B↔C 전환
+var patrolTimer=0, PATROL_ZONE_SEC=8;
+function applyPatrolView(){
+  var v=getView(curZone,'patrol');
+  if(v){ camera.position.set(v.x, v.up, v.cz-v.back); camera.lookAt(v.x, 0, v.cz); }
+  else { patrolFit(); patrolApply(); }   // 저장값 없으면 기본값
+}
 function togglePatrol(){
   patrolOn=!patrolOn;
   var btn=document.getElementById('patrolBtn');
-  var panel=document.getElementById('patrolPanel');
   if(patrolOn){
-    patrolSavedView={camRadius:camRadius,camTheta:camTheta,camPhi:camPhi,
-      tx:camTarget.x,ty:camTarget.y,tz:camTarget.z};
-    patrolFit();
     if(btn)btn.classList.add('on');
-    if(panel)panel.classList.add('show');
-    patrolApply();
+    patrolTimer=0;
+    applyPatrolView();
   }else{
     if(btn)btn.classList.remove('on');
-    if(panel)panel.classList.remove('show');
   }
 }
 function updatePatrol(dt){
   if(!patrolOn)return;
-  patrolApply();
+  patrolTimer+=dt;
+  if(patrolTimer>=PATROL_ZONE_SEC){
+    patrolTimer=0;
+    // 다음 동으로 전환
+    var ids=ZONES.map(function(z){return z.id});
+    var i=ids.indexOf(curZone);
+    curZone=ids[(i+1)%ids.length];
+    buildTabs(); buildScene();
+    applyPatrolView();
+  } else {
+    applyPatrolView();
+  }
 }
 function patrolNextZone(){}
 
