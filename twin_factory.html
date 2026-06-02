@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>트윈팩토리 3D v8.6 - 소재위 품번 표시</title>
+<title>트윈팩토리 3D v8.8 - 치수위험 4사 연동</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;}
@@ -73,7 +73,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 <body>
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🏭 트윈팩토리 3D<span class="v">v8.6</span></h1>
+    <h1>🏭 트윈팩토리 3D<span class="v">v8.8</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="upd">연결 중…</span> · <span id="cd">30</span>s</div>
   </div>
   <div class="sum">
@@ -94,6 +94,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
   <button class="cbtn" onclick="resetView()" title="시점 초기화">⟲</button>
   <button class="cbtn" onclick="topView()" title="위에서 보기">⬇</button>
   <button class="cbtn" id="patrolBtn" onclick="togglePatrol()" title="드론 순찰">🚁</button>
+  <button class="cbtn" onclick="setupDimGas()" title="치수 새로고침">🩺</button>
   <button class="cbtn" onclick="edEnter()" title="설정(2D 배치 편집)">⚙</button>
 </div>
 <div class="legend">
@@ -275,6 +276,18 @@ function resize(){
 window.addEventListener('resize',resize);
 
 // 호기번호/상태 라벨 텍스처
+function makeDimBadge(dim){
+  var c=document.createElement('canvas'); c.width=300; c.height=56;
+  var g=c.getContext('2d');
+  var risk=dim.risk; var col=risk?'#ef4444':'#22c55e';
+  g.fillStyle=risk?'rgba(60,18,18,0.92)':'rgba(18,40,24,0.9)'; roundRect(g,3,3,294,50,12); g.fill();
+  g.strokeStyle=col; g.lineWidth=2.5; roundRect(g,3,3,294,50,12); g.stroke();
+  g.fillStyle=col; g.font='bold 30px sans-serif'; g.textAlign='left'; g.textBaseline='middle';
+  g.fillText(risk?'⚠ 치수위험':'✓ 치수정상',18,30);
+  if(risk){ var n=dim.items.filter(function(x){return x.state!=='정상'}).length;
+    g.textAlign='right'; g.fillText(n+'건',282,30); }
+  var tex=new THREE.CanvasTexture(c); tex.minFilter=THREE.LinearFilter; return tex;
+}
 function makeModelLabel(name){
   var c=document.createElement('canvas'); c.width=320; c.height=72;
   var g=c.getContext('2d');
@@ -460,7 +473,7 @@ function buildScene(){
         pct.position.set(rx,ry+fullR+0.35,bz);
         pct.userData.billboard=true;
         machineGroup.add(pct);
-        // 소재 위쪽에 현재 생산 품번
+        // 소재 위쪽에 현재 생산 품번 + 치수상태
         var modelNm=d.current_item_code||d.item_name||'';
         if(modelNm){
           var mTex=makeModelLabel(modelNm);
@@ -470,6 +483,17 @@ function buildScene(){
           mlab.position.set(rx,ry+fullR+0.35+0.55,bz);
           mlab.userData.billboard=true;
           machineGroup.add(mlab);
+          // 치수상태 배지(정상/위험) — 품번 라벨 위
+          var dim=dimOf(d.current_item_code);
+          if(dim){
+            var dTex=makeDimBadge(dim);
+            var dMat=new THREE.MeshBasicMaterial({map:dTex,transparent:true,side:THREE.DoubleSide});
+            var dw=fullR*2.0, dh=dw*(56/300);
+            var dlab=new THREE.Mesh(new THREE.PlaneGeometry(dw,dh),dMat);
+            dlab.position.set(rx,ry+fullR+0.35+0.55+mh2*0.6+0.45,bz);
+            dlab.userData.billboard=true;
+            machineGroup.add(dlab);
+          }
         }
       }
     }
@@ -768,11 +792,31 @@ function openModal(e,d){
       '<div class="row" style="flex-direction:column;align-items:stretch"><div style="display:flex;justify-content:space-between"><span class="k">달성률</span><span class="vv" style="color:'+fc+'">'+rate.toFixed(0)+'%</span></div><div class="prog"><div class="f" style="width:'+Math.min(rate,100)+'%;background:'+fc+'"></div></div></div>'+
       r('잔량',fmt(d.remaining_qty))+r('잔여시간',rmTxt)+r('로트',d.lot_no||'-')+
       r('CT (실/목표)',(d.actual_ct>0?d.actual_ct.toFixed(1):'-')+' / '+(d.target_ct>0?d.target_ct.toFixed(1):'-'))+
-      r('NG',(d.ng_qty>0?'<span style="color:#ef4444">'+d.ng_qty+'</span>':'0'))+r('작업자',d.worker||'-');
+      r('NG',(d.ng_qty>0?'<span style="color:#ef4444">'+d.ng_qty+'</span>':'0'))+r('작업자',d.worker||'-')+
+      dimSection(d.current_item_code);
   }
   document.getElementById('modal').classList.add('show');
 }
 function closeModal(){document.getElementById('modal').classList.remove('show')}
+function dimSection(part){
+  var dim=dimOf(part);
+  if(!dim){ return '<div class="row"><span class="k">치수상태</span><span class="vv" style="color:#5b6678">데이터 없음</span></div>'; }
+  var head='<div class="row"><span class="k">치수상태</span><span class="vv" style="color:'+(dim.risk?'#ef4444':'#22c55e')+'">'+(dim.risk?'⚠ 위험':'✓ 정상')+'</span></div>';
+  // 위험항목 우선, 그다음 정상
+  var its=dim.items.slice().sort(function(a,b){ return (a.state!=='정상'?0:1)-(b.state!=='정상'?0:1); });
+  var rows=its.map(function(x){
+    var risk=x.state!=='정상';
+    var col=risk?'#ef4444':'#7e8aa0';
+    var pctTxt=(x.pct!=null)?(' ('+Math.round(x.pct)+'%)'):'';
+    var spec=(x.type==='제로근접형')?('≤'+(isNaN(x.hi)?'-':x.hi)):((isNaN(x.lo)?'-':x.lo)+'~'+(isNaN(x.hi)?'-':x.hi));
+    return '<div style="display:flex;justify-content:space-between;gap:8px;padding:5px 8px;border-radius:6px;background:'+(risk?'rgba(239,68,68,0.12)':'rgba(255,255,255,0.03)')+';margin-bottom:3px;font-size:12px">'
+      +'<span style="color:#cfd8e3">'+x.item+'</span>'
+      +'<span style="color:#8a93a3">'+spec+'</span>'
+      +'<span style="color:'+col+';font-weight:700">'+x.val.toFixed(3)+'</span>'
+      +'<span style="color:'+col+';min-width:64px;text-align:right">'+(risk?x.state:'정상')+pctTxt+'</span></div>';
+  }).join('');
+  return head+'<div style="margin-top:4px">'+rows+'</div>';
+}
 
 function buildTabs(){
   var tb=document.getElementById('tabs');tb.innerHTML='';
@@ -791,8 +835,69 @@ function updateSummary(){
     el.style.color=avg>=0.85?'#22c55e':avg>=0.60?'#f59e0b':'#ef4444';
   } else { el.textContent='-'; el.style.color=''; } }
 }
+// ===== 치수 위험 모니터링 (QC_dim GAS 연동) =====
+var DIM_GAS={
+  'SKF':'https://script.google.com/macros/s/AKfycbyHbGebpEZqSrutAwQX73kTbyCKmcsD-nFXcZLC0BjzXW8BW07MCiVGGZJRTGDQRWWo/exec',
+  'SBC':'https://script.google.com/macros/s/AKfycbwXQzDfPNhjlZp_jpR8JFjcMX7kpCuzVvGpUSaZFyVhygoXuqiLl9FyVnXwLo0ZL5Sp/exec',
+  '진양오일씰':'https://script.google.com/macros/s/AKfycbzHGiXKQIT9AJN3wqTVNpfYqXsvsbLv85DDw4TEBomGEHHWz71K1wGC0sAqOJHAv_LV9A/exec',
+  '부강스프링':'https://script.google.com/macros/s/AKfycbx3umpi4T0UC0xJ2Cx5R1srTpEpcqMT0AzgzJZeHUolNg8_ziiixp2fukIj80gCCFwv/exec'
+};
+var ZERO_ITEMS=['진원도','평면도','동심도','원통도','직각도','내경 Burr','외경 Burr','흔들림'];
+var DIM_TH=0.8;                                  // 80% 위험 기준
+var dimByPart={};                                // 품번 → {risk:bool, items:[...]}
+function dimParseDate(s){ s=String(s||'').replace(/[^0-9]/g,''); return s; }
+async function dimFetchOne(url){
+  if(!url) return [];
+  try{ var r=await fetch(url+'?action=getData',{redirect:'follow'}); if(!r.ok)return [];
+    var d=await r.json(); return (d&&d.success)?(d.data||[]):[]; }catch(e){ return []; }
+}
+// 컬럼: 작업일자 c0, 품번 c1, G열 c6, 항목 c7, 규격 c15, 하한 c20, 상한 c21, 평균 c35
+async function loadDim(){
+  var urls=Object.keys(DIM_GAS).map(function(k){return DIM_GAS[k]});
+  var arrs=await Promise.all(urls.map(dimFetchOne));
+  var rows=[].concat.apply([],arrs);
+  // 품번|G|항목 별로 최신 작업일자의 평균값만
+  var grp={};
+  rows.forEach(function(row){
+    var part=String(row.c1||'').trim(); if(!part)return;
+    var item=String(row.c7||'').trim(), g=String(row.c6||'').trim(), spec=String(row.c15||'').trim();
+    var lo=parseFloat(row.c20), hi=parseFloat(row.c21), avg=parseFloat(row.c35);
+    if(isNaN(avg))return;
+    var dk=dimParseDate(row.c0);
+    var key=part+'|'+g+'|'+item;
+    if(!grp[key]||dk>=grp[key].dk) grp[key]={part:part,item:item,g:g,spec:spec,lo:lo,hi:hi,val:avg,dk:dk};
+  });
+  // 품번별 위험 판정
+  var byPart={};
+  Object.keys(grp).forEach(function(k){
+    var o=grp[k]; var isZero=ZERO_ITEMS.indexOf(o.item)>=0;
+    var state='정상', pct=null, type=isZero?'제로근접형':'중심공차형';
+    if(isZero){
+      if(!isNaN(o.hi)){ pct=o.hi>0?(o.val/o.hi*100):100;
+        if(o.val>=o.hi) state='초과'; else if(o.val>=o.hi*DIM_TH) state='상한임박'; }
+    }else{
+      if(!isNaN(o.lo)&&!isNaN(o.hi)){ var range=o.hi-o.lo; pct=range>0?((o.val-o.lo)/range*100):50;
+        var uTh=o.lo+range*DIM_TH, lTh=o.lo+range*(1-DIM_TH);
+        if(o.val>o.hi) state='초과'; else if(o.val<o.lo) state='미달';
+        else if(o.val>=uTh) state='상한임박'; else if(o.val<=lTh) state='하한임박'; }
+    }
+    var risk=(state!=='정상');
+    if(!byPart[o.part]) byPart[o.part]={risk:false,items:[]};
+    byPart[o.part].items.push({item:o.item,spec:o.spec,val:o.val,lo:o.lo,hi:o.hi,type:type,state:state,pct:pct});
+    if(risk) byPart[o.part].risk=true;
+  });
+  dimByPart=byPart;
+}
+function dimOf(part){ return part? dimByPart[String(part).trim()]||null : null; }
+// 치수 데이터 수동 새로고침
+function setupDimGas(){
+  load._dimAt=0; loadDim().then(function(){buildScene();
+    var n=Object.keys(dimByPart).length; alert('치수 데이터 갱신: 품번 '+n+'건');});
+}
+
 async function load(){
   await loadInspections();  // 점검 상태는 machine_status와 독립적으로 항상 로드
+  if(!load._dimAt || Date.now()-load._dimAt>300000){ load._dimAt=Date.now(); loadDim().then(function(){buildScene()}); }
   var data=await sbGet('machine_status','select=*&order=machine_code.asc');
   if(!data){
     document.getElementById('upd').textContent='연결 실패';
