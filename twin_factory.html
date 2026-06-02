@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>트윈팩토리 3D v3.0 - 더블클릭/더블탭 정보</title>
+<title>트윈팩토리 3D v3.1 - 탭마커+근접선택</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;}
@@ -72,7 +72,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 <body>
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🏭 트윈팩토리 3D<span class="v">v3.0</span></h1>
+    <h1>🏭 트윈팩토리 3D<span class="v">v3.1</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="upd">연결 중…</span> · <span id="cd">30</span>s</div>
   </div>
   <div class="sum">
@@ -414,6 +414,7 @@ function bindControls(cv){
   // 터치: 1손가락=회전, 2손가락=핀치줌+팬, 짧은탭=선택
   var touchMoved=0;
   cv.addEventListener('touchstart',function(e){
+    e.preventDefault();
     if(e.touches.length===1){orbiting=true;lx=e.touches[0].clientX;ly=e.touches[0].clientY;downX=lx;downY=ly;downT=Date.now();touchMoved=0}
     else if(e.touches.length===2){pinchMode=true;orbiting=false;pinchD=touchDist(e);lx=(e.touches[0].clientX+e.touches[1].clientX)/2;ly=(e.touches[0].clientY+e.touches[1].clientY)/2}
   },{passive:false});
@@ -466,7 +467,16 @@ function zoomBy(f){camRadius=Math.max(6,Math.min(400,camRadius*f));updateCam()}
 function resetView(){camTheta=Math.PI*0.5;camPhi=Math.PI*0.32;var z=ZONES.filter(function(zz){return zz.id===curZone})[0];var mx=0,my=0;z.equip.forEach(function(e){var m=pxToM(e);mx=Math.max(mx,m.x+m.w);my=Math.max(my,m.y+m.h)});camTarget.set(0,0,0);camRadius=Math.max(mx,my)*1.15;updateCam()}
 function topView(){camPhi=0.13;updateCam()}
 
+function showTapMarker(clientX,clientY){
+  var m=document.getElementById('tapMarker');
+  if(!m){m=document.createElement('div');m.id='tapMarker';
+    m.style.cssText='position:fixed;width:26px;height:26px;border:2px solid #38bdf8;border-radius:50%;margin:-13px 0 0 -13px;z-index:9000;pointer-events:none;box-shadow:0 0 10px #38bdf8;transition:opacity .4s;opacity:1';
+    document.body.appendChild(m);}
+  m.style.left=clientX+'px'; m.style.top=clientY+'px'; m.style.opacity='1';
+  clearTimeout(m._t); m._t=setTimeout(function(){m.style.opacity='0'},450);
+}
 function pick(clientX,clientY){
+  showTapMarker(clientX,clientY);
   var rect=renderer.domElement.getBoundingClientRect();
   mouse.x=((clientX-rect.left)/rect.width)*2-1;
   mouse.y=-((clientY-rect.top)/rect.height)*2+1;
@@ -475,8 +485,19 @@ function pick(clientX,clientY){
   if(hits.length){
     var hit=hits[0].object;
     var rec=meshes.filter(function(m){return m.mesh===hit})[0];
-    if(rec) openModal(rec.e,rec.d);
+    if(rec){openModal(rec.e,rec.d);return}
   }
+  // 폴백: 직접 안 맞으면 화면상 가장 가까운 설비(중심) 선택 — 손가락 오차 보정
+  var best=null,bestD=60;  // 60px 이내
+  var v=new THREE.Vector3();
+  meshes.forEach(function(rec){
+    v.copy(rec.mesh.position); v.project(camera);
+    var sx=(v.x*0.5+0.5)*rect.width + rect.left;
+    var sy=(-v.y*0.5+0.5)*rect.height + rect.top;
+    var d=Math.hypot(sx-clientX, sy-clientY);
+    if(d<bestD){bestD=d;best=rec}
+  });
+  if(best) openModal(best.e,best.d);
 }
 
 // ===== 모달 =====
