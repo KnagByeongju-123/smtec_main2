@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>트윈팩토리 3D v2.4 - 팬 좌우 보정</title>
+<title>트윈팩토리 3D v2.5 - m단위+바닥외곽선</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;}
@@ -48,7 +48,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 <body>
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🏭 트윈팩토리 3D<span class="v">v2.4</span></h1>
+    <h1>🏭 트윈팩토리 3D<span class="v">v2.5</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="upd">연결 중…</span> · <span id="cd">30</span>s</div>
   </div>
   <div class="sum">
@@ -105,7 +105,12 @@ function fmt(n){n=n||0;return n.toLocaleString('ko-KR')}
 function hoOf(name){var m=(name||'').match(/^(\d{1,3})/);return m?parseInt(m[1],10):null}
 
 var curZone='B', byHo={}, mmByHo={}, cachedData=[], cd=30;
-var GRID_MM=80;  // 격자 1칸 도면단위(미정) — 추후 twin_zone.grid_mm 로 대체
+var GRID_M=1;          // 격자 1칸 = 1m
+// px→m 환산 (B동 654x1721px = 16x55m 기준, 축별 계수)
+var KX=16/654, KY=55/1721;
+function pxToM(e){ return { x:e.x*KX, y:e.y*KY, w:e.w*KX, h:e.h*KY }; }
+// 톤수 → 설비 높이(m): 80t≈1.6m ~ 800t≈4m
+function tonToHeightM(t){ t=t||100; return Math.max(1.4, Math.min(4.2, 1.2 + t/300)); }
 
 async function loadMaster(){
   var rows=await sbGet('machine_master_tj','select=*&order=sort_order.asc');
@@ -131,8 +136,8 @@ function initThree(){
   renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
   scene=new THREE.Scene();
   scene.background=new THREE.Color(0x0c0f16);
-  scene.fog=new THREE.Fog(0x0c0f16, 900, 2600);
-  camera=new THREE.PerspectiveCamera(45,1,1,5000);
+  scene.fog=new THREE.Fog(0x0c0f16, 60, 220);
+  camera=new THREE.PerspectiveCamera(45,1,0.1,1000);
   raycaster=new THREE.Raycaster(); mouse=new THREE.Vector2();
   var amb=new THREE.AmbientLight(0xffffff,0.75); scene.add(amb);
   var dir=new THREE.DirectionalLight(0xffffff,0.7); dir.position.set(300,600,400); scene.add(dir);
@@ -141,7 +146,7 @@ function initThree(){
   floorGroup=new THREE.Group(); scene.add(floorGroup);
   // v2.2: 궤도 파라미터 사전 초기화 (buildScene 전에 컨트롤/렌더가 접근해도 안전)
   camTarget=new THREE.Vector3(0,0,0);
-  camRadius=1200; camTheta=Math.PI*0.5; camPhi=Math.PI*0.32;
+  camRadius=70; camTheta=Math.PI*0.5; camPhi=Math.PI*0.32;
   updateCam();
   resize();
   bindControls(cv);
@@ -176,59 +181,75 @@ function buildScene(){
   while(floorGroup.children.length) floorGroup.remove(floorGroup.children[0]);
   meshes=[];
   var zone=ZONES.filter(function(z){return z.id===curZone})[0];
-  var maxX=0,maxY=0; zone.equip.forEach(function(e){maxX=Math.max(maxX,e.x+e.w);maxY=Math.max(maxY,e.y+e.h)});
+  // 모든 설비를 m로 환산, 바닥 크기(m) 산정
+  var items=zone.equip.map(function(e){ var m=pxToM(e); return {e:e, mx:m.x, my:m.y, mw:m.w, mh:m.h}; });
+  var maxX=0,maxY=0; items.forEach(function(it){maxX=Math.max(maxX,it.mx+it.mw);maxY=Math.max(maxY,it.my+it.mh)});
   var cx=maxX/2, cy=maxY/2;
+  var floorW=maxX, floorH=maxY;  // m
 
   // 바닥
-  var floorGeo=new THREE.PlaneGeometry(maxX+200,maxY+200);
+  var floorGeo=new THREE.PlaneGeometry(floorW,floorH);
   var floorMat=new THREE.MeshStandardMaterial({color:0x10151f,roughness:0.97,metalness:0});
   var floor=new THREE.Mesh(floorGeo,floorMat);
-  floor.rotation.x=-Math.PI/2; floor.position.set(0,0,0);
+  floor.rotation.x=-Math.PI/2; floor.position.set(0,0.01,0);
   floorGroup.add(floor);
-  // 2D 격자(연하게) — 격자 단위 미정이라 기본 GRID_MM(=80px 도면단위) 사용
-  var span=Math.max(maxX,maxY)+200;
-  var divisions=Math.max(8, Math.round(span/GRID_MM));
-  var grid=new THREE.GridHelper(span, divisions, 0x3a4a6a, 0x222c40);
-  grid.position.y=0.4;
-  grid.material.opacity=0.5; grid.material.transparent=true;
-  floorGroup.add(grid);
-  // 굵은 기준선(중앙 십자)
-  var axisMat=new THREE.LineBasicMaterial({color:0x3a4a6a,transparent:true,opacity:0.6});
-  var ag=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-span/2,0.6,0),new THREE.Vector3(span/2,0.6,0)]);
-  floorGroup.add(new THREE.Line(ag,axisMat));
-  var ag2=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0.6,-span/2),new THREE.Vector3(0,0.6,span/2)]);
-  floorGroup.add(new THREE.Line(ag2,axisMat));
 
-  zone.equip.forEach(function(e){
+  // 1m 격자 (연하게)
+  var span=Math.max(floorW,floorH);
+  var divisions=Math.max(4, Math.round(span/GRID_M));
+  var grid=new THREE.GridHelper(span, divisions, 0x3a4a6a, 0x232d44);
+  grid.position.y=0.02; grid.material.opacity=0.45; grid.material.transparent=true;
+  floorGroup.add(grid);
+
+  // 바닥 외곽선 (테두리) — 두께/색상은 zone 설정값(없으면 기본)
+  var olColor=(zone.outline_color)||'#5b6fa0';
+  var olW=(zone.outline_w_m!=null)?zone.outline_w_m:0.2;
+  addOutline(floorW, floorH, olColor, olW);
+
+  items.forEach(function(it){
+    var e=it.e;
     var ho=parseInt(e.no,10), d=byHo[ho]||null, meta=metaOf(e);
     var col=statusColor(d);
-    var t=meta.ton||100;
-    var hgt=Math.max(28, Math.min(150, 28 + t/5));  // 톤수 → 3D 높이
-    // 중심 정렬 좌표 (도면 y는 깊이 z로). 중심축 기준이라 회전도 자유.
-    var bx=(e.x+e.w/2)-cx;
-    var bz=(e.y+e.h/2)-cy;
-    var geo=new THREE.BoxGeometry(e.w,hgt,e.h);
+    var hgt=tonToHeightM(meta.ton);            // m
+    var bx=(it.mx+it.mw/2)-cx;
+    var bz=(it.my+it.mh/2)-cy;
+    var geo=new THREE.BoxGeometry(it.mw,hgt,it.mh);
     var mat=new THREE.MeshStandardMaterial({color:col,roughness:0.6,metalness:0.1});
     var mesh=new THREE.Mesh(geo,mat);
     mesh.position.set(bx,hgt/2,bz);
     machineGroup.add(mesh);
-    // 윗면 라벨(평면 스프라이트)
+    // 윗면 라벨
     var sub=d?(d.machine_status==='N'?'가동':stopName(d.machine_status)):(meta.maker||'');
     var tex=makeLabel(e.no,sub,col);
     var lmat=new THREE.MeshBasicMaterial({map:tex,transparent:true});
-    var lgeo=new THREE.PlaneGeometry(Math.min(e.w,e.h)*0.9, Math.min(e.w,e.h)*0.45);
-    var lab=new THREE.Mesh(lgeo,lmat);
-    lab.rotation.x=-Math.PI/2; lab.position.set(bx,hgt+0.6,bz);
+    var ls=Math.min(it.mw,it.mh)*0.95;
+    var lab=new THREE.Mesh(new THREE.PlaneGeometry(ls, ls*0.5),lmat);
+    lab.rotation.x=-Math.PI/2; lab.position.set(bx,hgt+0.03,bz);
     machineGroup.add(lab);
     meshes.push({mesh:mesh,e:e,d:d});
   });
 
-  // 카메라 초기화 (도면 크기에 맞춤)
+  // 카메라 초기화 (m 기준)
   camTarget=new THREE.Vector3(0,0,0);
-  camRadius=Math.max(maxX,maxY)*1.15;
-  camTheta=Math.PI*0.5;   // 정면
-  camPhi=Math.PI*0.32;    // 위에서 비스듬히
+  camRadius=Math.max(floorW,floorH)*1.15;
+  camTheta=Math.PI*0.5;
+  camPhi=Math.PI*0.32;
   updateCam();
+}
+
+// 바닥 외곽선: 네 변을 얇은 박스로 (두께 m, 색상)
+function addOutline(w,h,colorStr,tw){
+  var col=parseInt((colorStr||'#5b6fa0').replace('#',''),16);
+  var mat=new THREE.MeshStandardMaterial({color:col,roughness:0.7,metalness:0.1});
+  var hh=Math.max(0.05, tw);  // 외곽선 높이=두께와 비슷하게
+  function bar(bw,bd,px,pz){
+    var m=new THREE.Mesh(new THREE.BoxGeometry(bw,hh,bd),mat);
+    m.position.set(px,hh/2,pz); floorGroup.add(m);
+  }
+  bar(w+tw, tw, 0, -h/2);   // 상
+  bar(w+tw, tw, 0,  h/2);   // 하
+  bar(tw, h+tw, -w/2, 0);   // 좌
+  bar(tw, h+tw,  w/2, 0);   // 우
 }
 
 function updateCam(){
@@ -307,8 +328,8 @@ function pan(dx,dy){
   camTarget.addScaledVector(fwd,-dy*ps);
   updateCam();
 }
-function zoomBy(f){camRadius=Math.max(120,Math.min(4000,camRadius*f));updateCam()}
-function resetView(){camTheta=Math.PI*0.5;camPhi=Math.PI*0.32;var z=ZONES.filter(function(zz){return zz.id===curZone})[0];var mx=0,my=0;z.equip.forEach(function(e){mx=Math.max(mx,e.x+e.w);my=Math.max(my,e.y+e.h)});camTarget.set(0,0,0);camRadius=Math.max(mx,my)*1.15;updateCam()}
+function zoomBy(f){camRadius=Math.max(6,Math.min(400,camRadius*f));updateCam()}
+function resetView(){camTheta=Math.PI*0.5;camPhi=Math.PI*0.32;var z=ZONES.filter(function(zz){return zz.id===curZone})[0];var mx=0,my=0;z.equip.forEach(function(e){var m=pxToM(e);mx=Math.max(mx,m.x+m.w);my=Math.max(my,m.y+m.h)});camTarget.set(0,0,0);camRadius=Math.max(mx,my)*1.15;updateCam()}
 function topView(){camPhi=0.13;updateCam()}
 
 function pick(clientX,clientY){
