@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>트윈팩토리 3D v11.7 - 설비순회 스윕+솟는팝업</title>
+<title>트윈팩토리 3D v12.1 - K 천단위</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;}
@@ -81,7 +81,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 <body>
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🏭 트윈팩토리 3D<span class="v">v11.7</span></h1>
+    <h1>🏭 트윈팩토리 3D<span class="v">v12.1</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="upd">연결 중…</span> · <span id="cd">30</span>s</div>
   </div>
   <div class="sum">
@@ -178,6 +178,27 @@ var ZONES=[
 var _stopMap={'CL-M001':'소재교환','CL-M002':'불량처리','CL-M003':'부품랩핑','CL-M004':'부품연마','CL-M006':'치수조정','CL-M008':'금형수리','CL-A001':'금형교환','CL-A002':'설비이상','CL-A003':'부품대기','CL-A004':'부품교체','CL-M005':'소재대기','CL-M007':'소재대기','CL-M009':'기타','UL-A001':'금형교환','UL-A002':'설비이상','UL-A003':'부품대기','UL-M007':'소재대기','UL-Z000':'비가동','UL-Z001':'계획정지','UL-Z002':'3정5행','UL-Z003':'Try-Out','UL-Z004':'측정대기','UL-Z005':'타공정지원','UL-Z006':'휴식/식사','UL-Z010':'기타','UL-Z011':'조회/교육'};
 function stopName(c){if(!c||c==='N')return'가동';if(_stopMap[c])return _stopMap[c];var s=c.indexOf('-')>=0?c.split('-')[1]:c;return _stopMap[s]||s||'비가동'}
 function fmt(n){n=n||0;return n.toLocaleString('ko-KR')}
+function fmtK(n){n=n||0;return Math.round(n/1000).toLocaleString('ko-KR')+'K'}
+var todayQty=0;
+async function loadTodayQty(){
+  var ymd=kstYmd();  // 'YYYY-MM-DD'
+  // work_log에서 오늘분 pass_qty 합산 (work_date 우선, 실패 시 created_at)
+  var urls=[
+    SB_URL+'/rest/v1/work_log?select=pass_qty&work_date=eq.'+ymd,
+    SB_URL+'/rest/v1/work_log?select=pass_qty&created_at=gte.'+ymd+'T00:00:00%2B09:00&created_at=lte.'+ymd+'T23:59:59%2B09:00'
+  ];
+  for(var i=0;i<urls.length;i++){
+    try{
+      var r=await fetch(urls[i],{headers:sbH});
+      if(!r.ok) continue;
+      var rows=await r.json();
+      if(Array.isArray(rows)){
+        todayQty=rows.reduce(function(s,o){return s+(Number(o.pass_qty)||0)},0);
+        return;
+      }
+    }catch(e){}
+  }
+}
 function hoOf(name){var m=(name||'').match(/^(\d{1,3})/);return m?parseInt(m[1],10):null}
 
 var curZone='B', byHo={}, mmByHo={}, cachedData=[], cd=30;
@@ -765,14 +786,20 @@ function buildMachinePatrolList(){
   mpList = regd.length? regd : z.equip.slice();
 }
 function viewToPT(e){
-  // 등록 뷰가 있으면 그 position/target, 없으면 설비 위 비스듬 기본
+  var off={x:3, z:-5};   // 화면 보정: 좌측 3m, 위(안쪽) 5m
   var v=machineViewOf(e.no);
-  if(v&&v.px!=null) return {px:v.px,py:v.py,pz:v.pz,tx:v.tx,ty:v.ty,tz:v.tz};
-  if(v) return {px:v.x,py:v.up,pz:v.cz-v.back,tx:v.x,ty:0,tz:v.cz};
-  // 폴백: 설비 mesh 위치 기준
-  var rec=meshes.filter(function(m){return m.e===e})[0];
-  var mx=rec?rec.mesh.position.x:0, mz=rec?rec.mesh.position.z:0;
-  return {px:mx, py:14, pz:mz+10, tx:mx, ty:1, tz:mz};
+  var base;
+  if(v&&v.px!=null) base={px:v.px,py:v.py,pz:v.pz,tx:v.tx,ty:v.ty,tz:v.tz};
+  else if(v) base={px:v.x,py:v.up,pz:v.cz-v.back,tx:v.x,ty:0,tz:v.cz};
+  else {
+    var rec=meshes.filter(function(m){return m.e===e})[0];
+    var mx=rec?rec.mesh.position.x:0, mz=rec?rec.mesh.position.z:0;
+    base={px:mx, py:14, pz:mz+10, tx:mx, ty:1, tz:mz};
+  }
+  // position·target 동시 평행이동 → 구도 유지한 채 화면만 이동
+  base.px+=off.x; base.tx+=off.x;
+  base.pz+=off.z; base.tz+=off.z;
+  return base;
 }
 function mpStartSweep(e){
   mpTo=viewToPT(e);
@@ -1065,8 +1092,8 @@ function buildTabs(){
 function updateSummary(){
   var total=cachedData.length,run=cachedData.filter(function(d){return d.machine_status==='N'}).length;
   var soon=cachedData.filter(function(d){return d.machine_status==='N'&&d.remaining_minutes>0&&d.remaining_minutes<=30}).length;
-  var qty=cachedData.reduce(function(s,d){return s+(d.actual_qty||0)},0);
-  document.getElementById('sTotal').textContent=total;document.getElementById('sRun').textContent=run;document.getElementById('sStop').textContent=total-run;document.getElementById('sSoon').textContent=soon;document.getElementById('sQty').textContent=fmt(qty);
+  document.getElementById('sTotal').textContent=total;document.getElementById('sRun').textContent=run;document.getElementById('sStop').textContent=total-run;document.getElementById('sSoon').textContent=soon;
+  document.getElementById('sQty').textContent=fmtK(todayQty);
   // 평균 OEE (계산 가능한 설비만)
   var os=[]; cachedData.forEach(function(d){var o=calcOEE(d); if(o&&o.oee!=null)os.push(o.oee)});
   var el=document.getElementById('sOee');
@@ -1141,6 +1168,7 @@ function setupDimGas(){
 
 async function load(){
   await loadInspections();  // 점검 상태는 machine_status와 독립적으로 항상 로드
+  await loadTodayQty();     // 오늘 생산량(work_log)
   if(!load._dimAt || Date.now()-load._dimAt>300000){ load._dimAt=Date.now(); loadDim().then(function(){buildScene()}); }
   var data=await sbGet('machine_status','select=*&order=machine_code.asc');
   if(!data){
