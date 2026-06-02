@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>트윈팩토리 3D v2.5 - m단위+바닥외곽선</title>
+<title>트윈팩토리 3D v2.6 - 2D 배치 편집기</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;}
@@ -43,12 +43,36 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 .row:last-child{border-bottom:none}.row .k{color:var(--sub)}.row .vv{font-weight:700}
 .prog{height:8px;background:#0f1117;border-radius:4px;overflow:hidden;margin-top:6px}.prog .f{height:100%;border-radius:4px}
 .empty{text-align:center;color:var(--sub);padding:40px 20px;font-size:13px}
+/* ===== 2D 편집기 ===== */
+#editor{display:none;position:absolute;inset:0;z-index:60;background:var(--bg);flex-direction:column}
+#editor.show{display:flex}
+.ed-top{padding:8px 12px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;border-bottom:1px solid var(--border);background:var(--card)}
+.ed-top .seg{display:flex;gap:4px}
+.ed-btn{padding:7px 12px;border-radius:8px;border:1px solid var(--border);background:#0f1117;color:var(--txt);font-size:12px;font-weight:600;cursor:pointer}
+.ed-btn.on{background:var(--blue);border-color:var(--blue);color:#fff}
+.ed-btn.save{background:#15803d;border-color:#15803d;color:#fff}
+.ed-btn.exit{background:#374151;border-color:#374151;color:#fff}
+.ed-main{flex:1;display:flex;min-height:0}
+#edCanvasWrap{flex:1;overflow:hidden;position:relative;background:#0a0d14;touch-action:none}
+#edCanvas{position:absolute;left:0;top:0}
+.ed-side{width:230px;border-left:1px solid var(--border);background:var(--card);overflow-y:auto;padding:10px;font-size:12px}
+.ed-side h4{font-size:12px;color:var(--accent);margin:10px 0 6px;font-weight:700}
+.ed-side h4:first-child{margin-top:0}
+.ed-fld{display:flex;align-items:center;justify-content:space-between;gap:6px;margin:5px 0}
+.ed-fld label{color:var(--sub);font-size:11px;flex:1}
+.ed-fld input[type=number],.ed-fld input[type=text],.ed-fld select{width:86px;padding:5px 6px;background:#0f1117;border:1px solid var(--border);border-radius:5px;color:var(--txt);font-size:12px;font-family:inherit}
+.ed-fld input[type=color]{width:36px;height:26px;padding:0;border:1px solid var(--border);background:none;border-radius:4px}
+.ed-palette{display:flex;flex-wrap:wrap;gap:4px;max-height:160px;overflow-y:auto}
+.ed-chip{padding:5px 7px;border-radius:6px;background:#0f1117;border:1px solid var(--border);font-size:11px;font-weight:700;cursor:pointer;color:var(--txt)}
+.ed-chip:active{background:var(--blue)}
+.ed-hint{font-size:10px;color:var(--sub);margin-top:6px;line-height:1.5}
+.ed-del{width:100%;padding:7px;border-radius:6px;border:1px solid #b91c1c;background:#7f1d1d;color:#fff;font-size:11px;font-weight:700;cursor:pointer;margin-top:6px}
 </style>
 </head>
 <body>
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🏭 트윈팩토리 3D<span class="v">v2.5</span></h1>
+    <h1>🏭 트윈팩토리 3D<span class="v">v2.6</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="upd">연결 중…</span> · <span id="cd">30</span>s</div>
   </div>
   <div class="sum">
@@ -67,6 +91,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
   <button class="cbtn" onclick="zoomBy(1.18)" title="축소">－</button>
   <button class="cbtn" onclick="resetView()" title="시점 초기화">⟲</button>
   <button class="cbtn" onclick="topView()" title="위에서 보기">⬇</button>
+  <button class="cbtn" onclick="edEnter()" title="설정(2D 배치 편집)">⚙</button>
 </div>
 <div class="legend">
   <span class="lg"><span class="d" style="background:#22c55e"></span>가동</span>
@@ -75,6 +100,27 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
   <span class="lg" style="color:#6b7794">· 높이=톤수</span>
 </div>
 <div class="hint">우클릭드래그=회전 · 휠클릭드래그=이동 · 휠=확대축소 · 좌클릭=설비선택</div>
+
+<!-- ===== 2D 편집기 ===== -->
+<div id="editor">
+  <div class="ed-top">
+    <select id="edZoneSel" class="ed-btn" onchange="edSwitchZone(this.value)"></select>
+    <button class="ed-btn" onclick="edNewZone()">＋새 구역</button>
+    <span style="width:1px;height:20px;background:var(--border)"></span>
+    <div class="seg">
+      <button class="ed-btn on" id="edTool-select" onclick="edSetTool('select')">↖ 선택</button>
+      <button class="ed-btn" id="edTool-machine" onclick="edSetTool('machine')">＋설비</button>
+      <button class="ed-btn" id="edTool-line" onclick="edSetTool('line')">／라인</button>
+    </div>
+    <span style="flex:1"></span>
+    <button class="ed-btn save" onclick="edSave()">💾 저장</button>
+    <button class="ed-btn exit" onclick="edExit()">✕ 닫기</button>
+  </div>
+  <div class="ed-main">
+    <div id="edCanvasWrap"><canvas id="edCanvas"></canvas></div>
+    <div class="ed-side" id="edSide"></div>
+  </div>
+</div>
 
 <div class="mo" id="modal" onclick="if(event.target===this)closeModal()">
   <div class="ms">
@@ -93,9 +139,12 @@ var SB_URL='https://omngtyewdaqpphnzeate.supabase.co',
 SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tbmd0eWV3ZGFxcHBobnplYXRlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4ODk4ODksImV4cCI6MjA5MDQ2NTg4OX0.Zxur3t02JHtOcXforCMSwO3i2mMaf5sViE0tXXUC0-s';
 var sbH={apikey:SB_KEY,Authorization:'Bearer '+SB_KEY};
 async function sbGet(t,q){var r=await fetch(SB_URL+'/rest/v1/'+t+'?'+(q||''),{headers:sbH});return r.ok?r.json():null}
+async function sbPost(t,d){return fetch(SB_URL+'/rest/v1/'+t,{method:'POST',headers:Object.assign({},sbH,{'Content-Type':'application/json','Prefer':'return=minimal'}),body:JSON.stringify(d)})}
+async function sbDelete(t,q){return fetch(SB_URL+'/rest/v1/'+t+'?'+q,{method:'DELETE',headers:Object.assign({},sbH,{'Prefer':'return=minimal'})})}
+async function sbUpsertZone(z){return fetch(SB_URL+'/rest/v1/twin_zone?on_conflict=zone_code',{method:'POST',headers:Object.assign({},sbH,{'Content-Type':'application/json','Prefer':'resolution=merge-duplicates,return=minimal'}),body:JSON.stringify(z)})}
 
 var ZONES=[
- {id:'B',name:'B동',equip:[{no:'45',mk:'심팩',t:300,x:205,y:1664,w:74,h:57},{no:'31',mk:'심팩',t:150,x:399,y:1656,w:77,h:56},{no:'41',mk:'국일',t:200,x:566,y:1653,w:79,h:59},{no:'47',mk:'심팩',t:300,x:200,y:1377,w:74,h:58},{no:'04',mk:'심팩',t:150,x:360,y:1228,w:79,h:53},{no:'37',mk:'국일',t:200,x:503,y:1227,w:75,h:52},{no:'03',mk:'심팩',t:150,x:543,y:1004,w:83,h:65},{no:'40',mk:'심팩',t:110,x:417,y:1004,w:72,h:65},{no:'46',mk:'심팩',t:300,x:232,y:1012,w:84,h:56},{no:'48',mk:'심팩',t:300,x:235,y:740,w:74,h:58},{no:'05',mk:'심팩',t:110,x:461,y:561,w:75,h:60},{no:'06',mk:'심팩',t:110,x:349,y:560,w:80,h:59},{no:'30',mk:'국일',t:160,x:581,y:560,w:73,h:59},{no:'32',mk:'심팩',t:200,x:397,y:346,w:77,h:49},{no:'42',mk:'AIDA',t:200,x:540,y:352,w:78,h:49},{no:'49',mk:'심팩',t:300,x:237,y:254,w:68,h:104},{no:'17',mk:'심팩',t:80,x:0,y:158,w:55,h:39},{no:'11',mk:'심팩',t:80,x:476,y:135,w:55,h:38},{no:'10',mk:'심팩',t:80,x:579,y:135,w:57,h:41},{no:'13',mk:'심팩',t:80,x:476,y:77,w:54,h:38},{no:'09',mk:'심팩',t:80,x:579,y:79,w:56,h:38},{no:'07',mk:'심팩',t:80,x:475,y:18,w:54,h:38},{no:'08',mk:'심팩',t:80,x:579,y:20,w:55,h:39},{no:'12',mk:'심팩',t:80,x:354,y:0,w:50,h:45}]},
+ {id:'B',name:'B동',equip:[{no:'45',mk:'심팩',t:300,x:205,y:1664,w:74,h:57},{no:'31',mk:'심팩',t:150,x:399,y:1656,w:77,h:56},{no:'41',mk:'국일',t:200,x:566,y:1653,w:79,h:59},{no:'47',mk:'심팩',t:300,x:200,y:1377,w:74,h:58},{no:'04',mk:'심팩',t:150,x:360,y:1228,w:79,h:53},{no:'37',mk:'국일',t:200,x:503,y:1227,w:75,h:52},{no:'03',mk:'심팩',t:150,x:543,y:1004,w:83,h:65},{no:'40',mk:'심팩',t:110,x:417,y:1004,w:72,h:65},{no:'46',mk:'심팩',t:300,x:232,y:1012,w:84,h:56},{no:'48',mk:'심팩',t:300,x:235,y:740,w:74,h:58},{no:'05',mk:'심팩',t:110,x:461,y:561,w:75,h:60},{no:'06',mk:'심팩',t:110,x:349,y:560,w:80,h:59},{no:'30',mk:'국일',t:160,x:581,y:560,w:73,h:59},{no:'32',mk:'심팩',t:200,x:397,y:346,w:77,h:49},{no:'42',mk:'AIDA',t:200,x:540,y:352,w:78,h:49},{no:'49',mk:'심팩',t:300,x:237,y:254,w:74,h:58},{no:'17',mk:'심팩',t:80,x:0,y:158,w:55,h:39},{no:'11',mk:'심팩',t:80,x:476,y:135,w:55,h:38},{no:'10',mk:'심팩',t:80,x:579,y:135,w:57,h:41},{no:'13',mk:'심팩',t:80,x:476,y:77,w:54,h:38},{no:'09',mk:'심팩',t:80,x:579,y:79,w:56,h:38},{no:'07',mk:'심팩',t:80,x:475,y:18,w:54,h:38},{no:'08',mk:'심팩',t:80,x:579,y:20,w:55,h:39},{no:'12',mk:'심팩',t:80,x:354,y:0,w:50,h:45}]},
  {id:'C',name:'C동',equip:[{no:'39',mk:'국일',t:250,x:138,y:1327,w:87,h:68},{no:'02',mk:'심팩',t:200,x:139,y:1172,w:84,h:68},{no:'01',mk:'쌍용',t:200,x:140,y:999,w:84,h:67},{no:'29',mk:'국일',t:200,x:154,y:820,w:69,h:61},{no:'28',mk:'국일',t:250,x:377,y:545,w:74,h:68},{no:'34',mk:'심팩',t:250,x:146,y:435,w:76,h:54},{no:'38',mk:'국일',t:250,x:507,y:376,w:80,h:66},{no:'35',mk:'심팩',t:250,x:147,y:237,w:75,h:57},{no:'36',mk:'심팩',t:300,x:0,y:8,w:77,h:108},{no:'43',mk:'HIM',t:800,x:398,y:0,w:159,h:129}]}
 ];
 
@@ -112,10 +161,12 @@ function pxToM(e){ return { x:e.x*KX, y:e.y*KY, w:e.w*KX, h:e.h*KY }; }
 // 톤수 → 설비 높이(m): 80t≈1.6m ~ 800t≈4m
 function tonToHeightM(t){ t=t||100; return Math.max(1.4, Math.min(4.2, 1.2 + t/300)); }
 
+var masterList=[];
 async function loadMaster(){
   var rows=await sbGet('machine_master_tj','select=*&order=sort_order.asc');
-  if(!rows)return; mmByHo={};
-  rows.forEach(function(m){if(m.active===false)return;var ho=parseInt(m.ho_code,10);if(!isNaN(ho))mmByHo[ho]={maker:m.maker||'',tonnage:m.tonnage||null,customer:m.customer||''}});
+  if(!rows)return; mmByHo={}; masterList=[];
+  rows.forEach(function(m){if(m.active===false)return;var ho=parseInt(m.ho_code,10);if(!isNaN(ho)){mmByHo[ho]={maker:m.maker||'',tonnage:m.tonnage||null,customer:m.customer||''};masterList.push({ho:ho,maker:m.maker||'',ton:m.tonnage||null})}});
+  masterList.sort(function(a,b){return a.ho-b.ho});
 }
 function metaOf(e){var ho=parseInt(e.no,10),m=mmByHo[ho];return{maker:(m&&m.maker)?m.maker:(e.mk||''),ton:(m&&m.tonnage!=null)?m.tonnage:(e.t||null),customer:(m&&m.customer)?m.customer:''}}
 
@@ -411,6 +462,274 @@ placeTabs();
 window.addEventListener('resize',placeTabs);
 loadMaster().then(load);
 setInterval(tick,1000);
+
+// =================================================================
+// ===== 2D 배치 편집기 =====
+// =================================================================
+var ED={zone:'B',props:null,machines:[],lines:[],tool:'select',sel:null,
+        scale:10,ox:40,oy:40,drag:null,lineDraft:null,
+        lineKind:'wall',lineColor:'#888888',lineWidth:0.1};
+var edCv,edCtx;
+
+// 현재 구역의 기존(하드코딩 px) 설비를 m로 변환해 시드
+function edSeedFromHardcoded(zoneCode){
+  var z=ZONES.filter(function(zz){return zz.id===zoneCode})[0];
+  if(!z)return[];
+  return z.equip.map(function(e){
+    var m=pxToM(e), meta=metaOf(e);
+    return {ho:parseInt(e.no,10), x_m:+m.x.toFixed(2), y_m:+m.y.toFixed(2),
+            w_m:+m.w.toFixed(2), d_m:+m.h.toFixed(2),
+            height_m:+tonToHeightM(meta.ton).toFixed(2), rot:0};
+  });
+}
+function edDefaultProps(zoneCode){
+  var z=ZONES.filter(function(zz){return zz.id===zoneCode})[0];
+  var w=16,h=55;
+  if(z){var mx=0,my=0;z.equip.forEach(function(e){var m=pxToM(e);mx=Math.max(mx,m.x+m.w);my=Math.max(my,m.y+m.h)});w=Math.ceil(mx);h=Math.ceil(my)}
+  return {zone_code:zoneCode,zone_name:(z?z.id+'동':zoneCode),size_w_m:w,size_h_m:h,grid_m:1,
+          floor_color:'#10151f',outline_color:'#5b6fa0',outline_w_m:0.2};
+}
+
+async function edLoadZone(zoneCode){
+  // DB 우선, 없으면 하드코딩 시드
+  var zoneRows=await sbGet('twin_zone','zone_code=eq.'+encodeURIComponent(zoneCode)+'&limit=1');
+  var mRows=await sbGet('twin_machine','zone_code=eq.'+encodeURIComponent(zoneCode)+'&order=id.asc');
+  var lRows=await sbGet('twin_line','zone_code=eq.'+encodeURIComponent(zoneCode)+'&order=id.asc');
+  ED.props=(zoneRows&&zoneRows[0])?zoneRows[0]:edDefaultProps(zoneCode);
+  if(mRows&&mRows.length){
+    ED.machines=mRows.map(function(r){return {ho:parseInt(r.ho_code,10),x_m:+r.x_m,y_m:+r.y_m,w_m:+r.w_m,d_m:+r.d_m,height_m:+r.height_m,rot:r.rot||0}});
+  } else {
+    ED.machines=edSeedFromHardcoded(zoneCode);
+  }
+  ED.lines=(lRows||[]).map(function(r){return {kind:r.kind,pts:r.pts,color:r.color,width_m:+r.width_m,closed:r.closed}});
+  ED.sel=null;
+  edFit();
+  edRender();
+  edSide();
+}
+
+function edEnter(){
+  document.getElementById('editor').classList.add('show');
+  edCv=document.getElementById('edCanvas'); edCtx=edCv.getContext('2d');
+  edBindCanvas();
+  // 구역 셀렉트 채우기
+  var sel=document.getElementById('edZoneSel');
+  sel.innerHTML=ZONES.map(function(z){return '<option value="'+z.id+'">'+z.id+'동</option>'}).join('');
+  ED.zone=curZone; sel.value=curZone;
+  edResize();
+  edLoadZone(ED.zone);
+}
+function edExit(){ document.getElementById('editor').classList.remove('show'); buildScene(); }
+function edSwitchZone(z){ ED.zone=z; edLoadZone(z); }
+function edNewZone(){
+  var code=prompt('새 구역 코드 (영문, 예: INSP):'); if(!code)return;
+  code=code.trim().toUpperCase().replace(/[^\w]/g,'');
+  if(!code)return;
+  var name=prompt('구역 이름 (예: 검사실):',code)||code;
+  if(!ZONES.some(function(z){return z.id===code})) ZONES.push({id:code,name:name,equip:[]});
+  var sel=document.getElementById('edZoneSel');
+  sel.innerHTML=ZONES.map(function(z){return '<option value="'+z.id+'">'+(z.name||z.id+'동')+'</option>'}).join('');
+  sel.value=code; ED.zone=code;
+  ED.props=edDefaultProps(code); ED.props.zone_name=name; ED.props.size_w_m=20; ED.props.size_h_m=20;
+  ED.machines=[]; ED.lines=[]; ED.sel=null; edFit(); edRender(); edSide();
+}
+
+function edSetTool(t){
+  ED.tool=t; ED.lineDraft=null;
+  ['select','machine','line'].forEach(function(k){var b=document.getElementById('edTool-'+k);if(b)b.classList.toggle('on',k===t)});
+  edSide(); edRender();
+}
+
+// ---- 좌표 변환 (m ↔ 화면px) ----
+function m2sx(x){return ED.ox + x*ED.scale}
+function m2sy(y){return ED.oy + y*ED.scale}
+function s2mx(sx){return (sx-ED.ox)/ED.scale}
+function s2my(sy){return (sy-ED.oy)/ED.scale}
+
+function edResize(){
+  var wrap=document.getElementById('edCanvasWrap');
+  edCv.width=wrap.clientWidth; edCv.height=wrap.clientHeight;
+}
+function edFit(){
+  edResize();
+  var W=ED.props.size_w_m, H=ED.props.size_h_m;
+  var pad=40;
+  var sx=(edCv.width-pad*2)/W, sy=(edCv.height-pad*2)/H;
+  ED.scale=Math.max(2,Math.min(sx,sy));
+  ED.ox=(edCv.width-W*ED.scale)/2;
+  ED.oy=(edCv.height-H*ED.scale)/2;
+}
+
+function edRender(){
+  if(!edCtx)return;
+  var c=edCtx,W=ED.props.size_w_m,H=ED.props.size_h_m;
+  c.clearRect(0,0,edCv.width,edCv.height);
+  // 바닥
+  c.fillStyle=ED.props.floor_color||'#10151f';
+  c.fillRect(m2sx(0),m2sy(0),W*ED.scale,H*ED.scale);
+  // 격자(1m 또는 grid_m)
+  var g=ED.props.grid_m||1;
+  c.strokeStyle='rgba(90,111,160,0.25)';c.lineWidth=1;c.beginPath();
+  for(var x=0;x<=W+0.001;x+=g){c.moveTo(m2sx(x),m2sy(0));c.lineTo(m2sx(x),m2sy(H))}
+  for(var y=0;y<=H+0.001;y+=g){c.moveTo(m2sx(0),m2sy(y));c.lineTo(m2sx(W),m2sy(y))}
+  c.stroke();
+  // 외곽선
+  c.strokeStyle=ED.props.outline_color||'#5b6fa0';
+  c.lineWidth=Math.max(2,(ED.props.outline_w_m||0.2)*ED.scale);
+  c.strokeRect(m2sx(0),m2sy(0),W*ED.scale,H*ED.scale);
+  // 라인(벽/통로)
+  ED.lines.forEach(function(L,i){
+    c.strokeStyle=L.color||'#888';c.lineWidth=Math.max(2,(L.width_m||0.1)*ED.scale);
+    c.lineCap='round';c.lineJoin='round';c.beginPath();
+    L.pts.forEach(function(p,j){var sx=m2sx(p[0]),sy=m2sy(p[1]);if(j===0)c.moveTo(sx,sy);else c.lineTo(sx,sy)});
+    if(L.closed)c.closePath();
+    c.stroke();
+    if(ED.sel&&ED.sel.type==='line'&&ED.sel.idx===i){
+      c.fillStyle='#fbbf24';L.pts.forEach(function(p){c.beginPath();c.arc(m2sx(p[0]),m2sy(p[1]),4,0,7);c.fill()});
+    }
+  });
+  // 라인 작성중
+  if(ED.lineDraft&&ED.lineDraft.length){
+    c.strokeStyle=ED.lineColor;c.lineWidth=Math.max(2,ED.lineWidth*ED.scale);c.setLineDash([6,4]);c.beginPath();
+    ED.lineDraft.forEach(function(p,j){var sx=m2sx(p[0]),sy=m2sy(p[1]);if(j===0)c.moveTo(sx,sy);else c.lineTo(sx,sy)});
+    c.stroke();c.setLineDash([]);
+    c.fillStyle=ED.lineColor;ED.lineDraft.forEach(function(p){c.beginPath();c.arc(m2sx(p[0]),m2sy(p[1]),3,0,7);c.fill()});
+  }
+  // 설비
+  ED.machines.forEach(function(m,i){
+    var meta=mmByHo[m.ho]||{};
+    var sx=m2sx(m.x_m),sy=m2sy(m.y_m),sw=m.w_m*ED.scale,sh=m.d_m*ED.scale;
+    var d=byHo[m.ho]||null,col=statusColor(d);
+    c.save();
+    // 회전(중심 기준)
+    c.translate(sx+sw/2,sy+sh/2);c.rotate((m.rot||0)*Math.PI/180);
+    c.fillStyle='#'+('000000'+col.toString(16)).slice(-6);
+    c.fillRect(-sw/2,-sh/2,sw,sh);
+    c.strokeStyle=(ED.sel&&ED.sel.type==='machine'&&ED.sel.idx===i)?'#fbbf24':'rgba(0,0,0,0.4)';
+    c.lineWidth=(ED.sel&&ED.sel.type==='machine'&&ED.sel.idx===i)?3:1;
+    c.strokeRect(-sw/2,-sh/2,sw,sh);
+    c.fillStyle='#0b0f17';c.textAlign='center';c.textBaseline='middle';
+    c.font='bold '+Math.max(9,Math.min(sh*0.5,16))+'px sans-serif';
+    c.fillText(String(m.ho),0,0);
+    c.restore();
+  });
+}
+
+// ---- 캔버스 입력 ----
+function edBindCanvas(){
+  if(edCv.__bound)return; edCv.__bound=true;
+  edCv.addEventListener('mousedown',edDown);
+  window.addEventListener('mousemove',edMove);
+  window.addEventListener('mouseup',edUp);
+  edCv.addEventListener('dblclick',edDbl);
+  edCv.addEventListener('wheel',function(e){e.preventDefault();
+    var mx=s2mx(e.offsetX),my=s2my(e.offsetY);
+    ED.scale*=(e.deltaY>0?0.9:1.1);ED.scale=Math.max(2,Math.min(80,ED.scale));
+    ED.ox=e.offsetX-mx*ED.scale;ED.oy=e.offsetY-my*ED.scale;edRender();
+  },{passive:false});
+  window.addEventListener('resize',function(){if(document.getElementById('editor').classList.contains('show')){edResize();edRender()}});
+}
+function edEvtPos(e){var r=edCv.getBoundingClientRect();return {sx:e.clientX-r.left,sy:e.clientY-r.top}}
+function edHitMachine(mx,my){
+  for(var i=ED.machines.length-1;i>=0;i--){var m=ED.machines[i];
+    if(mx>=m.x_m&&mx<=m.x_m+m.w_m&&my>=m.y_m&&my<=m.y_m+m.d_m)return i}
+  return -1;
+}
+function edSnap(v){var g=ED.props.grid_m||1;return Math.round(v/g)*g}
+function edDown(e){
+  var p=edEvtPos(e),mx=s2mx(p.sx),my=s2my(p.sy);
+  if(e.button===1||e.button===2){ED.drag={pan:true,sx:p.sx,sy:p.sy,ox:ED.ox,oy:ED.oy};e.preventDefault();return}
+  if(ED.tool==='machine'){
+    if(!ED._addHo){alert('우측에서 추가할 호기를 먼저 선택하세요');return}
+    var meta=mmByHo[ED._addHo]||{};
+    ED.machines.push({ho:ED._addHo,x_m:+edSnap(mx).toFixed(2),y_m:+edSnap(my).toFixed(2),
+      w_m:1.6,d_m:1.2,height_m:+tonToHeightM(meta.ton).toFixed(2),rot:0});
+    ED.sel={type:'machine',idx:ED.machines.length-1};edSetTool('select');edRender();edSide();return;
+  }
+  if(ED.tool==='line'){
+    if(!ED.lineDraft)ED.lineDraft=[];
+    ED.lineDraft.push([+edSnap(mx).toFixed(2),+edSnap(my).toFixed(2)]);edRender();return;
+  }
+  // select
+  var hi=edHitMachine(mx,my);
+  if(hi>=0){ED.sel={type:'machine',idx:hi};var m=ED.machines[hi];ED.drag={move:true,idx:hi,dx:mx-m.x_m,dy:my-m.y_m};edSide();edRender();return}
+  ED.sel=null;edSide();edRender();
+}
+function edMove(e){
+  if(!ED.drag)return;var p=edEvtPos(e),mx=s2mx(p.sx),my=s2my(p.sy);
+  if(ED.drag.pan){ED.ox=ED.drag.ox+(p.sx-ED.drag.sx);ED.oy=ED.drag.oy+(p.sy-ED.drag.sy);edRender();return}
+  if(ED.drag.move){var m=ED.machines[ED.drag.idx];m.x_m=+edSnap(mx-ED.drag.dx).toFixed(2);m.y_m=+edSnap(my-ED.drag.dy).toFixed(2);edRender();edSide()}
+}
+function edUp(){ED.drag=null}
+function edDbl(){ if(ED.tool==='line'&&ED.lineDraft&&ED.lineDraft.length>=2){
+  ED.lines.push({kind:ED.lineKind,pts:ED.lineDraft.slice(),color:ED.lineColor,width_m:ED.lineWidth,closed:false});
+  ED.lineDraft=null;ED.sel={type:'line',idx:ED.lines.length-1};edSetTool('select');edRender();edSide();
+}}
+
+// ---- 속성 패널 ----
+function edSide(){
+  var s=document.getElementById('edSide');if(!s)return;
+  var h='';
+  if(ED.tool==='machine'){
+    h+='<h4>설비 추가 — 호기 선택</h4><div class="ed-palette">';
+    masterList.forEach(function(m){h+='<div class="ed-chip" onclick="edPickHo('+m.ho+')" style="'+(ED._addHo===m.ho?'background:var(--blue);color:#fff':'')+'">'+m.ho+'<br><span style="font-size:9px;opacity:.7">'+(m.ton||'')+'t</span></div>'});
+    h+='</div><div class="ed-hint">호기 선택 후 바닥을 클릭해 배치. 격자에 스냅됩니다.</div>';
+  } else if(ED.tool==='line'){
+    h+='<h4>라인 그리기</h4>';
+    h+='<div class="ed-fld"><label>종류</label><select onchange="ED.lineKind=this.value">'
+      +'<option value="wall"'+(ED.lineKind==='wall'?' selected':'')+'>벽</option>'
+      +'<option value="aisle"'+(ED.lineKind==='aisle'?' selected':'')+'>통로</option>'
+      +'<option value="zone"'+(ED.lineKind==='zone'?' selected':'')+'>구역선</option></select></div>';
+    h+='<div class="ed-fld"><label>색상</label><input type="color" value="'+ED.lineColor+'" oninput="ED.lineColor=this.value;edRender()"></div>';
+    h+='<div class="ed-fld"><label>굵기(m)</label><input type="number" step="0.05" value="'+ED.lineWidth+'" oninput="ED.lineWidth=parseFloat(this.value)||0.1;edRender()"></div>';
+    h+='<div class="ed-hint">바닥을 클릭해 점을 찍고, <b>더블클릭</b>으로 라인 완성.</div>';
+  } else if(ED.sel&&ED.sel.type==='machine'){
+    var m=ED.machines[ED.sel.idx],meta=mmByHo[m.ho]||{};
+    h+='<h4>설비 '+m.ho+'호기 ('+(meta.ton||'')+'t)</h4>';
+    h+=edNum('X(m)','x_m',m.x_m)+edNum('Y(m)','y_m',m.y_m)+edNum('가로(m)','w_m',m.w_m)+edNum('세로(m)','d_m',m.d_m)+edNum('높이(m)','height_m',m.height_m)+edNum('회전(°)','rot',m.rot);
+    h+='<button class="ed-del" onclick="edDelMachine()">🗑 이 설비 삭제</button>';
+  } else if(ED.sel&&ED.sel.type==='line'){
+    var L=ED.lines[ED.sel.idx];
+    h+='<h4>라인 ('+L.kind+')</h4>';
+    h+='<div class="ed-fld"><label>색상</label><input type="color" value="'+L.color+'" oninput="ED.lines['+ED.sel.idx+'].color=this.value;edRender()"></div>';
+    h+='<div class="ed-fld"><label>굵기(m)</label><input type="number" step="0.05" value="'+L.width_m+'" oninput="ED.lines['+ED.sel.idx+'].width_m=parseFloat(this.value)||0.1;edRender()"></div>';
+    h+='<button class="ed-del" onclick="edDelLine()">🗑 이 라인 삭제</button>';
+  } else {
+    h+='<h4>구역 설정</h4>';
+    h+='<div class="ed-fld"><label>이름</label><input type="text" value="'+(ED.props.zone_name||'')+'" oninput="ED.props.zone_name=this.value"></div>';
+    h+=edNumZ('가로(m)','size_w_m',ED.props.size_w_m)+edNumZ('세로(m)','size_h_m',ED.props.size_h_m)+edNumZ('격자(m)','grid_m',ED.props.grid_m);
+    h+='<div class="ed-fld"><label>바닥색</label><input type="color" value="'+(ED.props.floor_color||'#10151f')+'" oninput="ED.props.floor_color=this.value;edRender()"></div>';
+    h+='<div class="ed-fld"><label>외곽선색</label><input type="color" value="'+(ED.props.outline_color||'#5b6fa0')+'" oninput="ED.props.outline_color=this.value;edRender()"></div>';
+    h+=edNumZ('외곽두께(m)','outline_w_m',ED.props.outline_w_m);
+    h+='<div class="ed-hint">설비를 클릭하면 위치·크기·회전을 편집합니다.<br>＋설비/／라인 도구로 추가하세요.</div>';
+  }
+  s.innerHTML=h;
+}
+function edNum(lb,key,val){return '<div class="ed-fld"><label>'+lb+'</label><input type="number" step="0.1" value="'+val+'" oninput="edSetMachine(\''+key+'\',this.value)"></div>'}
+function edNumZ(lb,key,val){return '<div class="ed-fld"><label>'+lb+'</label><input type="number" step="0.1" value="'+val+'" oninput="ED.props[\''+key+'\']=parseFloat(this.value)||0;edFit&&edRender()"></div>'}
+function edPickHo(ho){ED._addHo=ho;edSide()}
+function edSetMachine(key,val){if(!ED.sel||ED.sel.type!=='machine')return;ED.machines[ED.sel.idx][key]=parseFloat(val)||0;edRender()}
+function edDelMachine(){if(ED.sel&&ED.sel.type==='machine'){ED.machines.splice(ED.sel.idx,1);ED.sel=null;edRender();edSide()}}
+function edDelLine(){if(ED.sel&&ED.sel.type==='line'){ED.lines.splice(ED.sel.idx,1);ED.sel=null;edRender();edSide()}}
+
+// ---- 저장 ----
+async function edSave(){
+  var zc=ED.zone;
+  try{
+    await sbUpsertZone({zone_code:zc,zone_name:ED.props.zone_name||zc,
+      size_w_m:ED.props.size_w_m,size_h_m:ED.props.size_h_m,grid_m:ED.props.grid_m||1,
+      floor_color:ED.props.floor_color,outline_color:ED.props.outline_color,outline_w_m:ED.props.outline_w_m});
+    await sbDelete('twin_machine','zone_code=eq.'+encodeURIComponent(zc));
+    if(ED.machines.length){
+      await sbPost('twin_machine',ED.machines.map(function(m){return {zone_code:zc,ho_code:String(m.ho),x_m:m.x_m,y_m:m.y_m,w_m:m.w_m,d_m:m.d_m,height_m:m.height_m,rot:m.rot||0}}));
+    }
+    await sbDelete('twin_line','zone_code=eq.'+encodeURIComponent(zc));
+    if(ED.lines.length){
+      await sbPost('twin_line',ED.lines.map(function(L){return {zone_code:zc,kind:L.kind,pts:L.pts,color:L.color,width_m:L.width_m,closed:!!L.closed}}));
+    }
+    alert('💾 저장 완료: '+zc+' (설비 '+ED.machines.length+' · 라인 '+ED.lines.length+')');
+  }catch(e){alert('❌ 저장 오류: '+e.message)}
+}
 </script>
 </body>
 </html>
