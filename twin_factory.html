@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>트윈팩토리 3D v3.1 - 탭마커+근접선택</title>
+<title>트윈팩토리 3D v3.3 - 윗면 호기만 표시</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;}
@@ -72,7 +72,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 <body>
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🏭 트윈팩토리 3D<span class="v">v3.1</span></h1>
+    <h1>🏭 트윈팩토리 3D<span class="v">v3.3</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="upd">연결 중…</span> · <span id="cd">30</span>s</div>
   </div>
   <div class="sum">
@@ -99,7 +99,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
   <span class="lg"><span class="d" style="background:#f59e0b"></span>임박</span>
   <span class="lg" style="color:#6b7794">· 높이=톤수</span>
 </div>
-<div class="hint">우클릭드래그=회전 · 휠클릭드래그=이동 · 휠=확대축소 · 더블클릭/더블탭=설비정보</div>
+<div class="hint">우클릭드래그=회전 · 휠클릭드래그=이동 · 휠=확대축소 · 클릭/탭=설비정보</div>
 
 <!-- ===== 2D 편집기 ===== -->
 <div id="editor">
@@ -241,9 +241,8 @@ function makeLabel(no,sub,colorHex){
   g.fillStyle='rgba(255,255,255,0.92)'; roundRect(g,6,6,244,116,16); g.fill();
   g.fillStyle='#'+('000000'+colorHex.toString(16)).slice(-6);
   g.fillRect(10,10,236,8);
-  g.fillStyle='#0b0f17'; g.textAlign='center';
-  g.font='bold 64px sans-serif'; g.fillText(no,128,72);
-  g.font='600 30px sans-serif'; g.fillStyle='#444'; g.fillText(sub,128,108);
+  g.fillStyle='#0b0f17'; g.textAlign='center'; g.textBaseline='middle';
+  g.font='bold 80px sans-serif'; g.fillText(no,128,70);  // 호기번호만 크게
   var tex=new THREE.CanvasTexture(c); tex.minFilter=THREE.LinearFilter;
   return tex;
 }
@@ -321,8 +320,7 @@ function buildScene(){
     mesh.position.set(bx,hgt/2,bz);
     machineGroup.add(mesh);
     // 윗면 라벨
-    var sub=d?(d.machine_status==='N'?'가동':stopName(d.machine_status)):(meta.maker||'');
-    var tex=makeLabel(e.no,sub,col);
+    var tex=makeLabel(e.no,'',col);
     var lmat=new THREE.MeshBasicMaterial({map:tex,transparent:true});
     var ls=Math.min(it.mw,it.mh)*0.95;
     var lab=new THREE.Mesh(new THREE.PlaneGeometry(ls, ls*0.5),lmat);
@@ -396,16 +394,10 @@ function bindControls(cv){
     var dx=e.clientX-lx,dy=e.clientY-ly;lx=e.clientX;ly=e.clientY;
     if(orbiting)orbit(dx,dy);else pan(dx,dy);
   });
-  var lastClickT=0,lastClickX=0,lastClickY=0;
   window.addEventListener('mouseup',function(e){
-    // 좌클릭 짧게 + 거의 안움직임 → 더블클릭일 때만 선택
+    // 좌클릭 짧게 + 거의 안움직임 → 선택(단일)
     if(e.button===0 && downBtn===0 && Date.now()-downT<250 && Math.abs(e.clientX-downX)<5 && Math.abs(e.clientY-downY)<5){
-      var now=Date.now();
-      if(now-lastClickT<350 && Math.abs(e.clientX-lastClickX)<8 && Math.abs(e.clientY-lastClickY)<8){
-        pick(e.clientX,e.clientY); lastClickT=0;
-      } else {
-        lastClickT=now; lastClickX=e.clientX; lastClickY=e.clientY;
-      }
+      pick(e.clientX,e.clientY);
     }
     orbiting=false;panning=false;
   });
@@ -430,21 +422,13 @@ function bindControls(cv){
       orbit(dx,dy);
     }
   },{passive:false});
-  var lastTapT=0,lastTapX=0,lastTapY=0;
   cv.addEventListener('touchend',function(e){
     if(pinchMode){pinchMode=false}
     else if(orbiting){
       var t=e.changedTouches[0];
       var moved = t ? (Math.abs(t.clientX-downX)+Math.abs(t.clientY-downY)) : touchMoved;
-      // 탭(거의 안움직임)일 때만 더블탭 판정
-      if(touchMoved<14 && moved<14 && Date.now()-downT<400 && t){
-        var now=Date.now();
-        if(now-lastTapT<400 && Math.abs(t.clientX-lastTapX)<24 && Math.abs(t.clientY-lastTapY)<24){
-          pick(t.clientX,t.clientY); lastTapT=0;
-        } else {
-          lastTapT=now; lastTapX=t.clientX; lastTapY=t.clientY;
-        }
-      }
+      // 탭(거의 안움직임) → 선택(단일)
+      if(touchMoved<14 && moved<14 && Date.now()-downT<400 && t) pick(t.clientX,t.clientY);
     }
     orbiting=false;
   });
@@ -501,6 +485,13 @@ function pick(clientX,clientY){
 }
 
 // ===== 모달 =====
+function inspRow(e,meta){
+  var ho=parseInt(e.no,10), insp=inspByHo[ho]||{}, is300=(meta.ton||0)>=300;
+  function badge(done){return done?'<span style="color:#22c55e;font-weight:700">✓ 완료</span>':'<span style="color:#ef4444;font-weight:700">! 미점검</span>'}
+  var h='<div class="row"><span class="k">일상점검</span><span class="vv">'+badge(!!insp.chkDone)+'</span></div>';
+  if(is300) h+='<div class="row"><span class="k">로드모니터</span><span class="vv">'+badge(!!insp.loadDone)+'</span></div>';
+  return h;
+}
 function openModal(e,d){
   var meta=metaOf(e);var colHex=statusColor(d);
   var faceHex='#'+('000000'+colHex.toString(16)).slice(-6);
@@ -511,7 +502,7 @@ function openModal(e,d){
   var body=document.getElementById('mBody');
   if(!d){
     document.getElementById('mSub').textContent=(meta.customer||'')+(meta.customer?' · ':'')+'실시간 데이터 없음';
-    body.innerHTML='<div class="empty">현재 이 설비의 실시간 데이터가 없습니다.<br>(작업지시 미등록 또는 통신 대기)</div>';
+    body.innerHTML=inspRow(e,meta)+'<div class="empty">현재 이 설비의 실시간 데이터가 없습니다.<br>(작업지시 미등록 또는 통신 대기)</div>';
   }else{
     var run=d.machine_status==='N';
     document.getElementById('mSub').textContent=(d.customer||meta.customer||'')+' · '+(run?'가동중':stopName(d.machine_status));
@@ -521,6 +512,7 @@ function openModal(e,d){
     var rmTxt=(rm==null)?'-':(rm<=0?'완료/초과':(rm<60?Math.round(rm)+'분':(Math.floor(rm/60)+'시간 '+Math.round(rm%60)+'분')));
     function r(k,v){return '<div class="row"><span class="k">'+k+'</span><span class="vv">'+v+'</span></div>'}
     body.innerHTML=
+      inspRow(e,meta)+
       r('상태',run?'<span style="color:#22c55e">● 가동</span>':'<span style="color:#ef4444">■ '+stopName(d.machine_status)+'</span>')+
       r('고객사',d.customer||meta.customer||'-')+
       r('금형',d.current_mold||'-')+r('품번',d.current_item_code||'-')+r('품명',d.item_name||'-')+
