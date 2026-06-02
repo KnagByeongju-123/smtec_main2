@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>트윈팩토리 3D v5.7 - 밝은 회색 바닥</title>
+<title>트윈팩토리 3D v6.0 - 금형 위치/바닥정렬 수정</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;}
@@ -72,7 +72,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 <body>
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🏭 트윈팩토리 3D<span class="v">v5.7</span></h1>
+    <h1>🏭 트윈팩토리 3D<span class="v">v6.0</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="upd">연결 중…</span> · <span id="cd">30</span>s</div>
   </div>
   <div class="sum">
@@ -326,6 +326,29 @@ function makeInspBoard(insp, is300, boardW){
   return mesh;
 }
 
+// 둥근 모서리 박스 (r128 RoundedBoxGeometry 미포함 → ExtrudeGeometry로 구현)
+function roundedBox(w,h,d,r){
+  r=Math.min(r, w/2-0.001, d/2-0.001);
+  if(r<=0.001) return new THREE.BoxGeometry(w,h,d);
+  var shape=new THREE.Shape();
+  var x=-w/2, z=-d/2;
+  shape.moveTo(x+r, z);
+  shape.lineTo(x+w-r, z);
+  shape.quadraticCurveTo(x+w, z, x+w, z+r);
+  shape.lineTo(x+w, z+d-r);
+  shape.quadraticCurveTo(x+w, z+d, x+w-r, z+d);
+  shape.lineTo(x+r, z+d);
+  shape.quadraticCurveTo(x, z+d, x, z+d-r);
+  shape.lineTo(x, z+r);
+  shape.quadraticCurveTo(x, z, x+r, z);
+  var bevel=Math.min(r*0.6, h*0.15);
+  var geo=new THREE.ExtrudeGeometry(shape,{depth:h-bevel*2, bevelEnabled:true,
+    bevelThickness:bevel, bevelSize:bevel, bevelSegments:3, curveSegments:6});
+  geo.rotateX(-Math.PI/2);            // 압출축(z) → 세로(y)
+  geo.computeBoundingBox();
+  geo.translate(0, -geo.boundingBox.min.y, 0);   // 바닥이 정확히 y=0에 오도록
+  return geo;
+}
 function buildScene(){
   // clear
   while(machineGroup.children.length) machineGroup.remove(machineGroup.children[0]);
@@ -364,12 +387,13 @@ function buildScene(){
     var hgt=tonToHeightM(meta.ton);            // m
     var bx=(it.mx+it.mw/2)-cx;
     var bz=(it.my+it.mh/2)-cy;
-    var geo=new THREE.BoxGeometry(it.mw,hgt,it.mh);
+    var rad=Math.min(it.mw,it.mh)*0.12;        // 모서리 R (설비 크기 비례)
+    var geo=roundedBox(it.mw,hgt,it.mh,rad);
     var running = d && d.machine_status==='N';
     var mat=new THREE.MeshStandardMaterial({color:col,roughness:0.32,metalness:0.7,
       transparent:true, opacity:running?0.78:0.32});  // 가동=불투명(금형 살짝 보임) / 비가동=투명
     var mesh=new THREE.Mesh(geo,mat);
-    mesh.position.set(bx,hgt/2,bz);
+    mesh.position.set(bx,0,bz);                 // roundedBox는 바닥 기준 y=0
     machineGroup.add(mesh);
     // 가동 중이면 본체 내부에 프레스 금형(상형 왕복 + 하형 고정) 표시
     if(running){
@@ -378,14 +402,14 @@ function buildScene(){
       var lowerMat=new THREE.MeshStandardMaterial({color:0x9aa6b6,roughness:0.4,metalness:0.7});
       var lowerH=Math.max(0.1,hgt*0.14);
       var lower=new THREE.Mesh(new THREE.BoxGeometry(iw,lowerH,idp),lowerMat);
-      lower.position.set(bx, lowerH/2+hgt*0.08, bz);
+      lower.position.set(bx, hgt*0.28, bz);          // 하형(중하단)
       machineGroup.add(lower);
       // 상형(왕복) — 파란 금형
       var upMat=new THREE.MeshStandardMaterial({color:0x4ea3ff,roughness:0.3,metalness:0.75});
       var upH=Math.max(0.12,hgt*0.2);
       var up=new THREE.Mesh(new THREE.BoxGeometry(iw*0.92,upH,idp*0.92),upMat);
-      var topY=hgt*0.68;                            // 상사점(본체 내부 상단, 천장 아래)
-      var botY=lower.position.y+lowerH/2+upH/2+0.02; // 하사점(하형 바로 위 = 맞닿음)
+      var topY=hgt*0.82;                             // 상사점(본체 상부)
+      var botY=hgt*0.28+lowerH/2+upH/2+0.02;         // 하사점(하형 바로 위)
       up.position.set(bx,topY,bz);
       up.userData.press={topY:topY,botY:botY,phase:Math.random()*Math.PI*2,
         spd:(d.actual_ct>0? Math.max(0.12, 1.2/d.actual_ct) : 0.4)};  // 1/5 속도
@@ -437,7 +461,7 @@ function buildScene(){
     var board=makeInspBoard(insp, is300, Math.max(2.0, it.mw*1.3));
     if(board){
       var boardH = is300 ? 1.1 : 0.66;
-      board.position.set(bx, hgt + 0.7 + boardH/2, bz);
+      board.position.set(bx, hgt + 1.3 + boardH/2, bz);
       board.userData.billboard=true;
       machineGroup.add(board);
     }
