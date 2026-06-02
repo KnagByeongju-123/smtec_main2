@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>트윈팩토리 3D v10.9 - 패트롤 자동순회+설정분리</title>
+<title>트윈팩토리 3D v11.0 - 패트롤 라인순회(Z이동)</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;}
@@ -77,7 +77,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 <body>
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🏭 트윈팩토리 3D<span class="v">v10.9</span></h1>
+    <h1>🏭 트윈팩토리 3D<span class="v">v11.0</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="upd">연결 중…</span> · <span id="cd">30</span>s</div>
   </div>
   <div class="sum">
@@ -630,12 +630,23 @@ function camPanelOpen(){
   patrolApply();         // 즉시 화면 반영
   panel.classList.add('show');
 }
-// 🚁 자동순회: 저장된 동별 patrol 화면으로 일정 시간마다 B↔C 전환
-var patrolTimer=0, PATROL_ZONE_SEC=8;
-function applyPatrolView(){
+// 🚁 자동순회: 저장된 patrol 화면을 기준으로 cz(응시점)를 앞↔뒤로 움직이며 라인 순회
+var patrolTimer=0, PATROL_ZONE_SEC=12, patrolBase=null, patrolCzMin=0, patrolCzMax=0;
+function setupPatrolRange(){
+  var z=ZONES.filter(function(zz){return zz.id===curZone})[0];
+  var my=0; z.equip.forEach(function(e){var m=pxToM(e);my=Math.max(my,m.y+m.h)});
+  var H=my;
   var v=getView(curZone,'patrol');
-  if(v){ camera.position.set(v.x, v.up, v.cz-v.back); camera.lookAt(v.x, 0, v.cz); }
-  else { patrolFit(); patrolApply(); }   // 저장값 없으면 기본값
+  if(v){ patrolBase={x:v.x,up:v.up,back:v.back,cz:v.cz}; }
+  else { patrolFit(); patrolBase={x:pVal('sX'),up:pVal('sUp'),back:pVal('sBack'),cz:pVal('sCz')}; }
+  // cz를 작업장 세로 전체(-H/2 ~ +H/2) 범위로 왕복
+  patrolCzMin=-H/2; patrolCzMax=H/2;
+}
+function applyPatrolFrame(cz){
+  if(!camera||!patrolBase)return;
+  var b=patrolBase;
+  camera.position.set(b.x, b.up, cz-b.back);
+  camera.lookAt(b.x, 0, cz);
 }
 function togglePatrol(){
   patrolOn=!patrolOn;
@@ -643,7 +654,8 @@ function togglePatrol(){
   if(patrolOn){
     if(btn)btn.classList.add('on');
     patrolTimer=0;
-    applyPatrolView();
+    setupPatrolRange();
+    applyPatrolFrame(patrolCzMin);
   }else{
     if(btn)btn.classList.remove('on');
   }
@@ -651,17 +663,22 @@ function togglePatrol(){
 function updatePatrol(dt){
   if(!patrolOn)return;
   patrolTimer+=dt;
-  if(patrolTimer>=PATROL_ZONE_SEC){
+  var cycle=PATROL_ZONE_SEC;            // 한 동을 훑는 시간
+  var t=patrolTimer/cycle;             // 0→1 진행
+  if(t>=1){
+    // 다음 동으로 전환 후 다시 시작
     patrolTimer=0;
-    // 다음 동으로 전환
     var ids=ZONES.map(function(z){return z.id});
     var i=ids.indexOf(curZone);
     curZone=ids[(i+1)%ids.length];
     buildTabs(); buildScene();
-    applyPatrolView();
-  } else {
-    applyPatrolView();
+    setupPatrolRange();
+    applyPatrolFrame(patrolCzMin);
+    return;
   }
+  // cz를 min→max로 선형 이동(라인 순회)
+  var cz=patrolCzMin + (patrolCzMax-patrolCzMin)*t;
+  applyPatrolFrame(cz);
 }
 function patrolNextZone(){}
 
