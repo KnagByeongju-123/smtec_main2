@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>트윈팩토리 3D v8.8 - 치수위험 4사 연동</title>
+<title>트윈팩토리 3D v9.2 - 호기번호 빌보드 표시</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;}
@@ -73,7 +73,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 <body>
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🏭 트윈팩토리 3D<span class="v">v8.8</span></h1>
+    <h1>🏭 트윈팩토리 3D<span class="v">v9.2</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="upd">연결 중…</span> · <span id="cd">30</span>s</div>
   </div>
   <div class="sum">
@@ -497,12 +497,13 @@ function buildScene(){
         }
       }
     }
-    // 앞면(정면) 상단 호기 라벨 — 정면을 향해 세움
+    // 호기번호 라벨 — 항상 카메라를 향하는 빌보드, 설비 위에 표시
     var tex=makeLabel(e.no,'',col);
     var lmat=new THREE.MeshBasicMaterial({map:tex,transparent:true,side:THREE.DoubleSide});
-    var lw=Math.min(it.mw*0.55, 0.8);            // 라벨 가로(m) — 축소
+    var lw=Math.min(it.mw*0.7, 1.1);
     var lab=new THREE.Mesh(new THREE.PlaneGeometry(lw, lw*0.5),lmat);
-    lab.position.set(bx, hgt*0.82, bz + it.mh/2 + 0.01);  // 앞면 상단
+    lab.position.set(bx, hgt+0.55, bz);          // 설비 위 공중
+    lab.userData.billboard=true;
     machineGroup.add(lab);
     // 점검 알림보드 — 설비 위 공중 간판
     var insp=inspByHo[ho]||{};
@@ -574,9 +575,7 @@ function togglePatrol(){
     patrolApply(patrolCzStart);
   }else{
     if(btn)btn.classList.remove('on');
-    if(patrolSavedView){camRadius=patrolSavedView.camRadius;camTheta=patrolSavedView.camTheta;
-      camPhi=patrolSavedView.camPhi;camTarget.set(patrolSavedView.tx,patrolSavedView.ty,patrolSavedView.tz);
-      updateCam();}
+    // 복원하지 않고 현재 보던 화면 그대로 멈춤 (튐 방지)
   }
 }
 function updatePatrol(dt){
@@ -872,18 +871,22 @@ async function loadDim(){
   Object.keys(grp).forEach(function(k){
     var o=grp[k]; var isZero=ZERO_ITEMS.indexOf(o.item)>=0;
     var state='정상', pct=null, type=isZero?'제로근접형':'중심공차형';
+    var warnAt=null, margin=null;   // 경고기준값, 한계까지 여유
     if(isZero){
-      if(!isNaN(o.hi)){ pct=o.hi>0?(o.val/o.hi*100):100;
+      if(!isNaN(o.hi)){ pct=o.hi>0?(o.val/o.hi*100):100; warnAt=o.hi*DIM_TH; margin=o.hi-o.val;
         if(o.val>=o.hi) state='초과'; else if(o.val>=o.hi*DIM_TH) state='상한임박'; }
     }else{
       if(!isNaN(o.lo)&&!isNaN(o.hi)){ var range=o.hi-o.lo; pct=range>0?((o.val-o.lo)/range*100):50;
         var uTh=o.lo+range*DIM_TH, lTh=o.lo+range*(1-DIM_TH);
-        if(o.val>o.hi) state='초과'; else if(o.val<o.lo) state='미달';
-        else if(o.val>=uTh) state='상한임박'; else if(o.val<=lTh) state='하한임박'; }
+        if(o.val>o.hi){ state='초과'; warnAt=o.hi; margin=o.hi-o.val; }
+        else if(o.val<o.lo){ state='미달'; warnAt=o.lo; margin=o.val-o.lo; }
+        else if(o.val>=uTh){ state='상한임박'; warnAt=uTh; margin=o.hi-o.val; }
+        else if(o.val<=lTh){ state='하한임박'; warnAt=lTh; margin=o.val-o.lo; } }
     }
     var risk=(state!=='정상');
     if(!byPart[o.part]) byPart[o.part]={risk:false,items:[]};
-    byPart[o.part].items.push({item:o.item,spec:o.spec,val:o.val,lo:o.lo,hi:o.hi,type:type,state:state,pct:pct});
+    byPart[o.part].items.push({item:o.item,g:o.g,spec:o.spec,val:o.val,lo:o.lo,hi:o.hi,
+      type:type,state:state,pct:pct,warnAt:warnAt,margin:margin,date:o.dk});
     if(risk) byPart[o.part].risk=true;
   });
   dimByPart=byPart;
