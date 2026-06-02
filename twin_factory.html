@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>트윈팩토리 3D v11.0 - 패트롤 라인순회(Z이동)</title>
+<title>트윈팩토리 3D v11.1 - 갱신시 시점유지(튐 수정)</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;}
@@ -77,7 +77,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 <body>
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🏭 트윈팩토리 3D<span class="v">v11.0</span></h1>
+    <h1>🏭 트윈팩토리 3D<span class="v">v11.1</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="upd">연결 중…</span> · <span id="cd">30</span>s</div>
   </div>
   <div class="sum">
@@ -540,12 +540,15 @@ function buildScene(){
     meshes.push({mesh:mesh,e:e,d:d});
   });
 
-  // 카메라 초기화 (m 기준)
-  camTarget=new THREE.Vector3(0,0,0);
-  camRadius=Math.max(floorW,floorH)*1.15;
-  camTheta=Math.PI*0.5;
-  camPhi=Math.PI*0.32;
-  updateCam();
+  // 카메라 초기화 — 최초 1회만(이후 갱신·설정·패트롤 중엔 시점 유지)
+  if(!window._camInit && !camPanelLock && !patrolOn){
+    camTarget=new THREE.Vector3(0,0,0);
+    camRadius=Math.max(floorW,floorH)*1.15;
+    camTheta=Math.PI*0.5;
+    camPhi=Math.PI*0.32;
+    updateCam();
+    window._camInit=true;
+  }
 }
 
 // 바닥 외곽선: 네 변을 얇은 박스로 (두께 m, 색상)
@@ -615,20 +618,25 @@ async function patrolSave(kind){
 }
 function patrolPanelClose(){
   var panel=document.getElementById('patrolPanel'); if(panel)panel.classList.remove('show');
+  camPanelLock=false;
 }
 function applyNormalView(){
+  if(camPanelLock)return;            // 설정 중엔 건드리지 않음
   var v=getView(curZone,'normal'); if(!v||!camera)return;
   setS('sX',v.x); setS('sUp',v.up); setS('sBack',v.back); setS('sCz',v.cz);
   camera.position.set(v.x, v.up, v.cz-v.back);
   camera.lookAt(v.x, 0, v.cz);
 }
 // 🎥 카메라 화면 설정 패널 열기(슬라이더+저장)
+var camPanelLock=false;   // 설정 패널 열림 중엔 다른 카메라 조작 차단
 function camPanelOpen(){
   var panel=document.getElementById('patrolPanel'); if(!panel)return;
-  if(panel.classList.contains('show')){ panel.classList.remove('show'); return; }
-  patrolFit();           // 현재 동 patrol 저장값 또는 기본값을 슬라이더에 로드
-  patrolApply();         // 즉시 화면 반영
+  if(panel.classList.contains('show')){ panel.classList.remove('show'); camPanelLock=false; return; }
+  if(patrolOn) togglePatrol();        // 패트롤 켜져있으면 끄고
+  patrolFit();
+  patrolApply();
   panel.classList.add('show');
+  camPanelLock=true;
 }
 // 🚁 자동순회: 저장된 patrol 화면을 기준으로 cz(응시점)를 앞↔뒤로 움직이며 라인 순회
 var patrolTimer=0, PATROL_ZONE_SEC=12, patrolBase=null, patrolCzMin=0, patrolCzMax=0;
@@ -907,7 +915,7 @@ function dimSection(part){
 
 function buildTabs(){
   var tb=document.getElementById('tabs');tb.innerHTML='';
-  ZONES.forEach(function(z){var t=document.createElement('div');t.className='tab'+(z.id===curZone?' active':'');t.innerHTML=z.name+'<span class="b">'+z.equip.length+'대</span>';t.onclick=function(){if(patrolOn)togglePatrol();curZone=z.id;buildTabs();buildScene();applyNormalView()};tb.appendChild(t)});
+  ZONES.forEach(function(z){var t=document.createElement('div');t.className='tab'+(z.id===curZone?' active':'');t.innerHTML=z.name+'<span class="b">'+z.equip.length+'대</span>';t.onclick=function(){if(patrolOn)togglePatrol();curZone=z.id;window._camInit=false;buildTabs();buildScene();applyNormalView()};tb.appendChild(t)});
 }
 function updateSummary(){
   var total=cachedData.length,run=cachedData.filter(function(d){return d.machine_status==='N'}).length;
