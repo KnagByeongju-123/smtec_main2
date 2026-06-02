@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>트윈팩토리 3D v3.7 - 제자리 회전</title>
+<title>트윈팩토리 3D v4.1 - 로드모니터 좌우값</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;}
@@ -72,7 +72,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 <body>
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🏭 트윈팩토리 3D<span class="v">v3.7</span></h1>
+    <h1>🏭 트윈팩토리 3D<span class="v">v4.1</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="upd">연결 중…</span> · <span id="cd">30</span>s</div>
   </div>
   <div class="sum">
@@ -177,12 +177,15 @@ async function loadInspections(){
     inspByHo[ho].chkDone=true;
     inspByHo[ho].chkOK=(r.result!=='NG');
   });
-  // 로드모니터 (load_monitor_check): machine_code "036"
-  var lm=await sbGet('load_monitor_check','select=machine_code,check_date&check_date=eq.'+ymd);
+  // 로드모니터 (load_monitor_check): machine_code "036" + 좌(ch1)/우(ch2) 측정값
+  var lm=await sbGet('load_monitor_check','select=machine_code,check_date,t0830_ch1,t0830_ch2,t1330_ch1,t1330_ch2,t1630_ch1,t1630_ch2&check_date=eq.'+ymd);
   (lm||[]).forEach(function(r){
     var ho=parseInt(r.machine_code,10); if(isNaN(ho))return;
     if(!inspByHo[ho])inspByHo[ho]={};
     inspByHo[ho].loadDone=true;
+    inspByHo[ho].load={
+      t0830:[r.t0830_ch1,r.t0830_ch2], t1330:[r.t1330_ch1,r.t1330_ch2], t1630:[r.t1630_ch1,r.t1630_ch2]
+    };
   });
 }
 async function loadMaster(){
@@ -195,7 +198,7 @@ function metaOf(e){var ho=parseInt(e.no,10),m=mmByHo[ho];return{maker:(m&&m.make
 
 function statusColor(d){
   if(!d) return 0x5b6678;
-  if(d.machine_status==='N'){var soon=d.remaining_minutes>0&&d.remaining_minutes<=30;return soon?0xf59e0b:0x22c55e}
+  if(d.machine_status==='N'){var soon=d.remaining_minutes>0&&d.remaining_minutes<=30;return soon?0xf59e0b:0x86e36b}
   return 0xef4444;
 }
 
@@ -213,9 +216,10 @@ function initThree(){
   scene.fog=new THREE.Fog(0x0c0f16, 60, 220);
   camera=new THREE.PerspectiveCamera(45,1,0.1,1000);
   raycaster=new THREE.Raycaster(); mouse=new THREE.Vector2();
-  var amb=new THREE.AmbientLight(0xffffff,0.75); scene.add(amb);
-  var dir=new THREE.DirectionalLight(0xffffff,0.7); dir.position.set(300,600,400); scene.add(dir);
-  var dir2=new THREE.DirectionalLight(0x88aaff,0.3); dir2.position.set(-300,400,-200); scene.add(dir2);
+  var amb=new THREE.AmbientLight(0xffffff,0.6); scene.add(amb);
+  var dir=new THREE.DirectionalLight(0xffffff,0.85); dir.position.set(20,40,25); scene.add(dir);
+  var dir2=new THREE.DirectionalLight(0xbfe0ff,0.45); dir2.position.set(-25,30,-15); scene.add(dir2);
+  var hemi=new THREE.HemisphereLight(0xffffff,0x223044,0.5); scene.add(hemi);
   machineGroup=new THREE.Group(); scene.add(machineGroup);
   floorGroup=new THREE.Group(); scene.add(floorGroup);
   // v2.2: 궤도 파라미터 사전 초기화 (buildScene 전에 컨트롤/렌더가 접근해도 안전)
@@ -315,24 +319,25 @@ function buildScene(){
     var bx=(it.mx+it.mw/2)-cx;
     var bz=(it.my+it.mh/2)-cy;
     var geo=new THREE.BoxGeometry(it.mw,hgt,it.mh);
-    var mat=new THREE.MeshStandardMaterial({color:col,roughness:0.6,metalness:0.1});
+    var mat=new THREE.MeshStandardMaterial({color:col,roughness:0.32,metalness:0.7});
     var mesh=new THREE.Mesh(geo,mat);
     mesh.position.set(bx,hgt/2,bz);
     machineGroup.add(mesh);
-    // 윗면 라벨
+    // 앞면(정면) 상단 호기 라벨 — 정면을 향해 세움
     var tex=makeLabel(e.no,'',col);
-    var lmat=new THREE.MeshBasicMaterial({map:tex,transparent:true});
-    var ls=Math.min(it.mw,it.mh)*0.95;
-    var lab=new THREE.Mesh(new THREE.PlaneGeometry(ls, ls*0.5),lmat);
-    lab.rotation.x=-Math.PI/2; lab.position.set(bx,hgt+0.03,bz + it.mh*0.22);
+    var lmat=new THREE.MeshBasicMaterial({map:tex,transparent:true,side:THREE.DoubleSide});
+    var lw=Math.min(it.mw*0.85, 1.2);            // 라벨 가로(m)
+    var lab=new THREE.Mesh(new THREE.PlaneGeometry(lw, lw*0.5),lmat);
+    lab.position.set(bx, hgt*0.78, bz + it.mh/2 + 0.01);  // 앞면 상단에 살짝 띄움
     machineGroup.add(lab);
-    // v2.8: 점검 알림보드 — 설비 윗면에 평평하게 고정(설비 따라 이동)
+    // 점검 알림보드 — 설비 위 공중 간판
     var insp=inspByHo[ho]||{};
     var is300=(meta.ton||0)>=300;
-    var board=makeInspBoard(insp, is300, Math.max(1.4, it.mw*0.95));
+    var board=makeInspBoard(insp, is300, Math.max(2.0, it.mw*1.3));
     if(board){
-      board.rotation.x=-Math.PI/2;                 // 바닥과 평행(윗면에 눕힘)
-      board.position.set(bx, hgt+0.04, bz - it.mh*0.15);  // 라벨 위쪽에 배치
+      var boardH = is300 ? 1.1 : 0.66;
+      board.position.set(bx, hgt + 0.7 + boardH/2, bz);
+      board.userData.billboard=true;
       machineGroup.add(board);
     }
     meshes.push({mesh:mesh,e:e,d:d});
@@ -490,7 +495,16 @@ function inspRow(e,meta){
   var ho=parseInt(e.no,10), insp=inspByHo[ho]||{}, is300=(meta.ton||0)>=300;
   function badge(done){return done?'<span style="color:#22c55e;font-weight:700">✓ 완료</span>':'<span style="color:#ef4444;font-weight:700">! 미점검</span>'}
   var h='<div class="row"><span class="k">일상점검</span><span class="vv">'+badge(!!insp.chkDone)+'</span></div>';
-  if(is300) h+='<div class="row"><span class="k">로드모니터</span><span class="vv">'+badge(!!insp.loadDone)+'</span></div>';
+  if(is300){
+    h+='<div class="row"><span class="k">로드모니터</span><span class="vv">'+badge(!!insp.loadDone)+'</span></div>';
+    if(insp.load){
+      var L=insp.load;
+      function cell(v){return (v==null||v==='')?'-':v}
+      function trow(t,lbl){var a=L[t]||[];return '<div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 0;color:var(--sub)"><span>'+lbl+'</span><span style="color:var(--txt)">좌 '+cell(a[0])+' · 우 '+cell(a[1])+'</span></div>'}
+      h+='<div style="padding:6px 0 2px;border-bottom:1px solid #1e2433">'
+        +trow('t0830','8:30')+trow('t1330','13:30')+trow('t1630','16:30')+'</div>';
+    }
+  }
   return h;
 }
 function openModal(e,d){
