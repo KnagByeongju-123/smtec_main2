@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>트윈팩토리 3D v12.7 - 순회 팝업3초→스크롤3초→닫기</title>
+<title>트윈팩토리 3D v12.8 - 설비선택 전체동 표시</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;}
@@ -81,7 +81,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 <body>
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🏭 트윈팩토리 3D<span class="v">v12.7</span></h1>
+    <h1>🏭 트윈팩토리 3D<span class="v">v12.8</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="upd">연결 중…</span> · <span id="cd">30</span>s</div>
   </div>
   <div class="sum">
@@ -660,25 +660,33 @@ async function loadMachineViews(){
 }
 function fillMachineSelect(){
   var sel=document.getElementById('selMachine'); if(!sel)return;
-  var z=ZONES.filter(function(zz){return zz.id===curZone})[0];
   var html='<option value="">— 설비 선택 —</option>';
-  z.equip.forEach(function(e){
-    var saved=MACHINE_VIEWS[String(e.no)]?' ●':'';
-    html+='<option value="'+e.no+'">'+e.no+'호기'+saved+'</option>';
+  ZONES.forEach(function(z){
+    if(!z||!z.equip||!z.equip.length)return;
+    var zname=z.name||z.id+'동';
+    html+='<optgroup label="'+zname+'">';
+    z.equip.forEach(function(e){
+      var saved=MACHINE_VIEWS[String(e.no)]?' ●':'';
+      html+='<option value="'+z.id+':'+e.no+'">'+e.no+'호기'+saved+'</option>';
+    });
+    html+='</optgroup>';
   });
   sel.innerHTML=html;
 }
 function machineViewLoad(){
   var sel=document.getElementById('selMachine'); if(!sel)return;
-  var ho=sel.value; if(!ho)return;
+  var val=sel.value; if(!val)return;
+  var parts=val.split(':'); var zone=parts.length>1?parts[0]:'', ho=parts.length>1?parts[1]:parts[0];
+  if(zone&&zone!==curZone){ if(patrolOn)togglePatrol(); curZone=zone; buildTabs(); buildScene(); }
   var v=MACHINE_VIEWS[ho];
   if(v){ applyView(v); }
 }
 async function saveCurrentMachine(){
   var sel=document.getElementById('selMachine');
-  var ho=sel?sel.value:''; if(!ho){ alert('설비를 먼저 선택하세요'); return; }
+  var val=sel?sel.value:''; if(!val){ alert('설비를 먼저 선택하세요'); return; }
+  var parts=val.split(':'); var zone=parts.length>1?parts[0]:curZone, ho=parts.length>1?parts[1]:parts[0];
   var v=currentView();
-  var rec={zone:curZone,ho:ho,kind:'normal',px:v.px,py:v.py,pz:v.pz,tx:v.tx,ty:v.ty,tz:v.tz};
+  var rec={zone:zone,ho:ho,kind:'normal',px:v.px,py:v.py,pz:v.pz,tx:v.tx,ty:v.ty,tz:v.tz};
   try{
     var r=await fetch(SB_URL+'/rest/v1/twin_machine_view?on_conflict=ho,kind',{
       method:'POST',
@@ -687,7 +695,7 @@ async function saveCurrentMachine(){
     });
     if(!r.ok){ alert('설비 저장 실패: '+r.status+' '+(await r.text())); return; }
     MACHINE_VIEWS[ho]=rec;
-    fillMachineSelect(); sel.value=ho;
+    fillMachineSelect(); sel.value=zone+':'+ho;
     alert(ho+'호기 화면 저장됨');
   }catch(e){ alert('저장 오류: '+e); }
 }
