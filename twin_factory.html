@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>트윈팩토리 3D v12.1 - K 천단위</title>
+<title>트윈팩토리 3D v12.3 - 팝업 자동슬라이딩</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;}
@@ -81,7 +81,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 <body>
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🏭 트윈팩토리 3D<span class="v">v12.1</span></h1>
+    <h1>🏭 트윈팩토리 3D<span class="v">v12.3</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="upd">연결 중…</span> · <span id="cd">30</span>s</div>
   </div>
   <div class="sum">
@@ -778,7 +778,7 @@ function patrolNextZone(){}
 // ============ 설비 순회 모드 ============
 // 우→좌 스윕하며 등록위치에 스톱 → 설비 안에서 솟는 팝업 → 다음
 var mpatrolOn=false, mpList=[], mpIdx=0, mpPhase='sweep', mpTimer=0;
-var MP_SWEEP=1.6, MP_HOLD=5.5, MP_SWEEP_OFFSET=26;  // 스윕시간/머무는시간/우측오프셋(m)
+var MP_SWEEP=1.6, MP_HOLD=7.5, MP_SWEEP_OFFSET=26;  // 스윕시간/머무는시간/우측오프셋(m)
 var mpFrom=null, mpTo=null;
 function buildMachinePatrolList(){
   var z=ZONES.filter(function(zz){return zz.id===curZone})[0];
@@ -786,20 +786,13 @@ function buildMachinePatrolList(){
   mpList = regd.length? regd : z.equip.slice();
 }
 function viewToPT(e){
-  var off={x:3, z:-5};   // 화면 보정: 좌측 3m, 위(안쪽) 5m
   var v=machineViewOf(e.no);
-  var base;
-  if(v&&v.px!=null) base={px:v.px,py:v.py,pz:v.pz,tx:v.tx,ty:v.ty,tz:v.tz};
-  else if(v) base={px:v.x,py:v.up,pz:v.cz-v.back,tx:v.x,ty:0,tz:v.cz};
-  else {
-    var rec=meshes.filter(function(m){return m.e===e})[0];
-    var mx=rec?rec.mesh.position.x:0, mz=rec?rec.mesh.position.z:0;
-    base={px:mx, py:14, pz:mz+10, tx:mx, ty:1, tz:mz};
-  }
-  // position·target 동시 평행이동 → 구도 유지한 채 화면만 이동
-  base.px+=off.x; base.tx+=off.x;
-  base.pz+=off.z; base.tz+=off.z;
-  return base;
+  if(v&&v.px!=null) return {px:v.px,py:v.py,pz:v.pz,tx:v.tx,ty:v.ty,tz:v.tz};
+  if(v) return {px:v.x,py:v.up,pz:v.cz-v.back,tx:v.x,ty:0,tz:v.cz};
+  // 폴백: 설비 mesh 위치 기준
+  var rec=meshes.filter(function(m){return m.e===e})[0];
+  var mx=rec?rec.mesh.position.x:0, mz=rec?rec.mesh.position.z:0;
+  return {px:mx, py:14, pz:mz+10, tx:mx, ty:1, tz:mz};
 }
 function mpStartSweep(e){
   mpTo=viewToPT(e);
@@ -851,6 +844,18 @@ function updateMachinePatrol(dt){
     applyPT(lerpPT(mpFrom,mpTo,te));
     if(t>=1){ mpPhase='hold'; mpTimer=0; mpOpenPopup(e); }
   } else if(mpPhase==='hold'){
+    // 솟는 애니메이션(0.6s) 후부터 내용을 위로 슬라이딩(자동 스크롤)
+    var b=document.getElementById('mBody');
+    if(b){
+      var max=b.scrollHeight-b.clientHeight;
+      if(max>4){
+        var animDelay=0.6;
+        var scrollDur=MP_HOLD-animDelay-0.8;   // 끝나기 0.8s 전까지 다 스크롤
+        var p=(mpTimer-animDelay)/scrollDur;
+        p=Math.max(0,Math.min(1,p));
+        b.scrollTop=max*p;
+      }
+    }
     if(mpTimer>=MP_HOLD){
       var mo=document.getElementById('modal'); if(mo)mo.classList.remove('rise');
       closeModal();
