@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>트윈팩토리 3D v12.3 - 팝업 자동슬라이딩</title>
+<title>트윈팩토리 3D v12.5 - 순회버튼 라인/설비 라벨</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;}
@@ -81,7 +81,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 <body>
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🏭 트윈팩토리 3D<span class="v">v12.3</span></h1>
+    <h1>🏭 트윈팩토리 3D<span class="v">v12.5</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="upd">연결 중…</span> · <span id="cd">30</span>s</div>
   </div>
   <div class="sum">
@@ -114,8 +114,8 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
   <button class="cbtn" onclick="zoomBy(1.18)" title="축소">－</button>
   <button class="cbtn" onclick="resetView()" title="시점 초기화">⟲</button>
   <button class="cbtn" onclick="topView()" title="위에서 보기">⬇</button>
-  <button class="cbtn" id="patrolBtn" onclick="togglePatrol()" title="드론 순찰(동 순회)">🚁</button>
-  <button class="cbtn" id="mpatrolBtn" onclick="toggleMachinePatrol()" title="설비 순회">🛰️</button>
+  <button class="cbtn" id="patrolBtn" onclick="togglePatrol()" title="라인 순회(동 순회)" style="font-size:13px;font-weight:700">라인</button>
+  <button class="cbtn" id="mpatrolBtn" onclick="toggleMachinePatrol()" title="설비 순회" style="font-size:13px;font-weight:700">설비</button>
   <button class="cbtn" onclick="camPanelOpen()" title="카메라 화면 설정/저장">🎥</button>
   <button class="cbtn" onclick="setupDimGas()" title="치수 새로고침">🩺</button>
   <button class="cbtn" onclick="edEnter()" title="설정(2D 배치 편집)">⚙</button>
@@ -778,7 +778,12 @@ function patrolNextZone(){}
 // ============ 설비 순회 모드 ============
 // 우→좌 스윕하며 등록위치에 스톱 → 설비 안에서 솟는 팝업 → 다음
 var mpatrolOn=false, mpList=[], mpIdx=0, mpPhase='sweep', mpTimer=0;
-var MP_SWEEP=1.6, MP_HOLD=7.5, MP_SWEEP_OFFSET=26;  // 스윕시간/머무는시간/우측오프셋(m)
+var MP_SWEEP=1.6, MP_SWEEP_OFFSET=26;       // 스윕시간/우측오프셋(m)
+var MP_ARRIVE=3.0;                          // 도착 후 팝업까지 대기
+var MP_POPUP_WAIT=2.0;                       // 팝업 뜬 뒤 슬라이딩 시작까지 대기
+var MP_SLIDE=4.0;                            // 내용 슬라이딩 시간
+var MP_END_WAIT=1.0;                         // 슬라이딩 완료 후 다음까지 대기
+var MP_HOLD=MP_POPUP_WAIT+MP_SLIDE+MP_END_WAIT;
 var mpFrom=null, mpTo=null;
 function buildMachinePatrolList(){
   var z=ZONES.filter(function(zz){return zz.id===curZone})[0];
@@ -842,16 +847,21 @@ function updateMachinePatrol(dt){
     var t=Math.min(1,mpTimer/MP_SWEEP);
     var te=1-Math.pow(1-t,3);              // ease-out(빠르게 들어와 부드럽게 정지)
     applyPT(lerpPT(mpFrom,mpTo,te));
-    if(t>=1){ mpPhase='hold'; mpTimer=0; mpOpenPopup(e); }
+    if(t>=1){ mpPhase='arrive'; mpTimer=0; }     // 도착 → 팝업 없이 대기
+  } else if(mpPhase==='arrive'){
+    // 설비 위치만 보여주며 MP_ARRIVE초 대기 후 팝업 등장
+    if(mpTimer>=MP_ARRIVE){
+      mpOpenPopup(e);
+      var b0=document.getElementById('mBody'); if(b0)b0.scrollTop=0;
+      mpPhase='hold'; mpTimer=0;
+    }
   } else if(mpPhase==='hold'){
-    // 솟는 애니메이션(0.6s) 후부터 내용을 위로 슬라이딩(자동 스크롤)
+    // 팝업 후 MP_POPUP_WAIT초 대기 → MP_SLIDE초 동안 서서히 아래로 슬라이딩
     var b=document.getElementById('mBody');
     if(b){
       var max=b.scrollHeight-b.clientHeight;
       if(max>4){
-        var animDelay=0.6;
-        var scrollDur=MP_HOLD-animDelay-0.8;   // 끝나기 0.8s 전까지 다 스크롤
-        var p=(mpTimer-animDelay)/scrollDur;
+        var p=(mpTimer-MP_POPUP_WAIT)/MP_SLIDE;
         p=Math.max(0,Math.min(1,p));
         b.scrollTop=max*p;
       }
