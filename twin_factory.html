@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>트윈팩토리 3D v12.9 - 스크롤완료 후 3초 대기</title>
+<title>트윈팩토리 3D v13.0 - 순회 좌표 안정화(씬 재구성 보류)</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;}
@@ -81,7 +81,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 <body>
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🏭 트윈팩토리 3D<span class="v">v12.9</span></h1>
+    <h1>🏭 트윈팩토리 3D<span class="v">v13.0</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="upd">연결 중…</span> · <span id="cd">30</span>s</div>
   </div>
   <div class="sum">
@@ -762,6 +762,7 @@ function togglePatrol(){
     applyPatrolFrame(patrolCzStart);
   }else{
     if(btn)btn.classList.remove('on');
+    buildScene();   // 순회 중 보류된 가동상태 갱신 반영
   }
 }
 function updatePatrol(dt){
@@ -798,14 +799,24 @@ function buildMachinePatrolList(){
   var regd=z.equip.filter(function(e){ return machineViewOf(e.no); });
   mpList = regd.length? regd : z.equip.slice();
 }
+// buildScene과 동일한 설비 중심 좌표를 ZONES에서 직접 계산 (mesh 재생성과 무관 → 순회 좌표 안정)
+function machineXZ(e){
+  var zone=ZONES.filter(function(z){return z.id===curZone})[0];
+  if(!zone) return {x:0,z:0};
+  var items=zone.equip.map(function(ee){var m=pxToM(ee);return {e:ee,mx:m.x,my:m.y,mw:m.w,mh:m.h}});
+  var maxX=0,maxY=0; items.forEach(function(it){maxX=Math.max(maxX,it.mx+it.mw);maxY=Math.max(maxY,it.my+it.mh)});
+  var cx=maxX/2, cy=maxY/2;
+  var me=items.filter(function(it){return it.e===e})[0];
+  if(!me) return {x:0,z:0};
+  return {x:(me.mx+me.mw/2)-cx, z:(me.my+me.mh/2)-cy};
+}
 function viewToPT(e){
   var v=machineViewOf(e.no);
   if(v&&v.px!=null) return {px:v.px,py:v.py,pz:v.pz,tx:v.tx,ty:v.ty,tz:v.tz};
   if(v) return {px:v.x,py:v.up,pz:v.cz-v.back,tx:v.x,ty:0,tz:v.cz};
-  // 폴백: 설비 mesh 위치 기준
-  var rec=meshes.filter(function(m){return m.e===e})[0];
-  var mx=rec?rec.mesh.position.x:0, mz=rec?rec.mesh.position.z:0;
-  return {px:mx, py:14, pz:mz+10, tx:mx, ty:1, tz:mz};
+  // 폴백: ZONES 좌표로 계산(mesh 의존 제거)
+  var xz=machineXZ(e);
+  return {px:xz.x, py:14, pz:xz.z+10, tx:xz.x, ty:1, tz:xz.z};
 }
 function mpStartSweep(e){
   mpTo=viewToPT(e);
@@ -845,6 +856,7 @@ function toggleMachinePatrol(){
     if(btn)btn.classList.remove('on');
     var mo=document.getElementById('modal'); if(mo)mo.classList.remove('rise');
     closeModal();
+    buildScene();   // 순회 중 보류된 가동상태 갱신 반영
   }
 }
 function updateMachinePatrol(dt){
@@ -1192,18 +1204,18 @@ function setupDimGas(){
 async function load(){
   await loadInspections();  // 점검 상태는 machine_status와 독립적으로 항상 로드
   await loadTodayQty();     // 오늘 생산량(work_log)
-  if(!load._dimAt || Date.now()-load._dimAt>300000){ load._dimAt=Date.now(); loadDim().then(function(){buildScene()}); }
+  if(!load._dimAt || Date.now()-load._dimAt>300000){ load._dimAt=Date.now(); loadDim().then(function(){ if(!(patrolOn||mpatrolOn)) buildScene(); }); }
   var data=await sbGet('machine_status','select=*&order=machine_code.asc');
   if(!data){
     document.getElementById('upd').textContent='연결 실패';
     document.getElementById('dot').style.background='var(--red)';
     cachedData=[]; byHo={};
-    updateSummary(); buildScene();  // MES 없어도 설비·점검보드는 표시
+    updateSummary(); if(!(patrolOn||mpatrolOn)) buildScene();  // MES 없어도 설비·점검보드는 표시(순회 중 보류)
     cd=30; return;
   }
   cachedData=data;byHo={};
   data.forEach(function(d){var ho=hoOf(d.machine_name);if(ho!=null)byHo[ho]=d});
-  updateSummary();buildScene();
+  updateSummary(); if(!(patrolOn||mpatrolOn)) buildScene();  // 순회 중엔 씬 재구성 보류(좌표 흔들림 방지)
   var dt=data[0]&&data[0].updated_at?new Date(data[0].updated_at):new Date();
   document.getElementById('upd').textContent=dt.toLocaleTimeString('ko-KR');
   document.getElementById('dot').style.background=(Date.now()-dt.getTime())/60000>10?'var(--amber)':'var(--green)';
