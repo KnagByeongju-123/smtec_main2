@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>트윈팩토리 3D v13.2 - 소재잔량 수량기준(잔량÷가능)</title>
+<title>트윈팩토리 3D v13.5 - 엔지니어 순회/수리배치</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;}
@@ -81,7 +81,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 <body>
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🏭 트윈팩토리 3D<span class="v">v13.2</span></h1>
+    <h1>🏭 트윈팩토리 3D<span class="v">v13.5</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="upd">연결 중…</span> · <span id="cd">30</span>s</div>
   </div>
   <div class="sum">
@@ -140,6 +140,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
       <button class="ed-btn" id="edTool-line" onclick="edSetTool('line')">／라인</button>
     </div>
     <span style="flex:1"></span>
+    <label class="ed-btn" style="display:flex;align-items:center;gap:5px;cursor:default">🔧 엔지니어 <input id="edEngCount" type="number" min="0" max="30" value="0" style="width:50px;background:#1a2236;color:#e6ecf5;border:1px solid #2a3550;border-radius:5px;padding:3px 5px" onchange="edSetEngCount(this.value)"></label>
     <button class="ed-btn save" onclick="edSave()">💾 저장</button>
     <button class="ed-btn exit" onclick="edExit()">✕ 닫기</button>
   </div>
@@ -368,6 +369,25 @@ function makeLabel(no,sub,colorHex){
 }
 function roundRect(g,x,y,w,h,r){g.beginPath();g.moveTo(x+r,y);g.arcTo(x+w,y,x+w,y+h,r);g.arcTo(x+w,y+h,x,y+h,r);g.arcTo(x,y+h,x,y,r);g.arcTo(x,y,x+w,y,r);g.closePath();}
 
+// 작업자 라벨 — 사람 아이콘(머리+어깨) + 이름
+function makeWorkerLabel(name){
+  var c=document.createElement('canvas'); c.width=320; c.height=96;
+  var g=c.getContext('2d');
+  g.fillStyle='rgba(20,28,42,0.88)'; roundRect(g,4,4,312,88,16); g.fill();
+  g.strokeStyle='rgba(120,150,200,0.55)'; g.lineWidth=2; roundRect(g,4,4,312,88,16); g.stroke();
+  // 사람 아이콘
+  g.fillStyle='#7db1ff';
+  g.beginPath(); g.arc(46,36,15,0,7); g.fill();                  // 머리
+  g.beginPath(); g.arc(46,86,27,Math.PI,0); g.fill();            // 어깨(반원)
+  // 이름 (길면 폰트 자동 축소)
+  g.fillStyle='#eaf2ff'; g.textAlign='left'; g.textBaseline='middle';
+  var sz=38; g.font='bold '+sz+'px sans-serif';
+  while(g.measureText(name).width>228 && sz>18){ sz-=2; g.font='bold '+sz+'px sans-serif'; }
+  g.fillText(name,82,50);
+  var tex=new THREE.CanvasTexture(c); tex.minFilter=THREE.LinearFilter;
+  return tex;
+}
+
 // v2.7: 점검 알림보드 — 일상점검 / 로드모니터(300t+) 당일 완료여부
 function makeInspBoard(insp, is300, boardW){
   var c=document.createElement('canvas'); c.width=200; c.height=is300?128:72;
@@ -542,6 +562,17 @@ function buildScene(){
         }
       }
     }
+    // 작업자 라벨 — 설비 왼쪽(소재 코일 반대쪽), 사람 아이콘+이름
+    var worker=(d && d.worker ? String(d.worker) : '').trim();
+    if(worker && worker!=='-'){
+      var wTex=makeWorkerLabel(worker);
+      var wMat=new THREE.MeshBasicMaterial({map:wTex,transparent:true,side:THREE.DoubleSide});
+      var ww=Math.max(1.1, it.mw*0.95), wh=ww*(96/320);
+      var wlab=new THREE.Mesh(new THREE.PlaneGeometry(ww,wh),wMat);
+      wlab.position.set(bx - it.mw/2 - ww/2 - 0.2, hgt*0.5, bz);   // 코일은 오른쪽 → 작업자는 왼쪽
+      wlab.userData.billboard=true;
+      machineGroup.add(wlab);
+    }
     // 호기번호 라벨 — 항상 카메라를 향하는 빌보드, 설비 위에 표시
     var tex=makeLabel(e.no,'',col);
     var lmat=new THREE.MeshBasicMaterial({map:tex,transparent:true,side:THREE.DoubleSide});
@@ -604,6 +635,7 @@ function applyView(v){
   // 궤도 파라미터도 현재 카메라에 동기화(손동작 이어받기)
   syncOrbitFromCamera();
   camera.lookAt(camTarget);
+  rebuildEngineers();   // 동별 엔지니어 마커 재생성
 }
 // 카메라 position/target → 궤도(theta/phi/radius) 역산
 function syncOrbitFromCamera(){
@@ -800,6 +832,71 @@ function buildMachinePatrolList(){
   mpList = regd.length? regd : z.equip.slice();
 }
 // buildScene과 동일한 설비 중심 좌표를 ZONES에서 직접 계산 (mesh 재생성과 무관 → 순회 좌표 안정)
+/* ============ 엔지니어(정비) — 동별 인원 순회 + 수리중 설비 배치 ============ */
+function loadEngCount(){ try{return JSON.parse(localStorage.getItem('twin_eng')||'{}')}catch(e){return{}} }
+function saveEngCount(){ try{localStorage.setItem('twin_eng',JSON.stringify(ENG))}catch(e){} }
+var ENG=loadEngCount(), engineers=[];
+var REPAIR_SUF=['A002','M008','A001','A004','M004'];   // 설비이상·금형수리·금형교환·부품교체·부품연마
+function isRepair(d){
+  if(!d)return false;
+  var c=d.machine_status;
+  if(!c||c==='N')return false;
+  var suf=String(c).indexOf('-')>=0?String(c).split('-')[1]:String(c);
+  return REPAIR_SUF.indexOf(suf)>=0;
+}
+function makeEngineer(){
+  var g=new THREE.Group();
+  var bm=new THREE.MeshStandardMaterial({color:0x2a6fdb,roughness:0.6});
+  var body=new THREE.Mesh(new THREE.CylinderGeometry(0.16,0.2,0.55,10),bm);
+  body.position.y=0.45; g.add(body);
+  var head=new THREE.Mesh(new THREE.SphereGeometry(0.15,12,10),new THREE.MeshStandardMaterial({color:0xffcf6b}));
+  head.position.y=0.86; g.add(head);
+  var helmet=new THREE.Mesh(new THREE.SphereGeometry(0.16,12,8,0,Math.PI*2,0,Math.PI*0.55),new THREE.MeshStandardMaterial({color:0xf5a623,roughness:0.4}));
+  helmet.position.y=0.88; g.add(helmet);
+  g.userData.bodyMat=bm;
+  return g;
+}
+function rebuildEngineers(){
+  engineers=[];
+  var n=ENG[curZone]||0;
+  if(n<=0)return;
+  var zone=ZONES.filter(function(z){return z.id===curZone})[0];
+  if(!zone||!zone.equip.length)return;
+  var pts=zone.equip.map(function(e){return machineXZ(e)});
+  for(var i=0;i<n;i++){
+    var g=makeEngineer();
+    var p=pts[i%pts.length];
+    g.position.set(p.x,0,p.z);
+    machineGroup.add(g);
+    engineers.push({grp:g,wpIdx:(i*3)%pts.length,mode:'patrol',wait:0});
+  }
+}
+function updateEngineers(dt){
+  if(!engineers.length)return;
+  var zone=ZONES.filter(function(z){return z.id===curZone})[0];
+  if(!zone)return;
+  var pts=zone.equip.map(function(e){return machineXZ(e)});
+  var reps=[];
+  zone.equip.forEach(function(e){ if(isRepair(byHo[e.no])) reps.push(machineXZ(e)); });
+  var SPEED=2.0;
+  for(var i=0;i<engineers.length;i++){
+    var e=engineers[i], tx, tz, repair=false;
+    if(i<reps.length){ tx=reps[i].x; tz=reps[i].z; repair=true; }
+    else { var wp=pts[e.wpIdx%pts.length]; tx=wp.x; tz=wp.z; }
+    var want=repair?'repair':'patrol';
+    if(e.mode!==want){ e.mode=want; if(e.grp.userData.bodyMat)e.grp.userData.bodyMat.color.set(repair?0xef4444:0x2a6fdb); }
+    var dx=tx-e.grp.position.x, dz=tz-e.grp.position.z;
+    var dist=Math.sqrt(dx*dx+dz*dz);
+    if(dist>0.18){
+      var step=Math.min(dist,SPEED*dt);
+      e.grp.position.x+=dx/dist*step; e.grp.position.z+=dz/dist*step;
+      e.grp.rotation.y=Math.atan2(dx,dz);
+    } else if(!repair){
+      e.wait+=dt;
+      if(e.wait>1.5){ e.wait=0; e.wpIdx=(e.wpIdx+1)%pts.length; }
+    }
+  }
+}
 function machineXZ(e){
   var zone=ZONES.filter(function(z){return z.id===curZone})[0];
   if(!zone) return {x:0,z:0};
@@ -925,6 +1022,7 @@ function animate(){
   })}
   if(patrolOn)updatePatrol(dt);
   if(mpatrolOn)updateMachinePatrol(dt);
+  updateEngineers(dt);
   renderer.render(scene,camera);
 }
 
@@ -1297,11 +1395,17 @@ function edEnter(){
   var sel=document.getElementById('edZoneSel');
   sel.innerHTML=ZONES.map(function(z){return '<option value="'+z.id+'">'+z.id+'동</option>'}).join('');
   ED.zone=curZone; sel.value=curZone;
+  var ec=document.getElementById('edEngCount'); if(ec)ec.value=ENG[curZone]||0;
   edResize();
   edLoadZone(ED.zone);
 }
 function edExit(){ document.getElementById('editor').classList.remove('show'); buildScene(); }
-function edSwitchZone(z){ ED.zone=z; edLoadZone(z); }
+function edSwitchZone(z){ ED.zone=z; edLoadZone(z); var ec=document.getElementById('edEngCount'); if(ec)ec.value=ENG[z]||0; }
+function edSetEngCount(v){
+  var z=document.getElementById('edZoneSel').value||ED.zone||curZone;
+  ENG[z]=Math.max(0,parseInt(v)||0); saveEngCount();
+  if(z===curZone) rebuildEngineers();
+}
 function edNewZone(){
   var code=prompt('새 구역 코드 (영문, 예: INSP):'); if(!code)return;
   code=code.trim().toUpperCase().replace(/[^\w]/g,'');
