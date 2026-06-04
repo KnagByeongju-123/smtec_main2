@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>트윈팩토리 3D v13.5 - 엔지니어 순회/수리배치</title>
+<title>트윈팩토리 3D v13.6 - 엔지니어 순회 지속/수리 소재쪽</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;}
@@ -81,7 +81,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 <body>
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🏭 트윈팩토리 3D<span class="v">v13.5</span></h1>
+    <h1>🏭 트윈팩토리 3D<span class="v">v13.6</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="upd">연결 중…</span> · <span id="cd">30</span>s</div>
   </div>
   <div class="sum">
@@ -856,19 +856,32 @@ function makeEngineer(){
   g.userData.bodyMat=bm;
   return g;
 }
+var engPersist={};
+function saveEngState(){
+  if(engineers.length) engPersist[curZone]=engineers.map(function(e){return {x:e.grp.position.x,z:e.grp.position.z,wpIdx:e.wpIdx,wait:e.wait}});
+}
+function repairXZ(e){
+  var p=machineXZ(e), m=pxToM(e);
+  return {x:p.x + m.w/2 + 0.5, z:p.z};   // 소재(코일)쪽 = 설비 오른쪽 옆
+}
 function rebuildEngineers(){
+  saveEngState();                         // 재생성 전 현재 위치/순회진행 백업
   engineers=[];
   var n=ENG[curZone]||0;
   if(n<=0)return;
   var zone=ZONES.filter(function(z){return z.id===curZone})[0];
   if(!zone||!zone.equip.length)return;
   var pts=zone.equip.map(function(e){return machineXZ(e)});
+  var saved=engPersist[curZone]||[];
+  var span=Math.max(1,Math.floor(pts.length/n));   // 인원을 설비에 균등 분산
   for(var i=0;i<n;i++){
     var g=makeEngineer();
-    var p=pts[i%pts.length];
-    g.position.set(p.x,0,p.z);
+    var s=saved[i], px, pz, wp;
+    if(s){ px=s.x; pz=s.z; wp=s.wpIdx%pts.length; }   // 이전 상태 복원(순회 지속)
+    else { wp=(i*span)%pts.length; px=pts[wp].x; pz=pts[wp].z; wp=(wp+1)%pts.length; }
+    g.position.set(px,0,pz);
     machineGroup.add(g);
-    engineers.push({grp:g,wpIdx:(i*3)%pts.length,mode:'patrol',wait:0});
+    engineers.push({grp:g,wpIdx:wp,mode:'patrol',wait:s?s.wait:0});
   }
 }
 function updateEngineers(dt){
@@ -877,7 +890,7 @@ function updateEngineers(dt){
   if(!zone)return;
   var pts=zone.equip.map(function(e){return machineXZ(e)});
   var reps=[];
-  zone.equip.forEach(function(e){ if(isRepair(byHo[e.no])) reps.push(machineXZ(e)); });
+  zone.equip.forEach(function(e){ if(isRepair(byHo[e.no])) reps.push(repairXZ(e)); });
   var SPEED=2.0;
   for(var i=0;i<engineers.length;i++){
     var e=engineers[i], tx, tz, repair=false;
