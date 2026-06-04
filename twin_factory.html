@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>트윈팩토리 3D v13.10 - 측정대기 작업자 공장 왼쪽밖</title>
+<title>트윈팩토리 3D v13.12 - 도면 웹앱 연결</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;}
@@ -81,7 +81,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 <body>
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🏭 트윈팩토리 3D<span class="v">v13.10</span></h1>
+    <h1>🏭 트윈팩토리 3D<span class="v">v13.12</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="upd">연결 중…</span> · <span id="cd">30</span>s</div>
   </div>
   <div class="sum">
@@ -158,6 +158,21 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
       <button class="mclose" onclick="closeModal()">×</button>
     </div>
     <div class="mbody" id="mBody"></div>
+  </div>
+</div>
+
+<!-- 도면 보기/등록/수정/삭제 오버레이 -->
+<div id="dwgOverlay" onclick="if(event.target===this)closeDwg()" style="display:none;position:fixed;inset:0;background:rgba(8,12,20,.82);z-index:9999;align-items:center;justify-content:center;padding:16px">
+  <div style="background:#0f1626;border:1px solid #2a3550;border-radius:14px;max-width:92vw;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.6)">
+    <div style="display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid #233">
+      <strong id="dwgTitle" style="color:#e6ecf5;font-size:15px;flex:1">도면</strong>
+      <button onclick="closeDwg()" style="width:30px;height:30px;border-radius:50%;border:none;background:#26324a;color:#cdd6e4;cursor:pointer;font-size:16px">×</button>
+    </div>
+    <div id="dwgImg" style="flex:1;min-height:200px;display:flex;align-items:center;justify-content:center;padding:12px;overflow:auto;color:#8a93a3">불러오는 중…</div>
+    <div style="display:flex;gap:8px;padding:12px 16px;border-top:1px solid #233;justify-content:flex-end">
+      <label style="padding:8px 14px;border:1px solid #3a4660;background:#1a2236;color:#9cc2ff;border-radius:8px;cursor:pointer;font-size:13px">📥 등록/수정<input type="file" accept="image/*" style="display:none" onchange="dwgUpload(this)"></label>
+      <button onclick="dwgDelete()" style="padding:8px 14px;border:1px solid #5a2a35;background:#2a1620;color:#ff8a9a;border-radius:8px;cursor:pointer;font-size:13px">🗑 삭제</button>
+    </div>
   </div>
 </div>
 
@@ -1219,15 +1234,59 @@ function openModal(e,d){
       r('잔량',fmt(d.remaining_qty))+r('잔여시간',rmTxt)+r('로트',d.lot_no||'-')+
       r('CT (실/목표)',(d.actual_ct>0?d.actual_ct.toFixed(1):'-')+' / '+(d.target_ct>0?d.target_ct.toFixed(1):'-'))+
       r('NG',(d.ng_qty>0?'<span style="color:#ef4444">'+d.ng_qty+'</span>':'0'))+r('작업자',d.worker||'-')+
-      dimSection(d.current_item_code);
+      dimSection(d.current_item_code, d.current_mold);
   }
   document.getElementById('modal').classList.add('show');
 }
 function closeModal(){document.getElementById('modal').classList.remove('show')}
-function dimSection(part){
+
+/* ===== 도면 보기/등록/수정/삭제 (Google Apps Script + 구글드라이브, 파일명=금형번호) ===== */
+var DWG_GAS='https://script.google.com/macros/s/AKfycbw8LeW4BnkLr9nm5mkN_zG2WTokF5c0UARe3e0u0pjlWGonbAu49HuZEts-jushO5Eo/exec';
+var _dwgMold='';
+function openDrawing(mold){
+  _dwgMold=mold||'';
+  document.getElementById('dwgTitle').textContent='도면 · '+_dwgMold;
+  document.getElementById('dwgImg').innerHTML='불러오는 중…';
+  document.getElementById('dwgOverlay').style.display='flex';
+  if(!DWG_GAS){ document.getElementById('dwgImg').innerHTML='<div style="color:#f59e0b">GAS URL 미설정<br><span style="font-size:12px;color:#8a93a3">코드의 DWG_GAS 값을 입력하세요</span></div>'; return; }
+  if(!_dwgMold){ document.getElementById('dwgImg').innerHTML='<div style="color:#8a93a3">금형번호 없음</div>'; return; }
+  fetch(DWG_GAS+'?mold='+encodeURIComponent(_dwgMold))
+    .then(function(r){return r.json()})
+    .then(function(j){
+      if(j&&j.ok&&j.dataUrl){ document.getElementById('dwgImg').innerHTML='<img src="'+j.dataUrl+'" style="max-width:88vw;max-height:74vh;border-radius:8px;background:#fff">'; }
+      else { document.getElementById('dwgImg').innerHTML='<div style="color:#8a93a3">등록된 도면 없음<br><span style="font-size:12px">아래 등록 버튼으로 추가하세요</span></div>'; }
+    }).catch(function(){ document.getElementById('dwgImg').innerHTML='<div style="color:#ef4444">불러오기 실패</div>'; });
+}
+function dwgUpload(input){
+  var f=input.files&&input.files[0]; input.value='';
+  if(!f)return;
+  if(!DWG_GAS){alert('먼저 코드의 DWG_GAS(웹앱 URL)를 설정하세요');return;}
+  if(!_dwgMold){alert('금형번호가 없습니다');return;}
+  var rd=new FileReader();
+  rd.onload=function(){
+    document.getElementById('dwgImg').innerHTML='업로드 중…';
+    fetch(DWG_GAS,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({action:'upload',mold:_dwgMold,dataUrl:rd.result})})
+      .then(function(r){return r.json()})
+      .then(function(j){ if(j&&j.ok){ openDrawing(_dwgMold); } else { alert('업로드 실패'); openDrawing(_dwgMold); } })
+      .catch(function(){ alert('업로드 실패'); });
+  };
+  rd.readAsDataURL(f);
+}
+function dwgDelete(){
+  if(!_dwgMold)return;
+  if(!DWG_GAS){alert('먼저 DWG_GAS(웹앱 URL)를 설정하세요');return;}
+  if(!confirm(_dwgMold+' 도면을 삭제할까요?'))return;
+  fetch(DWG_GAS,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({action:'delete',mold:_dwgMold})})
+    .then(function(r){return r.json()})
+    .then(function(j){ if(j&&j.ok){ document.getElementById('dwgImg').innerHTML='<div style="color:#8a93a3">삭제됨</div>'; } else { alert('삭제 실패'); } })
+    .catch(function(){ alert('삭제 실패'); });
+}
+function closeDwg(){ document.getElementById('dwgOverlay').style.display='none'; }
+function dimSection(part, mold){
+  var btn = mold ? ' <button onclick="openDrawing(\''+String(mold).replace(/[\\\'"]/g,'')+'\')" style="margin-left:6px;padding:2px 8px;font-size:11px;border:1px solid #3a4660;background:#1a2236;color:#9cc2ff;border-radius:5px;cursor:pointer">📐 도면</button>' : '';
   var dim=dimOf(part);
-  if(!dim){ return '<div class="row"><span class="k">치수상태</span><span class="vv" style="color:#5b6678">데이터 없음</span></div>'; }
-  var head='<div class="row"><span class="k">치수상태</span><span class="vv" style="color:'+(dim.risk?'#ef4444':'#22c55e')+'">'+(dim.risk?'⚠ 위험':'✓ 정상')+'</span></div>';
+  if(!dim){ return '<div class="row"><span class="k">치수상태'+btn+'</span><span class="vv" style="color:#5b6678">데이터 없음</span></div>'; }
+  var head='<div class="row"><span class="k">치수상태'+btn+'</span><span class="vv" style="color:'+(dim.risk?'#ef4444':'#22c55e')+'">'+(dim.risk?'⚠ 위험':'✓ 정상')+'</span></div>';
   // 위험항목 우선, 그다음 정상
   var its=dim.items.slice().sort(function(a,b){ return (a.state!=='정상'?0:1)-(b.state!=='정상'?0:1); });
   var rows=its.map(function(x){
