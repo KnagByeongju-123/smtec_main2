@@ -292,7 +292,7 @@
   function processRows(rows){
     const grouped = {};
     for(const r of rows){
-      const dev = r.device_id || 'LEGACY';
+      const dev = r.device_id || (r.esp32_mac ? 'MAC_'+r.esp32_mac.replace(/:/g,'') : 'LEGACY');
       if(!grouped[dev]) grouped[dev] = {};
       if(!grouped[dev][r.machine_code]){
         grouped[dev][r.machine_code] = r;
@@ -337,7 +337,7 @@
   // ===== 메인 렌더 =====
   function render(grouped){
     const container = document.getElementById('container');
-    const devices = Object.keys(grouped).sort();
+    const devices = Object.keys(grouped).filter(d => d !== 'LEGACY').sort();
 
     // 호기별 집계 영역
     const summary = aggregateByMachine(grouped);
@@ -392,7 +392,8 @@
     for(const dev of devices){
       const channels = grouped[dev];
       let mac = '-', ip = '-', lastTs = null;
-      const chList = dev.startsWith('ESP_S') ? S_LIST : DI_LIST;
+      const hasS = Object.keys(channels).some(k => k.startsWith('S'));
+      const chList = (dev.startsWith('ESP_S') || hasS) ? S_LIST : DI_LIST;
       for(const di of chList){
         const r = channels[di];
         if(r){
@@ -419,7 +420,7 @@
           <div class="grid">
       `;
       
-      const renderList = dev.startsWith('ESP_S') ? S_LIST : DI_LIST;
+      const renderList = (dev.startsWith('ESP_S') || hasS) ? S_LIST : DI_LIST;
       for(let i = 0; i < renderList.length; i++){
         const di = renderList[i];
         const gpio = dev.startsWith('ESP_S') ? (i === 0 ? 34 : '?') : (4 + i);
@@ -481,7 +482,7 @@
   function openSettings(){
     // 현재까지 발견된 디바이스 + localStorage에 있는 디바이스 합치기
     const fromStorage = Object.keys(mapping);
-    const allDevs = [...new Set([...knownDevices, ...fromStorage])].sort();
+    const allDevs = [...new Set([...knownDevices, ...fromStorage])].filter(d=>d!=='LEGACY').sort();
     
     // 디바이스 없으면 빈 ESP32_01 추가
     if(allDevs.length === 0) allDevs.push('ESP32_01');
@@ -490,7 +491,8 @@
     let html = '';
     for(const dev of allDevs){
       html += `<div class="modal-section"><h3>${dev}</h3>`;
-      const modalList = dev.startsWith('ESP_S') ? S_LIST : DI_LIST;
+      const mHasS = mapping[dev] && Object.keys(mapping[dev]).some(k=>k.startsWith('S'));
+      const modalList = (dev.startsWith('ESP_S') || mHasS) ? S_LIST : DI_LIST;
       for(const di of modalList){
         const cur = mapping[dev]?.[di] || {};
         html += `
