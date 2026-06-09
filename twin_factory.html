@@ -116,6 +116,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
   <button class="cbtn" onclick="topView()" title="위에서 보기">⬇</button>
   <button class="cbtn" id="patrolBtn" onclick="togglePatrol()" title="라인 순회(동 순회)" style="font-size:13px;font-weight:700">라인</button>
   <button class="cbtn" id="mpatrolBtn" onclick="toggleMachinePatrol()" title="설비 순회" style="font-size:13px;font-weight:700">설비</button>
+  <button class="cbtn" id="checkBtn" onclick="openCheckSummary()" title="금일 관리포인트(미체크·로드모니터 이상)" style="font-size:13px;font-weight:700">체크</button>
   <button class="cbtn" onclick="camPanelOpen()" title="카메라 화면 설정/저장">🎥</button>
   <button class="cbtn" onclick="setupDimGas()" title="치수 새로고침">🩺</button>
   <button class="cbtn" onclick="edEnter()" title="설정(2D 배치 편집)">⚙</button>
@@ -158,6 +159,17 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
       <button class="mclose" onclick="closeModal()">×</button>
     </div>
     <div class="mbody" id="mBody"></div>
+  </div>
+</div>
+
+<!-- 금일 관리포인트 보고서 (동별 미체크·로드모니터·품질·도면) -->
+<div class="mo" id="chkModal" onclick="if(event.target===this)closeCheckSummary()">
+  <div class="ms">
+    <div class="mhd">
+      <div class="minfo"><h3 id="chkTitle">📋 금일 관리포인트</h3><p id="chkSub" style="font-size:12px;color:var(--sub)"></p></div>
+      <button class="mclose" onclick="closeCheckSummary()">×</button>
+    </div>
+    <div class="mbody" id="chkBody"></div>
   </div>
 </div>
 
@@ -1263,6 +1275,75 @@ function openModal(e,d){
   document.getElementById('modal').classList.add('show');
 }
 function closeModal(){document.getElementById('modal').classList.remove('show')}
+
+/* ===== 금일 관리포인트 보고서 (동별 미체크 · 로드모니터 편차 · 품질 위험 · 도면) ===== */
+function _escQ(s){return String(s==null?'':s).replace(/[\\'"]/g,'')}
+function _numSortNo(a,b){return parseInt(a,10)-parseInt(b,10)}
+function _chip(text,color){
+  return '<span style="display:inline-block;margin:2px 5px 2px 0;padding:3px 9px;border-radius:8px;font-size:12px;font-weight:700;background:'+color+'22;color:'+color+';border:1px solid '+color+'66">'+text+'</span>';
+}
+// 한 설비의 품질(치수) 위험 카드 — 위험 항목 + 도면 버튼 (위험 없으면 '')
+function _qualityBlock(no,d){
+  var part=d&&d.current_item_code, mold=d&&d.current_mold;
+  var dim=dimOf(part);
+  if(!dim||!dim.risk)return '';
+  var btn = mold ? '<button onclick="openDrawing(\''+_escQ(mold)+'\')" style="margin-left:auto;padding:3px 9px;font-size:11px;border:1px solid #3a4660;background:#1a2236;color:#9cc2ff;border-radius:6px;cursor:pointer;white-space:nowrap">📐 도면</button>' : '';
+  var items=dim.items.filter(function(x){return x.state!=='정상'}).sort(function(a,b){return (b.pct||0)-(a.pct||0)});
+  var rows=items.map(function(x){
+    var spec=(x.type==='제로근접형')?('≤'+(isNaN(x.hi)?'-':x.hi)):((isNaN(x.lo)?'-':x.lo)+'~'+(isNaN(x.hi)?'-':x.hi));
+    var pctTxt=(x.pct!=null)?(' ('+Math.round(x.pct)+'%)'):'';
+    return '<div style="display:flex;justify-content:space-between;gap:8px;padding:5px 8px;border-radius:6px;background:rgba(239,68,68,0.12);margin-bottom:3px;font-size:12px">'
+      +'<span style="color:#cfd8e3">'+x.item+'</span>'
+      +'<span style="color:#8a93a3">'+spec+'</span>'
+      +'<span style="color:#ef4444;font-weight:700">'+x.val.toFixed(3)+'</span>'
+      +'<span style="color:#ef4444;min-width:62px;text-align:right">'+x.state+pctTxt+'</span></div>';
+  }).join('');
+  return '<div style="background:rgba(239,68,68,0.06);border:1px solid rgba(239,68,68,0.3);border-radius:10px;padding:8px 10px;margin:6px 0">'
+    +'<div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">'
+    +'<span style="font-weight:800;color:#fca5a5">'+no+'호기</span>'
+    +'<span style="font-size:12px;color:#8a93a3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(part||'-')+(d&&d.item_name?(' · '+d.item_name):'')+'</span>'+btn+'</div>'
+    +rows+'</div>';
+}
+async function openCheckSummary(){
+  var modal=document.getElementById('chkModal'); modal.classList.add('show');
+  var body=document.getElementById('chkBody');
+  body.innerHTML='<div class="empty">불러오는 중…</div>';
+  try{ await loadInspections(); }catch(e){}
+  if(!Object.keys(dimByPart).length){ try{ await loadDim(); }catch(e){} }
+  var ymd=kstYmd();
+  var totMiss=0,totNg=0,totLoadMiss=0,totLoadBad=0,totQ=0;
+  var html='';
+  ZONES.forEach(function(z){
+    if(!z.equip||!z.equip.length)return;
+    var miss=[],ng=[],loadMiss=[],loadBad=[],qBlocks='';
+    z.equip.slice().sort(function(a,b){return _numSortNo(a.no,b.no)}).forEach(function(e){
+      var ho=parseInt(e.no,10), insp=inspByHo[ho]||{}, d=byHo[ho]||null, is300=(e.t||0)>=300;
+      if(!insp.chkDone) miss.push(e.no);
+      else if(insp.chkOK===false) ng.push(e.no);
+      if(is300){
+        if(!insp.loadDone) loadMiss.push(e.no);
+        else{ var bal=loadBalance(insp.load); if(bal!=null&&Math.abs(bal)>5) loadBad.push({no:e.no,bal:bal}); }
+      }
+      var qb=_qualityBlock(e.no,d); if(qb){ qBlocks+=qb; totQ++; }
+    });
+    totMiss+=miss.length; totNg+=ng.length; totLoadMiss+=loadMiss.length; totLoadBad+=loadBad.length;
+    function grp(label,inner){ return '<div style="margin:7px 0"><div style="font-size:12px;color:var(--sub);margin-bottom:3px">'+label+'</div>'+inner+'</div>'; }
+    var sec='<div style="margin:10px 0 16px">'
+      +'<div style="font-size:15px;font-weight:800;color:var(--txt);border-bottom:2px solid var(--blue);padding-bottom:5px;margin-bottom:8px">'+(z.name||z.id+'동')+'</div>';
+    var any=false;
+    if(miss.length){any=true; sec+=grp('일상점검 미체크', miss.map(function(n){return _chip(n+'호기','#ef4444')}).join(''));}
+    if(ng.length){any=true; sec+=grp('일상점검 NG', ng.map(function(n){return _chip(n+'호기','#f97316')}).join(''));}
+    if(loadMiss.length){any=true; sec+=grp('로드모니터 미체크', loadMiss.map(function(n){return _chip(n+'호기','#ef4444')}).join(''));}
+    if(loadBad.length){any=true; sec+=grp('로드모니터 좌우편차(>5)', loadBad.map(function(o){return _chip(o.no+'호기 Δ'+(o.bal>0?'+':'')+o.bal,'#f59e0b')}).join(''));}
+    if(qBlocks){any=true; sec+=grp('품질(치수) 위험 · 도면', qBlocks);}
+    if(!any) sec+='<div style="color:#22c55e;font-size:13px;padding:6px 0">✓ 이상 없음</div>';
+    sec+='</div>';
+    html+=sec;
+  });
+  document.getElementById('chkSub').textContent=ymd+'  ·  미체크 '+totMiss+' / 로드미체크 '+totLoadMiss+' / 편차 '+totLoadBad+' / 품질 '+totQ;
+  body.innerHTML=html||'<div class="empty">표시할 설비가 없습니다.</div>';
+}
+function closeCheckSummary(){ document.getElementById('chkModal').classList.remove('show'); }
 
 /* ===== 도면 보기/등록/수정/삭제 (Google Apps Script + 구글드라이브, 파일명=금형번호) ===== */
 var DWG_GAS='https://script.google.com/macros/s/AKfycbw8LeW4BnkLr9nm5mkN_zG2WTokF5c0UARe3e0u0pjlWGonbAu49HuZEts-jushO5Eo/exec';
