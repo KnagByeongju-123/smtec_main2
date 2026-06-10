@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>트윈팩토리 3D v13.20 - 한쪽공차(Burr 등) 부분일치 판정</title>
+<title>트윈팩토리 3D v13.21 - 측정품번 저장 결과 검증·알림</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;}
@@ -81,7 +81,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 <body>
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🏭 트윈팩토리 3D<span class="v">v13.20</span></h1>
+    <h1>🏭 트윈팩토리 3D<span class="v">v13.21</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="upd">연결 중…</span> · <span id="cd">30</span>s</div>
   </div>
   <div class="sum">
@@ -1554,16 +1554,30 @@ function setMeasPart(code){
   saveMeasPart(code, v.trim());
 }
 async function saveMeasPart(code, meas){
-  if(meas){ measMap[code]=meas; } else { delete measMap[code]; }
   try{
+    var resp;
     if(meas){
-      await fetch(SB_URL+'/rest/v1/twin_meas_map?on_conflict=item_code',{method:'POST',
-        headers:Object.assign({},sbH,{'Content-Type':'application/json','Prefer':'resolution=merge-duplicates,return=minimal'}),
+      resp=await fetch(SB_URL+'/rest/v1/twin_meas_map?on_conflict=item_code',{method:'POST',
+        headers:Object.assign({},sbH,{'Content-Type':'application/json','Prefer':'resolution=merge-duplicates,return=representation'}),
         body:JSON.stringify({item_code:code,meas_part:meas})});
     } else {
-      await sbDelete('twin_meas_map','item_code=eq.'+encodeURIComponent(code));
+      resp=await fetch(SB_URL+'/rest/v1/twin_meas_map?item_code=eq.'+encodeURIComponent(code),{method:'DELETE',
+        headers:Object.assign({},sbH,{'Prefer':'return=minimal'})});
     }
-  }catch(e){}
+    if(!resp.ok){
+      var t=''; try{t=await resp.text()}catch(e){}
+      alert('서버 저장 실패 ('+resp.status+')\n'+(t||'')+'\n\n※ Supabase에 twin_meas_map 테이블/권한(SQL)이 적용됐는지 확인하세요.\n(PGRST205=테이블없음, 42501/401/403=권한)');
+      return;
+    }
+    // 서버 재확인
+    var chk=await sbGet('twin_meas_map','select=meas_part&item_code=eq.'+encodeURIComponent(code)+'&limit=1');
+    if(meas){
+      if(chk&&chk.length){ measMap[code]=meas; alert('✅ 서버 저장 완료\n'+code+' → '+meas); }
+      else { alert('저장 응답은 OK지만 재조회 실패.\n테이블 권한(GRANT/RLS) 또는 키를 확인하세요.'); return; }
+    } else {
+      delete measMap[code]; alert('🗑 매핑 삭제 완료: '+code);
+    }
+  }catch(e){ alert('네트워크 오류: '+e); return; }
   if(!(patrolOn||mpatrolOn)) buildScene();
   if(_lastModalE && document.getElementById('modal').classList.contains('show')) openModal(_lastModalE,_lastModalD);
 }
