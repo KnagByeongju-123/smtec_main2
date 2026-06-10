@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>트윈팩토리 3D v13.15 - 로드모니터 좌우편차 표시</title>
+<title>트윈팩토리 3D v13.17 - 치수데이터 거래처별 수신확인</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;}
@@ -81,7 +81,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 <body>
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🏭 트윈팩토리 3D<span class="v">v13.15</span></h1>
+    <h1>🏭 트윈팩토리 3D<span class="v">v13.17</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="upd">연결 중…</span> · <span id="cd">30</span>s</div>
   </div>
   <div class="sum">
@@ -349,16 +349,22 @@ function resize(){
 window.addEventListener('resize',resize);
 
 // 호기번호/상태 라벨 텍스처
+function dimFmtDate(dk){ dk=String(dk||''); if(dk.length>=8){ var m=parseInt(dk.substr(4,2),10),d=parseInt(dk.substr(6,2),10); if(m&&d) return m+'/'+d; } return ''; }
 function makeDimBadge(dim){
   var c=document.createElement('canvas'); c.width=300; c.height=56;
   var g=c.getContext('2d');
   var risk=dim.risk; var col=risk?'#ef4444':'#22c55e';
   g.fillStyle=risk?'rgba(60,18,18,0.92)':'rgba(18,40,24,0.9)'; roundRect(g,3,3,294,50,12); g.fill();
   g.strokeStyle=col; g.lineWidth=2.5; roundRect(g,3,3,294,50,12); g.stroke();
-  g.fillStyle=col; g.font='bold 30px sans-serif'; g.textAlign='left'; g.textBaseline='middle';
-  g.fillText(risk?'⚠ 치수위험':'✓ 치수정상',18,30);
-  if(risk){ var n=dim.items.filter(function(x){return x.state!=='정상'}).length;
-    g.textAlign='right'; g.fillText(n+'건',282,30); }
+  g.fillStyle=col; g.textAlign='left'; g.textBaseline='middle';
+  var ds=dimFmtDate(dim.lastDate);
+  var txt=(risk?'⚠ 치수위험':'✓ 치수정상')+(ds?'('+ds+')':'');
+  var nTxt=null, maxW=270;
+  if(risk){ var n=dim.items.filter(function(x){return x.state!=='정상'}).length; nTxt=n+'건'; maxW=196; }
+  var sz=30; g.font='bold '+sz+'px sans-serif';
+  while(g.measureText(txt).width>maxW && sz>16){ sz-=2; g.font='bold '+sz+'px sans-serif'; }
+  g.fillText(txt,18,30);
+  if(nTxt){ g.font='bold 30px sans-serif'; g.textAlign='right'; g.fillText(nTxt,282,30); }
   var tex=new THREE.CanvasTexture(c); tex.minFilter=THREE.LinearFilter; return tex;
 }
 function makeModelLabel(name){
@@ -1433,7 +1439,7 @@ function dimSection(part, mold){
   var btn = mold ? ' <button onclick="openDrawing(\''+String(mold).replace(/[\\\'"]/g,'')+'\')" style="margin-left:6px;padding:2px 8px;font-size:11px;border:1px solid #3a4660;background:#1a2236;color:#9cc2ff;border-radius:5px;cursor:pointer">📐 도면</button>' : '';
   var dim=dimOf(part);
   if(!dim){ return '<div class="row"><span class="k">치수상태'+btn+'</span><span class="vv" style="color:#5b6678">데이터 없음</span></div>'; }
-  var head='<div class="row"><span class="k">치수상태'+btn+'</span><span class="vv" style="color:'+(dim.risk?'#ef4444':'#22c55e')+'">'+(dim.risk?'⚠ 위험':'✓ 정상')+'</span></div>';
+  var head='<div class="row"><span class="k">치수상태'+btn+'</span><span class="vv" style="color:'+(dim.risk?'#ef4444':'#22c55e')+'">'+(dim.risk?'⚠ 위험':'✓ 정상')+(dimFmtDate(dim.lastDate)?' ('+dimFmtDate(dim.lastDate)+')':'')+'</span></div>';
   // 위험항목 우선, 그다음 정상
   var its=dim.items.slice().sort(function(a,b){ return (a.state!=='정상'?0:1)-(b.state!=='정상'?0:1); });
   var rows=its.map(function(x){
@@ -1477,6 +1483,7 @@ var DIM_GAS={
 var ZERO_ITEMS=['진원도','평면도','동심도','원통도','직각도','내경 Burr','외경 Burr','흔들림'];
 var DIM_TH=0.8;                                  // 80% 위험 기준
 var dimByPart={};                                // 품번 → {risk:bool, items:[...]}
+var dimSrcCount={};                              // 거래처별 수신 행 수 (진단용)
 function dimParseDate(s){ s=String(s||'').replace(/[^0-9]/g,''); return s; }
 async function dimFetchOne(url){
   if(!url) return [];
@@ -1485,8 +1492,9 @@ async function dimFetchOne(url){
 }
 // 컬럼: 작업일자 c0, 품번 c1, G열 c6, 항목 c7, 규격 c15, 하한 c20, 상한 c21, 평균 c35
 async function loadDim(){
-  var urls=Object.keys(DIM_GAS).map(function(k){return DIM_GAS[k]});
-  var arrs=await Promise.all(urls.map(dimFetchOne));
+  var names=Object.keys(DIM_GAS);
+  var arrs=await Promise.all(names.map(function(k){return dimFetchOne(DIM_GAS[k])}));
+  dimSrcCount={}; names.forEach(function(k,i){ dimSrcCount[k]=arrs[i].length; });
   var rows=[].concat.apply([],arrs);
   // 품번|G|항목 별로 최신 작업일자의 평균값만
   var grp={};
@@ -1517,10 +1525,11 @@ async function loadDim(){
         else if(o.val<=lTh){ state='하한임박'; warnAt=lTh; margin=o.val-o.lo; } }
     }
     var risk=(state!=='정상');
-    if(!byPart[o.part]) byPart[o.part]={risk:false,items:[]};
+    if(!byPart[o.part]) byPart[o.part]={risk:false,items:[],lastDate:''};
     byPart[o.part].items.push({item:o.item,g:o.g,spec:o.spec,val:o.val,lo:o.lo,hi:o.hi,
       type:type,state:state,pct:pct,warnAt:warnAt,margin:margin,date:o.dk});
     if(risk) byPart[o.part].risk=true;
+    if(o.dk && o.dk>byPart[o.part].lastDate) byPart[o.part].lastDate=o.dk;
   });
   dimByPart=byPart;
 }
@@ -1528,7 +1537,9 @@ function dimOf(part){ return part? dimByPart[String(part).trim()]||null : null; 
 // 치수 데이터 수동 새로고침
 function setupDimGas(){
   load._dimAt=0; loadDim().then(function(){buildScene();
-    var n=Object.keys(dimByPart).length; alert('치수 데이터 갱신: 품번 '+n+'건');});
+    var s=Object.keys(dimSrcCount).map(function(k){return '· '+k+' : '+dimSrcCount[k]+'행'+(dimSrcCount[k]===0?' ⚠ 수신없음':'')}).join('\n');
+    var n=Object.keys(dimByPart).length;
+    alert('치수 데이터 갱신: 품번 '+n+'건\n\n[거래처별 수신]\n'+s);});
 }
 
 async function load(){
