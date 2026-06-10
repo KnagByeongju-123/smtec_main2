@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>트윈팩토리 3D v13.17 - 치수데이터 거래처별 수신확인</title>
+<title>트윈팩토리 3D v13.19 - 측정품번 매핑(구글시트 B열)</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;}
@@ -81,7 +81,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 <body>
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🏭 트윈팩토리 3D<span class="v">v13.17</span></h1>
+    <h1>🏭 트윈팩토리 3D<span class="v">v13.19</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="upd">연결 중…</span> · <span id="cd">30</span>s</div>
   </div>
   <div class="sum">
@@ -606,7 +606,7 @@ function buildScene(){
           mlab.userData.billboard=true;
           machineGroup.add(mlab);
           // 치수상태 배지(정상/위험) — 품번 라벨 위
-          var dim=dimOf(d.current_item_code);
+          var dim=dimOfMachine(d);
           if(dim){
             var dTex=makeDimBadge(dim);
             var dMat=new THREE.MeshBasicMaterial({map:dTex,transparent:true,side:THREE.DoubleSide});
@@ -1247,6 +1247,7 @@ function inspRow(e,meta){
   return h;
 }
 function openModal(e,d){
+  _lastModalE=e; _lastModalD=d;
   var meta=metaOf(e);var colHex=statusColor(d);
   var faceHex='#'+('000000'+colHex.toString(16)).slice(-6);
   document.getElementById('mBdg').style.background=faceHex;
@@ -1276,7 +1277,7 @@ function openModal(e,d){
       r('잔량',fmt(d.remaining_qty))+r('잔여시간',rmTxt)+r('로트',d.lot_no||'-')+
       r('CT (실/목표)',(d.actual_ct>0?d.actual_ct.toFixed(1):'-')+' / '+(d.target_ct>0?d.target_ct.toFixed(1):'-'))+
       r('NG',(d.ng_qty>0?'<span style="color:#ef4444">'+d.ng_qty+'</span>':'0'))+r('작업자',d.worker||'-')+
-      dimSection(d.current_item_code, d.current_mold);
+      dimSection(d, d.current_mold);
   }
   document.getElementById('modal').classList.add('show');
 }
@@ -1296,7 +1297,7 @@ function _noTag(g){
 // 한 설비의 품질(치수) 위험 카드 — 위험 항목 + 도면 버튼 (위험 없으면 '')
 function _qualityBlock(no,d){
   var part=d&&d.current_item_code, mold=d&&d.current_mold;
-  var dim=dimOf(part);
+  var dim=dimOfMachine(d);
   if(!dim||!dim.risk)return '';
   var btn = mold ? '<button onclick="openDrawing(\''+_escQ(mold)+'\')" style="margin-left:auto;padding:3px 9px;font-size:11px;border:1px solid #3a4660;background:#1a2236;color:#9cc2ff;border-radius:6px;cursor:pointer;white-space:nowrap">📐 도면</button>' : '';
   var items=dim.items.filter(function(x){return x.state!=='정상'}).sort(function(a,b){return (b.pct||0)-(a.pct||0)});
@@ -1435,9 +1436,12 @@ function dwgDragEnd(){
   document.removeEventListener('touchmove',dwgDragMove);
   document.removeEventListener('touchend',dwgDragEnd);
 }
-function dimSection(part, mold){
-  var btn = mold ? ' <button onclick="openDrawing(\''+String(mold).replace(/[\\\'"]/g,'')+'\')" style="margin-left:6px;padding:2px 8px;font-size:11px;border:1px solid #3a4660;background:#1a2236;color:#9cc2ff;border-radius:5px;cursor:pointer">📐 도면</button>' : '';
-  var dim=dimOf(part);
+function dimSection(d, mold){
+  var code=(d&&d.current_item_code)?String(d.current_item_code).trim():'';
+  var dbtn = mold ? ' <button onclick="openDrawing(\''+_escQ(mold)+'\')" style="margin-left:6px;padding:2px 8px;font-size:11px;border:1px solid #3a4660;background:#1a2236;color:#9cc2ff;border-radius:5px;cursor:pointer">📐 도면</button>' : '';
+  var mbtn = code ? ' <button onclick="setMeasPart(\''+_escQ(code)+'\')" style="margin-left:6px;padding:2px 8px;font-size:11px;border:1px solid #3a4660;background:'+(measMap[code]?'#1f3326':'#1a2236')+';color:'+(measMap[code]?'#86efac':'#9cc2ff')+';border-radius:5px;cursor:pointer">🔗 측정품번'+(measMap[code]?' ✓':'')+'</button>' : '';
+  var btn = dbtn+mbtn;
+  var dim=dimOfMachine(d);
   if(!dim){ return '<div class="row"><span class="k">치수상태'+btn+'</span><span class="vv" style="color:#5b6678">데이터 없음</span></div>'; }
   var head='<div class="row"><span class="k">치수상태'+btn+'</span><span class="vv" style="color:'+(dim.risk?'#ef4444':'#22c55e')+'">'+(dim.risk?'⚠ 위험':'✓ 정상')+(dimFmtDate(dim.lastDate)?' ('+dimFmtDate(dim.lastDate)+')':'')+'</span></div>';
   // 위험항목 우선, 그다음 정상
@@ -1534,18 +1538,69 @@ async function loadDim(){
   dimByPart=byPart;
 }
 function dimOf(part){ return part? dimByPart[String(part).trim()]||null : null; }
+// ===== 측정품번 매핑 (ERP품번 → 구글시트 B열 부품번호) : Supabase twin_meas_map =====
+var measMap={};                                  // item_code → meas_part
+var _lastModalE=null,_lastModalD=null;
+async function loadMeasMap(){
+  try{ var rows=await sbGet('twin_meas_map','select=item_code,meas_part'); measMap={};
+    (rows||[]).forEach(function(r){ var c=(r.item_code==null?'':String(r.item_code)).trim(); var m=(r.meas_part==null?'':String(r.meas_part)).trim(); if(c&&m) measMap[c]=m; }); }catch(e){}
+}
+function setMeasPart(code){
+  code=String(code||'').trim(); if(!code){ alert('품번이 없습니다'); return; }
+  var cur=measMap[code]||'';
+  var v=prompt('측정DB(구글시트 B열) 부품번호를 입력하세요\n\nERP품번: '+code+'\n(비우고 확인하면 매핑 삭제)', cur);
+  if(v===null) return;
+  saveMeasPart(code, v.trim());
+}
+async function saveMeasPart(code, meas){
+  if(meas){ measMap[code]=meas; } else { delete measMap[code]; }
+  try{
+    if(meas){
+      await fetch(SB_URL+'/rest/v1/twin_meas_map?on_conflict=item_code',{method:'POST',
+        headers:Object.assign({},sbH,{'Content-Type':'application/json','Prefer':'resolution=merge-duplicates,return=minimal'}),
+        body:JSON.stringify({item_code:code,meas_part:meas})});
+    } else {
+      await sbDelete('twin_meas_map','item_code=eq.'+encodeURIComponent(code));
+    }
+  }catch(e){}
+  if(!(patrolOn||mpatrolOn)) buildScene();
+  if(_lastModalE && document.getElementById('modal').classList.contains('show')) openModal(_lastModalE,_lastModalD);
+}
+// 측정DB 품번이 ERP품번이 아닌 기종명/규격으로 등록된 경우 대비 → 매핑→품번→기종명(품명)→규격 순 폴백
+function dimCandidates(d){
+  if(!d) return [];
+  var code=(d.current_item_code==null?'':String(d.current_item_code)).trim();
+  return [measMap[code],d.current_item_code,d.item_name,d.current_model,d.model_name,d.item_spec]
+    .map(function(x){return (x==null?'':String(x)).trim()})
+    .filter(function(x){return x.length>0});
+}
+function dimOfMachine(d){
+  var cs=dimCandidates(d);
+  for(var i=0;i<cs.length;i++){ if(dimByPart[cs[i]]) return dimByPart[cs[i]]; }
+  return null;
+}
 // 치수 데이터 수동 새로고침
 function setupDimGas(){
-  load._dimAt=0; loadDim().then(function(){buildScene();
+  load._dimAt=0; Promise.all([loadDim(),loadMeasMap()]).then(function(){buildScene();
     var s=Object.keys(dimSrcCount).map(function(k){return '· '+k+' : '+dimSrcCount[k]+'행'+(dimSrcCount[k]===0?' ⚠ 수신없음':'')}).join('\n');
-    var n=Object.keys(dimByPart).length;
-    alert('치수 데이터 갱신: 품번 '+n+'건\n\n[거래처별 수신]\n'+s);});
+    var keys=Object.keys(dimByPart);
+    var prod=(cachedData||[]).filter(function(d){return d&&d.current_item_code});
+    var seen={}, mlines=[];
+    prod.forEach(function(d){
+      var code=String(d.current_item_code||'').trim(); if(seen[code])return; seen[code]=1;
+      var cs=dimCandidates(d), hit=''; for(var i=0;i<cs.length;i++){ if(dimByPart[cs[i]]){ hit=cs[i]; break; } }
+      mlines.push((hit?'✓':'✗')+' '+code+(d.item_name?'('+d.item_name+')':'')+(hit?' → '+hit:' → 없음'));
+    });
+    var samp=keys.slice(0,15).join(', ')+(keys.length>15?' …':'');
+    alert('치수 데이터 갱신: 품번키 '+keys.length+'건\n\n[거래처별 수신]\n'+s
+      +'\n\n[생산중 품번 매칭]\n'+(mlines.join('\n')||'(생산중 없음)')
+      +'\n\n[측정DB 품번키 샘플]\n'+samp);});
 }
 
 async function load(){
   await loadInspections();  // 점검 상태는 machine_status와 독립적으로 항상 로드
   await loadTodayQty();     // 오늘 생산량(work_log)
-  if(!load._dimAt || Date.now()-load._dimAt>300000){ load._dimAt=Date.now(); loadDim().then(function(){ if(!(patrolOn||mpatrolOn)) buildScene(); }); }
+  if(!load._dimAt || Date.now()-load._dimAt>300000){ load._dimAt=Date.now(); Promise.all([loadDim(),loadMeasMap()]).then(function(){ if(!(patrolOn||mpatrolOn)) buildScene(); }); }
   var data=await sbGet('machine_status','select=*&order=machine_code.asc');
   if(!data){
     document.getElementById('upd').textContent='연결 실패';
