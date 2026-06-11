@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SHOT 카운터 모니터 v2.2</title>
+<title>SHOT 카운터 모니터 v2.7</title>
 <style>
   :root{
     --bg:#0f1419; --panel:#1a2332; --border:#2a3a52;
@@ -144,16 +144,23 @@
   }
   .modal-section h3{font-size:14px; margin-bottom:10px; color:var(--accent)}
   .modal-row{
-    display:grid; grid-template-columns:80px 1fr 1fr 90px;
-    gap:8px; align-items:center; margin-bottom:6px; font-size:13px;
+    display:flex; gap:6px; align-items:center; margin-bottom:6px; font-size:13px;
   }
-  .modal-row .di-label{font-weight:700; color:var(--accent)}
+  .modal-row .di-label{font-weight:700; color:var(--accent); min-width:38px; flex-shrink:0}
   .modal-row input, .modal-row select{
     background:#1a2332; border:1px solid var(--border); color:var(--text);
     padding:6px 8px; border-radius:5px; font-family:inherit; font-size:13px;
+    min-width:0; width:100%;
   }
   .modal-row input:focus, .modal-row select:focus{outline:1px solid var(--accent)}
   .modal-actions{display:flex; gap:8px; justify-content:flex-end; margin-top:16px; padding-top:12px; border-top:1px solid var(--border)}
+  .zero-btn{
+    background:#3a2410; border:1px solid #f59e0b; color:#fbbf24;
+    font-size:11px; padding:4px 10px; border-radius:5px; cursor:pointer;
+    white-space:nowrap;
+  }
+  .zero-btn:hover{ background:#4a3015 }
+  .zero-btn:disabled{ opacity:0.4; cursor:not-allowed; border-color:var(--border); color:var(--muted) }
   
   .no-device{
     text-align:center; padding:40px 20px; color:var(--muted);
@@ -169,11 +176,11 @@
 <body>
 
 <div class="header">
-  <h1>📡 SHOT 카운터 모니터 v2.2</h1>
+  <h1>📡 SHOT 카운터 모니터 v2.7</h1>
   <div class="meta">
     <span><span class="status-dot" id="connDot"></span><b id="connText">연결 확인 중</b></span>
     <span>장비: <b id="deviceCount">0</b></span>
-    <span>전체 누적: <b id="totalCount">0</b></span>
+    <span>전체 당일: <b id="totalCount">0</b></span>
     <span>갱신: <b id="lastUpdate">-</b></span>
     <button class="btn primary" onclick="openSettings()">⚙️ 호기 매핑 설정</button>
   </div>
@@ -181,7 +188,7 @@
 
 <!-- 호기별 집계 (매핑 있을 때만 표시) -->
 <div class="machine-summary" id="machineSummary" style="display:none">
-  <h2>🏭 호기별 집계 (매핑 적용)</h2>
+  <h2>🏭 호기별 집계 (당일 · 매핑 적용)</h2>
   <div class="machine-grid" id="machineGrid"></div>
 </div>
 
@@ -190,7 +197,7 @@
 
 <div class="footer">
   <span>Supabase <b>shot_count</b> · 폴링 <b>2초</b> · 매핑은 브라우저 <b>localStorage</b>에 저장됨</span>
-  <span>v2.2</span>
+  <span>v2.7</span>
 </div>
 
 <!-- 설정 모달 -->
@@ -198,7 +205,7 @@
   <div class="modal">
     <h2>⚙️ 디바이스 → 호기 매핑 설정</h2>
     <p style="font-size:13px; color:var(--muted); margin-bottom:14px">
-      각 디바이스의 DI1~DI8 채널에 호기명과 종류(양품/불량)을 매핑하세요. 비워두면 매핑 없이 DI 원시 데이터만 표시됩니다.
+      각 채널에 호기명, 배출구명, GPIO 핀번호, 센서종류(NPN/PNP)를 수동 등록하세요. 배출구명에 '불량/NG'가 포함되면 불량으로, 그 외는 양품으로 자동 집계됩니다.
     </p>
     <div id="mappingContainer"></div>
     <div class="modal-actions">
@@ -214,10 +221,13 @@
   const SUPABASE_URL = 'https://omngtyewdaqpphnzeate.supabase.co';
   const SUPABASE_KEY = 'sb_publishable_9j2YkkL-7ul1TrhH-NjVdQ_vWDG2-1D';
   const TABLE = 'shot_count';
+  const BASELINE_TABLE = 'daily_baseline';
   const POLL_MS = 2000;
   const RECENT_THRESHOLD_MS = 10000;
   const DI_LIST = ['DI1','DI2','DI3','DI4','DI5','DI6','DI7','DI8'];
   const S_LIST  = ['S1','S2','S3','S4','S5','S6','S7','S8','S9','S10'];
+  // S코드별 실제 ESP32 GPIO 핀 매핑
+  const S_GPIO = { S1:34, S2:35, S3:32, S4:33, S5:25, S6:26, S7:27, S8:14, S9:13, S10:23 };
   const ALL_CODES = [...DI_LIST, ...S_LIST];
   const STORAGE_KEY = 'shot_monitor_mapping_v2';
 
@@ -301,17 +311,116 @@
     return grouped;
   }
 
-  // ===== 매핑된 호기 정보 가져오기 =====
-  function getMap(deviceId, di){
-    return mapping[deviceId]?.[di] || null;
+  // ===== KST 오늘 날짜 (YYYY-MM-DD) =====
+  function todayKST(){
+    return new Intl.DateTimeFormat('en-CA', {timeZone:'Asia/Seoul'}).format(new Date());
   }
 
+  // ===== 일자별 baseline (당일 0점 기준) =====
+  // baselineCache[`${dev}|${code}`] = { date, count }
+  let baselineCache = {};
+  let lastGrouped = {};   // 제로세팅용 최신 데이터 캐시
+
+  async function loadBaselines(){
+    const date = todayKST();
+    const url = `${SUPABASE_URL}/rest/v1/${BASELINE_TABLE}` +
+                `?baseline_date=eq.${date}&select=device_id,machine_code,baseline_count`;
+    try{
+      const res = await fetch(url, {
+        headers:{ 'apikey':SUPABASE_KEY, 'Authorization':'Bearer '+SUPABASE_KEY }
+      });
+      if(!res.ok) return;
+      const data = await res.json();
+      baselineCache = {};
+      for(const b of data){
+        baselineCache[`${b.device_id}|${b.machine_code}`] = {
+          date: date, count: Number(b.baseline_count)||0
+        };
+      }
+    }catch(e){ console.error('baseline load', e); }
+  }
+
+  function getBaseline(dev, code){
+    const b = baselineCache[`${dev}|${code}`];
+    return (b && b.date === todayKST()) ? b.count : 0;
+  }
+
+  // 당일 카운트 = 현재 누적 - baseline
+  function todayCount(dev, code, cumulative){
+    const base = getBaseline(dev, code);
+    const v = (cumulative||0) - base;
+    return v > 0 ? v : 0;
+  }
+
+  // 제로세팅: 현재 누적값을 오늘 baseline으로 UPSERT 저장
+  async function zeroSet(dev, code, cumulative){
+    const date = todayKST();
+    const body = [{
+      device_id: dev, machine_code: code,
+      baseline_date: date, baseline_count: cumulative||0,
+      created_at: new Date().toISOString().replace('Z','+00:00')
+    }];
+    try{
+      const res = await fetch(
+        `${SUPABASE_URL}/rest/v1/${BASELINE_TABLE}?on_conflict=device_id,machine_code,baseline_date`,
+        {
+          method:'POST',
+          headers:{
+            'Content-Type':'application/json',
+            'apikey':SUPABASE_KEY,
+            'Authorization':'Bearer '+SUPABASE_KEY,
+            'Prefer':'resolution=merge-duplicates,return=minimal'
+          },
+          body: JSON.stringify(body)
+        }
+      );
+      if(res.ok){
+        baselineCache[`${dev}|${code}`] = { date, count: cumulative||0 };
+        return true;
+      }
+      console.error('zeroSet fail', res.status, await res.text());
+      return false;
+    }catch(e){ console.error('zeroSet', e); return false; }
+  }
+
+  // 디바이스 전체 채널 제로세팅
+  async function zeroSetDevice(dev){
+    if(!confirm(`${dev}의 모든 채널을 오늘 0점으로 초기화하시겠습니까?\n(누적값은 유지되고, 당일 카운트만 0부터 시작합니다)`)) return;
+    const g = lastGrouped[dev];
+    if(!g) return;
+    const tasks = [];
+    for(const code of Object.keys(g)){
+      const rec = g[code];
+      if(rec) tasks.push(zeroSet(dev, code, rec.shot_count||0));
+    }
+    await Promise.all(tasks);
+    tick();
+  }
+
+  // 단일 채널 제로세팅
+  async function zeroSetChannel(dev, code){
+    const g = lastGrouped[dev];
+    const rec = g && g[code];
+    const cum = rec ? (rec.shot_count||0) : 0;
+    if(!confirm(`${dev} ${code} 채널을 오늘 0점으로 초기화하시겠습니까?`)) return;
+    await zeroSet(dev, code, cum);
+    tick();
+  }
+
+
   // ===== 호기별 집계 =====
+  // 배출구명에 '불량'/'NG'가 포함되면 불량, 그 외(양품/OK 등)는 양품으로 자동 판정
+  function outletKind(outlet){
+    if(!outlet) return 'pass';
+    const s = outlet.toLowerCase();
+    if(outlet.includes('불량') || s.includes('ng') || s.includes('fail') || outlet.includes('리젝') || s.includes('reject')) return 'fail';
+    return 'pass';
+  }
   function aggregateByMachine(grouped){
-    // { "3호기": { pass: 0, fail: 0, lastTs: null } }
     const summary = {};
     for(const dev of Object.keys(grouped)){
-      for(const di of DI_LIST){
+      const channelList = (dev.startsWith('ESP_S')) ? S_LIST : DI_LIST;
+      for(const di of channelList){
         const rec = grouped[dev][di];
         if(!rec) continue;
         const map = getMap(dev, di);
@@ -320,11 +429,11 @@
         if(!summary[map.machine]){
           summary[map.machine] = { pass:0, fail:0, lastTs:null };
         }
-        const cnt = rec.shot_count || 0;
-        if(map.type === '양품'){
-          summary[map.machine].pass += cnt;
-        } else if(map.type === '불량'){
+        const cnt = todayCount(dev, di, rec.shot_count || 0);
+        if(outletKind(map.outlet) === 'fail'){
           summary[map.machine].fail += cnt;
+        } else {
+          summary[map.machine].pass += cnt;
         }
         if(!summary[map.machine].lastTs || new Date(rec.created_at) > new Date(summary[map.machine].lastTs)){
           summary[map.machine].lastTs = rec.created_at;
@@ -415,6 +524,7 @@
               <span>MAC: <b>${mac}</b></span>
               <span>IP: <b>${ip}</b></span>
               <span>최신: <b>${fmtKST(lastTs)}</b></span>
+              <button class="btn zero-btn" onclick="zeroSetDevice('${dev}')" style="margin-left:8px">전체 당일 0</button>
             </div>
           </div>
           <div class="grid">
@@ -423,10 +533,14 @@
       const renderList = (dev.startsWith('ESP_S') || hasS) ? S_LIST : DI_LIST;
       for(let i = 0; i < renderList.length; i++){
         const di = renderList[i];
-        const gpio = dev.startsWith('ESP_S') ? (i === 0 ? 34 : '?') : (4 + i);
+        const map = getMap(dev, di);
+        const manualGpio = map?.gpio;
+        const gpio = (manualGpio != null && manualGpio !== '') ? manualGpio
+                   : ((dev.startsWith('ESP_S') || hasS) ? (S_GPIO[di] || '?') : (4 + i));
         const rec = channels[di];
         const cnt = rec ? (rec.shot_count || 0) : 0;
-        total += cnt;
+        const dayCnt = rec ? todayCount(dev, di, cnt) : 0;
+        total += dayCnt;
         const ivl = rec ? (rec.shot_interval_ms || 0) : 0;
         const ts = rec ? rec.created_at : null;
         
@@ -436,33 +550,40 @@
           cls = (age < RECENT_THRESHOLD_MS) ? 'card recent' : 'card has-data';
         }
         
-        const map = getMap(dev, di);
-        if(map?.type === '양품') cls += ' pass';
-        else if(map?.type === '불량') cls += ' fail';
+        if(map?.outlet){
+          cls += (outletKind(map.outlet) === 'fail') ? ' fail' : ' pass';
+        }
         
         const mapLabel = map?.machine 
-          ? `${map.machine} · ${map.type||'-'}`
+          ? `${map.machine}${map.outlet ? ' · '+map.outlet : ''}`
           : '미매핑';
         const mapCls = map?.machine ? '' : 'empty';
         
         html += `
           <div class="${cls}">
             <div class="ch-head">
-              <div class="ch-name">${di}</div>
+              <div class="ch-name">${di}${map?.sensor ? ` <span style="font-size:9px;color:var(--muted);background:#1a2332;padding:1px 5px;border-radius:3px;vertical-align:middle">${map.sensor}</span>` : ''}</div>
               <div class="ch-gpio">GPIO${gpio}</div>
             </div>
             <div class="mapping ${mapCls}">${mapLabel}</div>
-            <div class="count">${cnt.toLocaleString()}</div>
-            <div class="count-label">누적 SHOT</div>
+            <div class="count">${dayCnt.toLocaleString()}</div>
+            <div class="count-label">당일 SHOT</div>
             <div class="stats">
               <div class="stat">
-                <div class="stat-label">마지막</div>
-                <div class="stat-val">${fmtKST(ts)}</div>
+                <div class="stat-label">누적</div>
+                <div class="stat-val">${cnt.toLocaleString()}</div>
               </div>
               <div class="stat">
                 <div class="stat-label">간격(ms)</div>
                 <div class="stat-val">${ivl.toLocaleString()}</div>
               </div>
+            </div>
+            <div class="stats" style="margin-top:6px">
+              <div class="stat">
+                <div class="stat-label">마지막</div>
+                <div class="stat-val">${fmtKST(ts)}</div>
+              </div>
+              <button class="btn zero-btn" onclick="zeroSetChannel('${dev}','${di}')" ${rec?'':'disabled'}>당일 0</button>
             </div>
           </div>
         `;
@@ -495,16 +616,24 @@
       const modalList = (dev.startsWith('ESP_S') || mHasS) ? S_LIST : DI_LIST;
       for(const di of modalList){
         const cur = mapping[dev]?.[di] || {};
+        const defGpio = (S_GPIO[di] != null) ? S_GPIO[di] : '';
         html += `
           <div class="modal-row">
             <span class="di-label">${di}</span>
-            <input type="text" placeholder="호기명 (예: 3호기)" 
+            <input type="text" placeholder="호기명 (예: 9호기)" 
                    data-dev="${dev}" data-di="${di}" data-field="machine"
-                   value="${cur.machine || ''}">
-            <select data-dev="${dev}" data-di="${di}" data-field="type">
-              <option value="">- 종류 선택 -</option>
-              <option value="양품" ${cur.type==='양품'?'selected':''}>양품</option>
-              <option value="불량" ${cur.type==='불량'?'selected':''}>불량</option>
+                   value="${cur.machine || ''}" style="flex:1.2">
+            <input type="text" placeholder="배출구명 (예: 양품배출)" 
+                   data-dev="${dev}" data-di="${di}" data-field="outlet"
+                   value="${cur.outlet || ''}" style="flex:1.4">
+            <input type="text" placeholder="GPIO" 
+                   data-dev="${dev}" data-di="${di}" data-field="gpio"
+                   value="${cur.gpio != null && cur.gpio !== '' ? cur.gpio : defGpio}" 
+                   style="flex:0.5; text-align:center">
+            <select data-dev="${dev}" data-di="${di}" data-field="sensor" style="flex:0.7">
+              <option value="">- 센서 -</option>
+              <option value="NPN" ${cur.sensor==='NPN'?'selected':''}>NPN</option>
+              <option value="PNP" ${cur.sensor==='PNP'?'selected':''}>PNP</option>
             </select>
             <button class="btn" onclick="clearRow('${dev}','${di}')" style="padding:4px 10px">지움</button>
           </div>
@@ -563,7 +692,7 @@
     for(const dev of Object.keys(newMap)){
       for(const di of Object.keys(newMap[dev])){
         const m = newMap[dev][di];
-        if(!m.machine && !m.type){
+        if(!m.machine && !m.gpio && !m.sensor && !m.outlet){
           delete newMap[dev][di];
         }
       }
@@ -588,15 +717,29 @@
     const rows = await fetchLatest();
     if(rows){
       const grouped = processRows(rows);
+      lastGrouped = grouped;                 // 제로세팅용
       knownDevices = Object.keys(grouped);  // 설정 모달용
       render(grouped);
     }
   }
 
+  // baseline 자정 자동 갱신 체크 (날짜 바뀌면 재로드)
+  let lastBaselineDate = todayKST();
+  async function checkDayRollover(){
+    const t = todayKST();
+    if(t !== lastBaselineDate){
+      lastBaselineDate = t;
+      await loadBaselines();   // 새 날짜 baseline (없으면 0 → 당일=누적 전체부터 시작)
+    }
+  }
+
   // 초기화
   loadMapping();
-  tick();
-  setInterval(tick, POLL_MS);
+  (async ()=>{
+    await loadBaselines();
+    await tick();
+  })();
+  setInterval(async ()=>{ await checkDayRollover(); tick(); }, POLL_MS);
 </script>
 
 </body>
