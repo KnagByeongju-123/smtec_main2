@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SHOT 카운터 모니터 v3.0</title>
+<title>SHOT 카운터 모니터 v3.1</title>
 <style>
   :root{
     --bg:#0f1419; --panel:#1a2332; --border:#2a3a52;
@@ -185,7 +185,7 @@
 <body>
 
 <div class="header">
-  <h1>📡 SHOT 카운터 모니터 v3.0</h1>
+  <h1>📡 SHOT 카운터 모니터 v3.1</h1>
   <div class="meta">
     <span><span class="status-dot" id="connDot"></span><b id="connText">연결 확인 중</b></span>
     <span>장비: <b id="deviceCount">0</b></span>
@@ -206,7 +206,7 @@
 
 <div class="footer">
   <span>Supabase <b>shot_count</b> · 폴링 <b>2초</b> · 매핑은 브라우저 <b>localStorage</b>에 저장됨</span>
-  <span>v3.0</span>
+  <span>v3.1</span>
 </div>
 
 <!-- 설정 모달 -->
@@ -262,6 +262,10 @@
   }
   function persistMapping(){
     localStorage.setItem(STORAGE_KEY, JSON.stringify(mapping));
+  }
+  // ===== 매핑 조회 (v3.0에서 누락되어 있던 함수 - 복구) =====
+  function getMap(deviceId, di){
+    return mapping[deviceId]?.[di] || null;
   }
 
   // ===== KST 시각 =====
@@ -456,7 +460,9 @@
   // ===== 메인 렌더 =====
   function render(grouped){
     const container = document.getElementById('container');
-    const devices = Object.keys(grouped).filter(d => d !== 'LEGACY').sort();
+    // 데이터가 들어온 디바이스 + 매핑만 해둔 디바이스(비가동 시에도 표시)
+    const devices = [...new Set([...Object.keys(grouped), ...Object.keys(mapping)])]
+                      .filter(d => d !== 'LEGACY').sort();
 
     // 호기별 집계 영역
     const summary = aggregateByMachine(grouped);
@@ -498,7 +504,7 @@
 
     // 디바이스별 원시 영역
     if(devices.length === 0){
-      container.innerHTML = `<div class="no-device">아직 데이터가 없습니다. ESP32에서 SHOT 신호 대기 중...</div>`;
+      container.innerHTML = `<div class="no-device">아직 데이터도 매핑도 없습니다.<br>ESP32에서 SHOT 신호가 오면 자동 표시되며, 비가동 중에 미리 보려면 우측 상단 <b>⚙️ 호기 매핑 설정</b>에서 디바이스를 등록하세요.</div>`;
       document.getElementById('deviceCount').textContent = '0';
       document.getElementById('totalCount').textContent = '0';
       return;
@@ -509,9 +515,10 @@
     let html = '';
 
     for(const dev of devices){
-      const channels = grouped[dev];
+      const channels = grouped[dev] || {};
       let mac = '-', ip = '-', lastTs = null;
-      const hasS = Object.keys(channels).some(k => k.startsWith('S'));
+      const hasS = Object.keys(channels).some(k => k.startsWith('S'))
+                || (mapping[dev] && Object.keys(mapping[dev]).some(k => k.startsWith('S')));
       const chList = (dev.startsWith('ESP_S') || hasS) ? S_LIST : DI_LIST;
       for(const di of chList){
         const r = channels[di];
