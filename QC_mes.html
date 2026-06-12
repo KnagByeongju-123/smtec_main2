@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SHOT 카운터 모니터 v3.4</title>
+<title>SHOT 카운터 모니터 v3.5</title>
 <style>
   :root{
     --bg:#0f1419; --panel:#1a2332; --border:#2a3a52;
@@ -193,7 +193,7 @@
 <body>
 
 <div class="header">
-  <h1>📡 SHOT 카운터 모니터 v3.4</h1>
+  <h1>📡 SHOT 카운터 모니터 v3.5</h1>
   <div class="meta">
     <span><span class="status-dot" id="connDot"></span><b id="connText">연결 확인 중</b></span>
     <span>장비: <b id="deviceCount">0</b></span>
@@ -213,8 +213,8 @@
 <div id="container"></div>
 
 <div class="footer">
-  <span>Supabase <b>shot_count</b> · 폴링 <b>2초</b> · 매핑은 브라우저 <b>localStorage</b>에 저장됨</span>
-  <span>v3.4</span>
+  <span>Supabase <b>shot_count</b> · 폴링 <b>2초</b> · 매핑은 <b>Supabase</b>에 저장 (localStorage 캐시)</span>
+  <span>v3.5</span>
 </div>
 
 <!-- 설정 모달 -->
@@ -259,17 +259,46 @@
   // }
   let mapping = {};
 
-  // ===== localStorage 로드 / 저장 =====
-  function loadMapping(){
+  // ===== 매핑 로드 / 저장 (Supabase 서버 + localStorage 캐시) =====
+  const MAPPING_TABLE = 'qc_mapping';
+  async function loadMapping(){
     try{
-      const raw = localStorage.getItem(STORAGE_KEY);
-      mapping = raw ? JSON.parse(raw) : {};
+      const r = await fetch(`${SUPABASE_URL}/rest/v1/${MAPPING_TABLE}?id=eq.1&select=data`, {
+        headers:{ 'apikey':SUPABASE_KEY, 'Authorization':'Bearer '+SUPABASE_KEY }
+      });
+      if(r.ok){
+        const rows = await r.json();
+        if(rows && rows[0] && rows[0].data){
+          mapping = rows[0].data;
+          try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(mapping)); }catch(_){}
+          return;
+        }
+      }
+      throw new Error('서버 매핑 없음');
     }catch(e){
-      mapping = {};
+      // 서버 실패 시 localStorage 폴백
+      try{
+        const raw = localStorage.getItem(STORAGE_KEY);
+        mapping = raw ? JSON.parse(raw) : {};
+      }catch(_){ mapping = {}; }
     }
   }
-  function persistMapping(){
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(mapping));
+  async function persistMapping(){
+    // 즉시 로컬 캐시
+    try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(mapping)); }catch(_){}
+    // 서버 저장 (upsert id=1)
+    try{
+      await fetch(`${SUPABASE_URL}/rest/v1/${MAPPING_TABLE}?on_conflict=id`, {
+        method:'POST',
+        headers:{
+          'apikey':SUPABASE_KEY,
+          'Authorization':'Bearer '+SUPABASE_KEY,
+          'Content-Type':'application/json',
+          'Prefer':'resolution=merge-duplicates'
+        },
+        body: JSON.stringify([{ id:1, data:mapping }])
+      });
+    }catch(e){ console.error('[매핑 서버 저장 실패]', e); }
   }
   // ===== 매핑 조회 (v3.0에서 누락되어 있던 함수 - 복구) =====
   function getMap(deviceId, di){
@@ -639,7 +668,11 @@
     const container = document.getElementById('mappingContainer');
     let html = '';
     for(const dev of allDevs){
-      html += `<div class="modal-section"><h3>${dev}</h3>`;
+      html += `<div class="modal-section">
+        <h3 style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <span>${dev}</span>
+          <button class="btn danger" onclick="deleteDevice('${dev}')" style="padding:4px 12px;font-size:12px">항목삭제</button>
+        </h3>`;
       const mHasS = mapping[dev] && Object.keys(mapping[dev]).some(k=>k.startsWith('S'));
       const modalList = (dev.startsWith('ESP_S') || mHasS) ? S_LIST : DI_LIST;
       for(const di of modalList){
@@ -675,7 +708,7 @@
                 <option value="PNP" ${cur.sensor==='PNP'?'selected':''}>PNP</option>
               </select>
             </div>
-            <button class="btn" onclick="clearRow('${dev}','${di}')" style="padding:6px 10px;align-self:flex-end">지움</button>
+            <button class="btn" onclick="clearRow('${dev}','${di}')" style="padding:6px 10px;align-self:flex-end">내용삭제</button>
           </div>
         `;
       }
@@ -706,8 +739,16 @@
   }
   
   function clearRow(dev, di){
+    // 내용삭제: 해당 채널 입력값만 비움 (행은 유지)
     if(mapping[dev]) delete mapping[dev][di];
     openSettings(); // 새로 그리기
+  }
+
+  function deleteDevice(dev){
+    // 항목삭제: 디바이스 항목 자체를 목록에서 제거
+    if(!confirm(`${dev} 디바이스 항목을 목록에서 삭제하시겠습니까?\n(실시간 데이터가 다시 들어오면 자동으로 재생성됩니다)`)) return;
+    delete mapping[dev];
+    openSettings();
   }
   
   function addNewDevice(){
@@ -717,7 +758,7 @@
     openSettings();
   }
   
-  function saveMapping(){
+  async function saveMapping(){
     // 모달 안의 모든 input/select 읽기
     const newMap = {};
     document.querySelectorAll('[data-dev]').forEach(el => {
@@ -739,15 +780,15 @@
       if(Object.keys(newMap[dev]).length === 0) delete newMap[dev];
     }
     mapping = newMap;
-    persistMapping();
+    await persistMapping();
     closeSettings();
     tick(); // 즉시 갱신
   }
   
-  function resetMapping(){
-    if(!confirm('모든 매핑을 삭제하시겠습니까?')) return;
+  async function resetMapping(){
+    if(!confirm('모든 매핑을 삭제하시겠습니까? (서버에서도 삭제됩니다)')) return;
     mapping = {};
-    persistMapping();
+    await persistMapping();
     closeSettings();
     tick();
   }
@@ -779,12 +820,12 @@
   }
 
   // 초기화
-  loadMapping();
-  // baseline은 백그라운드로 (실패해도 화면 표시에 영향 없음)
-  loadBaselines().catch(e => console.error('baseline init', e));
-  // 데이터는 즉시 표시
-  tick();
-  setInterval(async ()=>{ await checkDayRollover(); tick(); }, POLL_MS);
+  (async ()=>{
+    await loadMapping();   // 서버에서 매핑 먼저 로드 (실패 시 localStorage 폴백)
+    loadBaselines().catch(e => console.error('baseline init', e));
+    tick();
+    setInterval(async ()=>{ await checkDayRollover(); tick(); }, POLL_MS);
+  })();
 </script>
 
 </body>
