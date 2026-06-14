@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SBC 검사기일보 v2.7</title>
+<title>SBC 검사기일보 v3.1</title>
 <style>
   :root{
     --bg:#0b1220; --panel:#111a2b; --line:#1f2a3d; --text:#e6ebf3;
@@ -95,7 +95,7 @@
 <body>
 <div class="wrap">
   <div class="topbar">
-    <h1>📋 SBC 검사기일보 <span class="ver">v2.7</span></h1>
+    <h1>📋 SBC 검사기일보 <span class="ver">v3.1</span></h1>
     <button class="btn ghost" onclick="openSettings()">⚙️ 설정</button>
   </div>
 
@@ -131,7 +131,6 @@
       <div class="upd" id="upd"></div>
       <div class="actions">
         <button class="btn" onclick="completeWork()">✅ 작업완료</button>
-        <button class="btn amber" onclick="switchModel()">🔄 기종전환</button>
       </div>
     </div>
   </div>
@@ -159,8 +158,8 @@
         <button class="btn sm" onclick="openHistEdit()" style="margin-left:auto">+ 추가</button>
       </div>
       <table>
-        <thead><tr><th>일자</th><th>검사자</th><th>기종</th><th>호기</th><th>합격수량</th><th>관리</th></tr></thead>
-        <tbody id="histBody"><tr><td colspan="6" class="empty">조회 버튼을 누르세요.</td></tr></tbody>
+        <thead><tr><th>일자</th><th>검사자</th><th>기종</th><th>호기</th><th>합격수량</th><th>C/T</th><th>SPM</th><th>관리</th></tr></thead>
+        <tbody id="histBody"><tr><td colspan="8" class="empty">조회 버튼을 누르세요.</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -260,7 +259,7 @@
     inspector = currentInspector();
     try{ modelList = JSON.parse(localStorage.getItem(LS_MODELS)||'[]'); }catch(_){ modelList=[]; }
     currentModel = localStorage.getItem(LS_CURMODEL) || '';
-    try{ baseline = JSON.parse(localStorage.getItem(LS_BASELINE)||'{"date":"","counts":{}}'); }catch(_){ baseline={date:'',counts:{}}; }
+    try{ baseline = JSON.parse(localStorage.getItem(LS_BASELINE)||'{"date":"","counts":{},"start":""}'); }catch(_){ baseline={date:'',counts:{},start:''}; }
     try{ selectedMachines = JSON.parse(localStorage.getItem(LS_MACHINES)||'[]'); }catch(_){ selectedMachines=[]; }
     try{ machineList = JSON.parse(localStorage.getItem(LS_MLIST)||'null'); }catch(_){ machineList=null; }
     if(!machineList || !machineList.length) machineList=['3','4','5','6','7','8','9','10'];
@@ -354,18 +353,32 @@
     renderMain(workByMachine(lastCounts));
   }
 
-  // ===== 기종 선택/전환 =====
-  function onModelChange(){
-    currentModel=document.getElementById('modelSelect').value;
+  // ===== 기종 선택 (변경 시 이전 기종 작업분 자동 저장) =====
+  async function onModelChange(){
+    const newModel=document.getElementById('modelSelect').value;
+    if(currentModel && currentModel!==newModel){
+      await autoSavePrev();
+    }
+    currentModel=newModel;
     localStorage.setItem(LS_CURMODEL,currentModel);
-    // 기종 선택 시점부터 카운트 → baseline 갱신
-    baseline={date:todayStr(),counts:{...lastCounts}}; saveBaseline();
+    baseline={date:todayStr(),counts:{...lastCounts},start:kstNow()}; saveBaseline();
     renderMain(workByMachine(lastCounts));
     syncSession();
   }
+  async function autoSavePrev(){
+    const insp=currentInspector();
+    if(!insp || selectedMachines.length===0) return;
+    const byM=workByMachine(lastCounts);
+    const total=selectedMachines.reduce((s,m)=>s+(byM[m]||0),0);
+    if(total<=0) return;
+    const rows=[{ report_date:todayStr(), inspector:insp, customer:'SBC', model:currentModel, machine:selectedMachines.join(','), qty:total, start_time:baseline.start||null, end_time:kstNow() }];
+    try{
+      const r=await fetch(`${SUPABASE_URL}/rest/v1/${REPORT_TABLE}`,{method:'POST',headers:HDR_J,body:JSON.stringify(rows)});
+      if(r.ok) alert(`이전 기종(${currentModel}) 합격수량 ${total.toLocaleString()}이(가) 자동 저장되었습니다.`);
+    }catch(e){ console.error('자동 저장 실패',e); }
+  }
 
   function completeWork(){ openFinishModal('complete'); }
-  function switchModel(){ openFinishModal('switch'); }
 
   // ===== 작업종료 최종수량 숫자판 모달 =====
   function openFinishModal(mode){
@@ -405,12 +418,12 @@
     const el=document.getElementById('ff_total');
     const v=parseInt(el?el.value:0)||0;
     if(v<=0){ alert('저장할 수량이 없습니다.'); return; }
-    const rows=[{ report_date:todayStr(), inspector:insp, customer:'SBC', model:currentModel, machine:selectedMachines.join(','), qty:v }];
+    const rows=[{ report_date:todayStr(), inspector:insp, customer:'SBC', model:currentModel, machine:selectedMachines.join(','), qty:v, start_time:baseline.start||null, end_time:kstNow() }];
     try{
       const r=await fetch(`${SUPABASE_URL}/rest/v1/${REPORT_TABLE}`,{method:'POST',headers:HDR_J,body:JSON.stringify(rows)});
       if(!r.ok) throw new Error(await r.text());
     }catch(e){ alert('이력 저장 실패: '+e.message); return; }
-    baseline={date:todayStr(),counts:{...lastCounts}}; saveBaseline();
+    baseline={date:todayStr(),counts:{...lastCounts},start:kstNow()}; saveBaseline();
     closeFinish();
     renderMain(workByMachine(lastCounts));
     if(finishMode==='switch'){
@@ -432,7 +445,7 @@
     if(rtTimer){ clearInterval(rtTimer); rtTimer=null; }
     if(t==='rt'){
       loadRealtime();
-      rtTimer=setInterval(loadRealtime, 15000);
+      rtTimer=setInterval(loadRealtime, 10000);
     }
     if(t==='hist'){
       if(!document.getElementById('fTo').value){
@@ -485,6 +498,18 @@
 
   // ===== 이력 CRUD =====
   function openPicker(id){ const e=document.getElementById(id); try{ e.showPicker(); }catch(_){ e.focus(); e.click(); } }
+  function calcCT(row){
+    if(!row.start_time || !row.end_time || !row.qty || row.qty<=0) return '-';
+    const sec=(new Date(row.end_time).getTime()-new Date(row.start_time).getTime())/1000;
+    if(sec<=0) return '-';
+    return (sec/row.qty).toFixed(1)+'s';
+  }
+  function calcSPM(row){
+    if(!row.start_time || !row.end_time || !row.qty || row.qty<=0) return '-';
+    const sec=(new Date(row.end_time).getTime()-new Date(row.start_time).getTime())/1000;
+    if(sec<=0) return '-';
+    return Math.round(row.qty*60/sec);
+  }
   async function loadHistory(){
     const from=document.getElementById('fFrom').value, to=document.getElementById('fTo').value;
     let url=`${SUPABASE_URL}/rest/v1/${REPORT_TABLE}?select=*&order=report_date.desc,id.desc&limit=500`;
@@ -494,15 +519,17 @@
     try{
       const r=await fetch(url,{headers:HDR});
       const rows=await r.json();
-      if(!rows||rows.length===0){ tb.innerHTML=`<tr><td colspan="6" class="empty">이력이 없습니다.</td></tr>`; return; }
+      if(!rows||rows.length===0){ tb.innerHTML=`<tr><td colspan="8" class="empty">이력이 없습니다.</td></tr>`; return; }
       tb.innerHTML=rows.map(x=>`<tr>
         <td>${x.report_date||''}</td><td>${x.inspector||''}</td><td>${x.model||''}</td>
         <td class="machine">${x.machine||''}호기</td><td class="num pass">${(x.qty||0).toLocaleString()}</td>
+        <td class="num">${calcCT(x)}</td>
+        <td class="num">${calcSPM(x)}</td>
         <td><div class="row-act">
           <button class="btn ghost sm" onclick='openHistEdit(${JSON.stringify(x)})'>수정</button>
           <button class="btn danger sm" onclick="delHist(${x.id})">삭제</button>
         </div></td></tr>`).join('');
-    }catch(e){ tb.innerHTML=`<tr><td colspan="6" class="empty">조회 실패: ${e.message}</td></tr>`; }
+    }catch(e){ tb.innerHTML=`<tr><td colspan="8" class="empty">조회 실패: ${e.message}</td></tr>`; }
   }
   function openHistEdit(row){
     document.getElementById('histModalTitle').textContent= row?'이력 수정':'이력 추가';
