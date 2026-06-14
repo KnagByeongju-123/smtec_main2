@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SBC 검사기일보 v3.2</title>
+<title>SBC 검사기일보 v3.4</title>
 <style>
   :root{
     --bg:#0b1220; --panel:#111a2b; --line:#1f2a3d; --text:#e6ebf3;
@@ -95,7 +95,7 @@
 <body>
 <div class="wrap">
   <div class="topbar">
-    <h1>📋 SBC 검사기일보 <span class="ver">v3.2</span></h1>
+    <h1>📋 SBC 검사기일보 <span class="ver">v3.4</span></h1>
     <button class="btn ghost" onclick="openSettings()">⚙️ 설정</button>
   </div>
 
@@ -160,8 +160,8 @@
         <button class="btn danger sm" onclick="deleteRange()">기간삭제</button>
       </div>
       <table>
-        <thead><tr><th>일자</th><th>검사자</th><th>기종</th><th>호기</th><th>합격수량</th><th>C/T</th><th>SPM</th><th>관리</th></tr></thead>
-        <tbody id="histBody"><tr><td colspan="8" class="empty">조회 버튼을 누르세요.</td></tr></tbody>
+        <thead><tr><th>일자</th><th>검사자</th><th>기종</th><th>호기</th><th>카운팅</th><th>최종수량</th><th>C/T</th><th>SPM</th><th>관리</th></tr></thead>
+        <tbody id="histBody"><tr><td colspan="9" class="empty">조회 버튼을 누르세요.</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -230,7 +230,7 @@
 
   let mapping={}, inspector='', modelList=[], currentModel='', baseline={date:'',counts:{}};
   let selectedMachines=[], lastCounts={}, machineList=[], lastHistRows=[];
-  let finishMode='complete', activeFF=null, rtTimer=null;
+  let finishMode='complete', activeFF=null, rtTimer=null, finishAuto=0;
 
   // 로그인(PIN 인증) 정보에서 검사자명 자동 추출
   function getLoginUser(){
@@ -277,16 +277,24 @@
   }
 
   // ===== 당일 채널별 카운트 =====
+  // QC 모니터와 동일: 각 채널(machine_code)의 최신 행 누적 shot_count
   async function loadToday(){
-    const {start,end}=todayRange();
-    const url=`${SUPABASE_URL}/rest/v1/shot_count?detected_at=gte.${encodeURIComponent(start)}&detected_at=lt.${encodeURIComponent(end)}&select=machine_code&limit=200000`;
+    const codes=[];
+    for(const dev in mapping) for(const ch in mapping[dev]) if(!codes.includes(ch)) codes.push(ch);
     const counts={};
+    if(!codes.length) return counts;
+    const url=`${SUPABASE_URL}/rest/v1/shot_count?machine_code=in.(${codes.join(',')})&order=created_at.desc&limit=800`;
     try{
       const r=await fetch(url,{headers:HDR});
-      if(r.ok){ const rows=await r.json(); rows.forEach(x=>counts[x.machine_code]=(counts[x.machine_code]||0)+1); }
-    }catch(e){ console.error('당일 집계 실패',e); }
+      if(r.ok){
+        const rows=await r.json();
+        rows.forEach(x=>{ if(!(x.machine_code in counts)) counts[x.machine_code]=Number(x.shot_count)||0; });
+      }
+    }catch(e){ console.error('카운트 조회 실패',e); }
     return counts;
   }
+  // 호기명 정규화 ('10호기' ↔ '10' 매칭)
+  function normMachine(s){ return String(s||'').replace(/[^0-9]/g,''); }
 
   // ===== 담당 호기 선택 (설정 등록 호기 목록) =====
   function renderChips(){
@@ -315,7 +323,7 @@
       let sum=0;
       for(const dev in mapping) for(const ch in mapping[dev]){
         const m=mapping[dev][ch];
-        if(m && String(m.machine)===String(machine)){
+        if(m && normMachine(m.machine)===normMachine(machine)){
           sum += Math.max(0,(counts[ch]||0)-(base[ch]||0));
         }
       }
@@ -373,7 +381,7 @@
     const byM=workByMachine(lastCounts);
     const total=selectedMachines.reduce((s,m)=>s+(byM[m]||0),0);
     if(total<=0) return;
-    const rows=[{ report_date:todayStr(), inspector:insp, customer:'SBC', model:currentModel, machine:selectedMachines.join(','), qty:total, start_time:baseline.start||null, end_time:kstNow() }];
+    const rows=[{ report_date:todayStr(), inspector:insp, customer:'SBC', model:currentModel, machine:selectedMachines.join(','), qty:total, count_qty:total, start_time:baseline.start||null, end_time:kstNow() }];
     try{
       const r=await fetch(`${SUPABASE_URL}/rest/v1/${REPORT_TABLE}`,{method:'POST',headers:HDR_J,body:JSON.stringify(rows)});
       if(r.ok) alert(`이전 기종(${currentModel}) 합격수량 ${total.toLocaleString()}이(가) 자동 저장되었습니다.`);
@@ -390,6 +398,7 @@
     finishMode=mode;
     const byM=workByMachine(lastCounts);
     const total=selectedMachines.reduce((s,m)=>s+(byM[m]||0),0);
+    finishAuto=total;
     document.getElementById('finishTitle').textContent = (mode==='switch'?'기종전환 · 기종별 총수량':'작업종료 · 기종별 총수량');
     document.getElementById('finishFields').innerHTML=`
       <div class="ff-row">
@@ -420,7 +429,7 @@
     const el=document.getElementById('ff_total');
     const v=parseInt(el?el.value:0)||0;
     if(v<=0){ alert('저장할 수량이 없습니다.'); return; }
-    const rows=[{ report_date:todayStr(), inspector:insp, customer:'SBC', model:currentModel, machine:selectedMachines.join(','), qty:v, start_time:baseline.start||null, end_time:kstNow() }];
+    const rows=[{ report_date:todayStr(), inspector:insp, customer:'SBC', model:currentModel, machine:selectedMachines.join(','), qty:v, count_qty:finishAuto, start_time:baseline.start||null, end_time:kstNow() }];
     try{
       const r=await fetch(`${SUPABASE_URL}/rest/v1/${REPORT_TABLE}`,{method:'POST',headers:HDR_J,body:JSON.stringify(rows)});
       if(!r.ok) throw new Error(await r.text());
@@ -484,7 +493,7 @@
     function dayQty(machine){
       let s=0;
       for(const dev in mapping) for(const ch in mapping[dev]){
-        const m=mapping[dev][ch]; if(m && String(m.machine)===String(machine)) s+=counts[ch]||0;
+        const m=mapping[dev][ch]; if(m && normMachine(m.machine)===normMachine(machine)) s+=counts[ch]||0;
       }
       return s;
     }
@@ -522,17 +531,19 @@
       const r=await fetch(url,{headers:HDR});
       const rows=await r.json();
       lastHistRows = rows||[];
-      if(!rows||rows.length===0){ tb.innerHTML=`<tr><td colspan="8" class="empty">이력이 없습니다.</td></tr>`; return; }
+      if(!rows||rows.length===0){ tb.innerHTML=`<tr><td colspan="9" class="empty">이력이 없습니다.</td></tr>`; return; }
       tb.innerHTML=rows.map(x=>`<tr>
         <td>${x.report_date||''}</td><td>${x.inspector||''}</td><td>${x.model||''}</td>
-        <td class="machine">${x.machine||''}호기</td><td class="num pass">${(x.qty||0).toLocaleString()}</td>
+        <td class="machine">${x.machine||''}호기</td>
+        <td class="num">${x.count_qty!=null?Number(x.count_qty).toLocaleString():'-'}</td>
+        <td class="num pass">${(x.qty||0).toLocaleString()}</td>
         <td class="num">${calcCT(x)}</td>
         <td class="num">${calcSPM(x)}</td>
         <td><div class="row-act">
           <button class="btn ghost sm" onclick='openHistEdit(${JSON.stringify(x)})'>수정</button>
           <button class="btn danger sm" onclick="delHist(${x.id})">삭제</button>
         </div></td></tr>`).join('');
-    }catch(e){ tb.innerHTML=`<tr><td colspan="8" class="empty">조회 실패: ${e.message}</td></tr>`; }
+    }catch(e){ tb.innerHTML=`<tr><td colspan="9" class="empty">조회 실패: ${e.message}</td></tr>`; }
   }
   function openHistEdit(row){
     document.getElementById('histModalTitle').textContent= row?'이력 수정':'이력 추가';
@@ -578,11 +589,12 @@
   function csvCell(v){ v=(v==null?'':String(v)); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; }
   function downloadExcel(){
     if(!lastHistRows.length){ alert('조회된 이력이 없습니다. 먼저 조회하세요.'); return; }
-    const head=['일자','검사자','기종','호기','합격수량','시작','종료','C/T(s)','SPM'];
+    const head=['일자','검사자','기종','호기','카운팅','최종수량','시작','종료','C/T(s)','SPM'];
     const lines=[head.join(',')];
     lastHistRows.forEach(x=>{
       const ct=calcCT(x).replace('s',''); const spm=calcSPM(x);
-      lines.push([x.report_date,x.inspector,x.model,x.machine,x.qty,fmtTime(x.start_time),fmtTime(x.end_time),ct,spm].map(csvCell).join(','));
+      const cq=(x.count_qty!=null?x.count_qty:'');
+      lines.push([x.report_date,x.inspector,x.model,x.machine,cq,x.qty,fmtTime(x.start_time),fmtTime(x.end_time),ct,spm].map(csvCell).join(','));
     });
     const csv='\uFEFF'+lines.join('\r\n');
     const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
