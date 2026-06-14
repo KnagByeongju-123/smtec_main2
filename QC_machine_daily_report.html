@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SBC 검사기일보 v3.4</title>
+<title>SBC 검사기일보 v3.5</title>
 <style>
   :root{
     --bg:#0b1220; --panel:#111a2b; --line:#1f2a3d; --text:#e6ebf3;
@@ -95,7 +95,7 @@
 <body>
 <div class="wrap">
   <div class="topbar">
-    <h1>📋 SBC 검사기일보 <span class="ver">v3.4</span></h1>
+    <h1>📋 SBC 검사기일보 <span class="ver">v3.5</span></h1>
     <button class="btn ghost" onclick="openSettings()">⚙️ 설정</button>
   </div>
 
@@ -483,13 +483,22 @@
   }
   async function loadRealtime(){
     const tb=document.getElementById('rtBody');
+    const counts=await loadToday();
+    // 작업자/기종 오버레이용 세션 (있으면 사용, 없어도 무방)
     let sessions=[];
     try{
       const start=`${todayStr()}T00:00:00+09:00`;
-      const r=await fetch(`${SUPABASE_URL}/rest/v1/${SESSION_TABLE}?select=*&updated_at=gte.${encodeURIComponent(start)}&order=machine`,{headers:HDR});
-      sessions=await r.json();
-    }catch(e){ tb.innerHTML=`<tr><td colspan="4" class="empty">조회 실패: ${e.message}</td></tr>`; return; }
-    const counts=await loadToday();
+      const r=await fetch(`${SUPABASE_URL}/rest/v1/${SESSION_TABLE}?select=*&updated_at=gte.${encodeURIComponent(start)}`,{headers:HDR});
+      if(r.ok) sessions=await r.json();
+    }catch(_){}
+    const sess={};
+    (sessions||[]).forEach(s=>{ sess[normMachine(s.machine)]={inspector:s.inspector,model:s.model}; });
+    // 매핑된 모든 호기
+    const set=new Set();
+    for(const dev in mapping) for(const ch in mapping[dev]){
+      const m=mapping[dev][ch]; if(m && m.machine) set.add(m.machine);
+    }
+    const machines=[...set].sort((a,b)=>(parseInt(normMachine(a))||0)-(parseInt(normMachine(b))||0));
     function dayQty(machine){
       let s=0;
       for(const dev in mapping) for(const ch in mapping[dev]){
@@ -497,12 +506,13 @@
       }
       return s;
     }
-    if(!sessions || !sessions.length){
-      tb.innerHTML=`<tr><td colspan="4" class="empty">현재 작업 중인 호기가 없습니다.</td></tr>`;
+    if(!machines.length){
+      tb.innerHTML=`<tr><td colspan="4" class="empty">매핑된 호기가 없습니다. QC 모니터에서 호기 매핑을 등록하세요.</td></tr>`;
     }else{
-      tb.innerHTML=sessions.map(x=>`<tr>
-        <td class="machine">${x.machine}호기</td><td>${x.inspector||''}</td><td>${x.model||''}</td>
-        <td class="num pass">${dayQty(x.machine).toLocaleString()}</td></tr>`).join('');
+      tb.innerHTML=machines.map(m=>{
+        const e=sess[normMachine(m)]||{};
+        return `<tr><td class="machine">${normMachine(m)}호기</td><td>${e.inspector||'-'}</td><td>${e.model||'-'}</td><td class="num pass">${dayQty(m).toLocaleString()}</td></tr>`;
+      }).join('');
     }
     document.getElementById('rtUpd').textContent='갱신 '+new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(new Date());
   }
