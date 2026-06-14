@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SBC 검사기일보 v3.1</title>
+<title>SBC 검사기일보 v3.2</title>
 <style>
   :root{
     --bg:#0b1220; --panel:#111a2b; --line:#1f2a3d; --text:#e6ebf3;
@@ -95,7 +95,7 @@
 <body>
 <div class="wrap">
   <div class="topbar">
-    <h1>📋 SBC 검사기일보 <span class="ver">v3.1</span></h1>
+    <h1>📋 SBC 검사기일보 <span class="ver">v3.2</span></h1>
     <button class="btn ghost" onclick="openSettings()">⚙️ 설정</button>
   </div>
 
@@ -155,7 +155,9 @@
         <span>~</span>
         <div class="dwrap"><input type="date" id="fTo"><button class="calbtn" onclick="openPicker('fTo')">📅</button></div>
         <button class="btn ghost sm" onclick="loadHistory()">조회</button>
-        <button class="btn sm" onclick="openHistEdit()" style="margin-left:auto">+ 추가</button>
+        <button class="btn sm" onclick="downloadExcel()">📥 엑셀</button>
+        <button class="btn sm" onclick="openHistEdit()">+ 추가</button>
+        <button class="btn danger sm" onclick="deleteRange()">기간삭제</button>
       </div>
       <table>
         <thead><tr><th>일자</th><th>검사자</th><th>기종</th><th>호기</th><th>합격수량</th><th>C/T</th><th>SPM</th><th>관리</th></tr></thead>
@@ -227,7 +229,7 @@
         LS_MACHINES='qcr_machines', LS_MLIST='qcr_machine_list';
 
   let mapping={}, inspector='', modelList=[], currentModel='', baseline={date:'',counts:{}};
-  let selectedMachines=[], lastCounts={}, machineList=[];
+  let selectedMachines=[], lastCounts={}, machineList=[], lastHistRows=[];
   let finishMode='complete', activeFF=null, rtTimer=null;
 
   // 로그인(PIN 인증) 정보에서 검사자명 자동 추출
@@ -519,6 +521,7 @@
     try{
       const r=await fetch(url,{headers:HDR});
       const rows=await r.json();
+      lastHistRows = rows||[];
       if(!rows||rows.length===0){ tb.innerHTML=`<tr><td colspan="8" class="empty">이력이 없습니다.</td></tr>`; return; }
       tb.innerHTML=rows.map(x=>`<tr>
         <td>${x.report_date||''}</td><td>${x.inspector||''}</td><td>${x.model||''}</td>
@@ -570,6 +573,36 @@
       if(!r.ok) throw new Error(await r.text());
       loadHistory();
     }catch(e){ alert('삭제 실패: '+e.message); }
+  }
+  function fmtTime(t){ if(!t) return ''; try{ return new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(t)); }catch(_){ return ''; } }
+  function csvCell(v){ v=(v==null?'':String(v)); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; }
+  function downloadExcel(){
+    if(!lastHistRows.length){ alert('조회된 이력이 없습니다. 먼저 조회하세요.'); return; }
+    const head=['일자','검사자','기종','호기','합격수량','시작','종료','C/T(s)','SPM'];
+    const lines=[head.join(',')];
+    lastHistRows.forEach(x=>{
+      const ct=calcCT(x).replace('s',''); const spm=calcSPM(x);
+      lines.push([x.report_date,x.inspector,x.model,x.machine,x.qty,fmtTime(x.start_time),fmtTime(x.end_time),ct,spm].map(csvCell).join(','));
+    });
+    const csv='\uFEFF'+lines.join('\r\n');
+    const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    const from=document.getElementById('fFrom').value, to=document.getElementById('fTo').value;
+    a.href=url; a.download=`검사기일보_${from}_${to}.csv`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+  async function deleteRange(){
+    const from=document.getElementById('fFrom').value, to=document.getElementById('fTo').value;
+    if(!from||!to){ alert('삭제할 기간(시작일·종료일)을 선택하세요.'); return; }
+    if(!confirm(`${from} ~ ${to} 기간의 모든 이력을 삭제합니다.\n되돌릴 수 없습니다. 진행하시겠습니까?`)) return;
+    try{
+      const r=await fetch(`${SUPABASE_URL}/rest/v1/${REPORT_TABLE}?report_date=gte.${from}&report_date=lte.${to}`,{method:'DELETE',headers:HDR});
+      if(!r.ok) throw new Error(await r.text());
+      alert('해당 기간 이력이 삭제되었습니다.');
+      loadHistory();
+    }catch(e){ alert('기간삭제 실패: '+e.message); }
   }
 
   // ===== 설정 =====
