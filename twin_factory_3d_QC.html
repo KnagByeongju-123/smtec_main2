@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>검사기 트윈팩토리 v1.9 - 잔량 채움·상자 % 라벨</title>
+<title>검사기 트윈팩토리 v2.0 - 박스수량 세션·설정 직접조합</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;--gray:#5b6678;}
@@ -58,7 +58,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🔎 검사기 트윈팩토리<span class="v">v1.9</span></h1>
+    <h1>🔎 검사기 트윈팩토리<span class="v">v2.0</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="conn">연결 대기</span> · <span id="upd">-</span></div>
   </div>
   <div class="sum">
@@ -154,15 +154,30 @@ async function sbGet(q){
     return r.json();
   }catch(e){ setConn(false,'연결 실패'); return null; }
 }
-// 박스당 담는 수량(기종별) — 검사기일보가 qc_box_target에 저장, 트윈은 읽기만
-//   create table qc_box_target(machine text primary key, box_qty integer, item_name text, updated_at timestamptz default now());
-//   alter table qc_box_target disable row level security; grant all on qc_box_target to anon,authenticated;
+// 호기별 박스당 수량 = qc_active_session(호기별 현재기종) × qc_report_config.packs(기종별 포장수량)
+//   둘 다 검사기일보가 이미 쓰는 테이블이므로 별도 테이블 불필요
 async function loadBoxTargets(){
   try{
-    var r=await fetch(SB_URL+'/rest/v1/qc_box_target?select=machine,box_qty,item_name',{headers:sbH});
-    if(!r.ok) return;            // 테이블 없으면 미설정 상태로 진행
-    var rows=await r.json(); var m={};
-    rows.forEach(function(o){ m[o.machine]={qty:o.box_qty||0,item:o.item_name||''}; });
+    var sessByMachine={};
+    var rs=await fetch(SB_URL+'/rest/v1/qc_active_session?select=machine,model,updated_at',{headers:sbH});
+    if(rs.ok){
+      var rows=await rs.json();
+      rows.forEach(function(o){
+        if(!o.machine||!o.model) return;
+        var key=String(o.machine).replace(/[^0-9]/g,'')+'호기';
+        var prev=sessByMachine[key];
+        if(!prev || (o.updated_at && o.updated_at>prev.ts)) sessByMachine[key]={model:o.model,ts:o.updated_at||''};
+      });
+    }
+    var packs={};
+    var rc=await fetch(SB_URL+'/rest/v1/qc_report_config?id=eq.1&select=data',{headers:sbH});
+    if(rc.ok){ var cr=await rc.json(); if(cr&&cr[0]&&cr[0].data&&cr[0].data.packs) packs=cr[0].data.packs; }
+    var m={};
+    for(var mc in sessByMachine){
+      var model=sessByMachine[mc].model;
+      var q=parseInt(packs[model])||0;
+      if(q>0) m[mc]={qty:q,item:model};
+    }
     boxTarget=m;
   }catch(e){}
 }
