@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>검사기 트윈팩토리 v2.0 - 박스수량 세션·설정 직접조합</title>
+<title>검사기 트윈팩토리 v2.2 - 컨베이어 다리제거·단축</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;--gray:#5b6678;}
@@ -58,7 +58,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🔎 검사기 트윈팩토리<span class="v">v2.0</span></h1>
+    <h1>🔎 검사기 트윈팩토리<span class="v">v2.2</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="conn">연결 대기</span> · <span id="upd">-</span></div>
   </div>
   <div class="sum">
@@ -339,7 +339,7 @@ function buildScene(){
     var w3=new THREE.Mesh(wLR,woodM); w3.position.set(cw/2,ch/2,0); crate.add(w3);
     var w4=new THREE.Mesh(wLR,woodM); w4.position.set(-cw/2,ch/2,0); crate.add(w4);
     var fill=new THREE.Mesh(new THREE.BoxGeometry(cw-2*cth-0.02,0.01,cd-2*cth-0.02),
-      new THREE.MeshStandardMaterial({color:0xe0b94e,roughness:0.7,emissive:0x000000}));
+      new THREE.MeshStandardMaterial({color:0xc8d0dc,roughness:0.45,metalness:0.55,emissive:0x000000}));
     fill.position.set(0,cth,0); fill.visible=false; crate.add(fill);
     // 상자 상단 채움 % 라벨
     var lc=document.createElement('canvas'); lc.width=180; lc.height=110;
@@ -350,6 +350,19 @@ function buildScene(){
     crate.add(lspr);
     grp.add(crate);
     var crateMaxH=ch-cth-0.02;
+    // 컨베이어(본체 앞 → 박스) + 링 제품 흐름
+    var beltY=0.50, zStart=BOX_D/2, zEnd=BOX_D/2+0.25;
+    var belt=new THREE.Mesh(new THREE.BoxGeometry(0.34,0.05,zEnd-zStart+0.06),
+      new THREE.MeshStandardMaterial({color:0x2a3340,roughness:0.7,metalness:0.3}));
+    belt.position.set(0,beltY,(zStart+zEnd)/2); grp.add(belt);
+    var ringMat=new THREE.MeshStandardMaterial({color:0xd2d8e2,roughness:0.3,metalness:0.7});
+    var rings=[], RN=3, ringY=beltY+0.06;
+    for(var k=0;k<RN;k++){
+      var ring=new THREE.Mesh(new THREE.TorusGeometry(0.07,0.022,8,20),ringMat);
+      ring.rotation.x=Math.PI/2;
+      ring.position.set(0,ringY,zStart+k*(zEnd-zStart)/RN);
+      ring.visible=false; grp.add(ring); rings.push(ring);
+    }
     // 빌보드(canvas)
     var c=document.createElement('canvas'); c.width=320; c.height=210;
     var ctx=c.getContext('2d');
@@ -358,7 +371,7 @@ function buildScene(){
     spr.scale.set(1.55,1.02,1); spr.position.set(0,BOX_H+1.35,0);
     grp.add(spr);
     scene.add(grp);
-    boxes.push({no:m.no,grp:grp,body:body,towerRed:redSeg,towerGrn:grnSeg,fill:fill,crateMaxH:crateMaxH,crateBase:cth,crateLabel:lspr,crateLabelCtx:lctx,crateLabelTex:ltex,bill:spr,billCtx:ctx,billTex:tex});
+    boxes.push({no:m.no,grp:grp,body:body,towerRed:redSeg,towerGrn:grnSeg,fill:fill,crateMaxH:crateMaxH,crateBase:cth,crateLabel:lspr,crateLabelCtx:lctx,crateLabelTex:ltex,rings:rings,ringZStart:zStart,ringZEnd:zEnd,bill:spr,billCtx:ctx,billTex:tex});
   }
   refreshVisual();
 }
@@ -387,14 +400,14 @@ function drawBillboard(b){
   if(p){
     // 현재 박스 잔량(완성 박스 단위는 제외) 강조
     var pct=Math.round(p.pct*100);
-    ctx.textAlign='left'; ctx.fillStyle=p.pct>=1?'#4f91ff':'#e6b34a'; ctx.font='bold 30px sans-serif';
+    ctx.textAlign='left'; ctx.fillStyle=p.pct>=1?'#9fc3ff':'#cbd5e1'; ctx.font='bold 30px sans-serif';
     ctx.fillText('채움 '+p.filled.toLocaleString('ko-KR')+' / '+p.qty.toLocaleString('ko-KR'),22,62);
     ctx.font='bold 24px sans-serif';
     ctx.fillText(pct+'%',22,98);
     // 진행바
     var bx=22,by=134,bw=W-44,bh=16;
     ctx.fillStyle='#0f1117'; roundRect(ctx,bx,by,bw,bh,8); ctx.fill();
-    ctx.fillStyle=p.pct>=1?'#4f91ff':'#e0b94e';
+    ctx.fillStyle=p.pct>=1?'#9fc3ff':'#c8d0dc';
     roundRect(ctx,bx,by,Math.max(bh,bw*Math.min(1,p.pct)),bh,8); ctx.fill();
     // 보조: 완성 박스 · 누적 · 최근
     ctx.fillStyle='#8b97ad'; ctx.font='14px sans-serif';
@@ -443,8 +456,8 @@ function refreshVisual(){
       b.fill.scale.y=fh/0.01;
       b.fill.position.y=b.crateBase+fh/2;
       var full=p.pct>=1;
-      b.fill.material.color.setHex(full?0x4f91ff:0xe0b94e);
-      b.fill.material.emissive.setHex(full?0x1b3d80:0x000000);
+      b.fill.material.color.setHex(full?0xeaf0f8:0xc8d0dc);
+      b.fill.material.emissive.setHex(full?0x223044:0x000000);
     } else {
       b.fill.visible=false;
     }
@@ -459,7 +472,7 @@ function drawCrateLabel(b,p){
   if(!p){ b.crateLabel.visible=false; b.crateLabelTex.needsUpdate=true; return; }
   b.crateLabel.visible=true;
   var pct=Math.round(p.pct*100);
-  var col=p.pct>=1?'#4f91ff':'#e6b34a';
+  var col=p.pct>=1?'#9fc3ff':'#cbd5e1';
   ctx.fillStyle='rgba(12,16,24,0.9)'; roundRect(ctx,6,6,W-12,H-12,20); ctx.fill();
   ctx.lineWidth=5; ctx.strokeStyle=col; ctx.stroke();
   ctx.fillStyle=col; ctx.font='bold 54px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
@@ -569,10 +582,28 @@ function pick(cx,cy){
 }
 
 // ===================== 애니메이션 =====================
+var RING_SPEED=0.32;  // m/s
 function animate(){
   requestAnimationFrame(animate);
+  var now=(typeof performance!=='undefined'?performance.now():Date.now());
+  var dt=Math.min(0.05,(now-(animate._last||now))/1000); animate._last=now;
   if(autoRotate){ camTheta+=0.0035; updateCam(); }
-  for(var i=0;i<boxes.length;i++) boxes[i].bill.material.rotation=0; // sprite는 항상 카메라 향함
+  for(var i=0;i<boxes.length;i++){
+    var b=boxes[i];
+    b.bill.material.rotation=0; // sprite는 항상 카메라 향함
+    // 가동(녹색) 호기만 링 제품이 컨베이어를 타고 박스로 흐름
+    var s=summary[b.no+'호기'], run=isRunning(s);
+    if(b.rings){
+      for(var k=0;k<b.rings.length;k++){
+        var ring=b.rings[k];
+        if(run){
+          ring.visible=true;
+          ring.position.z+=dt*RING_SPEED;
+          if(ring.position.z>b.ringZEnd) ring.position.z=b.ringZStart;
+        } else { ring.visible=false; }
+      }
+    }
+  }
   renderer.render(scene,camera);
 }
 
