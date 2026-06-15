@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>검사기 트윈팩토리 v2.4 - 본체 반투명·배출 시인성·링 감속</title>
+<title>검사기 트윈팩토리 v2.5 - 회전 인덱스테이블 배출</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;--gray:#5b6678;}
@@ -58,7 +58,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🔎 검사기 트윈팩토리<span class="v">v2.4</span></h1>
+    <h1>🔎 검사기 트윈팩토리<span class="v">v2.5</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="conn">연결 대기</span> · <span id="upd">-</span></div>
   </div>
   <div class="sum">
@@ -351,15 +351,29 @@ function buildScene(){
     crate.add(lspr);
     grp.add(crate);
     var crateMaxH=ch-cth-0.02;
-    // 컨베이어(본체 앞 → 박스) + 링 제품 흐름
-    var beltY=0.50, zStart=BOX_D/2, zEnd=BOX_D/2+0.25;
-    var belt=new THREE.Mesh(new THREE.BoxGeometry(0.34,0.05,zEnd-zStart+0.06),
+    // 회전 인덱스 테이블(본체 상단 중앙) + 컨베이어 배출
+    var ringMat=new THREE.MeshStandardMaterial({color:0xd2d8e2,roughness:0.3,metalness:0.7});
+    var diskY=BOX_H+0.02, diskR=0.32;
+    var disk=new THREE.Mesh(new THREE.CylinderGeometry(diskR,diskR,0.05,32),
+      new THREE.MeshStandardMaterial({color:0x3a4660,roughness:0.5,metalness:0.45}));
+    disk.position.set(0,diskY,0); grp.add(disk);
+    var hub=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.05,0.09,16),
+      new THREE.MeshStandardMaterial({color:0x222b3d,roughness:0.6}));
+    hub.position.set(0,diskY+0.02,0); grp.add(hub);
+    for(var k=0;k<6;k++){
+      var a=k/6*Math.PI*2;
+      var dr=new THREE.Mesh(new THREE.TorusGeometry(0.06,0.02,8,18),ringMat);
+      dr.rotation.x=Math.PI/2; dr.position.set(Math.cos(a)*0.21,0.055,Math.sin(a)*0.21);
+      disk.add(dr);   // 회전판 자식 → 함께 회전
+    }
+    // 컨베이어(회전판 앞 가장자리 → 박스)
+    var beltY=diskY-0.02, zStart=diskR, zEnd=BOX_D/2+0.5;
+    var belt=new THREE.Mesh(new THREE.BoxGeometry(0.3,0.04,zEnd-zStart+0.06),
       new THREE.MeshStandardMaterial({color:0x2a3340,roughness:0.7,metalness:0.3}));
     belt.position.set(0,beltY,(zStart+zEnd)/2); grp.add(belt);
-    var ringMat=new THREE.MeshStandardMaterial({color:0xd2d8e2,roughness:0.3,metalness:0.7});
-    var rings=[], RN=3, ringY=beltY+0.06;
-    for(var k=0;k<RN;k++){
-      var ring=new THREE.Mesh(new THREE.TorusGeometry(0.07,0.022,8,20),ringMat);
+    var rings=[], RN=4, ringY=beltY+0.06;
+    for(k=0;k<RN;k++){
+      var ring=new THREE.Mesh(new THREE.TorusGeometry(0.06,0.02,8,18),ringMat);
       ring.rotation.x=Math.PI/2;
       ring.position.set(0,ringY,zStart+k*(zEnd-zStart)/RN);
       ring.visible=false; grp.add(ring); rings.push(ring);
@@ -372,7 +386,7 @@ function buildScene(){
     spr.scale.set(1.55,1.02,1); spr.position.set(0,BOX_H+1.35,0);
     grp.add(spr);
     scene.add(grp);
-    boxes.push({no:m.no,grp:grp,body:body,towerRed:redSeg,towerGrn:grnSeg,fill:fill,crateMaxH:crateMaxH,crateBase:cth,crateLabel:lspr,crateLabelCtx:lctx,crateLabelTex:ltex,rings:rings,ringZStart:zStart,ringZEnd:zEnd,bill:spr,billCtx:ctx,billTex:tex});
+    boxes.push({no:m.no,grp:grp,body:body,towerRed:redSeg,towerGrn:grnSeg,fill:fill,crateMaxH:crateMaxH,crateBase:cth,crateLabel:lspr,crateLabelCtx:lctx,crateLabelTex:ltex,disk:disk,rings:rings,ringZStart:zStart,ringZEnd:zEnd,bill:spr,billCtx:ctx,billTex:tex});
   }
   refreshVisual();
 }
@@ -577,7 +591,7 @@ function pick(cx,cy){
 }
 
 // ===================== 애니메이션 =====================
-var RING_SPEED=0.042;  // m/s — 구간 0.25m·링3개 → 약 2초에 1개 박스로 입수
+var RING_SPEED=0.166;  // m/s — 긴 컨베이어·링4개 → 약 2초에 1개 박스로 입수
 function animate(){
   requestAnimationFrame(animate);
   var now=(typeof performance!=='undefined'?performance.now():Date.now());
@@ -588,6 +602,7 @@ function animate(){
     b.bill.material.rotation=0; // sprite는 항상 카메라 향함
     // 가동(녹색) 호기만 링 제품이 컨베이어를 타고 박스로 흐름
     var s=summary[b.no+'호기'], run=isRunning(s);
+    if(b.disk && run) b.disk.rotation.y += dt*0.6;   // 가동 시 회전판 인덱싱
     if(b.rings){
       for(var k=0;k<b.rings.length;k++){
         var ring=b.rings[k];
