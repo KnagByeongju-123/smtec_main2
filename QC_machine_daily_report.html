@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>검사기일보 v4.8</title>
+<title>검사기일보 v5.0</title>
 <style>
   :root{
     --bg:#0f1419; --panel:#1a2332; --border:#2a3a52;
@@ -244,7 +244,7 @@
 <body>
 
 <div class="header">
-  <h1>📋 검사기일보 v4.8</h1>
+  <h1>📋 검사기일보 v5.0</h1>
   <div class="meta">
     <span><span class="status-dot" id="connDot"></span><b id="connText">연결 확인 중</b></span>
     <span>장비: <b id="deviceCount">0</b></span>
@@ -263,7 +263,7 @@
 <!-- 실시간현황 -->
 <div id="viewRealtime">
   <div class="rcard">
-    <div class="rhint" style="margin-bottom:10px">호기별 당일 합격수량</div>
+    <div class="rhint" style="margin-bottom:10px">실시간 카운팅</div>
     <table class="rtable">
       <thead><tr><th>호기</th><th>기종</th><th>합격수량</th></tr></thead>
       <tbody id="rtMachineBody"><tr><td colspan="3" class="rempty">불러오는 중...</td></tr></tbody>
@@ -337,7 +337,7 @@
 
 <div class="footer">
   <span>Supabase <b>shot_count</b> · 폴링 <b>2초</b> · 매핑은 <b>Supabase</b>에 저장 (localStorage 캐시)</span>
-  <span>v4.8</span>
+  <span>v5.0</span>
 </div>
 
 <!-- 설정 모달 -->
@@ -995,9 +995,11 @@
       await fetch(SUPABASE_URL+'/rest/v1/'+SESSION_TABLE+'?inspector=eq.'+encodeURIComponent(insp),{method:'DELETE',headers:HDR_R});
       if(currentModel && selectedMachines.length){
         const rows=selectedMachines.map(m=>({machine:String(m),inspector:insp,model:currentModel,updated_at:kstNow()}));
-        await fetch(SUPABASE_URL+'/rest/v1/'+SESSION_TABLE,{method:'POST',headers:{...HDR_RJ,'Prefer':'resolution=merge-duplicates'},body:JSON.stringify(rows)});
+        const r=await fetch(SUPABASE_URL+'/rest/v1/'+SESSION_TABLE,{method:'POST',headers:{...HDR_RJ,'Prefer':'resolution=merge-duplicates'},body:JSON.stringify(rows)});
+        if(!r.ok){ console.error('session', await r.text()); return false; }
       }
-    }catch(e){ console.error('session',e); }
+      return true;
+    }catch(e){ console.error('session',e); return false; }
   }
 
   // 기종·호기 목록 서버 공유 (모든 기기 동일)
@@ -1070,10 +1072,12 @@
     if(currentModel && currentModel!==nm) await autoSavePrev();
     currentModel=nm; localStorage.setItem(LS_CURMODEL,currentModel);
     baseline={date:todayKST(),counts:snapCounts(),start:kstNow()}; saveBaseline();
-    syncSession();
+    const ok=await syncSession();
     fillModelSelect(document.getElementById('modelSelect'),currentModel);
     renderReport();
-    alert(currentModel ? ('기종 「'+currentModel+'」 적용 — 지금부터 수량을 집계합니다.') : '기종 선택을 해제했습니다.');
+    loadRtSessions().then(renderRealtime);
+    if(currentModel) alert('기종 「'+currentModel+'」 적용 — '+selectedMachines.map(m=>m+'호기').join(', ')+(ok?'\n실시간현황 기종별에 반영됩니다.':'\n⚠ 세션 등록 실패 — qc_active_session 테이블/RLS를 확인하세요.'));
+    else alert('기종 선택을 해제했습니다.');
   }
   async function autoSavePrev(){
     const insp=currentInspector(); if(!insp||selectedMachines.length===0) return;
