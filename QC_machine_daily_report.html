@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>검사기일보 v5.0</title>
+<title>검사기일보 v5.2</title>
 <style>
   :root{
     --bg:#0f1419; --panel:#1a2332; --border:#2a3a52;
@@ -244,7 +244,7 @@
 <body>
 
 <div class="header">
-  <h1>📋 검사기일보 v5.0</h1>
+  <h1>📋 검사기일보 v5.2</h1>
   <div class="meta">
     <span><span class="status-dot" id="connDot"></span><b id="connText">연결 확인 중</b></span>
     <span>장비: <b id="deviceCount">0</b></span>
@@ -337,7 +337,7 @@
 
 <div class="footer">
   <span>Supabase <b>shot_count</b> · 폴링 <b>2초</b> · 매핑은 <b>Supabase</b>에 저장 (localStorage 캐시)</span>
-  <span>v5.0</span>
+  <span>v5.2</span>
 </div>
 
 <!-- 설정 모달 -->
@@ -1017,10 +1017,12 @@
   }
   async function saveRepConfig(){
     try{
-      const r=await fetch(SUPABASE_URL+'/rest/v1/'+CONFIG_TABLE,{method:'POST',headers:{...HDR_RJ,'Prefer':'resolution=merge-duplicates'},body:JSON.stringify([{id:1,data:{models:modelList,machines:machineList},updated_at:kstNow()}])});
-      if(!r.ok){ console.error('config save', await r.text()); return false; }
-      return true;
-    }catch(e){ console.error('config save',e); return false; }
+      const r=await fetch(SUPABASE_URL+'/rest/v1/'+CONFIG_TABLE,{method:'POST',headers:{...HDR_RJ,'Prefer':'resolution=merge-duplicates,return=representation'},body:JSON.stringify([{id:1,data:{models:modelList,machines:machineList},updated_at:kstNow()}])});
+      if(!r.ok){ const t=await r.text(); console.error('config save', t); return {ok:false,msg:t}; }
+      const chk=await fetch(SUPABASE_URL+'/rest/v1/'+CONFIG_TABLE+'?id=eq.1&select=data',{headers:HDR_R});
+      if(chk.ok){ const cj=await chk.json(); const d=cj&&cj[0]&&cj[0].data; if(d&&Array.isArray(d.models)&&d.models.length===modelList.length) return {ok:true}; return {ok:false,msg:'서버 저장 후 검증 불일치(권한/캐시 확인)'}; }
+      return {ok:true};
+    }catch(e){ console.error('config save',e); return {ok:false,msg:e.message}; }
   }
 
   // QC_mes 카운팅 활용: 호기별(숫자키) 당일 합격수량(pass)
@@ -1122,7 +1124,7 @@
     document.getElementById('tabRepBtn').classList.toggle('on',t==='rep');
     document.getElementById('tabHistBtn').classList.toggle('on',t==='hist');
     if(rtTimer){ clearInterval(rtTimer); rtTimer=null; }
-    if(t==='rt'){ loadRtSessions().then(renderRealtime); renderRealtime(); rtTimer=setInterval(()=>loadRtSessions().then(renderRealtime),10000); }
+    if(t==='rt'){ tick(); loadRtSessions().then(renderRealtime); renderRealtime(); rtTimer=setInterval(()=>loadRtSessions().then(renderRealtime),10000); }
     if(t==='rep'){ fillModelSelect(document.getElementById('modelSelect'),currentModel); renderReport(); }
     if(t==='hist'){
       if(!document.getElementById('fTo').value){ const y=kstDateOf(new Date(Date.now()-86400000)); document.getElementById('fFrom').value=y; document.getElementById('fTo').value=y; }
@@ -1145,12 +1147,15 @@
   function renderRealtime(){
     const cur=repCountByMachine();
     const sessByM={}; (rtSessions||[]).forEach(s=>{ sessByM[normMachine(s.machine)]=s; });
-    // 호기별 (실시간 센서 카운트)
+    // 호기별 (실시간 센서 카운트) — 설정 호기 ∪ 매핑 호기
     const mb=document.getElementById('rtMachineBody');
-    if(!machineList.length){ mb.innerHTML='<tr><td colspan="3" class="rempty">설정에서 호기를 등록하세요.</td></tr>'; }
+    const mset=new Set((machineList||[]).map(normMachine).filter(k=>k));
+    Object.keys(cur).forEach(k=>{ if(k) mset.add(k); });
+    const mkeys=[...mset].sort((a,b)=>(parseInt(a)||0)-(parseInt(b)||0));
+    if(!mkeys.length){ mb.innerHTML='<tr><td colspan="3" class="rempty">설정에서 호기를 등록하거나 신호세팅에서 매핑하세요.</td></tr>'; }
     else{
       let h='',tot=0;
-      machineList.forEach(m=>{ const k=normMachine(m); const q=cur[k]||0; tot+=q; const s=sessByM[k]; const model=s?s.model:'-'; h+='<tr><td class="machine">'+m+'호기</td><td>'+(model||'-')+'</td><td class="num pass">'+q.toLocaleString()+'</td></tr>'; });
+      mkeys.forEach(k=>{ const q=cur[k]||0; tot+=q; const s=sessByM[k]; const model=s?s.model:'-'; h+='<tr><td class="machine">'+k+'호기</td><td>'+(model||'-')+'</td><td class="num pass">'+q.toLocaleString()+'</td></tr>'; });
       h+='<tr class="total"><td colspan="2">합계</td><td class="num pass">'+tot.toLocaleString()+'</td></tr>';
       mb.innerHTML=h;
     }
@@ -1257,9 +1262,9 @@
     localStorage.setItem(LS_MLIST,JSON.stringify(machineList));
     if(currentModel && !modelList.includes(currentModel)){ currentModel=''; localStorage.setItem(LS_CURMODEL,''); }
     selectedMachines=selectedMachines.filter(m=>machineList.includes(m)); localStorage.setItem(LS_MACHINES,JSON.stringify(selectedMachines));
-    const ok=await saveRepConfig();
+    const res=await saveRepConfig();
     closeRepSettings(); renderChips(); renderReport();
-    alert(ok ? '기종·호기 목록이 서버에 저장되었습니다.\n(다른 기기에서도 동일하게 표시됩니다)' : '서버 저장 실패 — 로컬에는 저장되었습니다.\n네트워크 또는 qc_report_config 테이블을 확인하세요.');
+    alert(res.ok ? '기종·호기 목록이 서버에 저장되었습니다.\n(다른 PC에서도 새로고침하면 동일하게 표시됩니다)' : '서버 저장 실패 — 로컬에만 저장됨.\n원인: '+(res.msg||'알 수 없음')+'\n\nqc_report_config 테이블 RLS 해제/권한을 확인하세요.');
   }
 
 
