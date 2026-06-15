@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>검사기 트윈팩토리 v1.8 - 검사기일보 매핑(qc_mapping) 연동</title>
+<title>검사기 트윈팩토리 v1.9 - 잔량 채움·상자 % 라벨</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;--gray:#5b6678;}
@@ -58,7 +58,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🔎 검사기 트윈팩토리<span class="v">v1.8</span></h1>
+    <h1>🔎 검사기 트윈팩토리<span class="v">v1.9</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="conn">연결 대기</span> · <span id="upd">-</span></div>
   </div>
   <div class="sum">
@@ -326,6 +326,13 @@ function buildScene(){
     var fill=new THREE.Mesh(new THREE.BoxGeometry(cw-2*cth-0.02,0.01,cd-2*cth-0.02),
       new THREE.MeshStandardMaterial({color:0xe0b94e,roughness:0.7,emissive:0x000000}));
     fill.position.set(0,cth,0); fill.visible=false; crate.add(fill);
+    // 상자 상단 채움 % 라벨
+    var lc=document.createElement('canvas'); lc.width=180; lc.height=110;
+    var lctx=lc.getContext('2d');
+    var ltex=new THREE.CanvasTexture(lc);
+    var lspr=new THREE.Sprite(new THREE.SpriteMaterial({map:ltex,depthTest:false,transparent:true}));
+    lspr.scale.set(0.82,0.50,1); lspr.position.set(0,ch+0.45,0); lspr.visible=false;
+    crate.add(lspr);
     grp.add(crate);
     var crateMaxH=ch-cth-0.02;
     // 빌보드(canvas)
@@ -336,7 +343,7 @@ function buildScene(){
     spr.scale.set(1.55,1.02,1); spr.position.set(0,BOX_H+1.35,0);
     grp.add(spr);
     scene.add(grp);
-    boxes.push({no:m.no,grp:grp,body:body,towerRed:redSeg,towerGrn:grnSeg,fill:fill,crateMaxH:crateMaxH,crateBase:cth,bill:spr,billCtx:ctx,billTex:tex});
+    boxes.push({no:m.no,grp:grp,body:body,towerRed:redSeg,towerGrn:grnSeg,fill:fill,crateMaxH:crateMaxH,crateBase:cth,crateLabel:lspr,crateLabelCtx:lctx,crateLabelTex:ltex,bill:spr,billCtx:ctx,billTex:tex});
   }
   refreshVisual();
 }
@@ -361,26 +368,29 @@ function drawBillboard(b){
     ctx.fillText('매핑 없음',22,80);
     b.billTex.needsUpdate=true; return;
   }
-  // 양품
-  ctx.textAlign='left'; ctx.fillStyle='#22c55e'; ctx.font='bold 34px sans-serif';
-  ctx.fillText('양품 '+(s.pass||0).toLocaleString('ko-KR'),22,66);
-  // 박스 채움
   var p=boxProgress(no);
   if(p){
-    var pctTxt=Math.round(p.pct*100)+'%';
-    ctx.fillStyle='#e6b34a'; ctx.font='bold 22px sans-serif';
-    ctx.fillText('박스 '+p.filled+'/'+p.qty+' ('+pctTxt+')',22,112);
+    // 현재 박스 잔량(완성 박스 단위는 제외) 강조
+    var pct=Math.round(p.pct*100);
+    ctx.textAlign='left'; ctx.fillStyle=p.pct>=1?'#4f91ff':'#e6b34a'; ctx.font='bold 30px sans-serif';
+    ctx.fillText('채움 '+p.filled.toLocaleString('ko-KR')+' / '+p.qty.toLocaleString('ko-KR'),22,62);
+    ctx.font='bold 24px sans-serif';
+    ctx.fillText(pct+'%',22,98);
     // 진행바
-    var bx=22,by=144,bw=W-44,bh=14;
-    ctx.fillStyle='#0f1117'; roundRect(ctx,bx,by,bw,bh,7); ctx.fill();
+    var bx=22,by=134,bw=W-44,bh=16;
+    ctx.fillStyle='#0f1117'; roundRect(ctx,bx,by,bw,bh,8); ctx.fill();
     ctx.fillStyle=p.pct>=1?'#4f91ff':'#e0b94e';
-    roundRect(ctx,bx,by,Math.max(bh,bw*Math.min(1,p.pct)),bh,7); ctx.fill();
+    roundRect(ctx,bx,by,Math.max(bh,bw*Math.min(1,p.pct)),bh,8); ctx.fill();
+    // 보조: 완성 박스 · 누적 · 최근
     ctx.fillStyle='#8b97ad'; ctx.font='14px sans-serif';
-    ctx.fillText('완성 '+p.doneBoxes+'박스 · 최근 '+agoText(s.lastTs),22,170);
+    ctx.fillText('완성 '+p.doneBoxes+'박스 · 누적 '+(s.pass||0).toLocaleString('ko-KR')+' · '+agoText(s.lastTs),22,164);
   }else{
+    // 박스수량 미설정 시: 누적 양품만 표시
+    ctx.textAlign='left'; ctx.fillStyle='#22c55e'; ctx.font='bold 34px sans-serif';
+    ctx.fillText('양품 '+(s.pass||0).toLocaleString('ko-KR'),22,66);
     ctx.fillStyle='#8b97ad'; ctx.font='16px sans-serif';
-    ctx.fillText('박스수량 미설정 (검사기일보)',22,114);
-    ctx.fillText('최근 '+agoText(s.lastTs),22,148);
+    ctx.fillText('박스수량 미설정 (검사기일보)',22,112);
+    ctx.fillText('최근 '+agoText(s.lastTs),22,146);
   }
   b.billTex.needsUpdate=true;
 }
@@ -423,9 +433,23 @@ function refreshVisual(){
     } else {
       b.fill.visible=false;
     }
+    drawCrateLabel(b,p);
     drawBillboard(b);
   }
   updateSummary();
+}
+function drawCrateLabel(b,p){
+  var ctx=b.crateLabelCtx, W=180, H=110;
+  ctx.clearRect(0,0,W,H);
+  if(!p){ b.crateLabel.visible=false; b.crateLabelTex.needsUpdate=true; return; }
+  b.crateLabel.visible=true;
+  var pct=Math.round(p.pct*100);
+  var col=p.pct>=1?'#4f91ff':'#e6b34a';
+  ctx.fillStyle='rgba(12,16,24,0.9)'; roundRect(ctx,6,6,W-12,H-12,20); ctx.fill();
+  ctx.lineWidth=5; ctx.strokeStyle=col; ctx.stroke();
+  ctx.fillStyle=col; ctx.font='bold 54px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText(pct+'%',W/2,H/2+2);
+  b.crateLabelTex.needsUpdate=true;
 }
 
 function updateSummary(){
