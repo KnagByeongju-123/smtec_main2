@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>검사기일보 v4.3</title>
+<title>검사기일보 v4.4</title>
 <style>
   :root{
     --bg:#0f1419; --panel:#1a2332; --border:#2a3a52;
@@ -244,7 +244,7 @@
 <body>
 
 <div class="header">
-  <h1>📋 검사기일보 v4.3</h1>
+  <h1>📋 검사기일보 v4.4</h1>
   <div class="meta">
     <span><span class="status-dot" id="connDot"></span><b id="connText">연결 확인 중</b></span>
     <span>장비: <b id="deviceCount">0</b></span>
@@ -316,7 +316,7 @@
 
 <div class="footer">
   <span>Supabase <b>shot_count</b> · 폴링 <b>2초</b> · 매핑은 <b>Supabase</b>에 저장 (localStorage 캐시)</span>
-  <span>v4.3</span>
+  <span>v4.4</span>
 </div>
 
 <!-- 설정 모달 -->
@@ -940,6 +940,7 @@
   const HDR_R={ 'apikey':SUPABASE_KEY, 'Authorization':'Bearer '+SUPABASE_KEY };
   const HDR_RJ={ ...HDR_R, 'Content-Type':'application/json' };
   const REPORT_TABLE='qc_daily_report';
+  const CONFIG_TABLE='qc_report_config';
   const LS_INSPECTOR='qcr_inspector', LS_MODELS='qcr_model_list', LS_CURMODEL='qcr_cur_model',
         LS_BASELINE='qcr_baseline', LS_MACHINES='qcr_machines', LS_MLIST='qcr_machine_list';
   let repInspector='', modelList=[], currentModel='', baseline={date:'',counts:{},start:''},
@@ -962,6 +963,26 @@
     if(!machineList||!machineList.length) machineList=['3','4','5','6','7','8','9','10'];
   }
   function saveBaseline(){ localStorage.setItem(LS_BASELINE,JSON.stringify(baseline)); }
+
+  // 기종·호기 목록 서버 공유 (모든 기기 동일)
+  async function loadRepConfig(){
+    try{
+      const r=await fetch(SUPABASE_URL+'/rest/v1/'+CONFIG_TABLE+'?id=eq.1&select=data',{headers:HDR_R});
+      if(r.ok){ const rows=await r.json(); if(rows&&rows[0]&&rows[0].data){
+        const d=rows[0].data;
+        if(Array.isArray(d.models)) modelList=d.models;
+        if(Array.isArray(d.machines)&&d.machines.length) machineList=d.machines;
+        localStorage.setItem(LS_MODELS,JSON.stringify(modelList));
+        localStorage.setItem(LS_MLIST,JSON.stringify(machineList));
+      }}
+    }catch(e){ console.error('config load',e); }
+  }
+  async function saveRepConfig(){
+    try{
+      const r=await fetch(SUPABASE_URL+'/rest/v1/'+CONFIG_TABLE,{method:'POST',headers:{...HDR_RJ,'Prefer':'resolution=merge-duplicates'},body:JSON.stringify([{id:1,data:{models:modelList,machines:machineList},updated_at:kstNow()}])});
+      if(!r.ok) console.error('config save', await r.text());
+    }catch(e){ console.error('config save',e); }
+  }
 
   // QC_mes 카운팅 활용: 호기별(숫자키) 당일 합격수량(pass)
   function repCountByMachine(){
@@ -1144,6 +1165,7 @@
     localStorage.setItem(LS_MLIST,JSON.stringify(machineList));
     if(currentModel && !modelList.includes(currentModel)){ currentModel=''; localStorage.setItem(LS_CURMODEL,''); }
     selectedMachines=selectedMachines.filter(m=>machineList.includes(m)); localStorage.setItem(LS_MACHINES,JSON.stringify(selectedMachines));
+    saveRepConfig();
     closeRepSettings(); renderChips(); renderReport();
   }
 
@@ -1153,6 +1175,7 @@
     await loadMapping();   // 서버에서 매핑 먼저 로드 (실패 시 localStorage 폴백)
     loadBaselines().catch(e => console.error('baseline init', e));
     loadRepLocal(); renderChips(); showTab('rep');
+    loadRepConfig().then(()=>{ renderChips(); renderReport(); });
     tick();
     setInterval(async ()=>{ await checkDayRollover(); tick(); }, POLL_MS);
   })();
