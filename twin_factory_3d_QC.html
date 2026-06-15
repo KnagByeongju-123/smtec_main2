@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>검사기 트윈팩토리 v1.7 - 완제품 나무상자 채움률</title>
+<title>검사기 트윈팩토리 v1.8 - 검사기일보 매핑(qc_mapping) 연동</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;--gray:#5b6678;}
@@ -58,7 +58,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🔎 검사기 트윈팩토리<span class="v">v1.7</span></h1>
+    <h1>🔎 검사기 트윈팩토리<span class="v">v1.8</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="conn">연결 대기</span> · <span id="upd">-</span></div>
   </div>
   <div class="sum">
@@ -123,9 +123,12 @@ var SB_KEY='sb_publishable_9j2YkkL-7ul1TrhH-NjVdQ_vWDG2-1D';
 var sbH={apikey:SB_KEY,Authorization:'Bearer '+SB_KEY};
 var TABLE='shot_count';
 var DI_LIST=['DI1','DI2','DI3','DI4','DI5','DI6','DI7','DI8'];
+var S_LIST=['S1','S2'];
+var ALL_CODES=DI_LIST.concat(S_LIST);
 var POLL_MS=5000;             // 폴링 주기
 var RECENT_MS=600000;         // 최근 감지 = 가동 판정 (10분). 이상이면 미가동(빨강)
-var MAP_KEY='qc_twin_mapping_v1';   // 트윈 전용 매핑(MAC+DI 기반)
+var MAPPING_TABLE='qc_mapping';            // 검사기일보/QC_mes가 저장하는 서버 매핑
+var MAP_CACHE_KEY='shot_monitor_mapping_v2'; // 동일 localStorage 캐시 공유
 
 // ===================== 검사기 배치(3~10호기, 일렬·2대씩 4그룹) =====================
 // 첨부 배치도 기준: 세로형 박스가 한 줄로, (3·4)(5·6)(7·8)(9·10) 그룹 간격
@@ -138,10 +141,9 @@ var MACHINES=[
 var BOX_W=0.85, BOX_D=2.3, BOX_H=1.0;   // 세로형(z방향으로 길게)
 
 // ===================== 상태 =====================
-var mapping={};               // { MAC:{ DI1:{machine,type}, ... } }
+var mapping={};               // qc_mapping 서버: { dev:{ DI1:{machine,outlet}, ... } }
 var boxTarget={};             // { "3호기":{qty,item} }  검사기일보가 설정 → 트윈은 읽기만
-var summary={};               // { "3호기":{pass,fail,lastTs} }
-var discovered={};            // { MAC:Set(DI...) }  들어온 채널
+var summary={};               // { "3호기":{pass,lastTs,dev,ch} }
 var lastUpdMs=0;
 
 // ===================== Supabase =====================
@@ -169,12 +171,22 @@ function setConn(ok,msg){
   document.getElementById('conn').textContent=msg;
 }
 
-// ===================== 매핑 localStorage =====================
-function loadMapping(){
-  try{ var raw=localStorage.getItem(MAP_KEY); mapping=raw?JSON.parse(raw):{}; }catch(e){ mapping={}; }
+// ===================== 매핑 (검사기일보/QC_mes와 동일: qc_mapping 서버) =====================
+async function loadMapping(){
+  try{
+    var r=await fetch(SB_URL+'/rest/v1/'+MAPPING_TABLE+'?id=eq.1&select=data',{headers:sbH});
+    if(r.ok){ var rows=await r.json(); if(rows&&rows[0]&&rows[0].data){ mapping=rows[0].data; try{localStorage.setItem(MAP_CACHE_KEY,JSON.stringify(mapping));}catch(_){} return; } }
+  }catch(e){}
+  try{ mapping=JSON.parse(localStorage.getItem(MAP_CACHE_KEY)||'{}'); }catch(e){ mapping={}; }
 }
-function persistMapping(){ try{ localStorage.setItem(MAP_KEY,JSON.stringify(mapping)); }catch(e){} }
-function getMap(mac,di){ return (mapping[mac]&&mapping[mac][di])||null; }
+function devKey(r){ return r.device_id || (r.esp32_mac?('MAC_'+r.esp32_mac.replace(/:/g,'')):'LEGACY'); }
+function getMap(dev,ch){ return (mapping[dev]&&mapping[dev][ch])||null; }
+function outletKind(o){
+  if(!o) return 'pass';
+  var s=String(o).toLowerCase();
+  if(String(o).indexOf('불량')>=0||s.indexOf('ng')>=0||s.indexOf('fail')>=0||String(o).indexOf('리젝')>=0||s.indexOf('reject')>=0) return 'fail';
+  return 'pass';
+}
 
 // ===================== KST 시각 =====================
 function fmtKST(iso){
@@ -193,18 +205,15 @@ function agoText(iso){
 }
 
 // ===================== 데이터 처리 =====================
-// 보드 구분 = esp32_mac, 채널 = machine_code(DI1~). MAC+DI별 최신 1건이 현재 누적 카운트.
+// 보드 구분 = device_id(없으면 MAC_…), 채널 = machine_code(DI1~/S1~). dev|채널별 최신 1건.
 function processRows(rows){
-  var latest={};   // key = MAC + '|' + DI
+  var latest={};
   for(var i=0;i<rows.length;i++){
     var r=rows[i];
-    var mac=r.esp32_mac||'UNKNOWN';
-    var di=r.machine_code;
-    if(DI_LIST.indexOf(di)<0) continue;
-    var key=mac+'|'+di;
-    if(!latest[key]) latest[key]=r;   // created_at desc 정렬 → 첫 건이 최신
-    if(!discovered[mac]) discovered[mac]={};
-    discovered[mac][di]=1;
+    var ch=r.machine_code;
+    if(ALL_CODES.indexOf(ch)<0) continue;
+    var key=devKey(r)+'|'+ch;
+    if(!latest[key]) latest[key]=r;   // created_at desc → 첫 건이 최신
   }
   return latest;
 }
@@ -212,12 +221,12 @@ function aggregate(latest){
   var sum={};
   for(var key in latest){
     var r=latest[key];
-    var mac=r.esp32_mac||'UNKNOWN', di=r.machine_code;
-    var m=getMap(mac,di);
+    var dev=devKey(r), ch=r.machine_code;
+    var m=getMap(dev,ch);
     if(!m||!m.machine) continue;
-    if(!sum[m.machine]) sum[m.machine]={pass:0,lastTs:null,mac:mac,di:di};
-    var cnt=r.shot_count||0;
-    sum[m.machine].pass+=cnt;   // 양품 카운터만 집계
+    if(outletKind(m.outlet||m.type)==='fail') continue;   // 양품만 집계
+    if(!sum[m.machine]) sum[m.machine]={pass:0,lastTs:null,dev:dev,ch:ch};
+    sum[m.machine].pass+=(r.shot_count||0);
     var ts=r.created_at||r.detected_at;
     if(ts && (!sum[m.machine].lastTs || new Date(ts)>new Date(sum[m.machine].lastTs))) sum[m.machine].lastTs=ts;
   }
@@ -555,7 +564,7 @@ function openModal(no){
       html+=row('박스당 수량','미설정 (검사기일보에서 설정)','#8b97ad');
     }
     html+=row('최근 감지',fmtKST(s.lastTs)+' ('+agoText(s.lastTs)+')')+
-      row('소스',(s.mac||'-')+' / '+(s.di||'-'));
+      row('소스',(s.dev||'-')+' / '+(s.ch||'-'));
     body.innerHTML=html;
   }
   document.getElementById('modal').classList.add('show');
@@ -563,43 +572,8 @@ function openModal(no){
 function row(k,v,c){ return '<div class="row"><span class="k">'+k+'</span><span class="vv"'+(c?' style="color:'+c+'"':'')+'>'+v+'</span></div>'; }
 function closeModal(){ document.getElementById('modal').classList.remove('show'); }
 
-// ===================== 매핑 UI =====================
-function openMapping(){
-  var list=document.getElementById('mapList');
-  // 발견된 (MAC,DI) + 기존 매핑에 있는 조합 합치기
-  var combos={};
-  for(var mac in discovered){ for(var di in discovered[mac]){ combos[mac+'|'+di]=1; } }
-  for(var mac2 in mapping){ for(var di2 in mapping[mac2]){ combos[mac2+'|'+di2]=1; } }
-  var keys=Object.keys(combos).sort();
-  if(!keys.length){
-    list.innerHTML='<div class="empty">아직 shot_count에 들어온 채널이 없습니다.<br>ESP32 신호가 들어오면 자동 표시됩니다.</div>';
-  }else{
-    var html='<div class="maprow" style="border-bottom:1px solid var(--border);color:var(--sub);font-size:11px"><div>MAC / 채널</div><div>호기명(양품)</div></div>';
-    for(var i=0;i<keys.length;i++){
-      var p=keys[i].split('|'), mac=p[0], di=p[1];
-      var cur=getMap(mac,di)||{machine:''};
-      var macShort=mac.length>11?('…'+mac.slice(-11)):mac;
-      html+='<div class="maprow" data-mac="'+mac+'" data-di="'+di+'">'+
-        '<div class="src" title="'+mac+'">'+macShort+'<br>'+di+'</div>'+
-        '<input type="text" class="mIn" placeholder="예:3호기" value="'+(cur.machine||'')+'"></div>';
-    }
-    list.innerHTML=html;
-  }
-  document.getElementById('mapModal').classList.add('show');
-}
-function closeMapping(){ document.getElementById('mapModal').classList.remove('show'); }
-function saveMapping(){
-  var rows=document.querySelectorAll('#mapList .maprow[data-mac]');
-  var nm={};
-  rows.forEach(function(r){
-    var mac=r.getAttribute('data-mac'), di=r.getAttribute('data-di');
-    var machine=r.querySelector('.mIn').value.trim();
-    if(machine){ if(!nm[mac])nm[mac]={}; nm[mac][di]={machine:machine,type:'양품'}; }
-  });
-  mapping=nm; persistMapping(); closeMapping();
-  // 즉시 재집계
-  refreshFromCache();
-}
+// 매핑은 검사기일보(⚙ 호기 매핑)에서 관리 → 트윈은 qc_mapping 서버를 읽기만 함
+function openMapping(){ alert('채널→호기 매핑은 「검사기일보」 또는 「신호테스트(QC_mes)」의 호기 매핑 설정에서 관리합니다.\n트윈은 그 매핑(qc_mapping)을 자동으로 읽어 표시합니다.'); }
 
 // ===================== 폴링 =====================
 var _cacheRows=[];
@@ -609,8 +583,9 @@ function refreshFromCache(){
   refreshVisual();
 }
 async function poll(){
+  await loadMapping();      // 검사기일보/QC_mes가 갱신한 매핑 반영
   await loadBoxTargets();   // 검사기일보가 설정한 박스당 수량 반영
-  var q='machine_code=in.('+DI_LIST.join(',')+')&order=created_at.desc&limit=800';
+  var q='machine_code=in.('+ALL_CODES.join(',')+')&order=created_at.desc&limit=800';
   var data=await sbGet(q);
   if(!data) return;
   setConn(true,'연결됨');
@@ -621,7 +596,6 @@ async function poll(){
 }
 
 // ===================== 시작 =====================
-loadMapping();
 initThree();
 poll();
 setInterval(poll,POLL_MS);
