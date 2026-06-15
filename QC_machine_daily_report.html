@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SBC 검사기일보 v3.5</title>
+<title>SBC 검사기일보 v3.7</title>
 <style>
   :root{
     --bg:#0b1220; --panel:#111a2b; --line:#1f2a3d; --text:#e6ebf3;
@@ -95,7 +95,7 @@
 <body>
 <div class="wrap">
   <div class="topbar">
-    <h1>📋 SBC 검사기일보 <span class="ver">v3.5</span></h1>
+    <h1>📋 SBC 검사기일보 <span class="ver">v3.7</span></h1>
     <button class="btn ghost" onclick="openSettings()">⚙️ 설정</button>
   </div>
 
@@ -222,6 +222,8 @@
   const HDR_J = { ...HDR, 'Content-Type':'application/json' };
   const REPORT_TABLE = 'qc_daily_report';
   const SESSION_TABLE = 'qc_active_session';
+  const BASELINE_TABLE = 'daily_baseline';
+  const ALL_CODES = ['DI1','DI2','DI3','DI4','DI5','DI6','DI7','DI8','S1','S2'];
   const POLL_MS = 30000;
 
   const LS_INSPECTOR='qcr_inspector', LS_MODELS='qcr_model_list',
@@ -481,10 +483,33 @@
       }
     }catch(e){ console.error('세션 동기화 실패',e); }
   }
+  // ===== QC_mes 카운팅 로직 이식: shot_count 누적 - daily_baseline =====
+  let rtBaseline={};
+  async function loadRtBaselines(){
+    const date=todayStr();
+    rtBaseline={};
+    try{
+      const r=await fetch(`${SUPABASE_URL}/rest/v1/${BASELINE_TABLE}?baseline_date=eq.${date}&select=device_id,machine_code,baseline_count`,{headers:HDR});
+      if(r.ok){ const d=await r.json(); (d||[]).forEach(b=>{ rtBaseline[`${b.device_id}|${b.machine_code}`]=Number(b.baseline_count)||0; }); }
+    }catch(_){}
+  }
   async function loadRealtime(){
     const tb=document.getElementById('rtBody');
-    const counts=await loadToday();
-    // 작업자/기종 오버레이용 세션 (있으면 사용, 없어도 무방)
+    // 1) shot_count 최신 행 (device_id+machine_code별)
+    let rows=[];
+    try{
+      const r=await fetch(`${SUPABASE_URL}/rest/v1/shot_count?machine_code=in.(${ALL_CODES.join(',')})&order=created_at.desc&limit=800`,{headers:HDR});
+      if(r.ok) rows=await r.json();
+    }catch(e){ tb.innerHTML=`<tr><td colspan="4" class="empty">조회 실패: ${e.message}</td></tr>`; return; }
+    const grouped={};
+    (rows||[]).forEach(r=>{
+      const dev=r.device_id||(r.esp32_mac?'MAC_'+r.esp32_mac.replace(/:/g,''):'LEGACY');
+      if(!grouped[dev]) grouped[dev]={};
+      if(!grouped[dev][r.machine_code]) grouped[dev][r.machine_code]=r;
+    });
+    // 2) 당일 baseline
+    await loadRtBaselines();
+    // 3) 작업자/기종 세션 오버레이
     let sessions=[];
     try{
       const start=`${todayStr()}T00:00:00+09:00`;
@@ -493,25 +518,25 @@
     }catch(_){}
     const sess={};
     (sessions||[]).forEach(s=>{ sess[normMachine(s.machine)]={inspector:s.inspector,model:s.model}; });
-    // 매핑된 모든 호기
-    const set=new Set();
-    for(const dev in mapping) for(const ch in mapping[dev]){
-      const m=mapping[dev][ch]; if(m && m.machine) set.add(m.machine);
-    }
-    const machines=[...set].sort((a,b)=>(parseInt(normMachine(a))||0)-(parseInt(normMachine(b))||0));
-    function dayQty(machine){
-      let s=0;
-      for(const dev in mapping) for(const ch in mapping[dev]){
-        const m=mapping[dev][ch]; if(m && normMachine(m.machine)===normMachine(machine)) s+=counts[ch]||0;
+    // 4) 호기별 당일 = 누적 - baseline (매핑)
+    const byMachine={};
+    for(const dev in grouped){
+      for(const code in grouped[dev]){
+        const m=mapping[dev] && mapping[dev][code];
+        if(!m || !m.machine) continue;
+        const cum=Number(grouped[dev][code].shot_count)||0;
+        const base=rtBaseline[`${dev}|${code}`]||0;
+        const cnt=Math.max(0,cum-base);
+        byMachine[m.machine]=(byMachine[m.machine]||0)+cnt;
       }
-      return s;
     }
+    const machines=Object.keys(byMachine).sort((a,b)=>(parseInt(normMachine(a))||0)-(parseInt(normMachine(b))||0));
     if(!machines.length){
-      tb.innerHTML=`<tr><td colspan="4" class="empty">매핑된 호기가 없습니다. QC 모니터에서 호기 매핑을 등록하세요.</td></tr>`;
+      tb.innerHTML=`<tr><td colspan="4" class="empty">카운팅 데이터가 없습니다. (호기 매핑 또는 신호 확인)</td></tr>`;
     }else{
       tb.innerHTML=machines.map(m=>{
         const e=sess[normMachine(m)]||{};
-        return `<tr><td class="machine">${normMachine(m)}호기</td><td>${e.inspector||'-'}</td><td>${e.model||'-'}</td><td class="num pass">${dayQty(m).toLocaleString()}</td></tr>`;
+        return `<tr><td class="machine">${normMachine(m)}호기</td><td>${e.inspector||'-'}</td><td>${e.model||'-'}</td><td class="num pass">${byMachine[m].toLocaleString()}</td></tr>`;
       }).join('');
     }
     document.getElementById('rtUpd').textContent='갱신 '+new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(new Date());
@@ -608,12 +633,14 @@
     });
     const csv='\uFEFF'+lines.join('\r\n');
     const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+    const from=(document.getElementById('fFrom').value||'').replace(/-/g,''), to=(document.getElementById('fTo').value||'').replace(/-/g,'');
+    const fname=`inspection_${from}_${to}.csv`;
+    if(window.navigator && window.navigator.msSaveOrOpenBlob){ window.navigator.msSaveOrOpenBlob(blob,fname); return; }
     const url=URL.createObjectURL(blob);
     const a=document.createElement('a');
-    const from=document.getElementById('fFrom').value, to=document.getElementById('fTo').value;
-    a.href=url; a.download=`검사기일보_${from}_${to}.csv`;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    a.href=url; a.download=fname; a.rel='noopener'; a.target='_blank';
+    document.body.appendChild(a); a.click();
+    setTimeout(()=>{ try{document.body.removeChild(a);}catch(_){} URL.revokeObjectURL(url); }, 1500);
   }
   async function deleteRange(){
     const from=document.getElementById('fFrom').value, to=document.getElementById('fTo').value;
