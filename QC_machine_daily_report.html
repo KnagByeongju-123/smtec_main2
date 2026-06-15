@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>검사기일보 v5.4</title>
+<title>검사기일보 v5.5</title>
 <style>
   :root{
     --bg:#0f1419; --panel:#1a2332; --border:#2a3a52;
@@ -244,7 +244,7 @@
 <body>
 
 <div class="header">
-  <h1>📋 검사기일보 v5.4</h1>
+  <h1>📋 검사기일보 v5.5</h1>
   <div class="meta">
     <span><span class="status-dot" id="connDot"></span><b id="connText">연결 확인 중</b></span>
     <span>장비: <b id="deviceCount">0</b></span>
@@ -330,7 +330,7 @@
 
 <div class="footer">
   <span>Supabase <b>shot_count</b> · 폴링 <b>2초</b> · 매핑은 <b>Supabase</b>에 저장 (localStorage 캐시)</span>
-  <span>v5.4</span>
+  <span>v5.5</span>
 </div>
 
 <!-- 설정 모달 -->
@@ -1076,10 +1076,11 @@
   }
   async function autoSavePrev(){
     const insp=currentInspector(); if(!insp||selectedMachines.length===0) return;
-    const byM=workByMachine(); const total=selectedMachines.reduce((s,m)=>s+(byM[m]||0),0);
-    if(total<=0) return;
-    const rows=[{report_date:todayKST(),inspector:insp,customer:'SBC',model:currentModel,machine:selectedMachines.join(','),qty:total,count_qty:total,start_time:baseline.start||null,end_time:kstNow()}];
-    try{ const r=await fetch(SUPABASE_URL+'/rest/v1/'+REPORT_TABLE,{method:'POST',headers:HDR_RJ,body:JSON.stringify(rows)}); if(r.ok) alert('이전 기종('+currentModel+') '+total.toLocaleString()+' 자동 저장됨'); }catch(e){ console.error(e); }
+    const byM=workByMachine(); const rows=[];
+    selectedMachines.forEach(m=>{ const q=byM[m]||0; if(q>0) rows.push({report_date:todayKST(),inspector:insp,customer:'SBC',model:currentModel,machine:String(m),qty:q,count_qty:q,start_time:baseline.start||null,end_time:kstNow()}); });
+    if(!rows.length) return;
+    const total=rows.reduce((s,r)=>s+r.qty,0);
+    try{ const r=await fetch(SUPABASE_URL+'/rest/v1/'+REPORT_TABLE,{method:'POST',headers:HDR_RJ,body:JSON.stringify(rows)}); if(r.ok) alert('이전 기종('+currentModel+') '+total.toLocaleString()+' 호기별 자동 저장됨'); }catch(e){ console.error(e); }
   }
   function completeWork(){ openFinishModal('complete'); }
   function openFinishModal(mode){
@@ -1087,23 +1088,25 @@
     if(selectedMachines.length===0){ alert('담당 호기를 먼저 선택하세요.'); return; }
     if(!currentInspector()){ alert('로그인 또는 설정에서 검사자명을 등록하세요.'); return; }
     finishMode=mode; const byM=workByMachine();
-    const total=selectedMachines.reduce((s,m)=>s+(byM[m]||0),0); finishAuto=total;
-    document.getElementById('finishTitle').textContent='작업종료 · 기종별 총수량';
-    document.getElementById('finishFields').innerHTML='<div class="ff-row"><div class="ff-info"><div class="ff-model">'+currentModel+'</div><div class="ff-auto">담당 호기 '+selectedMachines.map(m=>m+'호기').join(', ')+'<br>자동 집계 총수량 '+total.toLocaleString()+'</div></div><input readonly id="ff_total" value="'+total+'" onclick="setActiveFF(\'ff_total\')"></div>';
-    activeFF=null; setActiveFF('ff_total');
+    document.getElementById('finishTitle').textContent='작업종료 · 호기별 수량';
+    let html='';
+    selectedMachines.forEach(m=>{ const q=byM[m]||0; html+='<div class="ff-row"><div class="ff-info"><div class="ff-model">'+m+'호기 · '+currentModel+'</div><div class="ff-auto">자동 집계 '+q.toLocaleString()+'</div></div><input readonly id="ff_'+m+'" value="'+q+'" onclick="setActiveFF(\'ff_'+m+'\')"></div>'; });
+    document.getElementById('finishFields').innerHTML=html;
+    activeFF=null; if(selectedMachines.length) setActiveFF('ff_'+selectedMachines[0]);
     document.getElementById('finishModal').classList.add('on');
   }
   function setActiveFF(id){ if(activeFF){const e=document.getElementById(activeFF);if(e)e.classList.remove('active');} activeFF=id; const e=document.getElementById(id); if(e)e.classList.add('active'); }
   function numKey(k){ if(!activeFF)return; const e=document.getElementById(activeFF); if(!e)return; if(k==='C')e.value='0'; else if(k==='bs')e.value=(e.value.length>1?e.value.slice(0,-1):'0'); else e.value=(e.value==='0'?'':e.value)+k; }
   function closeFinish(){ document.getElementById('finishModal').classList.remove('on'); }
   async function saveFinish(){
-    const insp=currentInspector(); const el=document.getElementById('ff_total'); const v=parseInt(el?el.value:0)||0;
-    if(v<=0){ alert('저장할 수량이 없습니다.'); return; }
-    const rows=[{report_date:todayKST(),inspector:insp,customer:'SBC',model:currentModel,machine:selectedMachines.join(','),qty:v,count_qty:finishAuto,start_time:baseline.start||null,end_time:kstNow()}];
+    const insp=currentInspector(); const byM=workByMachine();
+    const rows=[];
+    selectedMachines.forEach(m=>{ const el=document.getElementById('ff_'+m); const v=parseInt(el?el.value:0)||0; const auto=byM[m]||0; if(v<=0 && auto<=0) return; rows.push({report_date:todayKST(),inspector:insp,customer:'SBC',model:currentModel,machine:String(m),qty:v,count_qty:auto,start_time:baseline.start||null,end_time:kstNow()}); });
+    if(!rows.length){ alert('저장할 수량이 없습니다.'); return; }
     try{ const r=await fetch(SUPABASE_URL+'/rest/v1/'+REPORT_TABLE,{method:'POST',headers:HDR_RJ,body:JSON.stringify(rows)}); if(!r.ok) throw new Error(await r.text()); }catch(e){ alert('저장 실패: '+e.message); return; }
     baseline={date:todayKST(),counts:snapCounts(),start:kstNow()}; saveBaseline();
     syncSession();
-    closeFinish(); renderReport(); alert('작업종료 — 이력에 저장되었습니다.');
+    closeFinish(); renderReport(); alert('작업종료 — 호기별로 이력에 저장되었습니다.');
   }
 
   function showTab(t){
