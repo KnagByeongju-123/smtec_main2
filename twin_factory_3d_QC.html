@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>검사기 트윈팩토리 v2.7 - 회전 인덱스테이블 배출</title>
+<title>검사기 트윈팩토리 v3.3 - 회전 인덱스테이블 배출</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;--gray:#5b6678;}
@@ -58,12 +58,12 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🔎 검사기 트윈팩토리<span class="v">v2.7</span></h1>
+    <h1>🔎 검사기 트윈팩토리<span class="v">v3.3</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="conn">연결 대기</span> · <span id="upd">-</span></div>
   </div>
   <div class="sum">
     <div class="sc"><span class="l">가동</span><span class="v" id="sRun">0/8</span></div>
-    <div class="sc"><span class="l">총 양품</span><span class="v" id="sPass" style="color:var(--green)">0</span></div>
+    <div class="sc"><span class="l">당일 양품</span><span class="v" id="sPass" style="color:var(--green)">0</span></div>
     <div class="sc"><span class="l">총 박스</span><span class="v" id="sBox" style="color:var(--accent)">0</span></div>
   </div>
 </div>
@@ -127,7 +127,7 @@ var DI_LIST=['DI1','DI2','DI3','DI4','DI5','DI6','DI7','DI8'];
 var S_LIST=['S1','S2'];
 var ALL_CODES=DI_LIST.concat(S_LIST);
 var POLL_MS=5000;             // 폴링 주기
-var RECENT_MS=600000;         // 최근 감지 = 가동 판정 (10분). 이상이면 미가동(빨강)
+var RECENT_MS=300000;         // 최근 감지 = 가동 판정 (5분). 이상이면 미가동(빨강)
 var MAPPING_TABLE='qc_mapping';            // 검사기일보/QC_mes가 저장하는 서버 매핑
 var MAP_CACHE_KEY='shot_monitor_mapping_v2'; // 동일 localStorage 캐시 공유
 
@@ -146,6 +146,7 @@ var mapping={};               // qc_mapping 서버: { dev:{ DI1:{machine,outlet}
 var boxTarget={};             // { "3호기":{qty,item} }  검사기일보가 설정 → 트윈은 읽기만
 var boxOffset={};             // { "3호기": 누적offset }  검사기일보 박스비우기 기준점
 var summary={};               // { "3호기":{pass,lastTs,dev,ch} }
+var baseMap={};               // dev|ch : 당일 0점(daily_baseline)
 var lastUpdMs=0;
 
 // ===================== Supabase =====================
@@ -248,7 +249,8 @@ function aggregate(latest){
     if(!m||!m.machine) continue;
     if(outletKind(m.outlet||m.type)==='fail') continue;   // 양품만 집계
     if(!sum[m.machine]) sum[m.machine]={pass:0,lastTs:null,dev:dev,ch:ch};
-    sum[m.machine].pass+=(r.shot_count||0);
+    var cum=r.shot_count||0; var base=baseMap[dev+'|'+ch]||0;
+    sum[m.machine].pass+=Math.max(0,cum-base);
     var ts=r.created_at||r.detected_at;
     if(ts && (!sum[m.machine].lastTs || new Date(ts)>new Date(sum[m.machine].lastTs))) sum[m.machine].lastTs=ts;
   }
@@ -366,12 +368,27 @@ function buildScene(){
     var hub=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.05,0.09,16),
       new THREE.MeshStandardMaterial({color:0x222b3d,roughness:0.6}));
     hub.position.set(0,diskY+0.02,0); grp.add(hub);
-    for(var k=0;k<6;k++){
-      var a=k/6*Math.PI*2;
-      var dr=new THREE.Mesh(new THREE.TorusGeometry(0.06,0.02,8,18),ringMat);
-      dr.rotation.x=Math.PI/2; dr.position.set(Math.cos(a)*0.21,0.055,Math.sin(a)*0.21);
-      disk.add(dr);   // 회전판 자식 → 함께 회전
+    // 회전판 위 제품 4개 (동서남북, 베어링/씰 형상) — 함께 회전
+    var prodMat=new THREE.MeshStandardMaterial({color:0xc8d0dc,roughness:0.35,metalness:0.65});
+    var prodHubMat=new THREE.MeshStandardMaterial({color:0x6b7689,roughness:0.4,metalness:0.6});
+    for(var k=0;k<4;k++){
+      var a=k/4*Math.PI*2;   // 0/90/180/270 = 동·북·서·남
+      var prod=new THREE.Group();
+      var outer=new THREE.Mesh(new THREE.TorusGeometry(0.07,0.026,10,24),prodMat); outer.rotation.x=Math.PI/2; prod.add(outer);
+      var innr=new THREE.Mesh(new THREE.CylinderGeometry(0.032,0.032,0.045,16),prodHubMat); prod.add(innr);
+      prod.position.set(Math.cos(a)*0.2,0.06,Math.sin(a)*0.2);
+      disk.add(prod);
     }
+    // 비전 카메라 (회전판 상단에서 아래로 촬영)
+    var poleX=diskR+0.2, vCamX=0.2;   // 기둥은 회전판 바깥, 카메라는 제품 궤도 위
+    var camPole=new THREE.Mesh(new THREE.CylinderGeometry(0.018,0.018,0.62,12),new THREE.MeshStandardMaterial({color:0x2a3340,roughness:0.6}));
+    camPole.position.set(poleX,diskY+0.31,0); grp.add(camPole);
+    var camArm=new THREE.Mesh(new THREE.BoxGeometry(poleX-vCamX+0.05,0.024,0.024),new THREE.MeshStandardMaterial({color:0x2a3340,roughness:0.6}));
+    camArm.position.set((poleX+vCamX)/2,diskY+0.58,0); grp.add(camArm);
+    var camBody=new THREE.Mesh(new THREE.BoxGeometry(0.12,0.1,0.12),new THREE.MeshStandardMaterial({color:0x1b2438,roughness:0.4,metalness:0.55}));
+    camBody.position.set(vCamX,diskY+0.54,0); grp.add(camBody);
+    var camLens=new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.05,0.05,16),new THREE.MeshStandardMaterial({color:0x3b82f6,emissive:0x1e40af,emissiveIntensity:0.55,metalness:0.6,roughness:0.3}));
+    camLens.position.set(vCamX,diskY+0.48,0); grp.add(camLens);
     // 컨베이어(회전판 앞 가장자리 → 박스)
     var beltY=diskY-0.02, zStart=diskR, zEnd=BOX_D/2+0.5;
     var belt=new THREE.Mesh(new THREE.BoxGeometry(0.3,0.04,zEnd-zStart+0.06),
@@ -384,6 +401,12 @@ function buildScene(){
       ring.position.set(0,ringY,zStart+k*(zEnd-zStart)/RN);
       ring.visible=false; grp.add(ring); rings.push(ring);
     }
+    // 에디커런트 테스트기 (컨베이어 중간, 하단부)
+    var ecZ=(zStart+zEnd)/2;
+    var ecBody=new THREE.Mesh(new THREE.BoxGeometry(0.3,0.24,0.34),new THREE.MeshStandardMaterial({color:0x3a3320,roughness:0.5,metalness:0.4}));
+    ecBody.position.set(0,beltY-0.16,ecZ); grp.add(ecBody);
+    var ecCoil=new THREE.Mesh(new THREE.TorusGeometry(0.07,0.018,8,20),new THREE.MeshStandardMaterial({color:0xfbbf24,emissive:0xb45309,emissiveIntensity:0.5,metalness:0.5,roughness:0.3}));
+    ecCoil.rotation.x=Math.PI/2; ecCoil.position.set(0,beltY-0.02,ecZ); grp.add(ecCoil);
     // 빌보드(canvas)
     var c=document.createElement('canvas'); c.width=320; c.height=210;
     var ctx=c.getContext('2d');
@@ -392,7 +415,7 @@ function buildScene(){
     spr.scale.set(1.55,1.02,1); spr.position.set(0,BOX_H+1.35,0);
     grp.add(spr);
     scene.add(grp);
-    boxes.push({no:m.no,grp:grp,body:body,towerRed:redSeg,towerGrn:grnSeg,fill:fill,crateMaxH:crateMaxH,crateBase:cth,crateLabel:lspr,crateLabelCtx:lctx,crateLabelTex:ltex,disk:disk,rings:rings,ringZStart:zStart,ringZEnd:zEnd,bill:spr,billCtx:ctx,billTex:tex});
+    boxes.push({no:m.no,grp:grp,body:body,towerRed:redSeg,towerGrn:grnSeg,fill:fill,crateMaxH:crateMaxH,crateBase:cth,crateLabel:lspr,crateLabelCtx:lctx,crateLabelTex:ltex,disk:disk,rings:rings,ringZStart:zStart,ringZEnd:zEnd,bill:spr,billCtx:ctx,billTex:tex,camLens:camLens});
   }
   refreshVisual();
 }
@@ -422,7 +445,7 @@ function drawBillboard(b){
   var item=(boxTarget[no+'호기']&&boxTarget[no+'호기'].item)||'';
   if(item){ ctx.fillStyle='#fbbf24'; ctx.font='bold 22px sans-serif'; ctx.fillText(item,22,56); }
   ctx.fillStyle='#22c55e'; ctx.font='bold 28px sans-serif';
-  ctx.fillText('누적 '+(s.pass||0).toLocaleString('ko-KR'),22,84);
+  ctx.fillText('당일 '+(s.pass||0).toLocaleString('ko-KR'),22,84);
   var p=boxProgress(no);
   if(p){
     // 생산 박스수 (중요)
@@ -613,6 +636,12 @@ function animate(){
     // 가동(녹색) 호기만 링 제품이 컨베이어를 타고 박스로 흐름
     var s=summary[b.no+'호기'], run=isRunning(s);
     if(b.disk && run) b.disk.rotation.y += dt*0.6;   // 가동 시 회전판 인덱싱
+    if(b.camLens){   // 비전 촬영 효과: 가동 시 90도마다(제품 1개 도달) 렌즈 플래시
+      var vang=b.disk?(b.disk.rotation.y % (Math.PI/2)):1;
+      var shooting = run && vang < 0.2;
+      b.camLens.material.emissiveIntensity = shooting ? 1.9 : 0.3;
+      b.camLens.material.emissive.setHex(shooting ? 0xffffff : 0x1e40af);
+    }
     if(b.rings){
       for(var k=0;k<b.rings.length;k++){
         var ring=b.rings[k];
@@ -641,7 +670,7 @@ function openModal(no){
   }else{
     var pass=s.pass||0, run=isRunning(s);
     var html=
-      row('양품 누적',pass.toLocaleString('ko-KR'),'#22c55e')+
+      row('당일 양품',pass.toLocaleString('ko-KR'),'#22c55e')+
       row('상태',run?'가동 중':'미가동 (10분 이상 신호 없음)',run?'#22c55e':'#ef4444');
     var p=boxProgress(no);
     if(p){
@@ -672,9 +701,17 @@ function refreshFromCache(){
   summary=aggregate(latest);
   refreshVisual();
 }
+async function loadDayBaselines(){
+  try{
+    var today=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Seoul'}).format(new Date());
+    var r=await fetch(SB_URL+'/rest/v1/daily_baseline?select=device_id,machine_code,baseline_count&baseline_date=eq.'+today,{headers:sbH});
+    if(r.ok){ var a=await r.json(); var m={}; (a||[]).forEach(function(b){ m[b.device_id+'|'+b.machine_code]=parseInt(b.baseline_count)||0; }); baseMap=m; }
+  }catch(e){}
+}
 async function poll(){
   await loadMapping();      // 검사기일보/QC_mes가 갱신한 매핑 반영
   await loadBoxTargets();   // 검사기일보가 설정한 박스당 수량 반영
+  await loadDayBaselines(); // 당일 0점 반영 (당일 수량 계산)
   var q='machine_code=in.('+ALL_CODES.join(',')+')&order=created_at.desc&limit=800';
   var data=await sbGet(q);
   if(!data) return;
