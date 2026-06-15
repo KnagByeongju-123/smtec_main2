@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>검사기일보 v4.6</title>
+<title>검사기일보 v4.8</title>
 <style>
   :root{
     --bg:#0f1419; --panel:#1a2332; --border:#2a3a52;
@@ -244,7 +244,7 @@
 <body>
 
 <div class="header">
-  <h1>📋 검사기일보 v4.6</h1>
+  <h1>📋 검사기일보 v4.8</h1>
   <div class="meta">
     <span><span class="status-dot" id="connDot"></span><b id="connText">연결 확인 중</b></span>
     <span>장비: <b id="deviceCount">0</b></span>
@@ -299,7 +299,8 @@
       <div id="machineChips" class="chips"></div>
       <div class="rrow" style="margin-top:16px;align-items:center">
         <span class="rlbl">기종</span>
-        <select id="modelSelect" onchange="onModelChange()"><option value="">기종 선택</option></select>
+        <select id="modelSelect"><option value="">기종 선택</option></select>
+        <button class="btn primary" onclick="onModelChange()">확인</button>
         <button class="btn" style="margin-left:auto" onclick="openRepSettings()">⚙️ 기종·호기</button>
       </div>
     </div>
@@ -336,7 +337,7 @@
 
 <div class="footer">
   <span>Supabase <b>shot_count</b> · 폴링 <b>2초</b> · 매핑은 <b>Supabase</b>에 저장 (localStorage 캐시)</span>
-  <span>v4.6</span>
+  <span>v4.8</span>
 </div>
 
 <!-- 설정 모달 -->
@@ -967,7 +968,7 @@
         LS_BASELINE='qcr_baseline', LS_MACHINES='qcr_machines', LS_MLIST='qcr_machine_list';
   let repInspector='', modelList=[], currentModel='', baseline={date:'',counts:{},start:''},
       selectedMachines=[], machineList=[], lastHistRows=[], finishMode='complete', activeFF=null, finishAuto=0, curTab='mon',
-      rtSessions=[], rtTimer=null;
+      rtSessions=[], rtTimer=null, rtHistory=[];
 
   function normMachine(s){ return String(s||'').replace(/[^0-9]/g,''); }
   function kstDateOf(d){ return new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Seoul'}).format(d); }
@@ -1055,7 +1056,6 @@
     repInspector=currentInspector();
     document.getElementById('rDate').textContent=todayMD();
     document.getElementById('rInspector').textContent=repInspector||'(로그인 필요)';
-    fillModelSelect(document.getElementById('modelSelect'),currentModel);
     const tb=document.getElementById('repBody');
     if(selectedMachines.length===0){ tb.innerHTML='<tr><td colspan="3" class="rempty">담당 호기를 선택하세요 (최대 2대).</td></tr>'; return; }
     const byM=workByMachine(); let html='',total=0;
@@ -1071,7 +1071,9 @@
     currentModel=nm; localStorage.setItem(LS_CURMODEL,currentModel);
     baseline={date:todayKST(),counts:snapCounts(),start:kstNow()}; saveBaseline();
     syncSession();
+    fillModelSelect(document.getElementById('modelSelect'),currentModel);
     renderReport();
+    alert(currentModel ? ('기종 「'+currentModel+'」 적용 — 지금부터 수량을 집계합니다.') : '기종 선택을 해제했습니다.');
   }
   async function autoSavePrev(){
     const insp=currentInspector(); if(!insp||selectedMachines.length===0) return;
@@ -1117,7 +1119,7 @@
     document.getElementById('tabHistBtn').classList.toggle('on',t==='hist');
     if(rtTimer){ clearInterval(rtTimer); rtTimer=null; }
     if(t==='rt'){ loadRtSessions().then(renderRealtime); renderRealtime(); rtTimer=setInterval(()=>loadRtSessions().then(renderRealtime),10000); }
-    if(t==='rep') renderReport();
+    if(t==='rep'){ fillModelSelect(document.getElementById('modelSelect'),currentModel); renderReport(); }
     if(t==='hist'){
       if(!document.getElementById('fTo').value){ const y=kstDateOf(new Date(Date.now()-86400000)); document.getElementById('fFrom').value=y; document.getElementById('fTo').value=y; }
       loadHistory();
@@ -1131,11 +1133,15 @@
       const r=await fetch(SUPABASE_URL+'/rest/v1/'+SESSION_TABLE+'?select=*&updated_at=gte.'+encodeURIComponent(start),{headers:HDR_R});
       if(r.ok) rtSessions=await r.json()||[];
     }catch(e){ console.error('rt sessions',e); }
+    try{
+      const r2=await fetch(SUPABASE_URL+'/rest/v1/'+REPORT_TABLE+'?select=model,machine,qty,count_qty&report_date=eq.'+todayKST(),{headers:HDR_R});
+      if(r2.ok) rtHistory=await r2.json()||[];
+    }catch(e){ console.error('rt history',e); }
   }
   function renderRealtime(){
     const cur=repCountByMachine();
     const sessByM={}; (rtSessions||[]).forEach(s=>{ sessByM[normMachine(s.machine)]=s; });
-    // 호기별
+    // 호기별 (실시간 센서 카운트)
     const mb=document.getElementById('rtMachineBody');
     if(!machineList.length){ mb.innerHTML='<tr><td colspan="3" class="rempty">설정에서 호기를 등록하세요.</td></tr>'; }
     else{
@@ -1144,12 +1150,16 @@
       h+='<tr class="total"><td colspan="2">합계</td><td class="num pass">'+tot.toLocaleString()+'</td></tr>';
       mb.innerHTML=h;
     }
-    // 기종별 (세션에 등록된 기종 기준)
+    // 기종별 (당일 이력 누적 + 현재 진행분)
     const byModel={};
-    (rtSessions||[]).forEach(s=>{ if(!s.model) return; const q=cur[normMachine(s.machine)]||0; byModel[s.model]=(byModel[s.model]||0)+q; });
+    (rtHistory||[]).forEach(x=>{ if(!x.model) return; const q=Number(x.qty)||0; byModel[x.model]=(byModel[x.model]||0)+q; });
+    // 현재 진행 중(세션) 미저장 작업분 추가: 세션 호기 당일카운트 - 당일 이력에 집계된 그 호기 분
+    const histByMachine={};
+    (rtHistory||[]).forEach(x=>{ String(x.machine||'').split(',').forEach(mm=>{ const k=normMachine(mm); if(k) histByMachine[k]=(histByMachine[k]||0)+(Number(x.count_qty!=null?x.count_qty:x.qty)||0); }); });
+    (rtSessions||[]).forEach(s=>{ if(!s.model) return; const k=normMachine(s.machine); const live=cur[k]||0; const saved=histByMachine[k]||0; const wip=Math.max(0,live-saved); if(wip>0) byModel[s.model]=(byModel[s.model]||0)+wip; });
     const tb=document.getElementById('rtModelBody');
     const keys=Object.keys(byModel).filter(k=>byModel[k]>0);
-    if(!keys.length){ tb.innerHTML='<tr><td colspan="2" class="rempty">작업 중인 기종이 없습니다. (검사기일보에서 호기·기종을 선택하면 표시)</td></tr>'; }
+    if(!keys.length){ tb.innerHTML='<tr><td colspan="2" class="rempty">당일 기종별 실적이 없습니다.</td></tr>'; }
     else{
       let h='',tot=0;
       keys.sort().forEach(k=>{ tot+=byModel[k]; h+='<tr><td class="machine">'+k+'</td><td class="num pass">'+byModel[k].toLocaleString()+'</td></tr>'; });
