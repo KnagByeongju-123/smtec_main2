@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>검사기 트윈팩토리 v2.6 - 회전 인덱스테이블 배출</title>
+<title>검사기 트윈팩토리 v2.7 - 회전 인덱스테이블 배출</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;--gray:#5b6678;}
@@ -58,7 +58,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🔎 검사기 트윈팩토리<span class="v">v2.6</span></h1>
+    <h1>🔎 검사기 트윈팩토리<span class="v">v2.7</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="conn">연결 대기</span> · <span id="upd">-</span></div>
   </div>
   <div class="sum">
@@ -144,6 +144,7 @@ var BOX_W=0.85, BOX_D=2.3, BOX_H=1.0;   // 세로형(z방향으로 길게)
 // ===================== 상태 =====================
 var mapping={};               // qc_mapping 서버: { dev:{ DI1:{machine,outlet}, ... } }
 var boxTarget={};             // { "3호기":{qty,item} }  검사기일보가 설정 → 트윈은 읽기만
+var boxOffset={};             // { "3호기": 누적offset }  검사기일보 박스비우기 기준점
 var summary={};               // { "3호기":{pass,lastTs,dev,ch} }
 var lastUpdMs=0;
 
@@ -180,6 +181,11 @@ async function loadBoxTargets(){
       if(q>0) m[mc]={qty:q,item:model};
     }
     boxTarget=m;
+    // 박스비우기 offset (검사기일보에서 설정)
+    try{
+      var ro=await fetch(SB_URL+'/rest/v1/qc_box_offset?select=machine,offset_qty',{headers:sbH});
+      if(ro.ok){ var oa=await ro.json(); var bo={}; (oa||[]).forEach(function(o){ bo[String(o.machine).replace(/[^0-9]/g,'')+'호기']=parseInt(o.offset_qty)||0; }); boxOffset=bo; }
+    }catch(e){}
   }catch(e){}
 }
 function setConn(ok,msg){
@@ -447,6 +453,7 @@ function setSeg(mesh,on,onColor,offColor){
 function boxProgress(no){
   var t=boxTarget[no+'호기']; if(!t||!t.qty) return null;
   var s=summary[no+'호기']; var pass=s?(s.pass||0):0;
+  var off=boxOffset[no+'호기']||0; pass=Math.max(0,pass-off);  // 박스비우기 기준점 차감
   var qty=t.qty;
   var doneBoxes=Math.floor(pass/qty);
   var filled=pass%qty;
