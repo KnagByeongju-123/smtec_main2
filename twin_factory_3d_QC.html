@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>검사기 트윈팩토리 v3.3 - 회전 인덱스테이블 배출</title>
+<title>검사기 트윈팩토리 v3.6 - 회전 인덱스테이블 배출</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;--gray:#5b6678;}
@@ -58,7 +58,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🔎 검사기 트윈팩토리<span class="v">v3.3</span></h1>
+    <h1>🔎 검사기 트윈팩토리<span class="v">v3.6</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="conn">연결 대기</span> · <span id="upd">-</span></div>
   </div>
   <div class="sum">
@@ -380,7 +380,8 @@ function buildScene(){
       disk.add(prod);
     }
     // 비전 카메라 (회전판 상단에서 아래로 촬영)
-    var poleX=diskR+0.2, vCamX=0.2;   // 기둥은 회전판 바깥, 카메라는 제품 궤도 위
+    // 비전 카메라: 기둥은 회전판 바깥, 암이 회전판 위로 뻗어 제품 촬영
+    var poleX=diskR+0.2, vCamX=0.2;
     var camPole=new THREE.Mesh(new THREE.CylinderGeometry(0.018,0.018,0.62,12),new THREE.MeshStandardMaterial({color:0x2a3340,roughness:0.6}));
     camPole.position.set(poleX,diskY+0.31,0); grp.add(camPole);
     var camArm=new THREE.Mesh(new THREE.BoxGeometry(poleX-vCamX+0.05,0.024,0.024),new THREE.MeshStandardMaterial({color:0x2a3340,roughness:0.6}));
@@ -708,6 +709,21 @@ async function loadDayBaselines(){
     if(r.ok){ var a=await r.json(); var m={}; (a||[]).forEach(function(b){ m[b.device_id+'|'+b.machine_code]=parseInt(b.baseline_count)||0; }); baseMap=m; }
   }catch(e){}
 }
+// 검사기일보와 동일: 오늘 0점이 없는 채널은 현재 누적을 0점으로 저장 → 당일 수량 0
+async function autoZeroNewDay(latest){
+  var today=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Seoul'}).format(new Date());
+  var body=[];
+  for(var key in latest){
+    if(baseMap[key]!==undefined) continue;
+    var r=latest[key]; var p=key.split('|'); var dev=p[0], ch=p[1];
+    var cum=r.shot_count||0;
+    body.push({device_id:dev,machine_code:ch,baseline_date:today,baseline_count:cum,created_at:new Date().toISOString().replace('Z','+00:00')});
+    baseMap[key]=cum;
+  }
+  if(body.length){
+    try{ await fetch(SB_URL+'/rest/v1/daily_baseline?on_conflict=device_id,machine_code,baseline_date',{method:'POST',headers:{'Content-Type':'application/json',apikey:SB_KEY,Authorization:'Bearer '+SB_KEY,'Prefer':'resolution=merge-duplicates,return=minimal'},body:JSON.stringify(body)}); }catch(e){}
+  }
+}
 async function poll(){
   await loadMapping();      // 검사기일보/QC_mes가 갱신한 매핑 반영
   await loadBoxTargets();   // 검사기일보가 설정한 박스당 수량 반영
@@ -717,6 +733,7 @@ async function poll(){
   if(!data) return;
   setConn(true,'연결됨');
   _cacheRows=data;
+  await autoZeroNewDay(processRows(data));
   refreshFromCache();
   lastUpdMs=Date.now();
   document.getElementById('upd').textContent=fmtKST(new Date().toISOString());
