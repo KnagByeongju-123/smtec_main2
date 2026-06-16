@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>검사기 트윈팩토리 v3.8 - 회전 인덱스테이블 배출</title>
+<title>검사기 트윈팩토리 v4.0 - 회전 인덱스테이블 배출</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;--gray:#5b6678;}
@@ -58,7 +58,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🔎 검사기 트윈팩토리<span class="v">v3.8</span></h1>
+    <h1>🔎 검사기 트윈팩토리<span class="v">v4.0</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="conn">연결 대기</span> · <span id="upd">-</span></div>
   </div>
   <div class="sum">
@@ -447,6 +447,8 @@ function drawBillboard(b){
   if(item){ ctx.fillStyle='#fbbf24'; ctx.font='bold 22px sans-serif'; ctx.fillText(item,22,56); }
   ctx.fillStyle='#22c55e'; ctx.font='bold 28px sans-serif';
   ctx.fillText('당일 '+(s.pass||0).toLocaleString('ko-KR'),22,84);
+  var ct=ctMap[no+'호기'];
+  if(ct){ ctx.fillStyle='#c4b5fd'; ctx.font='bold 22px sans-serif'; ctx.fillText('C/T '+ct.toFixed(2)+'초',180,84); }
   var p=boxProgress(no);
   if(p){
     // 생산 박스수 (중요)
@@ -510,14 +512,15 @@ function refreshVisual(){
 function drawCrateLabel(b,p){
   var ctx=b.crateLabelCtx, W=180, H=110;
   ctx.clearRect(0,0,W,H);
-  if(!p){ b.crateLabel.visible=false; b.crateLabelTex.needsUpdate=true; return; }
   b.crateLabel.visible=true;
-  var pct=Math.round(p.pct*100);
-  var col=p.pct>=1?'#9fc3ff':'#cbd5e1';
-  ctx.fillStyle='rgba(12,16,24,0.9)'; roundRect(ctx,6,6,W-12,H-12,20); ctx.fill();
+  var checked=checkedSet.has(String(b.no));
+  var col=checked?'#35d65f':'#ef5350';
+  ctx.fillStyle='rgba(12,16,24,0.9)'; roundRect(ctx,6,6,W-12,H-12,22); ctx.fill();
   ctx.lineWidth=5; ctx.strokeStyle=col; ctx.stroke();
-  ctx.fillStyle=col; ctx.font='bold 54px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
-  ctx.fillText(pct+'%',W/2,H/2+2);
+  ctx.fillStyle='#cbd5e1'; ctx.font='bold 25px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText('일상점검',W/2-22,H/2);
+  ctx.fillStyle=col; ctx.font='bold 40px sans-serif';
+  ctx.fillText(checked?'O':'X',W/2+48,H/2);
   b.crateLabelTex.needsUpdate=true;
 }
 
@@ -702,6 +705,32 @@ function refreshFromCache(){
   summary=aggregate(latest);
   refreshVisual();
 }
+// 검사기 일상점검(qc_machine_check) 오늘 완료 호기번호
+var checkedSet=new Set();
+var ctMap={};   // 호기별 평균 C/T(초)
+function calcCTByMachine(rows){
+  var acc={};
+  for(var i=0;i<rows.length;i++){
+    var r=rows[i], ch=r.machine_code;
+    if(ALL_CODES.indexOf(ch)<0) continue;
+    var m=getMap(devKey(r),ch); if(!m) continue;
+    var iv=r.shot_interval_ms; if(!iv||iv<=0||iv>600000) continue;
+    var k=m.machine;
+    if(!acc[k])acc[k]={sum:0,cnt:0};
+    if(acc[k].cnt<30){ acc[k].sum+=iv; acc[k].cnt++; }  // 최근 30타 평균
+  }
+  var ct={};
+  for(var k in acc){ if(acc[k].cnt>0) ct[k]=acc[k].sum/acc[k].cnt/1000; }
+  return ct;
+}
+function hoNum(s){ var m=String(s).match(/(\d+)\s*호기/); if(m)return m[1]; var n=String(s).match(/\d+/); return n?n[0]:''; }
+async function loadDayChecks(){
+  try{
+    var today=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Seoul'}).format(new Date());
+    var r=await fetch(SB_URL+'/rest/v1/qc_machine_check?select=machine&check_date=eq.'+today,{headers:sbH});
+    if(r.ok){ var a=await r.json(); var s=new Set(); (a||[]).forEach(function(x){ var h=hoNum(x.machine); if(h)s.add(h); }); checkedSet=s; }
+  }catch(e){}
+}
 async function loadDayBaselines(){
   try{
     var today=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Seoul'}).format(new Date());
@@ -727,11 +756,13 @@ async function poll(){
   await loadMapping();      // 검사기일보/QC_mes가 갱신한 매핑 반영
   await loadBoxTargets();   // 검사기일보가 설정한 박스당 수량 반영
   await loadDayBaselines(); // 당일 0점 반영 (당일 수량 계산)
+  await loadDayChecks();    // 검사기 일상점검 완료 유무
   var q='machine_code=in.('+ALL_CODES.join(',')+')&order=created_at.desc&limit=800';
   var data=await sbGet(q);
   if(!data) return;
   setConn(true,'연결됨');
   _cacheRows=data;
+  ctMap=calcCTByMachine(data);
   await autoZeroNewDay(processRows(data));
   await loadDayBaselines();   // 서버의 확정 0점을 다시 읽어 동기화 (덮어쓰기 방지)
   refreshFromCache();
