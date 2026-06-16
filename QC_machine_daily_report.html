@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>검사기일보 v7.5</title>
+<title>검사기일보 v7.7</title>
 <style>
   :root{
     --bg:#0f1419; --panel:#1a2332; --border:#2a3a52;
@@ -276,7 +276,7 @@
 <body>
 
 <div class="header">
-  <h1>📋 검사기일보 v7.5</h1>
+  <h1>📋 검사기일보 v7.7</h1>
   <div class="meta">
     <span><span class="status-dot" id="connDot"></span><b id="connText">연결 확인 중</b></span>
     <span>장비: <b id="deviceCount">0</b></span>
@@ -330,9 +330,9 @@
         <div class="mdrop-panel" id="machineChips"></div>
       </div>
       <div class="rrow" style="margin-top:16px;align-items:center">
-        <select id="modelSelect"><option value="">기종 선택</option></select>
-        <button class="btn primary" onclick="onModelChange()">확인</button>
+        <select id="modelSelect" style="flex:1"><option value="">기종 선택</option></select>
       </div>
+      <button class="btn primary" onclick="onModelChange()" style="margin-top:12px;width:100%">확인</button>
     </div>
   </div>
   <div class="rcard">
@@ -387,7 +387,7 @@
 
 <div class="footer">
   <span>Supabase <b>shot_count</b> · 폴링 <b>2초</b> · 매핑은 <b>Supabase</b>에 저장 (localStorage 캐시)</span>
-  <span>v7.5</span>
+  <span>v7.7</span>
 </div>
 
 <!-- 설정 모달 -->
@@ -584,6 +584,7 @@
   // ===== 일자별 baseline (당일 0점 기준) =====
   // baselineCache[`${dev}|${code}`] = { date, count }
   let baselineCache = {};
+  let sessionBase = {};   // 서버 baseline 없을 때 fallback: dev|code -> {date,count} (오늘 첫 관측 누적)
   let lastGrouped = {};   // 제로세팅용 최신 데이터 캐시
 
   async function loadBaselines(){
@@ -610,9 +611,22 @@
     return (b && b.date === todayKST()) ? b.count : 0;
   }
 
-  // 당일 카운트 = 현재 누적 - baseline
+  // 실효 baseline: 서버 확정 baseline 우선, 없으면 '오늘 첫 관측 누적'을 기준점으로 사용
+  // → 자정에 앱이 꺼져 있었어도 오늘 처음 본 누적이 0점이 되어 당일 카운트가 0부터 시작
+  function effectiveBaseline(dev, code, cumulative){
+    const today = todayKST();
+    const b = baselineCache[`${dev}|${code}`];
+    if(b && b.date === today) return b.count;
+    const k = `${dev}|${code}`;
+    if(!sessionBase[k] || sessionBase[k].date !== today){
+      sessionBase[k] = { date: today, count: cumulative||0 };
+    }
+    return sessionBase[k].count;
+  }
+
+  // 당일 카운트 = 현재 누적 - 실효 baseline
   function todayCount(dev, code, cumulative){
-    const base = getBaseline(dev, code);
+    const base = effectiveBaseline(dev, code, cumulative);
     const v = (cumulative||0) - base;
     return v > 0 ? v : 0;
   }
