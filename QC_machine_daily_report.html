@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>작업일보 v9.6</title>
+<title>작업일보 v9.8</title>
 <style>
   :root{
     --bg:#0f1419; --panel:#1a2332; --border:#2a3a52;
@@ -215,13 +215,16 @@
   .rlbl{color:var(--muted);min-width:60px}
   .rval{font-weight:700}.rval.cust{color:#fbbf24}
   .cust-sel{background:#0f1722;border:1px solid var(--border);border-radius:8px;color:#fbbf24;font-weight:700;padding:6px 10px;font-family:inherit;font-size:14px}
-  .slot-head{display:grid;grid-template-columns:0.8fr 1.1fr 88px 30px;gap:8px;padding:4px 4px 8px;color:var(--muted);font-size:12px;font-weight:700}
+  .slot-head{display:grid;grid-template-columns:0.8fr 1.1fr 88px 44px 30px;gap:8px;padding:4px 4px 8px;color:var(--muted);font-size:12px;font-weight:700}
   .slot-head .slot-qh{text-align:right}
-  .slot-row{display:grid;grid-template-columns:0.8fr 1.1fr 88px 30px;gap:8px;align-items:center;background:#0f1722;border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:8px}
+  .slot-row{display:grid;grid-template-columns:0.8fr 1.1fr 88px 44px 30px;gap:8px;align-items:center;background:#0f1722;border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:8px}
   .slot-row select{width:100%;min-width:0}
   .slot-qty{text-align:right;font-size:20px;font-weight:800;color:var(--pass)}
+  .slot-call{background:#1e293b;border:1px solid var(--accent);color:#bfdbfe;border-radius:8px;padding:6px 0;font-weight:800;cursor:pointer;font-family:inherit}
   .slot-del{background:transparent;border:1px solid var(--border);color:#f87171;border-radius:8px;padding:6px 0;font-weight:800;cursor:pointer;font-family:inherit}
   .slot-del:disabled{opacity:.4}
+  .call-btns{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:6px 0}
+  .call-btns .btn{padding:16px 0;font-size:16px}
   .wt-btn{background:#0f1722;border:1px solid var(--accent);color:#fff;border-radius:8px;padding:6px 18px;font-weight:700;font-family:inherit;cursor:pointer;font-size:14px}
   #btnApplyStart.on{background:var(--accent)}
   #btnApplyEnd.on{background:#dc2626;border-color:#dc2626;color:#fff}
@@ -297,7 +300,7 @@
 <body>
 
 <div class="header">
-  <h1>📋 작업일보 v9.6</h1>
+  <h1>📋 작업일보 v9.8</h1>
   <div class="meta">
     <span><span class="status-dot" id="connDot"></span><b id="connText">연결 확인 중</b></span>
     <span>장비: <b id="deviceCount">0</b></span>
@@ -346,7 +349,7 @@
     </div>
   </div>
   <div class="rcard">
-    <div class="slot-head"><span>호기</span><span>기종</span><span class="slot-qh">수량</span><span></span></div>
+    <div class="slot-head"><span>호기</span><span>기종</span><span class="slot-qh">수량</span><span>콜</span><span></span></div>
     <div id="slotRows"></div>
     <button class="btn" id="btnAddSlot" onclick="addSlot()" style="width:100%;margin-bottom:8px">+ 행 추가</button>
     <div class="rupd" id="repUpd"></div>
@@ -398,6 +401,7 @@
     <div class="rfld"><label>작업자 목록</label><div class="rlist" id="workerListEl"></div>
       <div class="addrow"><input type="text" id="newWorker" placeholder="작업자명 (예: 홍길동)"><button class="btn" onclick="addWorker()">추가</button></div>
     </div>
+    <div class="rfld"><label>ntfy 방 이름 (호출 알림 토픽)</label><input type="text" id="inNtfy" placeholder="예: taejin-qc-call"></div>
     <div class="rmodal-foot"><button class="btn primary" onclick="saveRepSettings()">저장</button></div>
   </div>
 </div>
@@ -429,7 +433,7 @@
 
 <div class="footer">
   <span>Supabase <b>shot_count</b> · 폴링 <b>2초</b> · 매핑은 <b>Supabase</b>에 저장 (localStorage 캐시)</span>
-  <span>v9.6</span>
+  <span>v9.8</span>
 </div>
 
 <!-- 설정 모달 -->
@@ -461,6 +465,21 @@
       <button onclick="numKey('C')">C</button><button onclick="numKey('0')">0</button><button onclick="numKey('bs')">⌫</button>
     </div>
     <div class="rmodal-foot"><button class="btn" onclick="closeFinish()">취소</button><button class="btn primary" onclick="saveFinish()">저장</button></div>
+  </div>
+</div>
+
+<!-- 호출(콜) 모달 -->
+<div class="rmodal" id="callModal">
+  <div class="rmodal-box">
+    <h2>📢 호출</h2>
+    <div class="rhint" id="callInfo" style="margin-bottom:12px"></div>
+    <div class="call-btns">
+      <button class="btn" onclick="sendCall('설비')">🔧 설비</button>
+      <button class="btn" onclick="sendCall('제품')">📦 제품</button>
+      <button class="btn" onclick="sendCall('안전')">🚨 안전</button>
+      <button class="btn" onclick="sendCall('기타')">❓ 기타</button>
+    </div>
+    <div class="rmodal-foot"><button class="btn" onclick="closeCallModal()">취소</button></div>
   </div>
 </div>
 
@@ -1120,13 +1139,14 @@
         LS_BASELINE='qcr_baseline', LS_MACHINES='qcr_machines', LS_MLIST='qcr_machine_list', LS_SESSBASE='qcr_sessbase',
         LS_SLOTS='qcr_slots', LS_APPLIED='qcr_applied', LS_WORKMIN='qcr_workmin',
         LS_CUSTOMERS='qcr_customers', LS_CURCUST='qcr_cur_cust',
-        LS_WORKERS='qcr_workers', LS_CURWORKER='qcr_cur_worker';
+        LS_WORKERS='qcr_workers', LS_CURWORKER='qcr_cur_worker', LS_NTFY='qcr_ntfy_topic';
   let repInspector='', modelList=[], currentModel='', baseline={date:'',counts:{},start:''},
       selectedMachines=[], machineList=[], lastHistRows=[], finishMode='complete', activeFF=null, finishAuto=0, curTab='mon',
       rtSessions=[], rtTimer=null, rtHistory=[];
   let slots=[{machine:'',model:''},{machine:'',model:''}], applyStarted=false, workMinutes=0;
   let customerList=[], currentCustomer='';
   let workerList=[], currentWorker='';
+  let ntfyTopic='', callTarget=null;
   let selectedHistIdx=-1;
   const DEFAULT_CUSTOMERS=['SBC'];
 
@@ -1163,6 +1183,7 @@
     if(!Array.isArray(workerList)) workerList=[];
     currentWorker=localStorage.getItem(LS_CURWORKER)||'';
     if(currentWorker && !workerList.includes(currentWorker)) currentWorker='';
+    ntfyTopic=localStorage.getItem(LS_NTFY)||'';
     syncSlotsToSel();
   }
   function saveSlots(){ localStorage.setItem(LS_SLOTS,JSON.stringify(slots)); }
@@ -1222,6 +1243,7 @@
         if(Array.isArray(d.models)) modelList=d.models;
         if(Array.isArray(d.customers)&&d.customers.length){ customerList=d.customers; if(!customerList.includes(currentCustomer)) currentCustomer=customerList[0]||''; localStorage.setItem(LS_CUSTOMERS,JSON.stringify(customerList)); }
         if(Array.isArray(d.workers)){ workerList=d.workers; if(currentWorker&&!workerList.includes(currentWorker)) currentWorker=''; localStorage.setItem(LS_WORKERS,JSON.stringify(workerList)); }
+        if(typeof d.ntfy==='string'){ ntfyTopic=d.ntfy; localStorage.setItem(LS_NTFY,ntfyTopic); }
         if(Array.isArray(d.machines)&&d.machines.length) machineList=normList(d.machines);
         if(!machineList.length) machineList=DEFAULT_MACHINES.slice();
         selectedMachines=normList(selectedMachines).filter(m=>machineList.includes(m));
@@ -1232,7 +1254,7 @@
   }
   async function saveRepConfig(){
     try{
-      const r=await fetch(SUPABASE_URL+'/rest/v1/'+CONFIG_TABLE,{method:'POST',headers:{...HDR_RJ,'Prefer':'resolution=merge-duplicates,return=representation'},body:JSON.stringify([{id:1,data:{models:modelList,machines:machineList,customers:customerList,workers:workerList},updated_at:kstNow()}])});
+      const r=await fetch(SUPABASE_URL+'/rest/v1/'+CONFIG_TABLE,{method:'POST',headers:{...HDR_RJ,'Prefer':'resolution=merge-duplicates,return=representation'},body:JSON.stringify([{id:1,data:{models:modelList,machines:machineList,customers:customerList,workers:workerList,ntfy:ntfyTopic},updated_at:kstNow()}])});
       if(!r.ok){ const t=await r.text(); console.error('config save', t); return {ok:false,msg:t}; }
       const chk=await fetch(SUPABASE_URL+'/rest/v1/'+CONFIG_TABLE+'?id=eq.1&select=data',{headers:HDR_R});
       if(chk.ok){ const cj=await chk.json(); const d=cj&&cj[0]&&cj[0].data; if(d&&Array.isArray(d.models)&&d.models.length===modelList.length) return {ok:true}; return {ok:false,msg:'서버 저장 후 검증 불일치(권한/캐시 확인)'}; }
@@ -1269,7 +1291,7 @@
     c.innerHTML=slots.map(function(s,i){
       const mOpts='<option value="">호기 선택</option>'+machineList.map(function(m){const nm=normMachine(m);return '<option value="'+nm+'"'+(normMachine(s.machine)===nm?' selected':'')+'>'+nm+'호기</option>';}).join('');
       const mdOpts='<option value="">기종 선택</option>'+modelList.map(function(m){return '<option value="'+m.replace(/"/g,'&quot;')+'"'+(s.model===m?' selected':'')+'>'+m+'</option>';}).join('');
-      return '<div class="slot-row"><select onchange="onSlotChange()"'+dis+'>'+mOpts+'</select><select onchange="onSlotChange()"'+dis+'>'+mdOpts+'</select><span class="slot-qty">'+slotQtyText(i)+'</span><button class="slot-del" onclick="removeSlot('+i+')"'+dis+'>✕</button></div>';
+      return '<div class="slot-row"><select onchange="onSlotChange()"'+dis+'>'+mOpts+'</select><select onchange="onSlotChange()"'+dis+'>'+mdOpts+'</select><span class="slot-qty">'+slotQtyText(i)+'</span><button class="slot-call" onclick="openCallModal('+i+')">콜</button><button class="slot-del" onclick="removeSlot('+i+')"'+dis+'>✕</button></div>';
     }).join('');
     const add=document.getElementById('btnAddSlot'); if(add) add.disabled=applyStarted;
   }
@@ -1411,7 +1433,7 @@
       if(!document.getElementById('fTo').value){ const y=kstDateOf(new Date(Date.now()-86400000)); document.getElementById('fFrom').value=y; document.getElementById('fTo').value=y; }
       loadHistory();
     }
-    if(t==='setup'){ document.getElementById('inInspector').value=currentInspector(); renderModelList(); renderMachineList(); renderCustomerList(); renderWorkerList(); }
+    if(t==='setup'){ document.getElementById('inInspector').value=currentInspector(); renderModelList(); renderMachineList(); renderCustomerList(); renderWorkerList(); const nt=document.getElementById('inNtfy'); if(nt) nt.value=ntfyTopic; }
     if(t==='twin'){ const f=document.getElementById('twinFrame'); if(!f.dataset.loaded){ f.src='data:text/html;charset=utf-8;base64,'+TWIN_B64; f.dataset.loaded='1'; } }
     if(t==='fw'){ renderFw(); }
   }
@@ -1547,6 +1569,29 @@
     if(currentWorker && !applyStarted){ await loadActiveForInspector(currentWorker); }
     renderChips(); renderReport();
   }
+  // ===== 호출(콜) → ntfy =====
+  function openCallModal(i){
+    if(!applyStarted) readSlotsFromDOM();
+    const s=slots[i]; if(!s||!s.machine){ alert('호기를 먼저 선택하세요.'); return; }
+    callTarget={machine:s.machine,model:s.model||''};
+    const info=document.getElementById('callInfo'); if(info) info.textContent=s.machine+'호기'+(s.model?' · '+s.model:'')+' — 호출 종류를 선택하세요';
+    document.getElementById('callModal').classList.add('on');
+  }
+  function closeCallModal(){ document.getElementById('callModal').classList.remove('on'); }
+  function callTag(kind){ return kind==='안전'?'rotating_light':(kind==='설비'?'wrench':(kind==='제품'?'package':'grey_question')); }
+  // ntfy 헤더는 ASCII만 허용(한글 헤더는 안드로이드에서 전송이 조용히 실패) → 비ASCII 제거
+  function asciiHdr(s){ const v=String(s||'').replace(/[^\x20-\x7E]/g,'').trim(); return v||'Call'; }
+  async function sendCall(kind){
+    if(!ntfyTopic){ alert('메뉴에서 ntfy 방 이름을 먼저 설정하세요.'); closeCallModal(); return; }
+    const t=callTarget||{}; const insp=currentInspector()||'-';
+    const when=new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',dateStyle:'short',timeStyle:'short'}).format(new Date());
+    const body=t.machine+'호기'+(t.model?' ('+t.model+')':'')+' '+kind+' 호출\n작업자: '+insp+'\n'+when;
+    try{
+      const r=await fetch('https://ntfy.sh/'+encodeURIComponent(ntfyTopic),{method:'POST',headers:{'Title':asciiHdr('Call '+(t.machine||'-')),'Priority':'high','Tags':callTag(kind)},body:body});
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      closeCallModal(); alert(t.machine+'호기 '+kind+' 호출을 보냈습니다.');
+    }catch(e){ alert('호출 전송 실패: '+e.message+'\nntfy 방 이름/네트워크를 확인하세요.'); }
+  }
   function openRepSettings(){ showTab('setup'); }
   function closeRepSettings(){ showTab('rep'); }
   async function saveRepSettings(){
@@ -1559,6 +1604,7 @@
     if(!customerList.includes(currentCustomer)){ currentCustomer=customerList[0]||''; localStorage.setItem(LS_CURCUST,currentCustomer); }
     localStorage.setItem(LS_WORKERS,JSON.stringify(workerList));
     if(currentWorker && !workerList.includes(currentWorker)){ currentWorker=''; localStorage.setItem(LS_CURWORKER,''); }
+    const nt=document.getElementById('inNtfy'); ntfyTopic=nt?nt.value.trim():ntfyTopic; localStorage.setItem(LS_NTFY,ntfyTopic);
     if(currentModel && !modelList.includes(currentModel)){ currentModel=''; localStorage.setItem(LS_CURMODEL,''); }
     selectedMachines=selectedMachines.filter(m=>machineList.includes(m)); localStorage.setItem(LS_MACHINES,JSON.stringify(selectedMachines));
     const res=await saveRepConfig();
