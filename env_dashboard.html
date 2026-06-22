@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>환경 모니터링 v1.1</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root{
+    --bg:#0e1116; --panel:#171c26; --panel2:#1f2733; --line:#2a3340;
+    --ink:#e8edf4; --muted:#8a97a8;
+    --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444; --off:#5b6675;
+    --temp:#facc15; --humi:#38bdf8; --feel:#e8edf4; --accent:#34d399;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans KR",sans-serif;
+    font-variant-numeric:tabular-nums;-webkit-tap-highlight-color:transparent}
+  header{position:sticky;top:0;z-index:20;background:rgba(14,17,22,.92);
+    backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+  .bar{display:flex;align-items:center;gap:10px;padding:10px 14px;flex-wrap:wrap}
+  .bar h1{font-size:17px;margin:0;font-weight:800;letter-spacing:.3px}
+  .ver{font-size:11px;color:var(--muted);font-weight:600}
+  .clock{margin-left:auto;font-size:13px;color:var(--muted);font-weight:600}
+  .tabs{display:flex;padding:0 8px}
+  .tab{flex:1;text-align:center;padding:11px 0;font-size:14px;font-weight:700;color:var(--muted);
+    background:none;border:none;border-bottom:2px solid transparent;cursor:pointer}
+  .tab.active{color:var(--ink);border-bottom-color:var(--accent)}
+  main{padding:14px;max-width:1100px;margin:0 auto}
+  .sub{display:flex;align-items:center;gap:12px;margin:2px 0 12px;font-size:12px;color:var(--muted);flex-wrap:wrap}
+  .sub .dot{width:8px;height:8px;border-radius:50%;background:var(--ok);display:inline-block}
+  label.sw{display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
+  button.btn{background:var(--panel2);color:var(--ink);border:1px solid var(--line);
+    border-radius:9px;padding:8px 13px;font-size:13px;font-weight:700;cursor:pointer}
+  button.btn:active{transform:translateY(1px)}
+  button.btn.go{background:var(--accent);color:#06281c;border-color:var(--accent)}
+  button.btn.del{color:#ffb4b4;border-color:#5a2e2e}
+  button.btn.on{background:var(--panel2);border-color:var(--accent);color:var(--accent)}
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+  .seg button{background:none;border:none;color:var(--muted);padding:8px 12px;font-size:13px;font-weight:700;cursor:pointer}
+  .seg button.active{background:var(--panel2);color:var(--ink)}
+  select.inp{background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px;font-size:13px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;cursor:pointer;transition:border-color .15s}
+  .card:hover{border-color:#3a4658} .card.sel{border-color:var(--accent)}
+  .chead{display:flex;align-items:center;gap:8px;margin-bottom:12px}
+  .badge{font-size:12px;font-weight:800;background:var(--panel2);border:1px solid var(--line);padding:3px 8px;border-radius:7px}
+  .loc{font-size:14px;font-weight:700}
+  .status{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted)}
+  .sdot{width:9px;height:9px;border-radius:50%}
+  .vals{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;text-align:center}
+  .v .lab{font-size:11px;color:var(--muted);margin-bottom:3px}
+  .v .num{font-size:28px;font-weight:800;line-height:1}
+  .v .unit{font-size:12px;color:var(--muted);font-weight:600}
+  .v.ok .num{color:var(--ink)} .v.warn .num{color:var(--warn)} .v.bad .num{color:var(--bad)} .v.off .num{color:var(--off)}
+  .updt{margin-top:11px;font-size:11px;color:var(--muted);text-align:right}
+  #detail,#statChartWrap{margin-top:16px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px}
+  #detail{display:none} #detail h3{margin:0 0 10px;font-size:15px}
+  .chwrap{height:240px}
+  table.tbl{width:100%;border-collapse:collapse;font-size:13px}
+  table.tbl th,table.tbl td{padding:9px 8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+  table.tbl th{color:var(--muted);font-weight:700;font-size:11px}
+  table.tbl td:first-child,table.tbl th:first-child,table.tbl td:nth-child(2),table.tbl th:nth-child(2){text-align:left}
+  .tblwrap{overflow-x:auto;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:6px 12px}
+  .srow{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px}
+  .srow .top{display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+  .fgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}
+  .f label{display:block;font-size:11px;color:var(--muted);margin-bottom:4px}
+  .f input,.f select{width:100%;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px;font-size:14px}
+  .srow .acts{display:flex;gap:8px;margin-top:12px;justify-content:flex-end}
+  .banner{background:#2a2410;border:1px solid #5a4d1e;color:#f5d97a;border-radius:10px;padding:10px 12px;font-size:13px;margin-bottom:12px}
+  .empty{color:var(--muted);text-align:center;padding:40px 0;font-size:14px}
+  .ro{font-size:12px;color:#f5d97a;margin-left:6px}
+  .toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--panel2);
+    border:1px solid var(--line);color:var(--ink);padding:11px 18px;border-radius:10px;font-size:14px;
+    box-shadow:0 8px 24px rgba(0,0,0,.4);opacity:0;transition:opacity .25s;z-index:50;pointer-events:none}
+  .toast.show{opacity:1}
+  footer{text-align:center;color:var(--muted);font-size:11px;padding:18px}
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <h1>환경 모니터링</h1><span class="ver" id="ver">v1.1</span>
+    <span class="clock" id="clock">--:--:--</span>
+  </div>
+  <div class="tabs">
+    <button class="tab active" id="tab-status" onclick="showTab('status')">현황</button>
+    <button class="tab" id="tab-stats" onclick="showTab('stats')">통계</button>
+    <button class="tab" id="tab-config" onclick="showTab('config')">설정</button>
+  </div>
+</header>
+
+<main>
+  <!-- 현황 -->
+  <section id="view-status">
+    <div class="sub">
+      <span class="dot"></span><span id="lastUpdate">불러오는 중…</span><span>· 자동 1분 갱신</span>
+      <label class="sw" style="margin-left:auto"><input type="checkbox" id="ntfyToggle" onchange="toggleNtfy()"> 경고 알림(ntfy)</label>
+      <button class="btn" onclick="loadStatus()">새로고침</button>
+    </div>
+    <div class="grid" id="cards"></div>
+    <div id="detail"><h3 id="detailTitle"></h3><div class="chwrap"><canvas id="chart"></canvas></div></div>
+  </section>
+
+  <!-- 통계 -->
+  <section id="view-stats" style="display:none">
+    <div class="sub">
+      <div class="seg" id="periodSeg">
+        <button data-d="0" class="active" onclick="setPeriod(0,this)">오늘</button>
+        <button data-d="7" onclick="setPeriod(7,this)">최근 7일</button>
+        <button data-d="30" onclick="setPeriod(30,this)">최근 30일</button>
+      </div>
+      <select class="inp" id="statDevice" onchange="renderStatChart()"></select>
+      <span id="statInfo"></span>
+      <button class="btn go" style="margin-left:auto" onclick="exportCSV()">CSV 내보내기</button>
+    </div>
+    <div class="tblwrap"><table class="tbl" id="statTbl"></table></div>
+    <div id="statChartWrap"><div class="chwrap"><canvas id="statChart"></canvas></div></div>
+  </section>
+
+  <!-- 설정 -->
+  <section id="view-config" style="display:none">
+    <div class="sub">
+      <span>온습도계별 위치 · 저장주기 · 정상범위(조건) 설정</span>
+      <span id="roNote" class="ro"></span>
+      <button class="btn go" style="margin-left:auto" id="addBtn" onclick="addBlank()">+ 기기 추가</button>
+    </div>
+    <div id="cfgBanner"></div>
+    <div id="cfgList"></div>
+  </section>
+</main>
+
+<footer>태진다이텍 환경 모니터링 · <span>v1.1</span></footer>
+<div class="toast" id="toast"></div>
+
+<script>
+const SB_URL='https://omngtyewdaqpphnzeate.supabase.co';
+const SB_KEY='sb_publishable_9j2YkkL-7ul1TrhH-NjVdQ_vWDG2-1D';
+const H={apikey:SB_KEY,Authorization:'Bearer '+SB_KEY,'Content-Type':'application/json'};
+const NTFY_TOPIC='taejin_env_alert';   // ★ ntfy.sh 토픽명 (원하는 이름으로 변경)
+
+let USER=null;
+try{USER=JSON.parse(localStorage.getItem('esg_pin_auth')||'null');}catch(e){}
+if(!USER){try{USER=JSON.parse(sessionStorage.getItem('ESG_USER')||'null');}catch(e){}}
+const READONLY=!!(USER&&(USER.pin==='0000'||USER.name==='게스트'));
+
+/* 공통 */
+function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');
+  clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),1800);}
+function parts(d){return new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',
+  day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).formatToParts(d)
+  .reduce((o,p)=>(o[p.type]=p.value,o),{});}
+function kstISO(d){const g=parts(d);return `${g.year}-${g.month}-${g.day}T${g.hour}:${g.minute}:${g.second}+09:00`;}
+function fmtFull(iso){const g=parts(new Date(iso));return `${g.year}-${g.month}-${g.day} ${g.hour}:${g.minute}:${g.second}`;}
+function kstDateStr(d){const g=parts(d);return `${g.year}-${g.month}-${g.day}`;}
+function fmtClock(d){const g=parts(d);return `${g.hour}:${g.minute}:${g.second}`;}
+function ageSec(iso){return (Date.now()-new Date(iso).getTime())/1000;}
+function relTime(iso){const s=ageSec(iso);if(s<60)return Math.floor(s)+'초 전';if(s<3600)return Math.floor(s/60)+'분 전';
+  if(s<86400)return Math.floor(s/3600)+'시간 전';return Math.floor(s/86400)+'일 전';}
+function isOnline(iso,iv){return iso&&ageSec(iso)<Math.max((iv||60)*3,180);}
+function valState(v,min,max){if(v==null||isNaN(v))return 'off';if(v<min||v>max)return 'bad';
+  const sp=(max-min)||1;if(v<min+sp*0.1||v>max-sp*0.1)return 'warn';return 'ok';}
+const num=v=>(v==null||isNaN(v))?'--':Number(v).toFixed(1);
+
+async function sbGet(path){const r=await fetch(SB_URL+'/rest/v1/'+path,{headers:H});
+  if(!r.ok)throw new Error('GET '+r.status);return r.json();}
+async function sbGetAll(base,cap=40000){let out=[],off=0,page=1000;
+  while(out.length<cap){const rows=await sbGet(base+'&limit='+page+'&offset='+off);
+    out=out.concat(rows);if(rows.length<page)break;off+=page;}return out;}
+async function sbUpsert(row){const r=await fetch(SB_URL+'/rest/v1/env_device?on_conflict=device_id',{
+  method:'POST',headers:{...H,Prefer:'resolution=merge-duplicates,return=minimal'},body:JSON.stringify(row)});
+  if(!r.ok)throw new Error('저장 실패 '+r.status+' '+await r.text());}
+async function sbDelete(id){const r=await fetch(SB_URL+'/rest/v1/env_device?device_id=eq.'+encodeURIComponent(id),{
+  method:'DELETE',headers:{...H,Prefer:'return=minimal'}});if(!r.ok)throw new Error('삭제 실패 '+r.status);}
+
+/* ntfy 경고 (정상->경고 전환 시 1회, 같은 문제는 30분마다 재알림) */
+let NTFY_ON=localStorage.getItem('env_ntfy_on')!=='0';
+let alertState={};try{alertState=JSON.parse(localStorage.getItem('env_alert_state')||'{}');}catch(e){}
+function toggleNtfy(){NTFY_ON=document.getElementById('ntfyToggle').checked;
+  localStorage.setItem('env_ntfy_on',NTFY_ON?'1':'0');toast(NTFY_ON?'경고 알림 켜짐':'경고 알림 꺼짐');}
+function sendNtfy(body){fetch('https://ntfy.sh/'+NTFY_TOPIC,{method:'POST',
+  headers:{'Title':'ENV ALERT','Priority':'high','Tags':'warning'},body}).catch(()=>{});}
+function checkAlert(id,loc,problem){
+  const prev=alertState[id],now=Date.now();
+  if(problem){
+    if(!prev||prev.p!==problem||now-prev.ts>30*60*1000){
+      if(NTFY_ON) sendNtfy(`${id} (${loc}) ${problem}`);
+      alertState[id]={p:problem,ts:now};
+    }
+  }else if(prev){
+    if(NTFY_ON) sendNtfy(`${id} (${loc}) 정상 복구`);
+    delete alertState[id];
+  }
+  localStorage.setItem('env_alert_state',JSON.stringify(alertState));
+}
+function deviceProblem(cfg,r){
+  if(!cfg||cfg.enabled===false) return null;
+  if(!r||!isOnline(r.measured_at,cfg.save_interval)) return '오프라인';
+  const t=+r.temperature,h=+r.humidity;
+  if(t<cfg.temp_min) return '온도 낮음 '+t.toFixed(1)+'C';
+  if(t>cfg.temp_max) return '온도 높음 '+t.toFixed(1)+'C';
+  if(h<cfg.humi_min) return '습도 낮음 '+h.toFixed(1)+'%';
+  if(h>cfg.humi_max) return '습도 높음 '+h.toFixed(1)+'%';
+  return null;
+}
+
+/* 탭 */
+function showTab(t){
+  document.getElementById('view-status').style.display=t==='status'?'':'none';
+  document.getElementById('view-stats').style.display=t==='stats'?'':'none';
+  document.getElementById('view-config').style.display=t==='config'?'':'none';
+  document.getElementById('tab-status').classList.toggle('active',t==='status');
+  document.getElementById('tab-stats').classList.toggle('active',t==='stats');
+  document.getElementById('tab-config').classList.toggle('active',t==='config');
+  if(t==='status')loadStatus(); else if(t==='stats')loadStats(); else loadConfig();
+}
+
+/* 현황 */
+let DEVICES={},selDevice=null,chart=null;
+async function loadStatus(){
+  try{
+    const since=kstISO(new Date(Date.now()-6*3600*1000));
+    const [cfg,logs]=await Promise.all([
+      sbGet('env_device?select=*'),
+      sbGet('env_log?select=device_id,zone,temperature,humidity,feels_like,measured_at'
+        +'&measured_at=gte.'+since+'&order=measured_at.desc&limit=4000')
+    ]);
+    DEVICES={};cfg.forEach(c=>DEVICES[c.device_id]=c);
+    const latest={};logs.forEach(r=>{if(!latest[r.device_id])latest[r.device_id]=r;});
+    const ids=[...new Set([...Object.keys(DEVICES),...Object.keys(latest)])].sort();
+    const wrap=document.getElementById('cards');
+    wrap.innerHTML=ids.length?ids.map(id=>cardHTML(id,DEVICES[id],latest[id])).join('')
+      :'<div class="empty">표시할 기기가 없습니다. 보드 데이터가 들어오면 표시됩니다.</div>';
+    // 경고 점검 (설정+사용 기기만)
+    ids.forEach(id=>{const c=DEVICES[id];if(c)checkAlert(id,c.location||'',deviceProblem(c,latest[id]));});
+    document.getElementById('lastUpdate').textContent='마지막 갱신 '+fmtClock(new Date());
+  }catch(e){document.getElementById('lastUpdate').textContent='불러오기 오류: '+e.message;}
+}
+function cardHTML(id,cfg,r){
+  const loc=(cfg&&cfg.location)||(r&&r.zone)||'-';
+  const tmin=cfg?cfg.temp_min:10,tmax=cfg?cfg.temp_max:35,hmin=cfg?cfg.humi_min:20,hmax=cfg?cfg.humi_max:70;
+  const iv=cfg?cfg.save_interval:60,online=r&&isOnline(r.measured_at,iv);
+  const sc=!r?'var(--off)':(online?'var(--ok)':'var(--off)'),stxt=!r?'데이터 없음':(online?'정상':'오프라인');
+  const unconf=!cfg?'<span class="badge" style="color:#f5d97a;border-color:#5a4d1e">미설정</span>':'';
+  const t=r?r.temperature:null,h=r?r.humidity:null,f=r?r.feels_like:null;
+  return `<div class="card${selDevice===id?' sel':''}" onclick="selectDevice('${id}',event)">
+    <div class="chead"><span class="badge">${id}</span><span class="loc">${loc}</span>${unconf}
+      <span class="status"><span class="sdot" style="background:${sc}"></span>${stxt}</span></div>
+    <div class="vals">
+      <div class="v ${valState(t,tmin,tmax)}"><div class="lab">온도</div><div class="num" style="color:var(--temp)">${num(t)}<span class="unit">°C</span></div></div>
+      <div class="v ${valState(h,hmin,hmax)}"><div class="lab">습도</div><div class="num" style="color:var(--humi)">${num(h)}<span class="unit">%</span></div></div>
+      <div class="v ok"><div class="lab">체감</div><div class="num">${num(f)}<span class="unit">°C</span></div></div>
+    </div>
+    <div class="updt">${r?relTime(r.measured_at):'-'}</div></div>`;
+}
+async function selectDevice(id,ev){
+  selDevice=(selDevice===id)?null:id;
+  document.querySelectorAll('.card').forEach(c=>c.classList.remove('sel'));
+  const d=document.getElementById('detail');
+  if(!selDevice){d.style.display='none';return;}
+  ev.currentTarget.classList.add('sel');d.style.display='';
+  const loc=(DEVICES[id]&&DEVICES[id].location)||'';
+  document.getElementById('detailTitle').textContent=id+' '+loc+' · 최근 6시간';
+  try{
+    const since=kstISO(new Date(Date.now()-6*3600*1000));
+    const rows=await sbGet('env_log?select=temperature,humidity,feels_like,measured_at&device_id=eq.'
+      +encodeURIComponent(id)+'&measured_at=gte.'+since+'&order=measured_at.asc&limit=3000');
+    drawChart('chart',rows.map(r=>fmtClock(new Date(r.measured_at)).slice(0,5)),
+      rows.map(r=>r.temperature),rows.map(r=>r.feels_like),rows.map(r=>r.humidity),'chartObj');
+    d.scrollIntoView({behavior:'smooth',block:'nearest'});
+  }catch(e){toast('차트 오류: '+e.message);}
+}
+function drawChart(canvasId,labels,t,f,h,store){
+  const cfg={type:'line',data:{labels,datasets:[
+    {label:'온도 °C',data:t,borderColor:'#facc15',borderWidth:2,pointRadius:0,tension:.3,yAxisID:'y1'},
+    {label:'체감 °C',data:f,borderColor:'#e8edf4',borderWidth:1.5,pointRadius:0,tension:.3,yAxisID:'y1'},
+    {label:'습도 %',data:h,borderColor:'#38bdf8',borderWidth:2,pointRadius:0,tension:.3,yAxisID:'y2'}]},
+    options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+      plugins:{legend:{labels:{color:'#8a97a8',boxWidth:14}}},
+      scales:{x:{ticks:{color:'#8a97a8',maxTicksLimit:8},grid:{color:'#2a3340'}},
+        y1:{position:'left',ticks:{color:'#facc15'},grid:{color:'#2a3340'},title:{display:true,text:'°C',color:'#8a97a8'}},
+        y2:{position:'right',ticks:{color:'#38bdf8'},grid:{drawOnChartArea:false},title:{display:true,text:'%',color:'#8a97a8'}}}}};
+  if(window[store])window[store].destroy();
+  window[store]=new Chart(document.getElementById(canvasId),cfg);
+}
+
+/* 통계 */
+let STAT_ROWS=[],STAT_DAYS=0;
+function setPeriod(d,btn){document.querySelectorAll('#periodSeg button').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');STAT_DAYS=d;loadStats();}
+async function loadStats(){
+  const info=document.getElementById('statInfo');info.textContent='집계 중…';
+  let since;
+  if(STAT_DAYS===0) since=kstDateStr(new Date())+'T00:00:00+09:00';
+  else since=kstISO(new Date(Date.now()-STAT_DAYS*86400*1000));
+  try{
+    STAT_ROWS=await sbGetAll('env_log?select=device_id,zone,temperature,humidity,feels_like,measured_at'
+      +'&measured_at=gte.'+since+'&order=measured_at.asc');
+    info.textContent=STAT_ROWS.length.toLocaleString()+'건';
+    buildStatTable();
+    fillDeviceSelect();
+    renderStatChart();
+  }catch(e){info.textContent='오류: '+e.message;}
+}
+function summarize(rows){
+  const by={};
+  for(const r of rows){let g=by[r.device_id];
+    if(!g)g=by[r.device_id]={zone:r.zone||'',n:0,ts:0,tc:0,tn:1e9,tx:-1e9,hs:0,hc:0,hn:1e9,hx:-1e9,fs:0,fc:0};
+    g.zone=r.zone||g.zone;g.n++;
+    const t=+r.temperature;if(!isNaN(t)){g.ts+=t;g.tc++;if(t<g.tn)g.tn=t;if(t>g.tx)g.tx=t;}
+    const h=+r.humidity;if(!isNaN(h)){g.hs+=h;g.hc++;if(h<g.hn)g.hn=h;if(h>g.hx)g.hx=h;}
+    const f=+r.feels_like;if(!isNaN(f)){g.fs+=f;g.fc++;}}
+  return by;
+}
+function buildStatTable(){
+  const by=summarize(STAT_ROWS);const ids=Object.keys(by).sort();
+  const f=v=>(v==null||!isFinite(v))?'-':v.toFixed(1);
+  let html='<thead><tr><th>기기</th><th>위치</th><th>건수</th>'
+    +'<th>온도 평균</th><th>최저</th><th>최고</th><th>습도 평균</th><th>최저</th><th>최고</th><th>체감 평균</th></tr></thead><tbody>';
+  if(ids.length===0) html+='<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:24px">데이터 없음</td></tr>';
+  ids.forEach(id=>{const g=by[id];
+    html+=`<tr><td><b>${id}</b></td><td>${g.zone}</td><td>${g.n.toLocaleString()}</td>
+      <td>${f(g.tc?g.ts/g.tc:null)}</td><td>${f(g.tc?g.tn:null)}</td><td>${f(g.tc?g.tx:null)}</td>
+      <td>${f(g.hc?g.hs/g.hc:null)}</td><td>${f(g.hc?g.hn:null)}</td><td>${f(g.hc?g.hx:null)}</td>
+      <td>${f(g.fc?g.fs/g.fc:null)}</td></tr>`;});
+  document.getElementById('statTbl').innerHTML=html+'</tbody>';
+}
+function fillDeviceSelect(){
+  const ids=[...new Set(STAT_ROWS.map(r=>r.device_id))].sort();
+  const sel=document.getElementById('statDevice');const cur=sel.value;
+  sel.innerHTML='<option value="__all__">전체(평균)</option>'+ids.map(i=>`<option value="${i}">${i}</option>`).join('');
+  if([...sel.options].some(o=>o.value===cur))sel.value=cur;
+}
+function renderStatChart(){
+  const dev=document.getElementById('statDevice').value||'__all__';
+  const byHour=STAT_DAYS===0;
+  const m={};
+  for(const r of STAT_ROWS){
+    if(dev!=='__all__'&&r.device_id!==dev)continue;
+    const g=parts(new Date(r.measured_at));
+    const k=byHour?`${g.hour}:00`:`${g.month}-${g.day}`;
+    let b=m[k];if(!b)b=m[k]={ts:0,tc:0,fs:0,fc:0,hs:0,hc:0};
+    const t=+r.temperature;if(!isNaN(t)){b.ts+=t;b.tc++;}
+    const f=+r.feels_like;if(!isNaN(f)){b.fs+=f;b.fc++;}
+    const h=+r.humidity;if(!isNaN(h)){b.hs+=h;b.hc++;}
+  }
+  const keys=Object.keys(m).sort();
+  drawChart('statChart',keys,keys.map(k=>m[k].tc?m[k].ts/m[k].tc:null),
+    keys.map(k=>m[k].fc?m[k].fs/m[k].fc:null),keys.map(k=>m[k].hc?m[k].hs/m[k].hc:null),'statObj');
+}
+function exportCSV(){
+  if(!STAT_ROWS.length){toast('내보낼 데이터가 없습니다');return;}
+  const head=['기기ID','위치','온도','습도','체감','측정시각(KST)'];
+  const lines=[head.join(',')];
+  for(const r of STAT_ROWS) lines.push([r.device_id,'"'+(r.zone||'')+'"',
+    r.temperature??'',r.humidity??'',r.feels_like??'',fmtFull(r.measured_at)].join(','));
+  const blob=new Blob(['\uFEFF'+lines.join('\r\n')],{type:'text/csv;charset=utf-8'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download='env_log_'+kstDateStr(new Date())+'.csv';a.click();
+  toast(STAT_ROWS.length.toLocaleString()+'건 내보냄');
+}
+
+/* 설정 */
+async function loadConfig(){
+  document.getElementById('roNote').textContent=READONLY?'(게스트 · 읽기전용)':'';
+  document.getElementById('addBtn').style.display=READONLY?'none':'';
+  try{
+    const since=kstISO(new Date(Date.now()-24*3600*1000));
+    const [cfg,seen]=await Promise.all([
+      sbGet('env_device?select=*&order=device_id.asc'),
+      sbGet('env_log?select=device_id,zone&measured_at=gte.'+since+'&order=measured_at.desc&limit=4000')]);
+    const ids=new Set(cfg.map(c=>c.device_id)),newOnes={};
+    seen.forEach(r=>{if(!ids.has(r.device_id)&&!newOnes[r.device_id])newOnes[r.device_id]={device_id:r.device_id,zone:r.zone};});
+    const newList=Object.values(newOnes);
+    document.getElementById('cfgBanner').innerHTML=(newList.length&&!READONLY)
+      ?'<div class="banner">미설정 기기 '+newList.length+'대: '+newList.map(n=>'<b>'+n.device_id+'</b>').join(', ')+' — 정보 채워 저장하세요.</div>':'';
+    const rows=cfg.concat(newList.map(n=>({device_id:n.device_id,mac:'',location:n.zone||'',
+      save_interval:60,temp_min:10,temp_max:35,humi_min:20,humi_max:70,enabled:true,_new:true})));
+    const el=document.getElementById('cfgList');
+    el.innerHTML=rows.length?rows.map(rowHTML).join(''):'<div class="empty">등록된 기기가 없습니다. + 기기 추가를 누르세요.</div>';
+  }catch(e){document.getElementById('cfgList').innerHTML='<div class="empty">불러오기 오류: '+e.message+'</div>';}
+}
+function rowHTML(c){const dis=READONLY?'disabled':'';
+  return `<div class="srow" data-id="${c.device_id||''}">
+    <div class="top"><span class="badge">${c.device_id||'신규'}</span>
+      <input style="flex:1;min-width:160px;background:var(--bg);border:1px solid var(--line);color:var(--muted);border-radius:8px;padding:6px 8px;font-family:ui-monospace,monospace"
+        placeholder="MAC (예: 5C:01:3B:07:B5:48)" value="${c.mac||''}" data-k="mac" ${dis}>
+      ${c._new?'<input placeholder="기기ID (예: SHT41_2)" style="background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:6px 8px" data-k="device_id" '+dis+'>':''}</div>
+    <div class="fgrid">
+      <div class="f"><label>위치</label><input data-k="location" value="${c.location||''}" placeholder="예: B_A" ${dis}></div>
+      <div class="f"><label>저장주기(초)</label><input type="number" data-k="save_interval" value="${c.save_interval??60}" ${dis}></div>
+      <div class="f"><label>온도 하한 °C</label><input type="number" step="0.5" data-k="temp_min" value="${c.temp_min??10}" ${dis}></div>
+      <div class="f"><label>온도 상한 °C</label><input type="number" step="0.5" data-k="temp_max" value="${c.temp_max??35}" ${dis}></div>
+      <div class="f"><label>습도 하한 %</label><input type="number" step="1" data-k="humi_min" value="${c.humi_min??20}" ${dis}></div>
+      <div class="f"><label>습도 상한 %</label><input type="number" step="1" data-k="humi_max" value="${c.humi_max??70}" ${dis}></div>
+      <div class="f"><label>사용</label><select data-k="enabled" ${dis}>
+        <option value="true" ${c.enabled!==false?'selected':''}>사용</option>
+        <option value="false" ${c.enabled===false?'selected':''}>중지</option></select></div></div>
+    ${READONLY?'':`<div class="acts"><button class="btn del" onclick="delRow(this)">삭제</button>
+      <button class="btn go" onclick="saveRow(this)">저장</button></div>`}</div>`;
+}
+function collect(rowEl){const o={};
+  rowEl.querySelectorAll('[data-k]').forEach(inp=>{const k=inp.dataset.k;let v=inp.value;
+    if(k==='save_interval')v=parseInt(v||'0',10);
+    else if(['temp_min','temp_max','humi_min','humi_max'].includes(k))v=parseFloat(v||'0');
+    else if(k==='enabled')v=(v==='true');o[k]=v;});
+  if(!o.device_id)o.device_id=rowEl.dataset.id;o.updated_at=kstISO(new Date());return o;}
+async function saveRow(btn){const o=collect(btn.closest('.srow'));
+  if(!o.device_id){toast('기기ID를 입력하세요');return;}
+  try{await sbUpsert(o);toast('저장됨: '+o.device_id);loadConfig();}catch(e){toast(e.message);}}
+async function delRow(btn){const row=btn.closest('.srow');
+  const id=row.dataset.id||row.querySelector('[data-k="device_id"]')?.value;
+  if(!id){row.remove();return;}if(!confirm(id+' 설정을 삭제할까요?'))return;
+  try{await sbDelete(id);toast('삭제됨: '+id);loadConfig();}catch(e){toast(e.message);}}
+function addBlank(){const el=document.getElementById('cfgList');
+  if(el.querySelector('.empty'))el.innerHTML='';
+  el.insertAdjacentHTML('afterbegin',rowHTML({_new:true,save_interval:60,temp_min:10,temp_max:35,humi_min:20,humi_max:70,enabled:true}));}
+
+/* 시작 */
+document.getElementById('ntfyToggle').checked=NTFY_ON;
+setInterval(()=>document.getElementById('clock').textContent=fmtClock(new Date()),1000);
+document.getElementById('clock').textContent=fmtClock(new Date());
+loadStatus();
+setInterval(()=>{if(document.getElementById('view-status').style.display!=='none')loadStatus();},60000);
+</script>
+</body>
+</html>
