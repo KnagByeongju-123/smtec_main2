@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>작업일보 v11.3</title>
+<title>작업일보 v11.5</title>
 <style>
   :root{
     --bg:#0f1419; --panel:#1a2332; --border:#2a3a52;
@@ -314,7 +314,7 @@
 <body>
 
 <div class="header">
-  <h1>📋 작업일보 v11.3</h1>
+  <h1>📋 작업일보 v11.5</h1>
   <div class="meta">
     <span><span class="status-dot" id="connDot"></span><b id="connText">연결 확인 중</b></span>
     <span>장비: <b id="deviceCount">0</b></span>
@@ -466,7 +466,7 @@
 
 <div class="footer">
   <span>Supabase <b>shot_count</b> · 폴링 <b>2초</b> · 매핑은 <b>Supabase</b>에 저장 (localStorage 캐시)</span>
-  <span>v11.3</span>
+  <span>v11.5</span>
 </div>
 
 <!-- 설정 모달 -->
@@ -1377,9 +1377,21 @@
   function renderSlots(){
     const c=document.getElementById('slotRows'); if(!c) return;
     if(!slots.length) slots=[{machine:'',model:'',applied:false,startAt:null}];
+    // 비정상 상태 복구: 호기 없이 적용 중인 슬롯은 적용 해제 → 호기 선택 가능
+    slots.forEach(function(s){ if(s.applied && !normMachine(s.machine)){ s.applied=false; s.startAt=null; } });
+    applyStarted=slots.some(function(s){return s.applied;});
+    // 슬롯 호기 옵션 = 레이아웃 호기목록 ∪ 공정배치 호기 ∪ 매핑 호기
+    var mset=new Set((machineList||[]).map(normMachine).filter(Boolean));
+    try{ Object.keys(layoutAssign||{}).forEach(function(k){ var nm=normMachine(k); if(nm) mset.add(nm); }); }catch(_){}
+    try{ Object.keys(mapping||{}).forEach(function(dev){ var d=mapping[dev]||{}; Object.keys(d).forEach(function(di){ var nm=normMachine(d[di]&&d[di].machine); if(nm) mset.add(nm); }); }); }catch(_){}
+    var mlist=[...mset].sort(function(a,b){ var na=parseInt(a),nb=parseInt(b); na=isNaN(na)?99999:na; nb=isNaN(nb)?99999:nb; return na!==nb?na-nb:String(a).localeCompare(String(b)); });
+    if(!mlist.length) mlist=DEFAULT_MACHINES.slice();
     c.innerHTML=slots.map(function(s,i){
       const dis=s.applied?' disabled':'';
-      const mOpts='<option value="">호기 선택</option>'+machineList.map(function(m){const nm=normMachine(m);return '<option value="'+nm+'"'+(normMachine(s.machine)===nm?' selected':'')+'>'+mLabel(nm)+'</option>';}).join('');
+      // 슬롯의 호기가 목록에 없으면 옵션에 포함시켜 표시 보존
+      var opts=mlist.slice(); const sm=normMachine(s.machine);
+      if(sm && opts.map(normMachine).indexOf(sm)<0) opts.push(s.machine);
+      const mOpts='<option value="">호기 선택</option>'+opts.map(function(m){const nm=normMachine(m);return '<option value="'+nm+'"'+(normMachine(s.machine)===nm?' selected':'')+'>'+mLabel(nm)+'</option>';}).join('');
       const mdOpts='<option value="">기종 선택</option>'+modelList.map(function(m){return '<option value="'+m.replace(/"/g,'&quot;')+'"'+(s.model===m?' selected':'')+'>'+m+'</option>';}).join('');
       const delBtn=s.applied?'':'<button class="slot-del" onclick="removeSlot('+i+')">✕</button>';
       const applyBtn=s.applied
