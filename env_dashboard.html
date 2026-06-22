@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>환경 모니터링 v1.2</title>
+<title>환경 모니터링 v1.3</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
   :root{
@@ -81,7 +81,7 @@
 <body>
 <header>
   <div class="bar">
-    <h1>환경 모니터링</h1><span class="ver" id="ver">v1.2</span>
+    <h1>환경 모니터링</h1><span class="ver" id="ver">v1.3</span>
     <span class="clock" id="clock">--:--:--</span>
   </div>
   <div class="tabs">
@@ -131,7 +131,7 @@
   </section>
 </main>
 
-<footer>태진다이텍 환경 모니터링 · <span>v1.2</span></footer>
+<footer>태진다이텍 환경 모니터링 · <span>v1.3</span></footer>
 <div class="toast" id="toast"></div>
 
 <script>
@@ -196,7 +196,8 @@ function checkAlert(id,loc,problem){
 }
 function deviceProblem(cfg,r){
   if(!cfg||cfg.enabled===false) return null;
-  if(!r||!isOnline(r.measured_at,cfg.save_interval)) return '오프라인';
+  const ts=r?(r.updated_at||r.measured_at):null;
+  if(!ts||ageSec(ts)>180) return '오프라인';
   const t=+r.temperature,h=+r.humidity;
   if(t<cfg.temp_min) return '온도 낮음 '+t.toFixed(1)+'C';
   if(t>cfg.temp_max) return '온도 높음 '+t.toFixed(1)+'C';
@@ -220,14 +221,12 @@ function showTab(t){
 let DEVICES={},selDevice=null,chart=null;
 async function loadStatus(){
   try{
-    const since=kstISO(new Date(Date.now()-6*3600*1000));
-    const [cfg,logs]=await Promise.all([
+    const [cfg,cur]=await Promise.all([
       sbGet('env_device?select=*'),
-      sbGet('env_log?select=device_id,zone,temperature,humidity,feels_like,measured_at'
-        +'&measured_at=gte.'+encodeURIComponent(since)+'&order=measured_at.desc&limit=4000')
+      sbGet('env_current?select=*')
     ]);
     DEVICES={};cfg.forEach(c=>DEVICES[c.device_id]=c);
-    const latest={};logs.forEach(r=>{if(!latest[r.device_id])latest[r.device_id]=r;});
+    const latest={};cur.forEach(r=>{latest[r.device_id]=r;});
     const ids=[...new Set([...Object.keys(DEVICES),...Object.keys(latest)])].sort();
     const wrap=document.getElementById('cards');
     wrap.innerHTML=ids.length?ids.map(id=>cardHTML(id,DEVICES[id],latest[id])).join('')
@@ -240,7 +239,7 @@ async function loadStatus(){
 function cardHTML(id,cfg,r){
   const loc=(cfg&&cfg.location)||(r&&r.zone)||'-';
   const tmin=cfg?cfg.temp_min:10,tmax=cfg?cfg.temp_max:35,hmin=cfg?cfg.humi_min:20,hmax=cfg?cfg.humi_max:70;
-  const iv=cfg?cfg.save_interval:60,online=r&&isOnline(r.measured_at,iv);
+  const ts=r?(r.updated_at||r.measured_at):null,online=ts&&ageSec(ts)<180;
   const sc=!r?'var(--off)':(online?'var(--ok)':'var(--off)'),stxt=!r?'데이터 없음':(online?'정상':'오프라인');
   const unconf=!cfg?'<span class="badge" style="color:#f5d97a;border-color:#5a4d1e">미설정</span>':'';
   const t=r?r.temperature:null,h=r?r.humidity:null,f=r?r.feels_like:null;
@@ -252,7 +251,7 @@ function cardHTML(id,cfg,r){
       <div class="v ${valState(h,hmin,hmax)}"><div class="lab">습도</div><div class="num" style="color:var(--humi)">${num(h)}<span class="unit">%</span></div></div>
       <div class="v ok"><div class="lab">체감</div><div class="num">${num(f)}<span class="unit">°C</span></div></div>
     </div>
-    <div class="updt">${r?relTime(r.measured_at):'-'}</div></div>`;
+    <div class="updt">${ts?relTime(ts):'-'}</div></div>`;
 }
 async function selectDevice(id,ev){
   selDevice=(selDevice===id)?null:id;
@@ -261,9 +260,9 @@ async function selectDevice(id,ev){
   if(!selDevice){d.style.display='none';return;}
   ev.currentTarget.classList.add('sel');d.style.display='';
   const loc=(DEVICES[id]&&DEVICES[id].location)||'';
-  document.getElementById('detailTitle').textContent=id+' '+loc+' · 최근 6시간';
+  document.getElementById('detailTitle').textContent=id+' '+loc+' · 최근 24시간';
   try{
-    const since=kstISO(new Date(Date.now()-6*3600*1000));
+    const since=kstISO(new Date(Date.now()-24*3600*1000));
     const rows=await sbGet('env_log?select=temperature,humidity,feels_like,measured_at&device_id=eq.'
       +encodeURIComponent(id)+'&measured_at=gte.'+encodeURIComponent(since)+'&order=measured_at.asc&limit=3000');
     drawChart('chart',rows.map(r=>fmtClock(new Date(r.measured_at)).slice(0,5)),
@@ -366,10 +365,9 @@ async function loadConfig(){
   document.getElementById('roNote').textContent=READONLY?'(게스트 · 읽기전용)':'';
   document.getElementById('addBtn').style.display=READONLY?'none':'';
   try{
-    const since=kstISO(new Date(Date.now()-24*3600*1000));
     const [cfg,seen]=await Promise.all([
       sbGet('env_device?select=*&order=device_id.asc'),
-      sbGet('env_log?select=device_id,zone&measured_at=gte.'+encodeURIComponent(since)+'&order=measured_at.desc&limit=4000')]);
+      sbGet('env_current?select=device_id,zone')]);
     const ids=new Set(cfg.map(c=>c.device_id)),newOnes={};
     seen.forEach(r=>{if(!ids.has(r.device_id)&&!newOnes[r.device_id])newOnes[r.device_id]={device_id:r.device_id,zone:r.zone};});
     const newList=Object.values(newOnes);
