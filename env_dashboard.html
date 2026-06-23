@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>환경 모니터링 v1.4</title>
+<title>환경 모니터링 v1.5</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
   :root{
@@ -81,7 +81,7 @@
 <body>
 <header>
   <div class="bar">
-    <h1>환경 모니터링</h1><span class="ver" id="ver">v1.4</span>
+    <h1>환경 모니터링</h1><span class="ver" id="ver">v1.5</span>
     <span class="clock" id="clock">--:--:--</span>
   </div>
   <div class="tabs">
@@ -145,7 +145,7 @@
   </section>
 </main>
 
-<footer>태진다이텍 환경 모니터링 · <span>v1.4</span></footer>
+<footer>태진다이텍 환경 모니터링 · <span>v1.5</span></footer>
 <div class="toast" id="toast"></div>
 
 <script>
@@ -249,14 +249,47 @@ function showTab(t){
 
 /* 현황 */
 let DEVICES={},selDevice=null,chart=null;
+
+/* 외부 측정실 환경 소스 (팀원 시스템 · 별도 Supabase, 읽기 전용) */
+const ROOM_SRC={
+  url:'https://trhjeongphtendkounig.supabase.co',
+  key:'sb_publishable_B6mrGhmPO7XrCzVijyDlhA_Jo-Mhnyk',
+  table:'env_log', id:'QC_ROOM', zone:'측정실'
+};
+function roomFeels(T,RH){   // 측정실 페이지와 동일 공식
+  if(T>=27){
+    const Tf=T*9/5+32;
+    let HI=-42.379+2.04901523*Tf+10.14333127*RH-0.22475541*Tf*RH-0.00683783*Tf*Tf
+      -0.05481717*RH*RH+0.00122874*Tf*Tf*RH+0.00085282*Tf*RH*RH-0.00000199*Tf*Tf*RH*RH;
+    if(RH<13&&Tf>=80&&Tf<=112) HI-=((13-RH)/4)*Math.sqrt((17-Math.abs(Tf-95))/17);
+    else if(RH>85&&Tf>=80&&Tf<=87) HI+=((RH-85)/10)*((87-Tf)/5);
+    return (HI-32)*5/9;
+  }
+  const e=(RH/100)*6.105*Math.exp(17.27*T/(237.7+T));
+  return T+0.348*e-0.70*0.1-4.25;
+}
+async function fetchRoom(){
+  try{
+    const u=ROOM_SRC.url+'/rest/v1/'+ROOM_SRC.table
+      +'?select=measured_at,temp,humi&order=measured_at.desc&limit=1';
+    const r=await fetch(u,{headers:{apikey:ROOM_SRC.key,Authorization:'Bearer '+ROOM_SRC.key}});
+    if(!r.ok)return null;
+    const a=await r.json();if(!a||!a.length)return null;
+    const x=a[0],T=+x.temp,RH=+x.humi;
+    return {device_id:ROOM_SRC.id,zone:ROOM_SRC.zone,temperature:T,humidity:RH,
+      feels_like:+roomFeels(T,RH).toFixed(1),updated_at:x.measured_at,measured_at:x.measured_at};
+  }catch(e){return null;}
+}
 async function loadStatus(){
   try{
-    const [cfg,cur]=await Promise.all([
+    const [cfg,cur,room]=await Promise.all([
       sbGet('env_device?select=*'),
-      sbGet('env_current?select=*')
+      sbGet('env_current?select=*'),
+      fetchRoom()
     ]);
     DEVICES={};cfg.forEach(c=>DEVICES[c.device_id]=c);
     const latest={};cur.forEach(r=>{latest[r.device_id]=r;});
+    if(room)latest[room.device_id]=room;
     const ids=[...new Set([...Object.keys(DEVICES),...Object.keys(latest)])].sort();
     const wrap=document.getElementById('cards');
     wrap.innerHTML=ids.length?ids.map(id=>cardHTML(id,DEVICES[id],latest[id])).join('')
@@ -293,10 +326,23 @@ async function selectDevice(id,ev){
   document.getElementById('detailTitle').textContent=id+' '+loc+' · 최근 24시간';
   try{
     const since=kstISO(new Date(Date.now()-24*3600*1000));
-    const rows=await sbGet('env_log?select=temperature,humidity,feels_like,measured_at&device_id=eq.'
-      +encodeURIComponent(id)+'&measured_at=gte.'+encodeURIComponent(since)+'&order=measured_at.asc&limit=3000');
-    drawChart('chart',rows.map(r=>fmtClock(new Date(r.measured_at)).slice(0,5)),
-      rows.map(r=>r.temperature),rows.map(r=>r.feels_like),rows.map(r=>r.humidity),'chartObj');
+    let labels,T,F,H;
+    if(id===ROOM_SRC.id){
+      const u=ROOM_SRC.url+'/rest/v1/'+ROOM_SRC.table
+        +'?select=measured_at,temp,humi&measured_at=gte.'+encodeURIComponent(since)
+        +'&order=measured_at.asc&limit=5000';
+      const res=await fetch(u,{headers:{apikey:ROOM_SRC.key,Authorization:'Bearer '+ROOM_SRC.key}});
+      const rows=res.ok?await res.json():[];
+      labels=rows.map(r=>fmtClock(new Date(r.measured_at)).slice(0,5));
+      T=rows.map(r=>+r.temp);H=rows.map(r=>+r.humi);
+      F=rows.map(r=>+roomFeels(+r.temp,+r.humi).toFixed(1));
+    }else{
+      const rows=await sbGet('env_log?select=temperature,humidity,feels_like,measured_at&device_id=eq.'
+        +encodeURIComponent(id)+'&measured_at=gte.'+encodeURIComponent(since)+'&order=measured_at.asc&limit=3000');
+      labels=rows.map(r=>fmtClock(new Date(r.measured_at)).slice(0,5));
+      T=rows.map(r=>r.temperature);F=rows.map(r=>r.feels_like);H=rows.map(r=>r.humidity);
+    }
+    drawChart('chart',labels,T,F,H,'chartObj');
     d.scrollIntoView({behavior:'smooth',block:'nearest'});
   }catch(e){toast('차트 오류: '+e.message);}
 }
