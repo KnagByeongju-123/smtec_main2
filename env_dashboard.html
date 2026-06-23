@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>환경 모니터링 v1.3</title>
+<title>환경 모니터링 v1.4</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
   :root{
@@ -81,7 +81,7 @@
 <body>
 <header>
   <div class="bar">
-    <h1>환경 모니터링</h1><span class="ver" id="ver">v1.3</span>
+    <h1>환경 모니터링</h1><span class="ver" id="ver">v1.4</span>
     <span class="clock" id="clock">--:--:--</span>
   </div>
   <div class="tabs">
@@ -127,18 +127,32 @@
       <button class="btn go" style="margin-left:auto" id="addBtn" onclick="addBlank()">+ 기기 추가</button>
     </div>
     <div id="cfgBanner"></div>
+    <div id="ntfyCard" style="background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:12px">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <strong style="color:var(--ink)">📢 ntfy 경고 알림</strong>
+        <label class="sw" style="margin-left:auto"><input type="checkbox" id="ntfyToggle2" onchange="toggleNtfyCfg()"> 사용</label>
+      </div>
+      <div style="display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap;margin-top:8px">
+        <div class="f" style="flex:1;min-width:160px"><label>토픽명</label>
+          <input id="ntfyTopicInp" placeholder="taejin_env_alert" style="width:100%"></div>
+        <button class="btn" onclick="saveNtfyTopic()">토픽 저장</button>
+        <button class="btn go" onclick="testNtfy()">테스트 발송</button>
+      </div>
+      <div style="color:var(--muted);font-size:12px;margin-top:8px;line-height:1.5">
+        휴대폰 <b>ntfy</b> 앱에서 위 토픽을 구독하면, 각 기기의 <b>온도·습도·체감</b>이 아래 정상범위를 벗어날 때 알림이 옵니다. 같은 문제는 30분마다 1회 재알림, 정상 복구 시에도 알림이 옵니다. (대시보드가 켜져 있는 동안 1분마다 감시·발송)</div>
+    </div>
     <div id="cfgList"></div>
   </section>
 </main>
 
-<footer>태진다이텍 환경 모니터링 · <span>v1.3</span></footer>
+<footer>태진다이텍 환경 모니터링 · <span>v1.4</span></footer>
 <div class="toast" id="toast"></div>
 
 <script>
 const SB_URL='https://omngtyewdaqpphnzeate.supabase.co';
 const SB_KEY='sb_publishable_9j2YkkL-7ul1TrhH-NjVdQ_vWDG2-1D';
 const H={apikey:SB_KEY,Authorization:'Bearer '+SB_KEY,'Content-Type':'application/json'};
-const NTFY_TOPIC='taejin_env_alert';   // ★ ntfy.sh 토픽명 (원하는 이름으로 변경)
+let NTFY_TOPIC=localStorage.getItem('env_ntfy_topic')||'taejin_env_alert';   // ★ ntfy.sh 토픽명 (설정 탭에서 변경 가능)
 
 let USER=null;
 try{USER=JSON.parse(localStorage.getItem('esg_pin_auth')||'null');}catch(e){}
@@ -178,7 +192,21 @@ async function sbDelete(id){const r=await fetch(SB_URL+'/rest/v1/env_device?devi
 let NTFY_ON=localStorage.getItem('env_ntfy_on')!=='0';
 let alertState={};try{alertState=JSON.parse(localStorage.getItem('env_alert_state')||'{}');}catch(e){}
 function toggleNtfy(){NTFY_ON=document.getElementById('ntfyToggle').checked;
-  localStorage.setItem('env_ntfy_on',NTFY_ON?'1':'0');toast(NTFY_ON?'경고 알림 켜짐':'경고 알림 꺼짐');}
+  localStorage.setItem('env_ntfy_on',NTFY_ON?'1':'0');
+  const c=document.getElementById('ntfyToggle2');if(c)c.checked=NTFY_ON;
+  toast(NTFY_ON?'경고 알림 켜짐':'경고 알림 꺼짐');}
+/* 설정 탭 ntfy 카드 */
+function toggleNtfyCfg(){NTFY_ON=document.getElementById('ntfyToggle2').checked;
+  localStorage.setItem('env_ntfy_on',NTFY_ON?'1':'0');
+  const h=document.getElementById('ntfyToggle');if(h)h.checked=NTFY_ON;
+  toast(NTFY_ON?'경고 알림 켜짐':'경고 알림 꺼짐');}
+function saveNtfyTopic(){const v=(document.getElementById('ntfyTopicInp').value||'').trim();
+  if(!v){toast('토픽명을 입력하세요');return;}
+  NTFY_TOPIC=v;localStorage.setItem('env_ntfy_topic',v);toast('토픽 저장됨: '+v);}
+function testNtfy(){const v=(document.getElementById('ntfyTopicInp').value||'').trim();
+  if(v){NTFY_TOPIC=v;localStorage.setItem('env_ntfy_topic',v);}
+  sendNtfy('테스트 알림 - 태진다이텍 환경 모니터링');
+  toast('테스트 발송 (ntfy 앱 확인)');}
 function sendNtfy(body){fetch('https://ntfy.sh/'+NTFY_TOPIC,{method:'POST',
   headers:{'Title':'ENV ALERT','Priority':'high','Tags':'warning'},body}).catch(()=>{});}
 function checkAlert(id,loc,problem){
@@ -198,11 +226,13 @@ function deviceProblem(cfg,r){
   if(!cfg||cfg.enabled===false) return null;
   const ts=r?(r.updated_at||r.measured_at):null;
   if(!ts||ageSec(ts)>180) return '오프라인';
-  const t=+r.temperature,h=+r.humidity;
+  const t=+r.temperature,h=+r.humidity,f=+r.feels_like;
   if(t<cfg.temp_min) return '온도 낮음 '+t.toFixed(1)+'C';
   if(t>cfg.temp_max) return '온도 높음 '+t.toFixed(1)+'C';
   if(h<cfg.humi_min) return '습도 낮음 '+h.toFixed(1)+'%';
   if(h>cfg.humi_max) return '습도 높음 '+h.toFixed(1)+'%';
+  if(cfg.feels_min!=null && f<cfg.feels_min) return '체감 낮음 '+f.toFixed(1)+'C';
+  if(cfg.feels_max!=null && f>cfg.feels_max) return '체감 높음 '+f.toFixed(1)+'C';
   return null;
 }
 
@@ -374,7 +404,7 @@ async function loadConfig(){
     document.getElementById('cfgBanner').innerHTML=(newList.length&&!READONLY)
       ?'<div class="banner">미설정 기기 '+newList.length+'대: '+newList.map(n=>'<b>'+n.device_id+'</b>').join(', ')+' — 정보 채워 저장하세요.</div>':'';
     const rows=cfg.concat(newList.map(n=>({device_id:n.device_id,mac:'',location:n.zone||'',
-      save_interval:60,temp_min:10,temp_max:35,humi_min:20,humi_max:70,enabled:true,_new:true})));
+      save_interval:60,temp_min:10,temp_max:35,humi_min:20,humi_max:70,feels_min:18,feels_max:38,enabled:true,_new:true})));
     const el=document.getElementById('cfgList');
     el.innerHTML=rows.length?rows.map(rowHTML).join(''):'<div class="empty">등록된 기기가 없습니다. + 기기 추가를 누르세요.</div>';
   }catch(e){document.getElementById('cfgList').innerHTML='<div class="empty">불러오기 오류: '+e.message+'</div>';}
@@ -392,6 +422,8 @@ function rowHTML(c){const dis=READONLY?'disabled':'';
       <div class="f"><label>온도 상한 °C</label><input type="number" step="0.5" data-k="temp_max" value="${c.temp_max??35}" ${dis}></div>
       <div class="f"><label>습도 하한 %</label><input type="number" step="1" data-k="humi_min" value="${c.humi_min??20}" ${dis}></div>
       <div class="f"><label>습도 상한 %</label><input type="number" step="1" data-k="humi_max" value="${c.humi_max??70}" ${dis}></div>
+      <div class="f"><label>체감 하한 °C</label><input type="number" step="0.5" data-k="feels_min" value="${c.feels_min??18}" ${dis}></div>
+      <div class="f"><label>체감 상한 °C</label><input type="number" step="0.5" data-k="feels_max" value="${c.feels_max??38}" ${dis}></div>
       <div class="f"><label>사용</label><select data-k="enabled" ${dis}>
         <option value="true" ${c.enabled!==false?'selected':''}>사용</option>
         <option value="false" ${c.enabled===false?'selected':''}>중지</option></select></div></div>
@@ -401,7 +433,7 @@ function rowHTML(c){const dis=READONLY?'disabled':'';
 function collect(rowEl){const o={};
   rowEl.querySelectorAll('[data-k]').forEach(inp=>{const k=inp.dataset.k;let v=inp.value;
     if(k==='save_interval')v=parseInt(v||'0',10);
-    else if(['temp_min','temp_max','humi_min','humi_max'].includes(k))v=parseFloat(v||'0');
+    else if(['temp_min','temp_max','humi_min','humi_max','feels_min','feels_max'].includes(k))v=parseFloat(v||'0');
     else if(k==='enabled')v=(v==='true');o[k]=v;});
   if(!o.device_id)o.device_id=rowEl.dataset.id;o.updated_at=kstISO(new Date());return o;}
 async function saveRow(btn){const o=collect(btn.closest('.srow'));
@@ -413,14 +445,16 @@ async function delRow(btn){const row=btn.closest('.srow');
   try{await sbDelete(id);toast('삭제됨: '+id);loadConfig();}catch(e){toast(e.message);}}
 function addBlank(){const el=document.getElementById('cfgList');
   if(el.querySelector('.empty'))el.innerHTML='';
-  el.insertAdjacentHTML('afterbegin',rowHTML({_new:true,save_interval:60,temp_min:10,temp_max:35,humi_min:20,humi_max:70,enabled:true}));}
+  el.insertAdjacentHTML('afterbegin',rowHTML({_new:true,save_interval:60,temp_min:10,temp_max:35,humi_min:20,humi_max:70,feels_min:18,feels_max:38,enabled:true}));}
 
 /* 시작 */
 document.getElementById('ntfyToggle').checked=NTFY_ON;
+(function(){const t2=document.getElementById('ntfyToggle2');if(t2)t2.checked=NTFY_ON;
+  const ti=document.getElementById('ntfyTopicInp');if(ti)ti.value=NTFY_TOPIC;})();
 setInterval(()=>document.getElementById('clock').textContent=fmtClock(new Date()),1000);
 document.getElementById('clock').textContent=fmtClock(new Date());
 loadStatus();
-setInterval(()=>{if(document.getElementById('view-status').style.display!=='none')loadStatus();},60000);
+setInterval(loadStatus,60000);
 </script>
 </body>
 </html>
