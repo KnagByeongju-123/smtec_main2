@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>환경 모니터링 v1.6</title>
+<title>환경 모니터링 v1.7</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
   :root{
@@ -81,7 +81,7 @@
 <body>
 <header>
   <div class="bar">
-    <h1>환경 모니터링</h1><span class="ver" id="ver">v1.6</span>
+    <h1>환경 모니터링</h1><span class="ver" id="ver">v1.7</span>
     <span class="clock" id="clock">--:--:--</span>
   </div>
   <div class="tabs">
@@ -145,7 +145,7 @@
   </section>
 </main>
 
-<footer>태진다이텍 환경 모니터링 · <span>v1.6</span></footer>
+<footer>태진다이텍 환경 모니터링 · <span>v1.7</span></footer>
 <div class="toast" id="toast"></div>
 
 <script>
@@ -370,8 +370,13 @@ async function loadStats(){
   if(STAT_DAYS===0) since=kstDateStr(new Date())+'T00:00:00+09:00';
   else since=kstISO(new Date(Date.now()-STAT_DAYS*86400*1000));
   try{
-    STAT_ROWS=await sbGetAll('env_log?select=device_id,zone,temperature,humidity,feels_like,measured_at'
-      +'&measured_at=gte.'+encodeURIComponent(since)+'&order=measured_at.asc');
+    const [rows,cfg]=await Promise.all([
+      sbGetAll('env_log?select=device_id,zone,temperature,humidity,feels_like,measured_at'
+        +'&measured_at=gte.'+encodeURIComponent(since)+'&order=measured_at.asc'),
+      sbGet('env_device?select=device_id,location')
+    ]);
+    STAT_ROWS=rows;
+    cfg.forEach(c=>{DEVICES[c.device_id]=Object.assign(DEVICES[c.device_id]||{},{location:c.location});});
     info.textContent=STAT_ROWS.length.toLocaleString()+'건';
     buildStatTable();
     fillDeviceSelect();
@@ -388,6 +393,7 @@ function summarize(rows){
     const f=+r.feels_like;if(!isNaN(f)){g.fs+=f;g.fc++;}}
   return by;
 }
+function locOf(id,zoneFallback){return (DEVICES[id]&&DEVICES[id].location)||zoneFallback||'-';}
 function buildStatTable(){
   const by=summarize(STAT_ROWS);const ids=Object.keys(by).sort();
   const f=v=>(v==null||!isFinite(v))?'-':v.toFixed(1);
@@ -395,7 +401,7 @@ function buildStatTable(){
     +'<th>온도 평균</th><th>최저</th><th>최고</th><th>습도 평균</th><th>최저</th><th>최고</th><th>체감 평균</th></tr></thead><tbody>';
   if(ids.length===0) html+='<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:24px">데이터 없음</td></tr>';
   ids.forEach(id=>{const g=by[id];
-    html+=`<tr><td><b>${id}</b></td><td>${g.zone}</td><td>${g.n.toLocaleString()}</td>
+    html+=`<tr><td><b>${id}</b></td><td>${locOf(id,g.zone)}</td><td>${g.n.toLocaleString()}</td>
       <td>${f(g.tc?g.ts/g.tc:null)}</td><td>${f(g.tc?g.tn:null)}</td><td>${f(g.tc?g.tx:null)}</td>
       <td>${f(g.hc?g.hs/g.hc:null)}</td><td>${f(g.hc?g.hn:null)}</td><td>${f(g.hc?g.hx:null)}</td>
       <td>${f(g.fc?g.fs/g.fc:null)}</td></tr>`;});
@@ -428,7 +434,7 @@ function exportCSV(){
   if(!STAT_ROWS.length){toast('내보낼 데이터가 없습니다');return;}
   const head=['기기ID','위치','온도','습도','체감','측정시각(KST)'];
   const lines=[head.join(',')];
-  for(const r of STAT_ROWS) lines.push([r.device_id,'"'+(r.zone||'')+'"',
+  for(const r of STAT_ROWS) lines.push([r.device_id,'"'+locOf(r.device_id,r.zone).replace(/"/g,'""')+'"',
     r.temperature??'',r.humidity??'',r.feels_like??'',fmtFull(r.measured_at)].join(','));
   const blob=new Blob(['\uFEFF'+lines.join('\r\n')],{type:'text/csv;charset=utf-8'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);
