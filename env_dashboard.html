@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>환경 모니터링 v1.7</title>
+<title>환경 모니터링 v1.8</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
   :root{
@@ -81,7 +81,7 @@
 <body>
 <header>
   <div class="bar">
-    <h1>환경 모니터링</h1><span class="ver" id="ver">v1.7</span>
+    <h1>환경 모니터링</h1><span class="ver" id="ver">v1.8</span>
     <span class="clock" id="clock">--:--:--</span>
   </div>
   <div class="tabs">
@@ -145,7 +145,7 @@
   </section>
 </main>
 
-<footer>태진다이텍 환경 모니터링 · <span>v1.7</span></footer>
+<footer>태진다이텍 환경 모니터링 · <span>v1.8</span></footer>
 <div class="toast" id="toast"></div>
 
 <script>
@@ -280,6 +280,13 @@ async function fetchRoom(){
       feels_like:+roomFeels(T,RH).toFixed(1),updated_at:x.measured_at,measured_at:x.measured_at};
   }catch(e){return null;}
 }
+function calibrate(id,r){
+  if(!r)return r;
+  const c=DEVICES[id]||{},to=+c.temp_offset||0,ho=+c.humi_offset||0;
+  if(!to&&!ho)return r;
+  const t=+r.temperature+to,h=+r.humidity+ho;
+  return Object.assign({},r,{temperature:t,humidity:h,feels_like:+roomFeels(t,h).toFixed(1)});
+}
 async function loadStatus(){
   try{
     const [cfg,cur,room]=await Promise.all([
@@ -290,6 +297,7 @@ async function loadStatus(){
     DEVICES={};cfg.forEach(c=>DEVICES[c.device_id]=c);
     const latest={};cur.forEach(r=>{latest[r.device_id]=r;});
     if(room)latest[room.device_id]=room;
+    Object.keys(latest).forEach(id=>{latest[id]=calibrate(id,latest[id]);});
     const ids=[...new Set([...Object.keys(DEVICES),...Object.keys(latest)])].sort();
     const wrap=document.getElementById('cards');
     wrap.innerHTML=ids.length?ids.map(id=>cardHTML(id,DEVICES[id],latest[id])).join('')
@@ -326,6 +334,7 @@ async function selectDevice(id,ev){
   document.getElementById('detailTitle').textContent=id+' '+loc+' · 최근 24시간';
   try{
     const since=kstISO(new Date(Date.now()-24*3600*1000));
+    const cc=DEVICES[id]||{},to=+cc.temp_offset||0,ho=+cc.humi_offset||0;
     let labels,T,F,H;
     if(id===ROOM_SRC.id){
       const u=ROOM_SRC.url+'/rest/v1/'+ROOM_SRC.table
@@ -334,13 +343,14 @@ async function selectDevice(id,ev){
       const res=await fetch(u,{headers:{apikey:ROOM_SRC.key,Authorization:'Bearer '+ROOM_SRC.key}});
       const rows=res.ok?await res.json():[];
       labels=rows.map(r=>fmtClock(new Date(r.measured_at)).slice(0,5));
-      T=rows.map(r=>+r.temp);H=rows.map(r=>+r.humi);
-      F=rows.map(r=>+roomFeels(+r.temp,+r.humi).toFixed(1));
+      T=rows.map(r=>+r.temp+to);H=rows.map(r=>+r.humi+ho);
+      F=rows.map(r=>+roomFeels(+r.temp+to,+r.humi+ho).toFixed(1));
     }else{
       const rows=await sbGet('env_log?select=temperature,humidity,feels_like,measured_at&device_id=eq.'
         +encodeURIComponent(id)+'&measured_at=gte.'+encodeURIComponent(since)+'&order=measured_at.asc&limit=3000');
       labels=rows.map(r=>fmtClock(new Date(r.measured_at)).slice(0,5));
-      T=rows.map(r=>r.temperature);F=rows.map(r=>r.feels_like);H=rows.map(r=>r.humidity);
+      T=rows.map(r=>+r.temperature+to);H=rows.map(r=>+r.humidity+ho);
+      F=(to||ho)?rows.map(r=>+roomFeels(+r.temperature+to,+r.humidity+ho).toFixed(1)):rows.map(r=>r.feels_like);
     }
     drawChart('chart',labels,T,F,H,'chartObj');
     d.scrollIntoView({behavior:'smooth',block:'nearest'});
@@ -456,7 +466,7 @@ async function loadConfig(){
     document.getElementById('cfgBanner').innerHTML=(newList.length&&!READONLY)
       ?'<div class="banner">미설정 기기 '+newList.length+'대: '+newList.map(n=>'<b>'+n.device_id+'</b>').join(', ')+' — 정보 채워 저장하세요.</div>':'';
     const rows=cfg.concat(newList.map(n=>({device_id:n.device_id,mac:'',location:n.zone||'',
-      save_interval:60,temp_min:10,temp_max:35,humi_min:20,humi_max:70,feels_min:18,feels_max:38,enabled:true,_new:true})));
+      save_interval:60,temp_min:10,temp_max:35,humi_min:20,humi_max:70,feels_min:18,feels_max:38,temp_offset:0,humi_offset:0,enabled:true,_new:true})));
     const el=document.getElementById('cfgList');
     el.innerHTML=rows.length?rows.map(rowHTML).join(''):'<div class="empty">등록된 기기가 없습니다. + 기기 추가를 누르세요.</div>';
   }catch(e){document.getElementById('cfgList').innerHTML='<div class="empty">불러오기 오류: '+e.message+'</div>';}
@@ -476,6 +486,8 @@ function rowHTML(c){const dis=READONLY?'disabled':'';
       <div class="f"><label>습도 상한 %</label><input type="number" step="1" data-k="humi_max" value="${c.humi_max??70}" ${dis}></div>
       <div class="f"><label>체감 하한 °C</label><input type="number" step="0.5" data-k="feels_min" value="${c.feels_min??18}" ${dis}></div>
       <div class="f"><label>체감 상한 °C</label><input type="number" step="0.5" data-k="feels_max" value="${c.feels_max??38}" ${dis}></div>
+      <div class="f"><label>온도 보정 °C</label><input type="number" step="0.1" data-k="temp_offset" value="${c.temp_offset??0}" ${dis}></div>
+      <div class="f"><label>습도 보정 %</label><input type="number" step="0.1" data-k="humi_offset" value="${c.humi_offset??0}" ${dis}></div>
       <div class="f"><label>사용</label><select data-k="enabled" ${dis}>
         <option value="true" ${c.enabled!==false?'selected':''}>사용</option>
         <option value="false" ${c.enabled===false?'selected':''}>중지</option></select></div></div>
@@ -485,7 +497,7 @@ function rowHTML(c){const dis=READONLY?'disabled':'';
 function collect(rowEl){const o={};
   rowEl.querySelectorAll('[data-k]').forEach(inp=>{const k=inp.dataset.k;let v=inp.value;
     if(k==='save_interval')v=parseInt(v||'0',10);
-    else if(['temp_min','temp_max','humi_min','humi_max','feels_min','feels_max'].includes(k))v=parseFloat(v||'0');
+    else if(['temp_min','temp_max','humi_min','humi_max','feels_min','feels_max','temp_offset','humi_offset'].includes(k))v=parseFloat(v||'0');
     else if(k==='enabled')v=(v==='true');o[k]=v;});
   if(!o.device_id)o.device_id=rowEl.dataset.id;o.updated_at=kstISO(new Date());return o;}
 async function saveRow(btn){const o=collect(btn.closest('.srow'));
@@ -497,7 +509,7 @@ async function delRow(btn){const row=btn.closest('.srow');
   try{await sbDelete(id);toast('삭제됨: '+id);loadConfig();}catch(e){toast(e.message);}}
 function addBlank(){const el=document.getElementById('cfgList');
   if(el.querySelector('.empty'))el.innerHTML='';
-  el.insertAdjacentHTML('afterbegin',rowHTML({_new:true,save_interval:60,temp_min:10,temp_max:35,humi_min:20,humi_max:70,feels_min:18,feels_max:38,enabled:true}));}
+  el.insertAdjacentHTML('afterbegin',rowHTML({_new:true,save_interval:60,temp_min:10,temp_max:35,humi_min:20,humi_max:70,feels_min:18,feels_max:38,temp_offset:0,humi_offset:0,enabled:true}));}
 
 /* 시작 */
 document.getElementById('ntfyToggle').checked=NTFY_ON;
