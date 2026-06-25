@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>트윈팩토리 3D v13.25 - 도면 Supabase 전환</title>
+<title>트윈팩토리 3D v13.24 - 라인순회 동전환 실시간기준</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;}
@@ -81,7 +81,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 <body>
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🏭 트윈팩토리 3D<span class="v">v13.25</span></h1>
+    <h1>🏭 트윈팩토리 3D<span class="v">v13.24</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="upd">연결 중…</span> · <span id="cd">30</span>s</div>
   </div>
   <div class="sum">
@@ -1299,7 +1299,7 @@ function _qualityBlock(no,d){
   var part=d&&d.current_item_code, mold=d&&d.current_mold;
   var dim=dimOfMachine(d);
   if(!dim||!dim.risk)return '';
-  var btn = (part||mold) ? '<button onclick="openDrawing(\''+_escQ(part)+'\',\''+_escQ(mold)+'\')" style="margin-left:auto;padding:3px 9px;font-size:11px;border:1px solid #3a4660;background:#1a2236;color:#9cc2ff;border-radius:6px;cursor:pointer;white-space:nowrap">📐 도면</button>' : '';
+  var btn = mold ? '<button onclick="openDrawing(\''+_escQ(mold)+'\')" style="margin-left:auto;padding:3px 9px;font-size:11px;border:1px solid #3a4660;background:#1a2236;color:#9cc2ff;border-radius:6px;cursor:pointer;white-space:nowrap">📐 도면</button>' : '';
   var items=dim.items.filter(function(x){return x.state!=='정상'}).sort(function(a,b){return (b.pct||0)-(a.pct||0)});
   var rows=items.map(function(x){
     var spec=(x.type==='제로근접형')?('≤'+(isNaN(x.hi)?'-':x.hi)):((isNaN(x.lo)?'-':x.lo)+'~'+(isNaN(x.hi)?'-':x.hi));
@@ -1359,91 +1359,46 @@ async function openCheckSummary(){
 }
 function closeCheckSummary(){ document.getElementById('chkModal').classList.remove('show'); }
 
-/* ===== 도면 보기/등록/수정/삭제 (Supabase twin_drawing · 키=품번 우선·금형 보조, 정규화 부분일치) ===== */
-var _dwgKeys=[];       // 현재 검색용 정규화 키 목록
-var _dwgTitleRaw='';   // 타이틀 표시용 원본 문자열
-function _dwgNorm(s){ return String(s==null?'':s).toUpperCase().replace(/[^A-Z0-9]/g,''); }
-function _dwgExpand(code){            // "IW/OW-BDA-1179-3" → ["IW-BDA-1179-3","OW-BDA-1179-3"]
-  code=String(code==null?'':code).trim();
-  if(!code) return [];
-  if(code.indexOf('/')>=0){
-    var dash=code.indexOf('-');
-    if(dash>code.indexOf('/')){
-      var head=code.slice(0,dash), tail=code.slice(dash);
-      return head.split('/').map(function(h){return h.trim()+tail;});
-    }
-    return code.split('/').map(function(x){return x.trim();});
-  }
-  return [code];
-}
-function _dwgBuildKeys(part,mold){
-  var ks=[];
-  _dwgExpand(part).forEach(function(c){var n=_dwgNorm(c); if(n&&ks.indexOf(n)<0)ks.push(n);});
-  var mn=_dwgNorm(mold); if(mn&&ks.indexOf(mn)<0)ks.push(mn);
-  return ks;
-}
-function openDrawing(part, mold){
-  _dwgKeys=_dwgBuildKeys(part,mold);
-  _dwgTitleRaw=(part||mold||'');
-  document.getElementById('dwgTitle').textContent='도면 · '+_dwgTitleRaw;
+/* ===== 도면 보기/등록/수정/삭제 (Google Apps Script + 구글드라이브, 파일명=금형번호) ===== */
+var DWG_GAS='https://script.google.com/macros/s/AKfycbw8LeW4BnkLr9nm5mkN_zG2WTokF5c0UARe3e0u0pjlWGonbAu49HuZEts-jushO5Eo/exec';
+var _dwgMold='';
+function openDrawing(mold){
+  _dwgMold=mold||'';
+  document.getElementById('dwgTitle').textContent='도면 · '+_dwgMold;
   document.getElementById('dwgImg').innerHTML='불러오는 중…';
   document.getElementById('dwgOverlay').style.display='flex';
   setTimeout(centerDwgBox,0);
-  if(!_dwgKeys.length){ document.getElementById('dwgImg').innerHTML='<div style="color:#8a93a3">품번/금형 정보 없음</div>'; return; }
-  var orq='or=('+_dwgKeys.map(function(k){return 'pno.ilike.*'+k+'*';}).join(',')+')';
-  sbGet('twin_drawing','select=fname,img&'+orq+'&order=fname').then(function(rows){
-    if(rows&&rows.length){
-      document.getElementById('dwgImg').innerHTML=rows.map(function(x){
-        return '<div style="margin-bottom:10px">'
-          +'<div style="color:#9cc2ff;font-size:12px;margin-bottom:4px">'+(x.fname||'')+'</div>'
-          +'<img src="'+x.img+'" style="max-width:88vw;max-height:70vh;border-radius:8px;background:#fff;cursor:zoom-in" onclick="window.open(this.src,\'_blank\')"></div>';
-      }).join('');
-    } else {
-      document.getElementById('dwgImg').innerHTML='<div style="color:#8a93a3">등록된 도면 없음<br><span style="font-size:12px">아래 등록 버튼으로 추가하세요</span></div>';
-    }
-  }).catch(function(){ document.getElementById('dwgImg').innerHTML='<div style="color:#ef4444">불러오기 실패</div>'; });
-}
-// 브라우저 업로드: 캔버스로 30KB 이하 압축 후 twin_drawing upsert (대표 키 1건)
-function _dwgCompress(img,cb){
-  var maxW=1400, w=img.width, h=img.height;
-  if(w>maxW){ h=Math.round(h*maxW/w); w=maxW; }
-  (function tryQ(scale,q){
-    var cw=Math.max(1,Math.round(w*scale)), ch=Math.max(1,Math.round(h*scale));
-    var cv=document.createElement('canvas'); cv.width=cw; cv.height=ch;
-    var cx=cv.getContext('2d'); cx.fillStyle='#fff'; cx.fillRect(0,0,cw,ch); cx.drawImage(img,0,0,cw,ch);
-    var url=cv.toDataURL('image/jpeg',q);
-    if(url.length<=41000 || (q<=0.4 && scale<=0.45)) cb(url);   // base64 ~41000자 ≈ 30KB
-    else if(q>0.4) tryQ(scale,q-0.1);
-    else tryQ(scale*0.8,0.7);
-  })(1,0.82);
+  if(!DWG_GAS){ document.getElementById('dwgImg').innerHTML='<div style="color:#f59e0b">GAS URL 미설정<br><span style="font-size:12px;color:#8a93a3">코드의 DWG_GAS 값을 입력하세요</span></div>'; return; }
+  if(!_dwgMold){ document.getElementById('dwgImg').innerHTML='<div style="color:#8a93a3">금형번호 없음</div>'; return; }
+  fetch(DWG_GAS+'?mold='+encodeURIComponent(_dwgMold))
+    .then(function(r){return r.json()})
+    .then(function(j){
+      if(j&&j.ok&&j.dataUrl){ document.getElementById('dwgImg').innerHTML='<img src="'+j.dataUrl+'" style="max-width:88vw;max-height:74vh;border-radius:8px;background:#fff">'; }
+      else { document.getElementById('dwgImg').innerHTML='<div style="color:#8a93a3">등록된 도면 없음<br><span style="font-size:12px">아래 등록 버튼으로 추가하세요</span></div>'; }
+    }).catch(function(){ document.getElementById('dwgImg').innerHTML='<div style="color:#ef4444">불러오기 실패</div>'; });
 }
 function dwgUpload(input){
   var f=input.files&&input.files[0]; input.value='';
-  if(!f) return;
-  if(!_dwgKeys.length){ alert('품번/금형 정보가 없습니다'); return; }
-  var key=_dwgKeys[0], fname='UP_'+key;
+  if(!f)return;
+  if(!DWG_GAS){alert('먼저 코드의 DWG_GAS(웹앱 URL)를 설정하세요');return;}
+  if(!_dwgMold){alert('금형번호가 없습니다');return;}
   var rd=new FileReader();
   rd.onload=function(){
-    var im=new Image();
-    im.onload=function(){
-      _dwgCompress(im,function(dataUrl){
-        document.getElementById('dwgImg').innerHTML='업로드 중…';
-        fetch(SB_URL+'/rest/v1/twin_drawing?on_conflict=fname',{method:'POST',
-          headers:Object.assign({},sbH,{'Content-Type':'application/json','Prefer':'resolution=merge-duplicates,return=minimal'}),
-          body:JSON.stringify({fname:fname,pno:key,img:dataUrl,bytes:dataUrl.length})})
-          .then(function(r){ if(r.ok){ openDrawing(_dwgTitleRaw,''); } else { alert('업로드 실패 ('+r.status+')'); openDrawing(_dwgTitleRaw,''); } })
-          .catch(function(){ alert('업로드 실패'); });
-      });
-    };
-    im.src=rd.result;
+    document.getElementById('dwgImg').innerHTML='업로드 중…';
+    fetch(DWG_GAS,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({action:'upload',mold:_dwgMold,dataUrl:rd.result})})
+      .then(function(r){return r.json()})
+      .then(function(j){ if(j&&j.ok){ openDrawing(_dwgMold); } else { alert('업로드 실패'); openDrawing(_dwgMold); } })
+      .catch(function(){ alert('업로드 실패'); });
   };
   rd.readAsDataURL(f);
 }
 function dwgDelete(){
-  if(!_dwgKeys.length) return;
-  if(!confirm(_dwgTitleRaw+' 의 브라우저 등록 도면(UP_)을 삭제할까요?\n(일괄 업로드된 원본 도면은 삭제되지 않습니다)')) return;
-  sbDelete('twin_drawing','fname=eq.UP_'+encodeURIComponent(_dwgKeys[0]))
-    .then(function(){ openDrawing(_dwgTitleRaw,''); })
+  if(!_dwgMold)return;
+  if(!DWG_GAS){alert('먼저 DWG_GAS(웹앱 URL)를 설정하세요');return;}
+  if(!confirm(_dwgMold+' 도면을 삭제할까요?'))return;
+  fetch(DWG_GAS,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({action:'delete',mold:_dwgMold})})
+    .then(function(r){return r.json()})
+    .then(function(j){ if(j&&j.ok){ document.getElementById('dwgImg').innerHTML='<div style="color:#8a93a3">삭제됨</div>'; } else { alert('삭제 실패'); } })
     .catch(function(){ alert('삭제 실패'); });
 }
 function closeDwg(){ document.getElementById('dwgOverlay').style.display='none'; }
@@ -1483,7 +1438,7 @@ function dwgDragEnd(){
 }
 function dimSection(d, mold){
   var code=(d&&d.current_item_code)?String(d.current_item_code).trim():'';
-  var dbtn = (code||mold) ? ' <button onclick="openDrawing(\''+_escQ(code)+'\',\''+_escQ(mold)+'\')" style="margin-left:6px;padding:2px 8px;font-size:11px;border:1px solid #3a4660;background:#1a2236;color:#9cc2ff;border-radius:5px;cursor:pointer">📐 도면</button>' : '';
+  var dbtn = mold ? ' <button onclick="openDrawing(\''+_escQ(mold)+'\')" style="margin-left:6px;padding:2px 8px;font-size:11px;border:1px solid #3a4660;background:#1a2236;color:#9cc2ff;border-radius:5px;cursor:pointer">📐 도면</button>' : '';
   var mbtn = code ? ' <button onclick="setMeasPart(\''+_escQ(code)+'\')" style="margin-left:6px;padding:2px 8px;font-size:11px;border:1px solid #3a4660;background:'+(measMap[code]?'#1f3326':'#1a2236')+';color:'+(measMap[code]?'#86efac':'#9cc2ff')+';border-radius:5px;cursor:pointer">🔗 측정품번'+(measMap[code]?' ✓':'')+'</button>' : '';
   var btn = dbtn+mbtn;
   var dim=dimOfMachine(d);
