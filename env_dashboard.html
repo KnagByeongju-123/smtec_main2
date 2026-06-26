@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>환경 모니터링 v1.9</title>
+<title>환경 모니터링 v2.1</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
   :root{
@@ -81,13 +81,14 @@
 <body>
 <header>
   <div class="bar">
-    <h1>환경 모니터링</h1><span class="ver" id="ver">v1.9</span>
+    <h1>환경 모니터링</h1><span class="ver" id="ver">v2.1</span>
     <span class="clock" id="clock">--:--:--</span>
   </div>
   <div class="tabs">
     <button class="tab active" id="tab-status" onclick="showTab('status')">현황</button>
     <button class="tab" id="tab-stats" onclick="showTab('stats')">통계</button>
     <button class="tab" id="tab-config" onclick="showTab('config')">설정</button>
+    <button class="tab" id="tab-firmware" onclick="showTab('firmware')">펌웨어</button>
   </div>
 </header>
 
@@ -143,9 +144,163 @@
     </div>
     <div id="cfgList"></div>
   </section>
+  <section id="view-firmware" style="display:none">
+    <div class="sub"><span>회사 온습도계 펌웨어 · 등록 정보 · 신규 보드 추가 가이드</span></div>
+
+    <div style="background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px">
+      <h3 style="color:var(--ink);font-size:15px;margin:0 0 8px">📋 등록 보드 MAC 목록 (SHT41)</h3>
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="color:var(--muted);text-align:left">
+          <th style="padding:6px 4px">기기ID</th><th>위치(Supabase)</th><th>MAC 주소</th></tr></thead>
+        <tbody id="fwBoardRows"><tr><td colspan="3" style="color:var(--muted);padding:8px 4px">불러오는 중…</td></tr></tbody>
+      </table>
+      <div style="color:var(--muted);font-size:12px;margin-top:8px">※ 위치는 <b>설정 탭</b>에 등록된 값(env_device)이며, 미등록 시 펌웨어 구역(B_A 등)으로 표시됩니다. 측정실 <b>SHT45_1</b>은 팀원 프로젝트(외부)라 회사 보드 목록에 없습니다.</div>
+    </div>
+
+    <div style="background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px">
+      <h3 style="color:var(--ink);font-size:15px;margin:0 0 8px">🗄 Supabase 설정 (회사 프로젝트)</h3>
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <tr><td style="color:var(--muted);padding:4px 8px 4px 0;white-space:nowrap">프로젝트 URL</td><td style="font-family:monospace">https://omngtyewdaqpphnzeate.supabase.co</td></tr>
+        <tr><td style="color:var(--muted);padding:4px 8px 4px 0">publishable 키</td><td style="font-family:monospace;word-break:break-all">sb_publishable_9j2YkkL-7ul1TrhH-NjVdQ_vWDG2-1D</td></tr>
+        <tr><td style="color:var(--muted);padding:4px 8px 4px 0;vertical-align:top">테이블</td><td>
+          <b>env_current</b> 현황(device_id PK, 1분 upsert)<br>
+          <b>env_log</b> 이력(1시간 insert)<br>
+          <b>env_device</b> 기기설정(위치·임계값·보정)</td></tr>
+        <tr><td style="color:var(--muted);padding:4px 8px 4px 0">저장 주기</td><td>현황 1분 / 이력 1시간</td></tr>
+        <tr><td style="color:var(--muted);padding:4px 8px 4px 0">보관</td><td>env_log 30일 (cron env_log_cleanup, 매일 KST 자정)</td></tr>
+        <tr><td style="color:var(--muted);padding:4px 8px 4px 0;vertical-align:top">WiFi AP</td><td>TAEJIN / taejin-A / taejin_100 / iptime / taejin_guest = <b>taejinpress</b>, Android0031 = 개방 (모두 2.4GHz)</td></tr>
+      </table>
+      <div style="color:var(--muted);font-size:12px;margin:8px 0 4px">새 테이블/기기 권한 (RLS 끄기 + 익명 권한):</div>
+      <pre id="fwSql" style="background:#0b0e13;border:1px solid var(--line);border-radius:8px;padding:10px;overflow:auto;font-size:11px;line-height:1.45;white-space:pre;color:#cdd9e5;max-height:360px;margin:6px 0">ALTER TABLE public.&lt;테이블&gt; DISABLE ROW LEVEL SECURITY;
+GRANT ALL ON public.&lt;테이블&gt; TO anon, authenticated;
+NOTIFY pgrst, 'reload schema';</pre>
+      <button class="btn" onclick="copyFw('fwSql')">SQL 복사</button>
+    </div>
+
+    <div style="background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px">
+      <h3 style="color:var(--ink);font-size:15px;margin:0 0 8px">🆕 신규 보드 추가 절차</h3>
+      <ol style="margin:0;padding-left:20px;line-height:1.8;font-size:13px">
+        <li><b>MAC 찾기 ino</b>를 새 보드에 업로드 → 화면/시리얼에 뜬 MAC 확인</li>
+        <li>그 MAC을 <b>모니터링 ino</b>의 REGISTRY에 한 줄 추가: <span style="font-family:monospace">{"MAC","SHT41_N","구역"}</span></li>
+        <li>모니터링 ino를 그 보드에 업로드 (속도 115200, 보드 ESP32 Dev Module)</li>
+        <li>시리얼에 <span style="font-family:monospace">[env_current] POST -&gt; 201</span> 확인</li>
+        <li>이 대시보드 <b>설정</b> 탭에서 해당 기기 위치·정상범위·보정 등록</li>
+      </ol>
+    </div>
+
+    <div style="background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px">
+      <h3 style="color:var(--ink);font-size:15px;margin:0 0 8px">🔧 ino ① — MAC 주소 찾기 (mac_reader)</h3>
+      <div style="color:var(--muted);font-size:12px;margin-bottom:4px">WiFi/Supabase 연결 없이 MAC만 표시(유령행 안 생김). 새 보드 등록 전용.</div>
+      <pre id="fwMac" style="background:#0b0e13;border:1px solid var(--line);border-radius:8px;padding:10px;overflow:auto;font-size:11px;line-height:1.45;white-space:pre;color:#cdd9e5;max-height:360px;margin:6px 0">/*
+ * 새 보드 MAC 확인 전용  v1.0
+ *  - WiFi/Supabase 연결 안 함 → env_current에 UNREG 유령행 안 생김
+ *  - 정식 펌웨어와 동일한 방식(esp_read_mac, STA)으로 읽음 → 그대로 REGISTRY에 복사
+ *  - 표시: T-Display 화면 + 시리얼모니터(115200)
+ *
+ *  사용법
+ *   1) 이 스케치를 새 보드에 업로드 (속도 115200, 보드 ESP32 Dev Module)
+ *   2) 화면 또는 시리얼모니터에 뜬 MAC을 확인
+ *   3) 그 MAC을 등록 요청 → 정식 펌웨어 REGISTRY에 추가 후 다시 업로드
+ */
+#include &lt;TFT_eSPI.h&gt;
+#include &quot;esp_mac.h&quot;
+
+TFT_eSPI tft = TFT_eSPI();
+
+String readMacSTA() {
+  uint8_t m[6];
+  esp_read_mac(m, ESP_MAC_WIFI_STA);          // efuse에서 직접 (정식 펌웨어와 동일)
+  char b[18];
+  sprintf(b, &quot;%02X:%02X:%02X:%02X:%02X:%02X&quot;, m[0], m[1], m[2], m[3], m[4], m[5]);
+  return String(b);
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(300);
+
+  String mac = readMacSTA();
+
+  Serial.println();
+  Serial.println(&quot;==================&quot;);
+  Serial.println(&quot;  새 보드 MAC&quot;);
+  Serial.println(&quot;  &quot; + mac);
+  Serial.println(&quot;==================&quot;);
+  Serial.println(&quot;REGISTRY 추가 예:&quot;);
+  Serial.printf(&quot;  {\&quot;%s\&quot;, \&quot;SHT41_n\&quot;, \&quot;구역\&quot;},\n&quot;, mac.c_str());
+
+  tft.init();
+  tft.setRotation(0);                         // 세로
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextDatum(MC_DATUM);
+  int cx = tft.width() / 2;
+
+  tft.setTextColor(TFT_CYAN, TFT_BLACK);
+  tft.drawString(&quot;NEW BOARD MAC&quot;, cx, 36, 2);
+
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.drawString(mac.substring(0, 8), cx, 108, 4);   // 5C:01:3B
+  tft.drawString(mac.substring(9),    cx, 148, 4);   // 07:99:28
+
+  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  tft.drawString(&quot;Serial 115200&quot;, cx, 212, 2);
+}
+
+void loop() {
+  // MAC 표시만 — 반복 작업 없음
+}
+</pre>
+      <button class="btn" onclick="copyFw('fwMac')">코드 복사</button>
+    </div>
+
+    <div style="background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px">
+      <h3 style="color:var(--ink);font-size:15px;margin:0 0 8px">🤖 ino ② — 모니터링 (AI 작성용 프롬프트)</h3>
+      <div style="color:var(--muted);font-size:12px;margin-bottom:4px">한글 라벨 비트맵 때문에 본문이 커서, 아래 사양을 AI(Claude 등)에게 주면 모니터링 펌웨어를 그대로 생성할 수 있습니다.</div>
+      <pre id="fwAi" style="background:#0b0e13;border:1px solid var(--line);border-radius:8px;padding:10px;overflow:auto;font-size:11px;line-height:1.45;white-space:pre;color:#cdd9e5;max-height:360px;margin:6px 0">[역할] 너는 ESP32 펌웨어 개발자다. 아래 사양 그대로 Arduino .ino 1개를 &quot;완성 코드만&quot; 출력하라(설명 금지).
+
+[하드웨어] TTGO T-Display(ESP32) + SHT41(I2C). SDA=GPIO21, SCL=GPIO22, 주소 0x44, VIN=3.3V(5V 금지).
+ 라이브러리: Adafruit SHT4x, TFT_eSPI(Setup25_TTGO_T_Display). ESP32 Arduino core 2.0.17 (3.x 금지: TLS POST 회귀버그).
+
+[화면] 세로 setRotation(0). 3행: 온도/습도/체감.
+ - 한글 라벨(온도/습도/체감)은 RGB565 pushImage 비트맵으로(기존 labels3.h 재사용). 온도=노랑, 습도=하늘색, 체감=흰색.
+ - 숫자는 7세그 폰트(font 7). 좌상단 ID/구역, 우상단 상태점(회색=WiFi끊김 / 초록=전송OK / 빨강=실패).
+ - 부팅 즉시 측정값 표시. 통신은 core0(netTask)로 분리해 화면(core1) 끊김 없게.
+
+[식별] esp_read_mac(m, ESP_MAC_WIFI_STA)로 MAC을 읽어 REGISTRY 배열({mac,id,zone})과 대조 → DEVICE_ID/ZONE 결정.
+ 미등록이면 화면에 &quot;REGISTER MAC&quot; + MAC 표시, DEVICE_ID=&quot;UNREG-&quot;+뒷자리.
+
+[WiFi] WiFiMulti. AP 목록: TAEJIN / taejin-A / taejin_100 / iptime / taejin_guest = 비번 &quot;taejinpress&quot;,
+ Android0031 = 개방(&quot;&quot;). DHCP만(고정IP 금지). WiFiClientSecure client; client.setInsecure();
+
+[전송 - Supabase REST]
+ - SB_REST = &quot;https://omngtyewdaqpphnzeate.supabase.co/rest/v1/&quot;
+ - 헤더: apikey: &lt;publishable키&gt;, Authorization: Bearer &lt;publishable키&gt;, Content-Type: application/json
+ - env_current : 1분마다 upsert  → POST SB_REST+&quot;env_current?on_conflict=device_id&quot;, Prefer: resolution=merge-duplicates,return=minimal
+ - env_log     : 1시간마다 insert → POST SB_REST+&quot;env_log&quot;, Prefer: return=minimal
+ - body: {&quot;device_id&quot;,&quot;zone&quot;,&quot;temperature&quot;,&quot;humidity&quot;,&quot;feels_like&quot;,&quot;measured_at&quot;}
+ - measured_at는 KST: configTime(9*3600,0,&quot;pool.ntp.org&quot;,&quot;time.google.com&quot;); strftime &quot;%Y-%m-%dT%H:%M:%S+09:00&quot;
+
+[체감온도] NWS 열지수(섭씨). T&lt;27 간이식, 그 이상 Rothfusz 식.
+
+[주의] GPIO34/35 입력전용. shot_count류 컬럼/esp32_id 보내지 말 것. ntfy Title은 ASCII만.
+
+[REGISTRY 현재값 - 그대로 넣고, 새 보드는 한 줄 추가]
+const DevReg REGISTRY[] = {
+  {&quot;5C:01:3B:07:B5:48&quot;,&quot;SHT41_1&quot;,&quot;B_A&quot;},
+  {&quot;5C:01:3B:07:99:28&quot;,&quot;SHT41_2&quot;,&quot;B_B&quot;},
+  {&quot;5C:01:3B:07:9F:4C&quot;,&quot;SHT41_3&quot;,&quot;B_C&quot;},
+  {&quot;5C:01:3B:07:A1:44&quot;,&quot;SHT41_4&quot;,&quot;4&quot;},
+  {&quot;5C:01:3B:07:A8:34&quot;,&quot;SHT41_5&quot;,&quot;5&quot;},
+  {&quot;5C:01:3B:07:AA:AC&quot;,&quot;SHT41_6&quot;,&quot;6&quot;},
+};
+
+[새 보드 추가 절차] mac_reader.ino로 MAC 확인 → 위 배열에 {MAC,&quot;SHT41_N&quot;,&quot;구역&quot;} 추가 → 모니터링 ino 재업로드 → 대시보드 설정탭에서 위치/임계값 등록.</pre>
+      <button class="btn" onclick="copyFw('fwAi')">프롬프트 복사</button>
+    </div>
+  </section>
 </main>
 
-<footer>태진다이텍 환경 모니터링 · <span>v1.9</span></footer>
+<footer>태진다이텍 환경 모니터링 · <span>v2.1</span></footer>
 <div class="toast" id="toast"></div>
 
 <script>
@@ -237,14 +392,40 @@ function deviceProblem(cfg,r){
 }
 
 /* 탭 */
+const FW_BOARDS=[
+  {id:'SHT41_1',zone:'B_A',mac:'5C:01:3B:07:B5:48'},
+  {id:'SHT41_2',zone:'B_B',mac:'5C:01:3B:07:99:28'},
+  {id:'SHT41_3',zone:'B_C',mac:'5C:01:3B:07:9F:4C'},
+  {id:'SHT41_4',zone:'4',mac:'5C:01:3B:07:A1:44'},
+  {id:'SHT41_5',zone:'5',mac:'5C:01:3B:07:A8:34'},
+  {id:'SHT41_6',zone:'6',mac:'5C:01:3B:07:AA:AC'}
+];
+async function loadFirmware(){
+  const tb=document.getElementById('fwBoardRows');
+  let loc={};
+  try{
+    const cfg=await sbGet('env_device?select=device_id,location');
+    cfg.forEach(c=>{loc[c.device_id]=c.location;});
+  }catch(e){}
+  tb.innerHTML=FW_BOARDS.map(b=>{
+    const where=loc[b.id]||b.zone||'-';
+    return '<tr><td><b>'+b.id+'</b></td><td>'+where+'</td>'
+      +'<td style="font-family:monospace">'+b.mac+'</td></tr>';
+  }).join('');
+}
+function copyFw(id){const t=document.getElementById(id).innerText;
+  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(()=>toast('복사됨')).catch(()=>toast('복사 실패'));}
+  else{const ta=document.createElement('textarea');ta.value=t;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');toast('복사됨');}catch(e){toast('복사 실패');}document.body.removeChild(ta);}}
 function showTab(t){
   document.getElementById('view-status').style.display=t==='status'?'':'none';
   document.getElementById('view-stats').style.display=t==='stats'?'':'none';
   document.getElementById('view-config').style.display=t==='config'?'':'none';
+  document.getElementById('view-firmware').style.display=t==='firmware'?'':'none';
   document.getElementById('tab-status').classList.toggle('active',t==='status');
   document.getElementById('tab-stats').classList.toggle('active',t==='stats');
   document.getElementById('tab-config').classList.toggle('active',t==='config');
-  if(t==='status')loadStatus(); else if(t==='stats')loadStats(); else loadConfig();
+  document.getElementById('tab-firmware').classList.toggle('active',t==='firmware');
+  if(t==='status')loadStatus(); else if(t==='stats')loadStats(); else if(t==='firmware')loadFirmware(); else loadConfig();
 }
 
 /* 현황 */
