@@ -40,7 +40,7 @@
 </style>
 </head>
 <body>
-<header><h1>설비 카운터</h1><span class="ver">v1.0</span><span class="clock" id="clock">--:--:--</span></header>
+<header><h1>설비 카운터</h1><span class="ver">v1.1</span><span class="clock" id="clock">--:--:--</span></header>
 <div class="tabs">
   <button class="tab active" id="tab-mon" onclick="showTab('mon')">현황</button>
   <button class="tab" id="tab-map" onclick="showTab('map')">매핑</button>
@@ -63,7 +63,7 @@
       <button class="btn" onclick="addRow()">+ 줄 추가</button>
       <button class="btn go" style="margin-left:auto" onclick="saveMap()">저장</button></div>
   </section>
-  <footer>설비 카운터 (MAC+GPIO) · v1.0</footer>
+  <footer>설비 카운터 (MAC+GPIO) · v1.1</footer>
 </div>
 <div class="toast" id="toast"></div>
 
@@ -71,7 +71,7 @@
 const SB="https://omngtyewdaqpphnzeate.supabase.co";
 const KEY="sb_publishable_9j2YkkL-7ul1TrhH-NjVdQ_vWDG2-1D";
 const REST=SB.replace(/\/+$/,'').replace(/\/rest\/v1$/,'')+'/rest/v1/';
-const SHOT="shot_count", BASE="daily_baseline";
+const SHOT="shot_count", BASE="daily_baseline", CONFIG="counter_config";
 const POLL=10000;
 const GPIOS=[26,27,32,33];
 const LS='mc_mapping_v1';
@@ -86,13 +86,26 @@ function relTime(s){if(!s)return'-';const a=(Date.now()-new Date(s).getTime())/1
 function normMac(m){return (m||'').replace(/:/g,'').replace(/\s/g,'').toUpperCase();}
 function codeOf(m){return normMac(m.mac)+'_'+m.gpio;}
 function loadMap(){try{mapping=JSON.parse(localStorage.getItem(LS)||'[]');}catch(e){mapping=[];}}
+// 서버(Supabase)에서 매핑 로드 → 성공 시 localStorage 캐시 갱신
+async function loadMapServer(){
+  try{
+    const r=await get(CONFIG+'?id=eq.1&select=data');
+    if(r&&r[0]&&r[0].data&&Array.isArray(r[0].data.mapping)){
+      mapping=r[0].data.mapping;
+      localStorage.setItem(LS,JSON.stringify(mapping));
+      return true;
+    }
+  }catch(e){}
+  loadMap(); // 서버 없으면 로컬 캐시 사용
+  return false;
+}
 
 function showTab(t){
   document.getElementById('view-mon').style.display=t==='mon'?'':'none';
   document.getElementById('view-map').style.display=t==='map'?'':'none';
   document.getElementById('tab-mon').classList.toggle('active',t==='mon');
   document.getElementById('tab-map').classList.toggle('active',t==='map');
-  if(t==='mon')loadMon();else renderMap();
+  if(t==='mon')loadMon();else loadMapServer().then(renderMap);
 }
 
 /* ===== 현황 ===== */
@@ -175,15 +188,26 @@ function addRow(mac,gpio,machine,type){
     <td><button class="btn x" onclick="this.closest('tr').remove()">✕</button></td>`;
   tb.appendChild(tr);
 }
-function saveMap(){
+async function saveMap(){
   const rows=[...document.querySelectorAll('#mapBody .maprow')].map(tr=>({
     mac:tr.querySelector('.m-mac').value.trim(),
     gpio:+tr.querySelector('.m-gpio').value,
     machine:tr.querySelector('.m-machine').value.trim(),
     type:tr.querySelector('.m-type').value
   })).filter(m=>m.mac&&m.machine);
-  mapping=rows;localStorage.setItem(LS,JSON.stringify(rows));
-  toast('저장됨 ('+rows.length+'줄)');showDetected();
+  mapping=rows;
+  localStorage.setItem(LS,JSON.stringify(rows));   // 로컬 캐시
+  // 서버(Supabase) 저장 — 다른 기기/접속자와 공유
+  try{
+    const r=await fetch(REST+CONFIG+'?on_conflict=id',{method:'POST',
+      headers:Object.assign(H(),{'Content-Type':'application/json','Prefer':'resolution=merge-duplicates,return=minimal'}),
+      body:JSON.stringify([{id:1,data:{mapping:rows},updated_at:new Date().toISOString().replace('Z','+00:00')}])});
+    if(!r.ok)throw new Error('HTTP '+r.status+' '+await r.text());
+    toast('서버 저장됨 ('+rows.length+'줄)');
+  }catch(e){
+    toast('서버 저장 실패: '+e.message);  // 로컬에는 저장됨
+  }
+  showDetected();
 }
 async function showDetected(){
   const box=document.getElementById('detected');
@@ -205,7 +229,7 @@ function quickAdd(code){
 loadMap();
 setInterval(()=>document.getElementById('clock').textContent=kstClock(),1000);
 document.getElementById('clock').textContent=kstClock();
-loadMon();
+loadMapServer().then(loadMon);
 setInterval(loadMon,POLL);
 </script>
 </body>
