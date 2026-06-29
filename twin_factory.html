@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>트윈팩토리 3D v13.24 - 라인순회 동전환 실시간기준</title>
+<title>트윈팩토리 3D v13.26 - MAC매칭 디스플레이 전송·매핑</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;}
@@ -81,7 +81,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 <body>
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🏭 트윈팩토리 3D<span class="v">v13.24</span></h1>
+    <h1>🏭 트윈팩토리 3D<span class="v">v13.26</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="upd">연결 중…</span> · <span id="cd">30</span>s</div>
   </div>
   <div class="sum">
@@ -162,6 +162,17 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
   </div>
 </div>
 
+<div class="mo" id="andonMap" onclick="if(event.target===this)closeAndonMap()">
+  <div class="ms">
+    <div class="mhd">
+      <div class="minfo"><h3>📟 현장 디스플레이 매핑</h3><p>MAC ↔ 설비호기 (켜진 장치는 자동 등록)</p></div>
+      <button class="mclose" onclick="renderAndonMap()" title="새로고침" style="margin-right:6px">⟳</button>
+      <button class="mclose" onclick="closeAndonMap()">×</button>
+    </div>
+    <div class="mbody" id="andonMapBody"></div>
+  </div>
+</div>
+
 <!-- 금일 관리포인트 보고서 (동별 미체크·로드모니터·품질·도면) -->
 <div class="mo" id="chkModal" onclick="if(event.target===this)closeCheckSummary()">
   <div class="ms">
@@ -198,6 +209,8 @@ async function sbGet(t,q){var r=await fetch(SB_URL+'/rest/v1/'+t+'?'+(q||''),{he
 async function sbPost(t,d){return fetch(SB_URL+'/rest/v1/'+t,{method:'POST',headers:Object.assign({},sbH,{'Content-Type':'application/json','Prefer':'return=minimal'}),body:JSON.stringify(d)})}
 async function sbDelete(t,q){return fetch(SB_URL+'/rest/v1/'+t+'?'+q,{method:'DELETE',headers:Object.assign({},sbH,{'Prefer':'return=minimal'})})}
 async function sbUpsertZone(z){return fetch(SB_URL+'/rest/v1/twin_zone?on_conflict=zone_code',{method:'POST',headers:Object.assign({},sbH,{'Content-Type':'application/json','Prefer':'resolution=merge-duplicates,return=minimal'}),body:JSON.stringify(z)})}
+async function sbUpsert(t,key,d){return fetch(SB_URL+'/rest/v1/'+t+'?on_conflict='+key,{method:'POST',headers:Object.assign({},sbH,{'Content-Type':'application/json','Prefer':'resolution=merge-duplicates,return=minimal'}),body:JSON.stringify(d)})}
+function kstNow(){var d=new Date(Date.now()+9*3600000);function p(n){return (n<10?'0':'')+n;}return d.getUTCFullYear()+'-'+p(d.getUTCMonth()+1)+'-'+p(d.getUTCDate())+'T'+p(d.getUTCHours())+':'+p(d.getUTCMinutes())+':'+p(d.getUTCSeconds())+'+09:00';}
 
 var ZONES=[
  {id:'B',name:'B동',equip:[{no:'45',mk:'심팩',t:300,x:205,y:1664,w:74,h:57},{no:'31',mk:'심팩',t:150,x:399,y:1656,w:77,h:56},{no:'41',mk:'국일',t:200,x:566,y:1653,w:79,h:59},{no:'47',mk:'심팩',t:300,x:200,y:1377,w:74,h:58},{no:'04',mk:'심팩',t:150,x:360,y:1228,w:79,h:53},{no:'37',mk:'국일',t:200,x:503,y:1227,w:75,h:52},{no:'03',mk:'심팩',t:150,x:543,y:1004,w:83,h:65},{no:'40',mk:'심팩',t:110,x:417,y:1004,w:72,h:65},{no:'46',mk:'심팩',t:300,x:232,y:1012,w:84,h:56},{no:'48',mk:'심팩',t:300,x:235,y:740,w:74,h:58},{no:'05',mk:'심팩',t:110,x:461,y:561,w:75,h:60},{no:'06',mk:'심팩',t:110,x:349,y:560,w:80,h:59},{no:'30',mk:'국일',t:160,x:581,y:560,w:73,h:59},{no:'32',mk:'심팩',t:200,x:397,y:346,w:77,h:49},{no:'42',mk:'AIDA',t:200,x:540,y:352,w:78,h:49},{no:'49',mk:'심팩',t:300,x:237,y:254,w:74,h:58},{no:'17',mk:'심팩',t:80,x:0,y:158,w:55,h:39},{no:'11',mk:'심팩',t:80,x:476,y:135,w:55,h:38},{no:'10',mk:'심팩',t:80,x:579,y:135,w:57,h:41},{no:'13',mk:'심팩',t:80,x:476,y:77,w:54,h:38},{no:'09',mk:'심팩',t:80,x:579,y:79,w:56,h:38},{no:'07',mk:'심팩',t:80,x:475,y:18,w:54,h:38},{no:'08',mk:'심팩',t:80,x:579,y:20,w:55,h:39},{no:'12',mk:'심팩',t:80,x:354,y:0,w:50,h:45}]},
@@ -1257,7 +1270,11 @@ function openModal(e,d){
   var body=document.getElementById('mBody');
   if(!d){
     document.getElementById('mSub').textContent=(meta.customer||'')+(meta.customer?' · ':'')+'실시간 데이터 없음';
-    body.innerHTML=inspRow(e,meta)+'<div class="empty">현재 이 설비의 실시간 데이터가 없습니다.<br>(작업지시 미등록 또는 통신 대기)</div>';
+    body.innerHTML=inspRow(e,meta)+'<div class="empty">현재 이 설비의 실시간 데이터가 없습니다.<br>(작업지시 미등록 또는 통신 대기)</div>'
+      +'<div style="display:flex;gap:8px;margin-top:6px">'
+      +'<button onclick="sendToDisplay()" style="flex:1;padding:11px;border:1px solid #3a4660;background:#1a2236;color:#9cc2ff;border-radius:9px;font-size:14px;font-weight:700;cursor:pointer">📟 디스플레이 전송</button>'
+      +'<button onclick="openAndonMap()" style="padding:11px 14px;border:1px solid #3a4660;background:#1a2236;color:#9cc2ff;border-radius:9px;font-size:14px;font-weight:700;cursor:pointer">🔧 매핑</button>'
+      +'</div>';
   }else{
     var run=d.machine_status==='N';
     document.getElementById('mSub').textContent=(d.customer||meta.customer||'')+' · '+(run?'가동중':stopName(d.machine_status));
@@ -1277,7 +1294,11 @@ function openModal(e,d){
       r('잔량',fmt(d.remaining_qty))+r('잔여시간',rmTxt)+r('로트',d.lot_no||'-')+
       r('CT (실/목표)',(d.actual_ct>0?d.actual_ct.toFixed(1):'-')+' / '+(d.target_ct>0?d.target_ct.toFixed(1):'-'))+
       r('NG',(d.ng_qty>0?'<span style="color:#ef4444">'+d.ng_qty+'</span>':'0'))+r('작업자',d.worker||'-')+
-      dimSection(d, d.current_mold);
+      dimSection(d, d.current_mold)+
+      '<div style="display:flex;gap:8px;margin-top:10px">'
+      +'<button onclick="sendToDisplay()" style="flex:1;padding:12px;border:none;border-radius:10px;background:linear-gradient(135deg,#2f6df0,#1e4fc0);color:#fff;font-size:15px;font-weight:800;cursor:pointer">📟 디스플레이 전송 (WORST)</button>'
+      +'<button onclick="openAndonMap()" style="padding:12px 14px;border:1px solid #3a4660;border-radius:10px;background:#1a2236;color:#9cc2ff;font-size:15px;font-weight:700;cursor:pointer">🔧 매핑</button>'
+      +'</div>';
   }
   document.getElementById('modal').classList.add('show');
 }
@@ -1593,6 +1614,120 @@ function dimOfMachine(d){
   var cs=dimCandidates(d);
   for(var i=0;i<cs.length;i++){ if(dimByPart[cs[i]]) return dimByPart[cs[i]]; }
   return null;
+}
+// ===== 현장 디스플레이(ESP32) 전송 : andon (MAC 기준) =====
+function dimSpecTxt(x){ return (x.type==='제로근접형')?('≤'+(isNaN(x.hi)?'-':x.hi)):((isNaN(x.lo)?'-':x.lo)+'~'+(isNaN(x.hi)?'-':x.hi)); }
+function worstDimItem(dim){
+  if(!dim) return null;
+  var risk=dim.items.filter(function(x){return x.state!=='정상';});
+  if(!risk.length) return null;
+  function sev(x){
+    if(x.state==='초과'||x.state==='미달') return 2000+(x.pct!=null?Math.abs(x.pct):0);
+    if(x.state==='상한임박') return (x.pct!=null?x.pct:80);
+    if(x.state==='하한임박') return (x.pct!=null?(100-x.pct):80);
+    return 0;
+  }
+  risk.sort(function(a,b){return sev(b)-sev(a);});
+  return risk[0];
+}
+function stateShort(s){ if(s==='상한임박')return'상한'; if(s==='하한임박')return'하한'; return s||''; }
+// 현재 모달 설비의 worst 메시지 payload 생성 (mac/label 합성은 발송 시점에)
+function buildAndonPayload(e,d){
+  var meta=metaOf(e);
+  var dim=d?dimOfMachine(d):null;
+  var w=dim?worstDimItem(dim):null;
+  var riskN=dim?dim.items.filter(function(x){return x.state!=='정상';}).length:0;
+  var totN=dim?dim.items.length:0;
+  var level = !dim ? 'none' : (dim.risk ? ((w&&(w.state==='초과'||w.state==='미달'))?'danger':'warn') : 'normal');
+  return {
+    ho_code:String(e.no),
+    title:e.no+'호기 '+(meta.maker||'')+' '+(meta.ton||'')+'t',
+    status_text:d?(d.machine_status==='N'?'가동중':stopName(d.machine_status)):'데이터없음',
+    ng_qty:(d&&d.ng_qty)||0,
+    worker:(d&&d.worker)||'',
+    worst_item:w?(w.item||''):'',
+    worst_spec:w?dimSpecTxt(w):'',
+    worst_val:w?w.val.toFixed(3):'',
+    worst_state:w?w.state:(dim?'정상':''),
+    worst_pct:(w&&w.pct!=null)?Math.round(w.pct):null,
+    risk_level:level,
+    risk_count:riskN+'/'+totN,
+    _worst:w
+  };
+}
+// 호기에 매핑된 디스플레이(andon) row 조회
+async function andonByHo(ho){
+  var rows=await sbGet('andon','ho_code=eq.'+encodeURIComponent(String(ho))+'&select=*&order=last_seen.desc');
+  return (rows&&rows.length)?rows:[];
+}
+// 설비 선택 → 매핑된 MAC으로 WORST 메시지 발송
+async function sendToDisplay(){
+  var e=_lastModalE, d=_lastModalD;
+  if(!e){ alert('설비를 먼저 선택하세요'); return; }
+  var devs=await andonByHo(e.no);
+  if(!devs.length){
+    if(confirm(e.no+'호기에 매핑된 현장 디스플레이가 없습니다.\n지금 디스플레이를 매핑하시겠습니까?')) openAndonMap();
+    return;
+  }
+  var p=buildAndonPayload(e,d), w=p._worst;
+  var okCnt=0, errs=[];
+  for(var i=0;i<devs.length;i++){
+    var dev=devs[i], lbl=dev.label||String(dev.mac).slice(-4);
+    var msg = w ? (lbl+' '+w.item+' '+w.val.toFixed(3)+' '+stateShort(w.state)) : (lbl+' 정상');
+    var payload={mac:dev.mac,ho_code:p.ho_code,msg:msg,title:p.title,status_text:p.status_text,
+      ng_qty:p.ng_qty,worker:p.worker,worst_item:p.worst_item,worst_spec:p.worst_spec,worst_val:p.worst_val,
+      worst_state:p.worst_state,worst_pct:p.worst_pct,risk_level:p.risk_level,risk_count:p.risk_count,updated_at:kstNow()};
+    try{ var r=await sbUpsert('andon','mac',payload); if(r.ok)okCnt++; else errs.push(dev.mac+':'+r.status); }
+    catch(err){ errs.push(dev.mac+':'+err.message); }
+  }
+  if(errs.length) alert('일부 전송 실패\n'+errs.join('\n'));
+  else alert('📟 '+e.no+'호기 → 디스플레이 '+okCnt+'대 전송 완료\n\n'+(w?(w.item+' '+w.val.toFixed(3)+' '+stateShort(w.state)+(w.pct!=null?' ('+Math.round(w.pct)+'%)':'')):'위험 항목 없음 (정상)'));
+}
+// ===== 디스플레이(MAC) ↔ 호기 매핑 =====
+function openAndonMap(){
+  var ov=document.getElementById('andonMap'); ov.classList.add('show');
+  renderAndonMap();
+}
+function closeAndonMap(){ document.getElementById('andonMap').classList.remove('show'); }
+function andonOnline(ls){ if(!ls)return false; var t=new Date(ls).getTime(); return (Date.now()-t)/1000 < 1200; }
+async function renderAndonMap(){
+  var box=document.getElementById('andonMapBody');
+  box.innerHTML='<div style="color:#8b97ad;padding:20px;text-align:center">불러오는 중…</div>';
+  var rows=await sbGet('andon','select=*&order=last_seen.desc');
+  if(rows==null){ box.innerHTML='<div style="color:#ef4444;padding:20px;text-align:center">연결 실패</div>'; return; }
+  if(!rows.length){ box.innerHTML='<div style="color:#8b97ad;padding:20px;text-align:center;line-height:1.6">등록된 디스플레이가 없습니다.<br>ESP32 디스플레이가 켜지면 자동으로 여기에 표시됩니다.<br><span style="font-size:11px">(부팅 시 자기 MAC을 andon 테이블에 자동 등록)</span></div>'; return; }
+  var hoOpts=[];
+  ZONES.forEach(function(z){ z.equip.forEach(function(x){ hoOpts.push(x.no); }); });
+  hoOpts.sort(_numSortNo);
+  var optHtml='<option value="">— 미지정 —</option>'+hoOpts.map(function(n){return '<option value="'+n+'">'+n+'호기</option>';}).join('');
+  var h='';
+  rows.forEach(function(r){
+    var lbl=r.label||String(r.mac).slice(-4);
+    var on=andonOnline(r.last_seen);
+    h+='<div style="border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:8px;background:'+(r.ho_code?'#11261a':'#1a2236')+'">'
+      +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'
+      +'<span style="width:9px;height:9px;border-radius:50%;background:'+(on?'#22c55e':'#5b6678')+';box-shadow:'+(on?'0 0 6px #22c55e':'none')+'"></span>'
+      +'<b style="font-size:15px;color:#e6ecf5">'+lbl+'</b>'
+      +'<span style="font-size:10px;color:#8b97ad">'+r.mac+'</span>'
+      +'<span style="margin-left:auto;font-size:10px;color:'+(on?'#22c55e':'#8b97ad')+'">'+(on?'온라인':'오프라인')+'</span></div>'
+      +'<div style="display:flex;gap:6px;align-items:center">'
+      +'<select id="amSel_'+r.mac+'" style="flex:1;background:#0f1117;color:#cfd8e3;border:1px solid var(--border);border-radius:7px;padding:9px;font-size:14px">'+optHtml+'</select>'
+      +'<button onclick="saveAndonMap(\''+_escQ(r.mac)+'\')" style="padding:9px 14px;border:none;border-radius:7px;background:#2f6df0;color:#fff;font-size:13px;font-weight:700;cursor:pointer">저장</button>'
+      +'</div>'
+      +(r.msg?('<div style="margin-top:6px;font-size:11px;color:#8b97ad">최근 메시지: '+r.msg+'</div>'):'')
+      +'</div>';
+  });
+  box.innerHTML=h;
+  rows.forEach(function(r){ var s=document.getElementById('amSel_'+r.mac); if(s&&r.ho_code)s.value=String(r.ho_code); });
+}
+async function saveAndonMap(mac){
+  var s=document.getElementById('amSel_'+mac); if(!s)return;
+  var ho=s.value||null;
+  try{
+    var r=await sbUpsert('andon','mac',{mac:mac,ho_code:ho,updated_at:kstNow()});
+    if(r.ok){ renderAndonMap(); }
+    else{ var t=await r.text(); alert('저장 실패: '+r.status+'\n'+t); }
+  }catch(err){ alert('저장 오류: '+err.message); }
 }
 // 치수 데이터 수동 새로고침
 function setupDimGas(){
