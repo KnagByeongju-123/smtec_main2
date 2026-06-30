@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>MES 가동설비 모니터링 v4.2</title>
+<title>MES 가동설비 모니터링 v4.3</title>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -311,7 +311,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 </style>
 </head>
 <body>
-<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v4.2</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">30초 갱신</span></div></div></div>
+<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v4.3</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">30초 갱신</span></div></div></div>
 <div class="tabs"><div class="tab active" data-tab="monitor" onclick="switchTab('monitor')">📊 모니터링</div><div class="tab" data-tab="settings" onclick="switchTab('settings')">📋 이력/설정</div></div>
 <div class="panel active" id="panel-monitor">
   <div class="stats"><div class="st"><div class="st-label">전체</div><div class="st-val" id="sTotal">-</div></div><div class="st run"><div class="st-label">가동</div><div class="st-val" id="sRun">-</div></div><div class="st stop"><div class="st-label">비가동</div><div class="st-val" id="sStop">-</div></div><div class="st warn"><div class="st-label">⏰30분이내</div><div class="st-val" id="sSoon">-</div></div><div class="st ng"><div class="st-label">NG</div><div class="st-val" id="sNg">-</div></div></div>
@@ -623,17 +623,30 @@ async function andonOfCurrent(){
   var rows=await sbGet('andon','ho_code=eq.'+encodeURIComponent(ho)+'&select=mac,label,ho_code&order=last_seen.desc');
   return{ho:ho,rows:rows||[]};
 }
+// 표시 폭 환산: 한글/전각=2, 그외=1. 디스플레이 한 줄 ≈ 34units(한글17자), 3줄=102 → 여유두고 96 한도
+var AL_MAX_UNITS=96;
+function alUnits(s){var u=0;for(var i=0;i<s.length;i++){var c=s.charCodeAt(i);u+=(c>0x1100&&!(c>=0xFF61&&c<=0xFF9F))?2:1}return u}
+function alUpdateCount(){
+  var ta=document.getElementById('alPopTxt'), cnt=document.getElementById('alPopCnt');
+  var u=alUnits(ta.value), over=u>AL_MAX_UNITS;
+  cnt.textContent=(over?'초과 ':'')+Math.round(u/2)+' / '+(AL_MAX_UNITS/2)+'자';
+  cnt.style.color=over?'#ef4444':'#8b97ad';
+  var btn=document.getElementById('alPopSend');
+  if(btn){btn.disabled=over;btn.style.opacity=over?'0.4':'1';btn.style.cursor=over?'not-allowed':'pointer'}
+}
 function openAlertPopup(){
   var ho=hoNumOf(chkState.machine);
   document.getElementById('alPopHo').textContent=ho?(ho+'호기'):'-';
   document.getElementById('alPopTxt').value='';
   document.getElementById('alPop').classList.add('show');
+  alUpdateCount();
   setTimeout(function(){document.getElementById('alPopTxt').focus()},100);
 }
 function closeAlertPopup(){document.getElementById('alPop').classList.remove('show')}
 async function sendDisplayAlert(){
   var txt=document.getElementById('alPopTxt').value.trim();
   if(!txt){alert('알림 내용을 입력하세요');return}
+  if(alUnits(txt)>AL_MAX_UNITS){alert('내용이 너무 깁니다. 한글 '+(AL_MAX_UNITS/2)+'자 이내로 줄여주세요.');return}
   var r=await andonOfCurrent();
   if(!r.ho){alert('호기를 확인할 수 없습니다');return}
   if(!r.rows.length){alert(r.ho+'호기에 연결된 현장 디스플레이가 없습니다.\n(디스플레이 ESP32가 켜져 있어야 합니다)');return}
@@ -3194,12 +3207,15 @@ setTimeout(function(){
   <div style="background:#161a22;border:1px solid #2a3142;border-radius:14px;max-width:420px;width:100%;padding:18px;margin:auto">
     <h3 style="margin:0 0 4px;font-size:17px;color:#e6ecf5">📟 현장 디스플레이 알림</h3>
     <div style="font-size:13px;color:#8b97ad;margin-bottom:12px"><b id="alPopHo" style="color:#9cc2ff">-</b> 디스플레이로 전송</div>
-    <textarea id="alPopTxt" rows="3" maxlength="60" placeholder="예) 금형점검 요망 / 자재 교체 / 검사 강화" style="width:100%;box-sizing:border-box;padding:11px;border-radius:9px;border:1px solid #2a3142;background:#0f1117;color:#e6ecf5;font-size:15px;font-family:inherit;resize:vertical"></textarea>
-    <div style="font-size:11px;color:#8b97ad;margin:4px 0 12px">최대 60자 · 화면 3줄까지 표시</div>
+    <textarea id="alPopTxt" rows="3" oninput="alUpdateCount()" placeholder="예) 금형점검 요망 / 자재 교체 / 검사 강화" style="width:100%;box-sizing:border-box;padding:11px;border-radius:9px;border:1px solid #2a3142;background:#0f1117;color:#e6ecf5;font-size:15px;font-family:inherit;resize:vertical"></textarea>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin:4px 0 12px">
+      <span style="font-size:11px;color:#8b97ad">화면 3줄까지 표시</span>
+      <span id="alPopCnt" style="font-size:12px;font-weight:700;color:#8b97ad">0 / 48자</span>
+    </div>
     <div style="display:flex;gap:8px">
       <button onclick="closeAlertPopup()" style="flex:1;padding:12px;border:1px solid #2a3142;border-radius:9px;background:#1a2236;color:#8b97ad;font-size:14px;font-weight:700;cursor:pointer">취소</button>
       <button onclick="clearDisplayAlert()" style="padding:12px 14px;border:1px solid #5b3a3a;border-radius:9px;background:#2a1a1a;color:#ffb4b4;font-size:14px;font-weight:700;cursor:pointer">🔕 해제</button>
-      <button onclick="sendDisplayAlert()" style="flex:1.4;padding:12px;border:none;border-radius:9px;background:linear-gradient(135deg,#2f6df0,#1e4fc0);color:#fff;font-size:15px;font-weight:800;cursor:pointer">전송</button>
+      <button id="alPopSend" onclick="sendDisplayAlert()" style="flex:1.4;padding:12px;border:none;border-radius:9px;background:linear-gradient(135deg,#2f6df0,#1e4fc0);color:#fff;font-size:15px;font-weight:800;cursor:pointer">전송</button>
     </div>
   </div>
 </div>
