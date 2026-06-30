@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>MES 가동설비 모니터링 v4.3</title>
+<title>MES 가동설비 모니터링 v4.4</title>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -311,7 +311,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 </style>
 </head>
 <body>
-<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v4.3</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">30초 갱신</span></div></div></div>
+<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v4.4</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">30초 갱신</span></div></div></div>
 <div class="tabs"><div class="tab active" data-tab="monitor" onclick="switchTab('monitor')">📊 모니터링</div><div class="tab" data-tab="settings" onclick="switchTab('settings')">📋 이력/설정</div></div>
 <div class="panel active" id="panel-monitor">
   <div class="stats"><div class="st"><div class="st-label">전체</div><div class="st-val" id="sTotal">-</div></div><div class="st run"><div class="st-label">가동</div><div class="st-val" id="sRun">-</div></div><div class="st stop"><div class="st-label">비가동</div><div class="st-val" id="sStop">-</div></div><div class="st warn"><div class="st-label">⏰30분이내</div><div class="st-val" id="sSoon">-</div></div><div class="st ng"><div class="st-label">NG</div><div class="st-val" id="sNg">-</div></div></div>
@@ -620,8 +620,33 @@ function hoNumOf(m){if(!m)return'';var n=(m.machine_name||'').trim();var mt=n.ma
 async function andonOfCurrent(){
   var ho=hoNumOf(chkState.machine);
   if(!ho)return{ho:'',rows:[]};
-  var rows=await sbGet('andon','ho_code=eq.'+encodeURIComponent(ho)+'&select=mac,label,ho_code&order=last_seen.desc');
+  var rows=await sbGet('andon','ho_code=eq.'+encodeURIComponent(ho)+'&select=mac,label,ho_code,alert_msg,alert_at&order=last_seen.desc');
   return{ho:ho,rows:rows||[]};
+}
+// 경과시간 문자열 (alert_at 기준)
+function alAgoText(aat){
+  if(!aat)return'';
+  var t=new Date(aat).getTime(); if(isNaN(t))return'';
+  var s=Math.floor((Date.now()-t)/1000); if(s<0)s=0;
+  if(s<60)return s+'초 전';
+  var m=Math.floor(s/60); if(m<60)return m+'분 전';
+  var h=Math.floor(m/60); return h+'시간 '+(m%60)+'분 전';
+}
+// 현재 표시중인 알림(1시간 이내)을 팝업 하단에 표시
+function showCurrentAlert(rows){
+  var box=document.getElementById('alPopCur');
+  var cur=null;
+  for(var i=0;i<(rows||[]).length;i++){
+    var r=rows[i];
+    if(r.alert_msg&&r.alert_at){
+      var age=(Date.now()-new Date(r.alert_at).getTime())/1000;
+      if(age>=0&&age<3600){cur=r;break}
+    }
+  }
+  if(!cur){box.style.display='none';box.innerHTML='';return}
+  box.style.display='block';
+  box.innerHTML='<div style="font-size:11px;color:#ffd27a;margin-bottom:4px">📟 현재 표시중 · '+_esc(alAgoText(cur.alert_at))+'</div>'
+    +'<div style="font-size:14px;color:#e6ecf5;line-height:1.4;word-break:break-all">'+_esc(cur.alert_msg)+'</div>';
 }
 // 표시 폭 환산: 한글/전각=2, 그외=1. 디스플레이 한 줄 ≈ 34units(한글17자), 3줄=102 → 여유두고 96 한도
 var AL_MAX_UNITS=96;
@@ -638,9 +663,11 @@ function openAlertPopup(){
   var ho=hoNumOf(chkState.machine);
   document.getElementById('alPopHo').textContent=ho?(ho+'호기'):'-';
   document.getElementById('alPopTxt').value='';
+  document.getElementById('alPopCur').style.display='none';
   document.getElementById('alPop').classList.add('show');
   alUpdateCount();
   setTimeout(function(){document.getElementById('alPopTxt').focus()},100);
+  andonOfCurrent().then(function(r){showCurrentAlert(r.rows)});   // 현재 표시중 알림 조회
 }
 function closeAlertPopup(){document.getElementById('alPop').classList.remove('show')}
 async function sendDisplayAlert(){
@@ -3212,6 +3239,7 @@ setTimeout(function(){
       <span style="font-size:11px;color:#8b97ad">화면 3줄까지 표시</span>
       <span id="alPopCnt" style="font-size:12px;font-weight:700;color:#8b97ad">0 / 48자</span>
     </div>
+    <div id="alPopCur" style="display:none;background:#1f1a08;border:1px solid #5a4a18;border-radius:9px;padding:10px;margin-bottom:12px"></div>
     <div style="display:flex;gap:8px">
       <button onclick="closeAlertPopup()" style="flex:1;padding:12px;border:1px solid #2a3142;border-radius:9px;background:#1a2236;color:#8b97ad;font-size:14px;font-weight:700;cursor:pointer">취소</button>
       <button onclick="clearDisplayAlert()" style="padding:12px 14px;border:1px solid #5b3a3a;border-radius:9px;background:#2a1a1a;color:#ffb4b4;font-size:14px;font-weight:700;cursor:pointer">🔕 해제</button>
