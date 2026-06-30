@@ -1,0 +1,2047 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>작업일보 v13.8</title>
+<style>
+  :root{
+    --bg:#0f1419; --panel:#1a2332; --border:#2a3a52;
+    --text:#e8eef7; --muted:#7a8aa0;
+    --ok:#22c55e; --ng:#ef4444; --idle:#475569; --accent:#3b82f6;
+    --pass:#22c55e; --fail:#ef4444;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Malgun Gothic",sans-serif;
+    background:var(--bg); color:var(--text);
+    min-height:100vh; padding:10px 8px;
+  }
+  .header{
+    display:flex; justify-content:space-between; align-items:center;
+    background:var(--panel); border:1px solid var(--border);
+    padding:13px 16px; border-radius:10px; margin-bottom:14px;
+    flex-wrap:wrap; gap:12px;
+  }
+  .header h1{font-size:20px; font-weight:600}
+  .header .meta{display:flex; gap:14px; align-items:center; font-size:13px; color:var(--muted); flex-wrap:wrap}
+  .header .meta b{color:var(--text); font-weight:600}
+  .status-dot{
+    display:inline-block; width:9px; height:9px; border-radius:50%;
+    margin-right:6px; background:var(--idle);
+  }
+  .status-dot.online{background:var(--ok); box-shadow:0 0 8px var(--ok)}
+  .status-dot.offline{background:var(--ng)}
+  .btn{
+    padding:8px 16px; border-radius:6px; border:1px solid var(--border);
+    background:#0c1320; color:var(--text); cursor:pointer; font-size:13px;
+    font-family:inherit;
+  }
+  .btn:hover{background:#1a2332; border-color:var(--accent)}
+  .btn.primary{background:var(--accent); border-color:var(--accent)}
+  .btn.primary:hover{background:#2563eb}
+  .btn.danger{background:transparent; border-color:var(--ng); color:var(--ng)}
+
+  /* 디바이스 섹션 */
+  .dev-section{
+    background:var(--panel); border:1px solid var(--border);
+    border-radius:10px; padding:16px; margin-bottom:16px;
+  }
+  .dev-header{
+    display:flex; justify-content:space-between; align-items:center;
+    margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--border);
+    flex-wrap:wrap; gap:8px;
+  }
+  .dev-title{
+    font-size:17px; font-weight:700; display:flex; align-items:center; gap:10px;
+  }
+  .dev-badge{
+    padding:4px 10px; border-radius:5px; font-size:12px; font-weight:600;
+    background:var(--accent); color:white;
+  }
+  .dev-info{font-size:12px; color:var(--muted); display:flex; gap:14px; flex-wrap:wrap}
+  .dev-info b{color:var(--text)}
+
+  .grid{
+    display:grid; grid-template-columns:repeat(4, 1fr);
+    gap:10px;
+  }
+  @media (max-width: 1200px){ .grid{grid-template-columns:repeat(2,1fr)} }
+  @media (max-width: 600px){ .grid{grid-template-columns:1fr} }
+
+  .card{
+    background:#0c1320; border:1px solid var(--border);
+    border-radius:8px; padding:12px;
+    transition:border-color .2s, box-shadow .2s;
+    position:relative;
+  }
+  .card.has-data{ border-color:var(--accent) }
+  .card.recent{ border-color:var(--ok); box-shadow:0 0 12px rgba(34,197,94,.35) }
+  .card.empty{ opacity:.45 }
+  .card.pass{ border-left:4px solid var(--pass) }
+  .card.fail{ border-left:4px solid var(--fail) }
+
+  .card .ch-head{
+    display:flex; justify-content:space-between; align-items:center;
+    margin-bottom:8px;
+  }
+  .card .ch-name{font-size:16px; font-weight:700}
+  .card .machine-label{font-size:18px; font-weight:800; color:#fbbf24; letter-spacing:.3px}
+  .card .machine-label.empty{font-size:13px; font-weight:600; color:var(--muted); font-style:italic}
+  .card .chan-id{
+    font-size:11px; color:var(--accent); margin-bottom:8px;
+    background:rgba(59,130,246,.12); padding:3px 8px; border-radius:4px;
+    display:inline-flex; align-items:center; gap:4px; font-weight:600;
+  }
+  .card .ch-gpio{font-size:10px; color:var(--muted); background:#1a2332; padding:2px 6px; border-radius:4px}
+  .card .mapping{
+    font-size:11px; color:var(--accent); margin-bottom:8px;
+    background:rgba(59,130,246,.1); padding:4px 8px; border-radius:4px;
+    min-height:22px; display:flex; align-items:center;
+  }
+  .card .mapping.empty{color:var(--muted); background:transparent; font-style:italic}
+  
+  .count{
+    font-size:32px; font-weight:700; line-height:1;
+    color:var(--text); margin-bottom:4px;
+    font-variant-numeric:tabular-nums;
+  }
+  .count-label{font-size:10px; color:var(--muted); margin-bottom:8px}
+  .stats{display:flex; gap:6px; font-size:10px}
+  .stat{flex:1; padding:5px 7px; background:#1a2332; border-radius:4px}
+  .stat-label{color:var(--muted); margin-bottom:2px}
+  .stat-val{color:var(--text); font-weight:600; font-variant-numeric:tabular-nums}
+
+  /* 호기 집계 섹션 */
+  .machine-summary{
+    background:var(--panel); border:1px solid var(--border);
+    border-radius:10px; padding:16px; margin-bottom:16px;
+  }
+  .machine-summary h2{font-size:15px; margin-bottom:12px; color:var(--text)}
+  .machine-grid{
+    display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));
+    gap:10px;
+  }
+  .machine-card{
+    background:#0c1320; border:1px solid var(--border); border-radius:8px;
+    padding:12px;
+  }
+  .machine-name{font-size:15px; font-weight:800; margin-bottom:8px; color:#fbbf24; letter-spacing:.3px}
+  .machine-stats{display:flex; gap:12px; align-items:center}
+  .machine-stats .num{font-size:24px; font-weight:700; font-variant-numeric:tabular-nums}
+  .machine-stats .pass{color:var(--pass)}
+  .machine-stats .total{color:var(--text)}
+  .machine-stats .fail{color:var(--fail)}
+  .machine-stats .rate{font-size:11px; color:var(--muted); margin-top:2px}
+
+  /* 모달 */
+  .modal-bg{
+    display:none; position:fixed; top:0;left:0;right:0;bottom:0;
+    background:rgba(0,0,0,.7); z-index:100;
+    align-items:center; justify-content:center; padding:20px;
+  }
+  .modal-bg.show{display:flex}
+  .modal{
+    background:var(--panel); border:1px solid var(--border); border-radius:10px;
+    max-width:900px; width:100%; max-height:90vh; overflow:auto; padding:20px;
+  }
+  .modal h2{font-size:18px; margin-bottom:16px}
+  .modal-section{
+    background:#0c1320; border:1px solid var(--border); border-radius:8px;
+    padding:14px; margin-bottom:12px;
+  }
+  .modal-section h3{font-size:14px; margin-bottom:10px; color:var(--accent)}
+  .modal-row{
+    display:flex; flex-wrap:wrap; gap:6px; align-items:center;
+    margin-bottom:10px; font-size:13px;
+    background:#141d2b; border:1px solid var(--border);
+    border-radius:8px; padding:10px;
+  }
+  .modal-row .di-label{
+    font-weight:700; color:var(--accent); min-width:36px; flex-shrink:0;
+    font-size:14px;
+  }
+  .modal-field{ display:flex; flex-direction:column; gap:2px; flex:1 1 100px; min-width:90px; }
+  .modal-field.gpio-f{ flex:0 0 70px; min-width:70px; }
+  .modal-field .fl{ font-size:10px; color:var(--muted); padding-left:2px; }
+  .modal-row input, .modal-row select{
+    background:#1a2332; border:1px solid var(--border); color:var(--text);
+    padding:7px 8px; border-radius:5px; font-family:inherit; font-size:13px;
+    min-width:0; width:100%;
+  }
+  .modal-row input:focus, .modal-row select:focus{outline:1px solid var(--accent)}
+  .modal-actions{display:flex; gap:8px; justify-content:flex-end; margin-top:16px; padding-top:12px; border-top:1px solid var(--border)}
+  .zero-btn{
+    background:#3a2410; border:1px solid #f59e0b; color:#fbbf24;
+    font-size:11px; padding:4px 10px; border-radius:5px; cursor:pointer;
+    white-space:nowrap;
+  }
+  .zero-btn:hover{ background:#4a3015 }
+  .zero-btn:disabled{ opacity:0.4; cursor:not-allowed; border-color:var(--border); color:var(--muted) }
+  
+  .no-device{
+    text-align:center; padding:40px 20px; color:var(--muted);
+    background:var(--panel); border:1px dashed var(--border); border-radius:10px;
+  }
+  .footer{
+    margin-top:16px; padding:10px 14px;
+    background:var(--panel); border:1px solid var(--border); border-radius:8px;
+    font-size:11px; color:var(--muted); display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px;
+  }
+  /* ===== 탭 + 작업일보 ===== */
+  .tabs{display:flex;gap:2px;max-width:none;margin:0 auto 14px;padding:0 2px;
+    flex-wrap:nowrap;overflow-x:auto;border-bottom:1px solid var(--border);
+    -ms-overflow-style:none;scrollbar-width:none}
+  .tabs::-webkit-scrollbar{display:none}
+  .tab{
+    background:transparent;border:none;border-bottom:3px solid transparent;
+    color:var(--muted);padding:13px 16px;font-size:14px;font-weight:700;
+    cursor:pointer;font-family:inherit;white-space:nowrap;flex:0 0 auto;margin-bottom:-1px;
+    transition:color .15s,border-color .15s;
+  }
+  .tab:hover{color:var(--text)}
+  .tab.on{color:var(--accent);border-bottom-color:var(--accent)}
+  .rep-hidden{display:none}
+  .mon-bar{max-width:none;margin:0 auto 14px;padding:0;display:flex;justify-content:flex-end}
+  #viewReport,#viewHist,#viewSetup{max-width:none;margin:0 auto;padding:0}
+  #viewFw{max-width:none;margin:0 auto;padding:0}
+  .fw-pre{background:#0b0f17;border:1px solid var(--border);border-radius:8px;padding:12px;overflow:auto;max-height:62vh;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;line-height:1.55;color:#cbd5e1;white-space:pre;-webkit-overflow-scrolling:touch;margin:0}
+  .fw-guide{color:#a7f3d0;max-height:none;white-space:pre-wrap}
+  .rcard{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:16px;margin-bottom:12px}
+  #repMetaCard{background:#0e2018;border-color:#1f4a36}
+  #repMetaCard .rrow{background:#10271d;border-color:#225740}
+  .rmeta{display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:14px}
+  .rrow{display:flex;flex-direction:column;gap:5px;min-width:0;background:#0f1722;border:1px solid var(--border);border-radius:10px;padding:10px 12px}
+  .rlbl{color:var(--muted);flex:0 0 auto;white-space:nowrap;font-size:12px}
+  .rval{font-weight:800;font-size:17px}.rval.cust{color:#fbbf24}
+  .cust-sel{background:#0b1018;border:1px solid var(--border);border-radius:8px;color:#fbbf24;font-weight:800;padding:9px 8px;font-family:inherit;font-size:15px;width:100%;min-width:0;max-width:100%}
+  .slot-row{display:flex;flex-direction:column;gap:10px;background:#0f1722;border:1px solid var(--border);border-left:4px solid var(--border);border-radius:12px;padding:14px;margin-bottom:12px;transition:border-color .15s}
+  .slot-l1{display:flex;gap:8px}
+  .slot-l1 select{flex:1;min-width:0;padding:12px 10px;font-size:15px}
+  .slot-l2{display:flex;align-items:center;justify-content:space-between;gap:10px;
+    background:#0b1018;border:1px solid var(--border);border-radius:10px;padding:12px 14px}
+  .slot-qwrap{display:flex;align-items:baseline;gap:8px;color:var(--muted);font-size:14px;font-weight:600}
+  .slot-qty{color:var(--pass);font-size:30px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1}
+  .slot-icons{display:flex;gap:8px;flex:0 0 auto}
+  .slot-call{background:#1e293b;border:1px solid var(--accent);color:#bfdbfe;border-radius:8px;padding:10px 16px;font-weight:800;cursor:pointer;font-family:inherit;font-size:15px}
+  .slot-del{background:transparent;border:1px solid var(--border);color:#f87171;border-radius:8px;padding:10px 14px;font-weight:800;cursor:pointer;font-family:inherit;font-size:15px}
+  .slot-del:disabled{opacity:.4}
+  .slot-l3{display:flex;gap:8px}
+  .slot-go{flex:1;padding:14px 0;border-radius:10px;font-weight:800;font-family:inherit;font-size:16px;cursor:pointer;background:var(--accent);border:1px solid var(--accent);color:#fff}
+  .slot-stop{flex:1;padding:14px 0;border-radius:10px;font-weight:800;font-family:inherit;font-size:16px;cursor:pointer;background:#dc2626;border:1px solid #dc2626;color:#fff}
+  .slot-go.off,.slot-stop.off{background:#0f1722;border-color:var(--border);color:var(--muted);cursor:default}
+  .slot-apply{width:100%;padding:14px 0;border-radius:10px;font-weight:800;font-family:inherit;font-size:16px;cursor:pointer;background:var(--accent);border:1px solid var(--accent);color:#fff}
+  .slot-apply.on{background:#dc2626;border-color:#dc2626}
+  .slot-row.applied{border-color:#22c55e;border-left-color:#22c55e;background:#0f1a14}
+  .slot-row.applied .slot-l2{border-color:#22c55e}
+  .slot-row.paused{border-color:#f59e0b;border-left-color:#f59e0b;background:#1a160c}
+  .slot-row.paused .slot-l2{border-color:#f59e0b}
+  .slot-resume{flex:1;padding:14px 0;border-radius:10px;font-weight:800;font-family:inherit;font-size:16px;cursor:pointer;background:#16a34a;border:1px solid #16a34a;color:#fff}
+  .slot-finish{flex:1;padding:14px 0;border-radius:10px;font-weight:800;font-family:inherit;font-size:16px;cursor:pointer;background:#2563eb;border:1px solid #2563eb;color:#fff}
+  .slot-pausebar{display:flex;align-items:center;gap:8px;background:#2a1f08;border:1px solid #f59e0b;border-radius:10px;padding:9px 12px;color:#fbbf24;font-weight:700;font-size:13px}
+  .slot-pausebar .pb-dot{width:9px;height:9px;border-radius:50%;background:#f59e0b;box-shadow:0 0 8px #f59e0b;flex:0 0 auto;animation:pbblink 1.2s infinite}
+  @keyframes pbblink{50%{opacity:.3}}
+  .slot-stopinfo{font-size:12px;color:var(--muted);padding:2px 2px 0}
+  .slot-stopinfo b{color:#fbbf24}
+  .lay-addrow{display:flex;gap:8px;margin:10px 0}
+  .lay-addrow input{flex:1;background:#0f1722;border:1px solid var(--border);border-radius:8px;color:#e6edf3;padding:9px 10px;font-family:inherit;font-size:14px}
+  .lay-chips{display:flex;flex-wrap:wrap;gap:8px}
+  .lay-chip{display:inline-flex;align-items:center;gap:8px;background:#0f1722;border:1px solid var(--accent);border-radius:18px;padding:6px 8px 6px 14px;font-weight:700;font-size:14px}
+  .lay-chip button{background:none;border:none;color:#ef4444;font-size:16px;cursor:pointer;font-weight:800;line-height:1}
+  .lay-assign{display:grid;grid-template-columns:1fr 1fr;gap:8px 12px}
+  .lay-arow{display:flex;align-items:center;gap:8px;min-width:0}
+  .lay-arow b{flex:0 0 auto;color:#fbbf24}
+  .lay-arow select{flex:1;min-width:0;background:#0f1722;border:1px solid var(--border);border-radius:8px;color:#e6edf3;padding:8px;font-family:inherit;font-size:13px}
+  .fl-proc{display:inline-block;padding:6px 10px;background:#0f1722;border:1px solid var(--accent);border-radius:8px;color:#fbbf24;font-weight:700;font-size:13px;min-width:54px;text-align:center}
+  .call-photo{margin-top:12px;display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+  .call-btns{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:6px 0}
+  .call-btns .btn{padding:16px 0;font-size:16px}
+  .wt-btn{background:#0b1018;border:1px solid var(--accent);color:#fff;border-radius:8px;padding:9px 12px;font-weight:800;font-family:inherit;cursor:pointer;font-size:15px;width:100%;text-align:left}
+  .rdiv{margin-top:14px;border-top:1px solid var(--border);padding-top:14px}
+  .rhint{font-size:13px;color:var(--muted);margin-bottom:8px}
+  .chips{display:flex;gap:8px;flex-wrap:wrap}
+  .chip{background:#0f1722;border:1px solid var(--border);border-radius:20px;padding:8px 18px;cursor:pointer;font-size:15px;font-weight:700;color:var(--muted);user-select:none}
+  .chip.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+  /* 호기 드롭다운(라디오식) */
+  .mdrop{position:relative;display:inline-block;min-width:240px}
+  .mdrop-head{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;
+    background:#0f1722;border:1px solid var(--border);border-radius:8px;padding:11px 14px;
+    color:var(--text);font-size:15px;font-weight:700;cursor:pointer;font-family:inherit;text-align:left}
+  .mdrop-head .mdrop-arrow{color:var(--muted);transition:transform .15s;flex:0 0 auto}
+  .mdrop.open .mdrop-head{border-color:var(--accent)}
+  .mdrop.open .mdrop-arrow{transform:rotate(180deg)}
+  .mdrop-panel{display:none;position:absolute;top:calc(100% + 6px);left:0;right:0;z-index:40;
+    background:var(--panel);border:1px solid var(--accent);border-radius:10px;padding:6px;
+    box-shadow:0 8px 24px rgba(0,0,0,.55);max-height:300px;overflow:auto}
+  .mdrop.open .mdrop-panel{display:block}
+  .mopt{display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:8px;cursor:pointer;
+    font-size:15px;font-weight:700;color:var(--muted);user-select:none}
+  .mopt:hover{background:#0f1722}
+  .mopt.on{color:#fff}
+  .mopt .radio{width:20px;height:20px;border-radius:50%;border:2px solid var(--border);flex:0 0 auto;
+    display:flex;align-items:center;justify-content:center;transition:border-color .15s}
+  .mopt.on .radio{border-color:var(--accent)}
+  .mopt.on .radio::after{content:'';width:10px;height:10px;border-radius:50%;background:var(--accent)}
+  select,#viewReport input,#viewHist input{background:#0f1722;border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:15px;font-family:inherit}
+  .slot-l1 select{background:#2a1606;border-color:#9a5212;color:#ffd9a8;font-weight:700}
+  select{min-width:170px}
+  .rtable{width:100%;border-collapse:collapse;font-size:15px}
+  .rtable th,.rtable td{padding:10px 8px;border-bottom:1px solid var(--border);text-align:center}
+  .rtable th{color:var(--muted);font-size:12px;font-weight:600;background:rgba(255,255,255,.02)}
+  .rtable td.machine{font-weight:800;color:#fbbf24}
+  .rtable td.num{font-weight:700}
+  .rtable td.pass{color:var(--pass)}
+  .rtable tr.total td{border-top:2px solid var(--border);font-weight:800;background:rgba(255,255,255,.03)}
+  .rempty{color:var(--muted);padding:26px;text-align:center}
+  .rupd{font-size:12px;color:var(--muted);margin-top:10px;text-align:right}
+  .ractions{display:flex;gap:10px;margin-top:10px}
+  .filterbar{display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
+  .actionbar{margin-bottom:14px;gap:6px}
+  .actionbar .btn{flex:1;min-width:64px}
+  .rtable tbody tr{cursor:pointer}
+  .rtable tbody tr.sel{background:rgba(59,130,246,.20)}
+  .dwrap{display:flex;align-items:center;gap:5px}
+  .calbtn{background:#0f1722;border:1px solid var(--border);border-radius:8px;padding:8px 11px;font-size:17px;cursor:pointer;line-height:1}
+  .row-act{display:flex;gap:6px;justify-content:center}
+  .rmodal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:200;padding:16px}
+  .rmodal.on{display:flex}
+  .rmodal-box{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:22px;width:100%;max-width:480px;max-height:88vh;overflow:auto}
+  .rmodal-box h2{font-size:17px;margin:0 0 16px}
+  .rfld{margin-bottom:14px}
+  .rfld label{display:block;font-size:12px;color:var(--muted);margin-bottom:5px}
+  .rfld input,.rfld select{width:100%}
+  .rfld input,.rfld select,.addrow input{background:#0f1722;border:1px solid var(--border);color:var(--text);border-radius:8px;padding:10px 12px;font-family:inherit;font-size:14px}
+  .rfld input::placeholder,.addrow input::placeholder{color:var(--muted)}
+  .rfld input:focus,.rfld select:focus,.addrow input:focus{outline:none;border-color:var(--accent)}
+  .rmodal-foot{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
+  .rlist{display:flex;flex-direction:column;gap:7px;margin-bottom:10px}
+  .ritem{display:flex;justify-content:space-between;align-items:center;background:#0f1722;border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:14px}
+  .addrow{display:flex;gap:8px}.addrow input{flex:1}
+  .numpad{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:14px}
+  .numpad button{padding:18px;font-size:22px;font-weight:800;background:#0f1722;border:1px solid var(--border);border-radius:10px;color:var(--text);cursor:pointer;font-family:inherit}
+  .ff-row{display:flex;align-items:center;gap:14px;justify-content:space-between;background:#0f1722;border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:10px}
+  .ff-info{flex:1;min-width:0}.ff-model{font-size:17px;font-weight:800;color:#fbbf24}.ff-auto{font-size:13px;color:var(--muted);margin-top:5px;line-height:1.5}
+  .ff-row input{width:120px;flex:0 0 auto;font-size:24px;font-weight:800;text-align:right;padding:10px;background:#0b1018;border:1px solid var(--border);border-radius:8px;color:var(--pass)}
+  .ff-row input.active{border-color:var(--accent);box-shadow:0 0 0 2px rgba(59,130,246,.35)}
+  .btn.danger{background:transparent;border:1px solid var(--ng);color:var(--ng)}
+  .boxbtn{margin-top:6px;padding:4px 10px;font-size:12px;font-weight:700;background:transparent;border:1px solid var(--accent);color:var(--accent);border-radius:7px;cursor:pointer;font-family:inherit}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>📋 작업일보 v13.8</h1>
+  <div class="meta">
+    <span><span class="status-dot" id="connDot"></span><b id="connText">연결 확인 중</b></span>
+    <span>장비: <b id="deviceCount">0</b></span>
+    <span>전체 당일: <b id="totalCount">0</b></span>
+    <span>갱신: <b id="lastUpdate">-</b></span>
+  </div>
+</div>
+
+<div class="tabs">
+  <button class="tab on" id="tabRepBtn" onclick="showTab('rep')">📋 일보</button>
+  <button class="tab" id="tabRtBtn" onclick="showTab('rt')">📡 현황</button>
+  <button class="tab" id="tabHistBtn" onclick="showTab('hist')">📜 조회</button>
+  <button class="tab" id="tabSetupBtn" onclick="showTab('setup')">⚙️ 메뉴</button>
+  <button class="tab" id="tabLayoutBtn" onclick="showTab('layout')">🗺️ 레이아웃</button>
+  <button class="tab" id="tabMonBtn" onclick="showTab('mon')">📡 매핑</button>
+  <button class="tab" id="tabFwBtn" onclick="showTab('fw')">🔌 펌웨어</button>
+</div>
+
+<!-- 실시간현황 -->
+<div id="viewRealtime">
+  <div class="rcard">
+    <div class="rhint" style="margin-bottom:10px">실시간 카운팅</div>
+    <table class="rtable">
+      <thead><tr><th>호기</th><th>작업자</th><th>기종</th><th>합격수량</th></tr></thead>
+      <tbody id="rtMachineBody"><tr><td colspan="4" class="rempty">불러오는 중...</td></tr></tbody>
+    </table>
+    <div class="rupd" id="rtUpd"></div>
+  </div>
+</div>
+
+<!-- 모니터(기존 카운팅 화면) -->
+<div id="viewMonitor">
+  <div class="mon-bar"><button class="btn primary" onclick="openSettings()">⚙️ 호기 매핑 설정</button></div>
+  <!-- 디바이스별 원시 데이터 -->
+  <div id="container"></div>
+</div>
+
+<!-- 작업일보 -->
+<div id="viewReport" class="rep-hidden">
+  <div class="rcard" id="repMetaCard">
+    <div class="rmeta">
+      <div class="rrow"><span class="rlbl">작업일자</span><span class="rval" id="rDate">자동등록</span></div>
+      <div class="rrow"><span class="rlbl">작업자</span><select class="cust-sel" id="workerSelect" onchange="onWorkerChange()"></select></div>
+      <div class="rrow"><span class="rlbl">근무시간</span><button type="button" class="wt-btn" id="rWorkMin" onclick="openWorkModal()">숫자모달</button></div>
+      <div class="rrow"><span class="rlbl">고객사명</span><select class="cust-sel" id="custSelect" onchange="onCustChange()"></select></div>
+    </div>
+  </div>
+  <div class="rcard">
+    <div id="slotRows"></div>
+    <button class="btn" id="btnAddSlot" onclick="addSlot()" style="width:100%;margin-bottom:8px">+ 행 추가</button>
+    <div class="rupd" id="repUpd"></div>
+  </div>
+</div>
+</div>
+
+<!-- 이력조회 -->
+<div id="viewHist" class="rep-hidden">
+  <div class="rcard">
+    <div class="filterbar">
+      <span class="rlbl">기간</span>
+      <div class="dwrap"><input type="date" id="fFrom"><button class="calbtn" onclick="openPicker('fFrom')">📅</button></div>
+      <span>~</span>
+      <div class="dwrap"><input type="date" id="fTo"><button class="calbtn" onclick="openPicker('fTo')">📅</button></div>
+    </div>
+    <div class="filterbar actionbar">
+      <button class="btn" onclick="loadHistory()">조회</button>
+      <button class="btn" onclick="downloadExcel()">📥 엑셀</button>
+      <button class="btn" onclick="openStopLog()">🛑 정지내역</button>
+      <button class="btn" onclick="openHistEdit()">+ 추가</button>
+      <button class="btn" onclick="editSelectedHist()">수정</button>
+      <button class="btn danger" onclick="deleteSelectedHist()">삭제</button>
+    </div>
+    <table class="rtable">
+      <thead><tr><th>일자</th><th>작업자</th><th>기종</th><th>호기</th><th>카운팅</th><th>양품</th><th>불량</th><th>시작</th><th>종료</th><th>C/T</th><th>SPM</th><th>정지</th></tr></thead>
+      <tbody id="histBody"><tr><td colspan="12" class="rempty">행을 누르면 선택되고, 수정/삭제 버튼으로 처리합니다. 조회 버튼을 누르세요.</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- 기종·호기 설정 -->
+<div id="viewSetup" class="rep-hidden">
+  <div class="rcard">
+    <h2 style="font-size:17px;margin:0 0 16px">⚙️ 작업일보 설정</h2>
+    <div class="rfld"><label>작업자명 (로그인 시 자동 · 미로그인 시에만 사용)</label><input type="text" id="inInspector" placeholder="예: 홍길동"></div>
+    <div class="rfld"><label>기종 목록</label><div class="rlist" id="modelList"></div>
+      <div class="addrow"><input type="text" id="newModel" placeholder="기종명 (예: Race Way-117X)"><button class="btn" onclick="addModel()">추가</button></div>
+    </div>
+    <div class="rfld"><label>검사기 호기 목록</label><div class="rlist" id="machineListEl"></div>
+      <div class="addrow"><input type="text" id="newMachine" placeholder="호기 번호 (예: 11)"><button class="btn" onclick="addMachine()">추가</button></div>
+    </div>
+    <div class="rfld"><label>고객사 목록</label><div class="rlist" id="customerListEl"></div>
+      <div class="addrow"><input type="text" id="newCustomer" placeholder="고객사명 (예: SKF)"><button class="btn" onclick="addCustomer()">추가</button></div>
+    </div>
+    <div class="rfld"><label>작업자 목록</label><div class="rlist" id="workerListEl"></div>
+      <div class="addrow"><input type="text" id="newWorker" placeholder="작업자명 (예: 홍길동)"><button class="btn" onclick="addWorker()">추가</button></div>
+    </div>
+    <div class="rfld"><label>정지 사유 목록 (프레스 공통 · 타사 적용 가능)</label><div class="rlist" id="stopReasonListEl"></div>
+      <div class="addrow"><input type="text" id="newStopReason" placeholder="정지사유 (예: 소재교환)"><button class="btn" onclick="addStopReason()">추가</button></div>
+    </div>
+    <div class="rfld"><label>ntfy 방 이름 (호출 알림 토픽)</label><input type="text" id="inNtfy" placeholder="예: taejin-qc-call"></div>
+    <div class="rmodal-foot"><button class="btn primary" onclick="saveRepSettings()">저장</button></div>
+  </div>
+</div>
+
+<!-- 펌웨어 (ESP32 SHOT 카운터) -->
+<div id="viewFw" class="rep-hidden">
+  <div class="rcard">
+    <h2 style="font-size:17px;margin:0 0 6px">🔌 ESP32 펌웨어 · SET1 (ESP_S1)</h2>
+    <div class="rhint">DevKitC V4 · 2채널 SHOT 카운터 v2.3(10초) · S1=GPIO32, S2=GPIO33 (검사기 전광판 신호 2채널)</div>
+    <div style="display:flex;gap:8px;margin:12px 0">
+      <button class="btn primary" onclick="copyFw('fwS1')">📋 코드 전체 복사</button>
+    </div>
+    <pre id="fwS1" class="fw-pre">로딩…</pre>
+  </div>
+  <div class="rcard">
+    <h2 style="font-size:17px;margin:0 0 6px">🤖 디바이스 추가 규격 (AI 안내용)</h2>
+    <div class="rhint">새 ESP32(SET2, SET3…)를 추가할 때 이 규격대로 요청하면 됩니다.</div>
+    <div style="display:flex;gap:8px;margin:12px 0">
+      <button class="btn" onclick="copyFw('fwGuide')">📋 규격 복사</button>
+    </div>
+    <pre id="fwGuide" class="fw-pre fw-guide">로딩…</pre>
+  </div>
+</div>
+
+<!-- 레이아웃 (공정·호기 배치) -->
+<div id="viewLayout" class="rep-hidden">
+  <div class="rcard">
+    <h2 style="font-size:17px;margin:0 0 6px">🗂️ 공정 목록</h2>
+    <div class="rhint">공정(라인/구역)을 만듭니다. 예: 1라인, 2라인, 검사라인</div>
+    <div class="lay-addrow"><input type="text" id="inProcess" placeholder="공정명"><button class="btn primary" onclick="addProcess()">+ 공정 추가</button></div>
+    <div id="processList" class="lay-chips"></div>
+  </div>
+  <div class="rcard">
+    <h2 style="font-size:17px;margin:0 0 6px">⚙️ 호기 목록</h2>
+    <div class="rhint">호기를 추가/삭제합니다. (메뉴 탭의 호기 설정과 동일한 목록)</div>
+    <div class="lay-addrow"><input type="text" id="inMachineLay" inputmode="numeric" placeholder="호기 번호 (예: 9)"><button class="btn primary" onclick="addMachineLay()">+ 호기 추가</button></div>
+    <div id="machineListLay" class="lay-chips"></div>
+  </div>
+  <div class="rcard">
+    <h2 style="font-size:17px;margin:0 0 6px">🔗 호기 배치</h2>
+    <div class="rhint">각 호기를 공정에 지정하세요. 저장하면 트윈·매핑이 공정별로 공유합니다.</div>
+    <div id="layoutAssign" class="lay-assign"></div>
+    <button class="btn primary" id="btnSaveLayout" onclick="saveLayout()" style="width:100%;margin-top:12px">💾 레이아웃 저장</button>
+    <div class="rhint" id="layoutSaved" style="margin-top:8px;color:var(--green);display:none">저장되었습니다.</div>
+  </div>
+</div>
+
+<div class="footer">
+  <span>Supabase <b>shot_count</b> · 폴링 <b>10초</b> · 매핑은 <b>Supabase</b>에 저장 (localStorage 캐시)</span>
+  <span>v13.5</span>
+</div>
+
+<!-- 설정 모달 -->
+<div class="modal-bg" id="modalBg">
+  <div class="modal">
+    <h2>⚙️ 디바이스 → 호기 매핑 설정</h2>
+    <p style="font-size:13px; color:var(--muted); margin-bottom:14px">
+      각 채널에 호기명, 배출구명, GPIO 핀번호, 센서종류(NPN/PNP)를 수동 등록하세요. 배출구명에 '불량/NG'가 포함되면 불량으로, 그 외는 양품으로 자동 집계됩니다.
+    </p>
+    <div id="mappingContainer"></div>
+    <div class="modal-actions">
+      <button class="btn danger" onclick="resetMapping()">매핑 초기화</button>
+      <button class="btn" onclick="closeSettings()">취소</button>
+      <button class="btn primary" onclick="saveMapping()">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- 정지(일시정지) 사유 모달 -->
+<div class="rmodal" id="pauseModal">
+  <div class="rmodal-box">
+    <h2 id="pauseTitle">■ 정지 · 사유</h2>
+    <div id="stopReasonWrap" style="margin-bottom:14px">
+      <div class="rhint" style="margin-bottom:8px">정지 사유를 선택하세요 (재가동 전까지 정지시간이 자동 기록됩니다)</div>
+      <div class="chips" id="stopReasonChips"></div>
+      <div id="lotWrap" style="display:none;margin-top:12px">
+        <label style="display:block;font-size:12px;color:var(--muted);margin-bottom:6px">소재 LOT / Heat No. (소재교환 시)</label>
+        <div style="display:flex;gap:8px">
+          <input type="text" id="ff_lot" placeholder="예: H240513-01" style="flex:1;background:#0f1722;border:1px solid var(--border);color:var(--text);border-radius:8px;padding:10px 12px;font-family:inherit;font-size:14px">
+          <button class="btn" onclick="openLotPicker()" id="lotPickBtn">📦 입고소재</button>
+        </div>
+        <div id="lotPickList" style="display:none;margin-top:8px;max-height:180px;overflow:auto"></div>
+      </div>
+    </div>
+    <div class="rmodal-foot"><button class="btn" onclick="closePause()">취소</button><button class="btn primary" onclick="confirmPause()">■ 정지</button></div>
+  </div>
+</div>
+
+<!-- 기종작업 마무리(실적 등록) 모달 -->
+<div class="rmodal" id="finishModal">
+  <div class="rmodal-box">
+    <h2 id="finishTitle">✅ 기종작업 마무리</h2>
+    <div class="rhint" id="finishStopSummary" style="margin-bottom:10px"></div>
+    <div class="rhint" style="margin-bottom:10px">양품은 센서 자동집계입니다. 불량은 직접 입력(없으면 0), 필요시 숫자판으로 수정하세요.</div>
+    <div id="finishFields"></div>
+    <div class="numpad">
+      <button onclick="numKey('1')">1</button><button onclick="numKey('2')">2</button><button onclick="numKey('3')">3</button>
+      <button onclick="numKey('4')">4</button><button onclick="numKey('5')">5</button><button onclick="numKey('6')">6</button>
+      <button onclick="numKey('7')">7</button><button onclick="numKey('8')">8</button><button onclick="numKey('9')">9</button>
+      <button onclick="numKey('C')">C</button><button onclick="numKey('0')">0</button><button onclick="numKey('bs')">⌫</button>
+    </div>
+    <div class="rmodal-foot"><button class="btn" onclick="closeFinish()">취소</button><button class="btn primary" onclick="saveFinishWork()">✅ 마무리 저장</button></div>
+  </div>
+</div>
+
+<!-- 호출(콜) 모달 -->
+<div class="rmodal" id="callModal">
+  <div class="rmodal-box">
+    <h2>📢 호출</h2>
+    <div class="rhint" id="callInfo" style="margin-bottom:12px"></div>
+    <div class="call-btns">
+      <button class="btn" onclick="sendCall('설비')">🔧 설비</button>
+      <button class="btn" onclick="sendCall('제품')">📦 제품</button>
+      <button class="btn" onclick="sendCall('안전')">🚨 안전</button>
+      <button class="btn" onclick="sendCall('기타')">❓ 기타</button>
+    </div>
+    <div class="call-photo">
+      <input type="file" id="callPhotoInput" accept="image/*" capture="environment" style="display:none" onchange="onCallPhoto(this)">
+      <button class="btn" onclick="document.getElementById('callPhotoInput').click()">📷 사진 추가</button>
+      <button class="btn danger" id="callPhotoClear" onclick="clearCallPhoto()" style="display:none">사진 제거</button>
+      <span id="callPhotoStat" class="rhint"></span>
+      <img id="callPhotoPrev" style="display:none;max-width:100%;border-radius:8px;margin-top:8px">
+    </div>
+    <div class="rmodal-foot"><button class="btn" onclick="closeCallModal()">취소</button></div>
+  </div>
+</div>
+
+<!-- 근무시간 숫자모달 -->
+<div class="rmodal" id="workModal">
+  <div class="rmodal-box">
+    <h2>근무시간 입력 (분)</h2>
+    <div class="rhint" style="margin-bottom:10px">숫자판으로 근무시간(분)을 입력하세요. 예: 480 = 8시간</div>
+    <div class="ff-row"><div class="ff-info"><div class="ff-model">근무시간</div><div class="ff-auto">분 단위</div></div><input readonly id="ff_work" value="0" class="active"></div>
+    <div class="numpad">
+      <button onclick="numKey('1')">1</button><button onclick="numKey('2')">2</button><button onclick="numKey('3')">3</button>
+      <button onclick="numKey('4')">4</button><button onclick="numKey('5')">5</button><button onclick="numKey('6')">6</button>
+      <button onclick="numKey('7')">7</button><button onclick="numKey('8')">8</button><button onclick="numKey('9')">9</button>
+      <button onclick="numKey('C')">C</button><button onclick="numKey('0')">0</button><button onclick="numKey('bs')">⌫</button>
+    </div>
+    <div class="rmodal-foot"><button class="btn" onclick="closeWorkModal()">취소</button><button class="btn primary" onclick="saveWorkModal()">확인</button></div>
+  </div>
+</div>
+
+<!-- 정지내역 조회 모달 -->
+<div class="rmodal" id="stopLogModal">
+  <div class="rmodal-box" style="max-width:640px">
+    <h2>🛑 정지내역</h2>
+    <div class="rhint" id="stopLogRange" style="margin-bottom:10px"></div>
+    <div style="max-height:60vh;overflow:auto">
+      <table class="rtable">
+        <thead><tr><th>일자</th><th>호기</th><th>기종</th><th>사유</th><th>시작</th><th>종료</th><th>분</th><th>LOT</th></tr></thead>
+        <tbody id="stopLogBody"><tr><td colspan="8" class="rempty">불러오는 중…</td></tr></tbody>
+      </table>
+    </div>
+    <div class="rupd" id="stopLogSum" style="margin-top:8px"></div>
+    <div class="rmodal-foot"><button class="btn" onclick="downloadStopLog()">📥 엑셀</button><button class="btn primary" onclick="closeStopLog()">닫기</button></div>
+  </div>
+</div>
+
+<!-- 이력 편집 모달 -->
+<div class="rmodal" id="histModal">
+  <div class="rmodal-box">
+    <h2 id="histModalTitle">이력 추가</h2>
+    <input type="hidden" id="hId">
+    <div class="rfld"><label>일자</label><input type="date" id="hDate"></div>
+    <div class="rfld"><label>작업자</label><input type="text" id="hInspector"></div>
+    <div class="rfld"><label>기종</label><select id="hModel"></select></div>
+    <div class="rfld"><label>호기</label><input type="text" id="hMachine" placeholder="예: 10"></div>
+    <div class="rfld"><label>카운팅</label><input type="number" id="hCount" value="0"></div>
+    <div class="rfld"><label>최종수량(양품)</label><input type="number" id="hQty" value="0"></div>
+    <div class="rfld"><label>불량수량</label><input type="number" id="hBad" value="0"></div>
+    <div class="rfld"><label>정지시간(분)</label><input type="number" id="hStopMin" value="0"></div>
+    <div class="rfld"><label>시작시간</label><input type="datetime-local" id="hStart"></div>
+    <div class="rfld"><label>종료시간</label><input type="datetime-local" id="hEnd"></div>
+    <div class="rmodal-foot"><button class="btn" onclick="closeHistEdit()">취소</button><button class="btn primary" onclick="saveHist()">저장</button></div>
+  </div>
+</div>
+
+<script>
+  // ===== ESP32 펌웨어 =====
+  const FW_S1_B64="LyogPT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09CiAgIEVTUDMyIERldktpdEMgVjQgLSAy7LGE64SQIFNIT1Qg7Lm07Jq07YSwIHYyLjMgKDEw7LSIIOyjvOq4sCDsoITshqEpCiAgID09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PQogICBERVZJQ0UgOiBFU1BfUzEgICAoU0VUMSA9IDMsNO2YuOq4sCDqsoDsgqzquLApCiAgIOyxhOuEkCAgIDogUzE9R1BJTzMyICgz7Zi46riwKSwgUzI9R1BJTzMzICg07Zi46riwKQogICBXaUZpICAgOiBUQUVKSU4gLyB0YWVqaW4tQSAvIEFuZHJvaWQwMDMxICjsnpDrj5kg7ISg7YOdKQogICAtLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0KICAgKiDsnoXroKXtlYDsnYQgR1BJTzMyLzMz7Jy866GcIOuzgOqyvSDihpIg64K067aAIO2SgOyXhShJTlBVVF9QVUxMVVApIOyCrOyaqS4KICAgICAzNC8zNeyZgCDri6zrpqwgZmxvYXRpbmcg7Zeb7Lm07Jq07Yq4IOyXhuydjCjsmbjrtoAg7ZKA7KCA7ZWtIOu2iO2VhOyalCkuCiAgICog7Ji17YagIE9OIOyLnCBHUElP6rCAIExPV+uhnCDrlqjslrTsp4DripQg6rWs7ISxIOq4sOykgCjtlZjqsJXsl6Psp4Ag7Lm07Jq07Yq4KS4KICAgICDtmLnsi5wg7Ji17YagIE9OIOuVjCBISUdI6rCAIOuQmOuptCBBQ1RJVkVfRURHRV9MT1cgPSBmYWxzZSDroZwg67OA6rK9LgogICAqIO2YuOq4sOuqhS/slpHtkogg6rWs67aE7J2AIEhUTUwg66ek7ZWR7JeQ7IScIEVTUF9TMeydmCBTMS0+M+2YuOq4sCwgUzItPjTtmLjquLAuCiAgICog7KCE7IahIOygleyxhTog7Lm07Jq07Yq464qUIOymieyLnCDshLjqs6AsIDEw7LSI66eI64ukICfqsJLsnbQg67OA7ZWcIOyxhOuEkCfsnZgg64iE7KCB6rCS66eMIDHspIQg7KCE7IahKO2GteyLoCDsoIjslb0pLgogICA9PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT0gKi8KCiNpbmNsdWRlIDxBcmR1aW5vLmg+CiNpbmNsdWRlIDxXaUZpLmg+CiNpbmNsdWRlIDxXaUZpTXVsdGkuaD4KI2luY2x1ZGUgPEhUVFBDbGllbnQuaD4KI2luY2x1ZGUgPFdpRmlDbGllbnRTZWN1cmUuaD4KI2luY2x1ZGUgPEFyZHVpbm9Kc29uLmg+CiNpbmNsdWRlICJlc3BfbWFjLmgiCgpjb25zdCBjaGFyKiBERVZJQ0VfSUQgPSAiRVNQX1MxIjsKCi8vIOyxhOuEkCDshKTsoJUgKO2VgCwgbWFjaGluZV9jb2RlKSDigJQg64K067aAIO2SgOyXhSDqsIDriqXtlZwgR1BJTzMyLzMzIOyCrOyaqQpjb25zdCBpbnQgICBOVU1fQ0ggPSAyOwpjb25zdCBpbnQgICBDSF9QSU5bTlVNX0NIXSAgPSB7IDMyLCAzMyB9Owpjb25zdCBjaGFyKiBDSF9DT0RFW05VTV9DSF0gPSB7ICJTMSIsICJTMiIgfTsKCi8vIOyYte2GoCBPTiDsi5wgR1BJT+qwgCBMT1froZwg65ao7Ja07KeA66m0IHRydWUo7ZWY6rCV7Jej7KeAIOy5tOyatO2KuCksIEhJR0jqsIAg65CY66m0IGZhbHNlCmNvbnN0IGJvb2wgIEFDVElWRV9FREdFX0xPVyA9IHRydWU7CgpXaUZpTXVsdGkgd2lmaU11bHRpOwoKY29uc3QgY2hhciogU1VQQUJBU0VfVVJMID0gImh0dHBzOi8vb21uZ3R5ZXdkYXFwcGhuemVhdGUuc3VwYWJhc2UuY28vcmVzdC92MS9zaG90X2NvdW50IjsKY29uc3QgY2hhciogU1VQQUJBU0VfS0VZID0gInNiX3B1Ymxpc2hhYmxlXzlqMllra0wtN3VsMVRyaEgtTmpWZFFfdldERzItMUQiOwoKY29uc3QgdW5zaWduZWQgbG9uZyBERUJPVU5DRV9NUyAgICAgID0gNTA7CmNvbnN0IHVuc2lnbmVkIGxvbmcgV0lGSV9DSEVDS19NUyAgICA9IDEwMDAwOwpjb25zdCB1bnNpZ25lZCBsb25nIFdJRklfUkVQT1JUX01TICAgPSA2MDAwMDsKY29uc3QgdW5zaWduZWQgbG9uZyBESUFHX1BFUklPRF9NUyAgID0gNTAwMDsKY29uc3QgdW5zaWduZWQgbG9uZyBQT1NUX0lOVEVSVkFMX01TID0gNTA7ICAgICAvLyDtgZAg7LKY66asIOqwhOqyqSjsoITshqEgYmFja2xvZyDshozsp4TsmqkpCmNvbnN0IHVuc2lnbmVkIGxvbmcgU0VORF9QRVJJT0RfTVMgICA9IDEwMDAwOyAgLy8gMTDstIjrp4jri6Qg67OA7ZmU67aE66eMIOyghOyGoQoKI2RlZmluZSBRVUVVRV9TSVpFIDYwCgppbnQgICAgICAgICAgIHFfY2hbUVVFVUVfU0laRV07CnVuc2lnbmVkIGxvbmcgcV9jb3VudFtRVUVVRV9TSVpFXTsKdW5zaWduZWQgbG9uZyBxX2ludGVydmFsW1FVRVVFX1NJWkVdOwppbnQgcV9oZWFkICAgID0gMDsKaW50IHFfdGFpbCAgICA9IDA7CmludCBxX2Ryb3BwZWQgPSAwOwoKYnl0ZSAgbWFjX2FkZHJbNl07CmNoYXIgIG1hY19zdHJbMThdOwpjaGFyICBpcF9zdHJbMjBdOwpTdHJpbmcgY3VycmVudFNTSUQgPSAiIjsKCnVuc2lnbmVkIGxvbmcgc2hvdF9jb3VudFtOVU1fQ0hdICAgPSB7MH07CnVuc2lnbmVkIGxvbmcgbGFzdF9zaG90X21zW05VTV9DSF0gPSB7MH07CmludCAgICAgICAgICAgbGFzdF9zdGF0ZVtOVU1fQ0hdICAgPSB7SElHSCwgSElHSH07CnVuc2lnbmVkIGxvbmcgbGFzdF9zZW50X2NvdW50W05VTV9DSF0gPSB7MH07ICAgLy8g66eI7KeA66eJ7Jy866GcIOyghOyGoe2VnCDriITsoIHqsJIKdW5zaWduZWQgbG9uZyBsYXN0X3NlbmRfdHJ5ID0gMDsgICAgICAgICAgICAgICAvLyAxMOy0iCDso7zquLAg7YOA7J2066i4Cgp1bnNpZ25lZCBsb25nIGxhc3Rfd2lmaV9jaGVjayAgPSAwOwp1bnNpZ25lZCBsb25nIGxhc3Rfd2lmaV9yZXBvcnQgPSAwOwp1bnNpZ25lZCBsb25nIGxhc3RfZGlhZyAgICAgICAgPSAwOwp1bnNpZ25lZCBsb25nIGxhc3RfcG9zdF90cnkgICAgPSAwOwoKaW50IHF1ZXVlU2l6ZSgpewogIHJldHVybiAocV9oZWFkIC0gcV90YWlsICsgUVVFVUVfU0laRSkgJSBRVUVVRV9TSVpFOwp9Cgpib29sIGVucXVldWVTaG90KGludCBjaCwgdW5zaWduZWQgbG9uZyBjbnQsIHVuc2lnbmVkIGxvbmcgaW50ZXJ2YWwpewogIGludCBuZXh0ID0gKHFfaGVhZCArIDEpICUgUVVFVUVfU0laRTsKICBpZihuZXh0ID09IHFfdGFpbCl7IHFfZHJvcHBlZCsrOyByZXR1cm4gZmFsc2U7IH0KICBxX2NoW3FfaGVhZF0gICAgICAgPSBjaDsKICBxX2NvdW50W3FfaGVhZF0gICAgPSBjbnQ7CiAgcV9pbnRlcnZhbFtxX2hlYWRdID0gaW50ZXJ2YWw7CiAgcV9oZWFkID0gbmV4dDsKICByZXR1cm4gdHJ1ZTsKfQoKdm9pZCB1cGRhdGVJUEluZm8oKXsKICBJUEFkZHJlc3MgaXAgPSBXaUZpLmxvY2FsSVAoKTsKICBzbnByaW50ZihpcF9zdHIsIHNpemVvZihpcF9zdHIpLCAiJWQuJWQuJWQuJWQiLCBpcFswXSxpcFsxXSxpcFsyXSxpcFszXSk7CiAgY3VycmVudFNTSUQgPSBXaUZpLlNTSUQoKTsKfQoKdm9pZCBzZXR1cFdpRmkoKXsKICBlc3BfcmVhZF9tYWMobWFjX2FkZHIsIEVTUF9NQUNfV0lGSV9TVEEpOwogIHNucHJpbnRmKG1hY19zdHIsIHNpemVvZihtYWNfc3RyKSwgIiUwMlg6JTAyWDolMDJYOiUwMlg6JTAyWDolMDJYIiwKICAgIG1hY19hZGRyWzBdLG1hY19hZGRyWzFdLG1hY19hZGRyWzJdLG1hY19hZGRyWzNdLG1hY19hZGRyWzRdLG1hY19hZGRyWzVdKTsKICBTZXJpYWwucHJpbnQoIk1BQzogIik7IFNlcmlhbC5wcmludGxuKG1hY19zdHIpOwoKICBXaUZpLm1vZGUoV0lGSV9TVEEpOwogIHdpZmlNdWx0aS5hZGRBUCgiVEFFSklOIiwgICAgICAidGFlamlucHJlc3MiKTsKICB3aWZpTXVsdGkuYWRkQVAoInRhZWppbi1BIiwgICAgInRhZWppbnByZXNzIik7CiAgd2lmaU11bHRpLmFkZEFQKCJBbmRyb2lkMDAzMSIsICIiKTsKCiAgU2VyaWFsLnByaW50bG4oIldpRmkg6rKA7IOJIOykkSAoVEFFSklOIC8gdGFlamluLUEgLyBBbmRyb2lkMDAzMSkuLi4iKTsKCiAgdW5zaWduZWQgbG9uZyB0MCA9IG1pbGxpcygpOwogIHdoaWxlKHdpZmlNdWx0aS5ydW4oKSAhPSBXTF9DT05ORUNURUQgJiYgbWlsbGlzKCktdDAgPCAzMDAwMCl7CiAgICBTZXJpYWwucHJpbnQoIi4iKTsKICAgIGRlbGF5KDUwMCk7CiAgfQogIFNlcmlhbC5wcmludGxuKCk7CgogIGlmKFdpRmkuc3RhdHVzKCkgPT0gV0xfQ09OTkVDVEVEKXsKICAgIHVwZGF0ZUlQSW5mbygpOwogICAgU2VyaWFsLnByaW50bG4oIldpRmkg7Jew6rKwIOyEseqztSEiKTsKICAgIFNlcmlhbC5wcmludCgiICAgU1NJRCA6ICIpOyBTZXJpYWwucHJpbnRsbihjdXJyZW50U1NJRCk7CiAgICBTZXJpYWwucHJpbnQoIiAgIElQICAgOiAiKTsgU2VyaWFsLnByaW50bG4oaXBfc3RyKTsKICAgIFNlcmlhbC5wcmludCgiICAgUlNTSSA6ICIpOyBTZXJpYWwucHJpbnQoV2lGaS5SU1NJKCkpOyBTZXJpYWwucHJpbnRsbigiIGRCbSIpOwogIH0gZWxzZSB7CiAgICBTZXJpYWwucHJpbnRsbigiV2lGaSDsl7DqsrAg7Iuk7YyoIik7CiAgICBzdHJjcHkoaXBfc3RyLCAiMC4wLjAuMCIpOwogICAgY3VycmVudFNTSUQgPSAi7JeG7J2MIjsKICB9Cn0KCnZvaWQgY2hlY2tXaUZpKCl7CiAgdW5zaWduZWQgbG9uZyBub3cgPSBtaWxsaXMoKTsKICBpZihub3cgLSBsYXN0X3dpZmlfY2hlY2sgPCBXSUZJX0NIRUNLX01TKSByZXR1cm47CiAgbGFzdF93aWZpX2NoZWNrID0gbm93OwoKICB3aWZpTXVsdGkucnVuKCk7CgogIGlmKFdpRmkuc3RhdHVzKCkgIT0gV0xfQ09OTkVDVEVEKXsKICAgIHN0cmNweShpcF9zdHIsICIwLjAuMC4wIik7CiAgICBjdXJyZW50U1NJRCA9ICLsnqzsl7DqsrDspJEiOwogICAgcmV0dXJuOwogIH0KICB1cGRhdGVJUEluZm8oKTsKCiAgaWYobm93IC0gbGFzdF93aWZpX3JlcG9ydCA+PSBXSUZJX1JFUE9SVF9NUyl7CiAgICBsYXN0X3dpZmlfcmVwb3J0ID0gbm93OwogICAgU2VyaWFsLnByaW50ZigiV2lGaSBPSyB8IFNTSUQ9JXMgSVA9JXMgUlNTST0lZGRCbSBRPSVkIFMxPSVsdSBTMj0lbHVcbiIsCiAgICAgIGN1cnJlbnRTU0lELmNfc3RyKCksIGlwX3N0ciwgV2lGaS5SU1NJKCksIHF1ZXVlU2l6ZSgpLAogICAgICBzaG90X2NvdW50WzBdLCBzaG90X2NvdW50WzFdKTsKICB9Cn0KCnZvaWQgdGVzdFN1cGFiYXNlKCl7CiAgaWYoV2lGaS5zdGF0dXMoKSAhPSBXTF9DT05ORUNURUQpeyBTZXJpYWwucHJpbnRsbigiW1RFU1RdIFdpRmkg7JeG7J2MIik7IHJldHVybjsgfQogIFNlcmlhbC5wcmludGxuKCJbVEVTVF0gU3VwYWJhc2Ug7Jew6rKwIO2ZleyduCDspJEuLi4iKTsKCiAgV2lGaUNsaWVudFNlY3VyZSBjbGllbnQ7CiAgY2xpZW50LnNldEluc2VjdXJlKCk7CiAgSFRUUENsaWVudCBodHRwczsKICBTdHJpbmcgdXJsID0gU3RyaW5nKFNVUEFCQVNFX1VSTCkgKyAiP2xpbWl0PTEiOwoKICBpZighaHR0cHMuYmVnaW4oY2xpZW50LCB1cmwpKXsgU2VyaWFsLnByaW50bG4oIltURVNUXSBIVFRQUyDsi6TtjKgiKTsgcmV0dXJuOyB9CiAgaHR0cHMuYWRkSGVhZGVyKCJhcGlrZXkiLCBTVVBBQkFTRV9LRVkpOwogIGh0dHBzLmFkZEhlYWRlcigiQXV0aG9yaXphdGlvbiIsIFN0cmluZygiQmVhcmVyICIpICsgU1VQQUJBU0VfS0VZKTsKICBodHRwcy5zZXRUaW1lb3V0KDEwMDAwKTsKCiAgaW50IGNvZGUgPSBodHRwcy5HRVQoKTsKICBodHRwcy5lbmQoKTsKCiAgaWYoY29kZSA+PSAyMDAgJiYgY29kZSA8IDMwMCkgU2VyaWFsLnByaW50bG4oIltURVNUXSBTdXBhYmFzZSDsoJHsho0gT0siKTsKICBlbHNlIGlmKGNvZGUgPT0gLTEpICAgICAgICAgICBTZXJpYWwucHJpbnRsbigiW1RFU1RdIOyduO2EsOuEtyDrtojqsIAiKTsKICBlbHNlICAgICAgICAgICAgICAgICAgICAgICAgICBTZXJpYWwucHJpbnRmKCJbVEVTVF0gSFRUUD0lZFxuIiwgY29kZSk7Cn0KCi8vIDEw7LSIIOyjvOq4sDog66eI7KeA66eJIOyghOyGoeqwkuqzvCDri6Trpbgo7Kad6rCA7ZWcKSDssYTrhJDrp4wg64iE7KCB6rCS7J2EIO2BkOyXkCDsoIHsnqwKdm9pZCBlbnF1ZXVlQ2hhbmdlZENvdW50cygpewogIHVuc2lnbmVkIGxvbmcgbm93ID0gbWlsbGlzKCk7CiAgZm9yKGludCBjaCA9IDA7IGNoIDwgTlVNX0NIOyBjaCsrKXsKICAgIGlmKHNob3RfY291bnRbY2hdICE9IGxhc3Rfc2VudF9jb3VudFtjaF0pewogICAgICB1bnNpZ25lZCBsb25nIGRlbHRhID0gc2hvdF9jb3VudFtjaF0gLSBsYXN0X3NlbnRfY291bnRbY2hdOwogICAgICBib29sIHF1ZXVlZCA9IGVucXVldWVTaG90KGNoLCBzaG90X2NvdW50W2NoXSwgZGVsdGEpOyAgLy8gaW50ZXJ2YWzsubg97J2067KIIOyjvOq4sCDspp3qsIDrtoQKICAgICAgaWYocXVldWVkKXsKICAgICAgICBsYXN0X3NlbnRfY291bnRbY2hdID0gc2hvdF9jb3VudFtjaF07CiAgICAgICAgU2VyaWFsLnByaW50ZigiUVVFVUUgJXMg64iE7KCBPSVsdSAo7J2067KIMTDstIggKyVsdSkgUT0lZFxuIiwKICAgICAgICAgIENIX0NPREVbY2hdLCBzaG90X2NvdW50W2NoXSwgZGVsdGEsIHF1ZXVlU2l6ZSgpKTsKICAgICAgfQogICAgfQogIH0KfQoKYm9vbCBwcm9jZXNzT25lUXVldWVJdGVtKCl7CiAgaWYocV9oZWFkID09IHFfdGFpbCkgcmV0dXJuIGZhbHNlOwogIGlmKFdpRmkuc3RhdHVzKCkgIT0gV0xfQ09OTkVDVEVEKSByZXR1cm4gZmFsc2U7CgogIGludCAgICAgICAgICAgY2ggICAgICAgPSBxX2NoW3FfdGFpbF07CiAgdW5zaWduZWQgbG9uZyBjbnQgICAgICA9IHFfY291bnRbcV90YWlsXTsKICB1bnNpZ25lZCBsb25nIGludGVydmFsID0gcV9pbnRlcnZhbFtxX3RhaWxdOwogIGludCBzYXZlZF90YWlsID0gcV90YWlsOwogIHFfdGFpbCA9IChxX3RhaWwgKyAxKSAlIFFVRVVFX1NJWkU7CgogIHVwZGF0ZUlQSW5mbygpOwoKICBTdGF0aWNKc29uRG9jdW1lbnQ8MjU2PiBkb2M7CiAgZG9jWyJkZXZpY2VfaWQiXSAgICAgICAgPSBERVZJQ0VfSUQ7CiAgZG9jWyJtYWNoaW5lX2NvZGUiXSAgICAgPSBDSF9DT0RFW2NoXTsKICBkb2NbInNob3RfY291bnQiXSAgICAgICA9IGNudDsKICBkb2NbInNob3RfaW50ZXJ2YWxfbXMiXSA9IGludGVydmFsOwogIGRvY1siZXNwMzJfbWFjIl0gICAgICAgID0gbWFjX3N0cjsKICBkb2NbImVzcDMyX2lwIl0gICAgICAgICA9IGlwX3N0cjsKCiAgU3RyaW5nIGJvZHk7CiAgc2VyaWFsaXplSnNvbihkb2MsIGJvZHkpOwoKICBXaUZpQ2xpZW50U2VjdXJlIGNsaWVudDsKICBjbGllbnQuc2V0SW5zZWN1cmUoKTsKICBIVFRQQ2xpZW50IGh0dHBzOwoKICBpZighaHR0cHMuYmVnaW4oY2xpZW50LCBTVVBBQkFTRV9VUkwpKXsKICAgIHFfdGFpbCA9IHNhdmVkX3RhaWw7CiAgICByZXR1cm4gZmFsc2U7CiAgfQoKICBodHRwcy5hZGRIZWFkZXIoIkNvbnRlbnQtVHlwZSIsICAiYXBwbGljYXRpb24vanNvbiIpOwogIGh0dHBzLmFkZEhlYWRlcigiYXBpa2V5IiwgICAgICAgIFNVUEFCQVNFX0tFWSk7CiAgaHR0cHMuYWRkSGVhZGVyKCJBdXRob3JpemF0aW9uIiwgU3RyaW5nKCJCZWFyZXIgIikgKyBTVVBBQkFTRV9LRVkpOwogIGh0dHBzLmFkZEhlYWRlcigiUHJlZmVyIiwgICAgICAgICJyZXR1cm49bWluaW1hbCIpOwoKICBpbnQgY29kZSA9IGh0dHBzLlBPU1QoYm9keSk7CiAgaHR0cHMuZW5kKCk7CgogIGJvb2wgb2sgPSAoY29kZSA+PSAyMDAgJiYgY29kZSA8IDMwMCk7CiAgU2VyaWFsLnByaW50ZigiUE9TVCAlcyAjJWx1IFE9JWQgLT4gJWQlc1xuIiwKICAgIENIX0NPREVbY2hdLCBjbnQsIHF1ZXVlU2l6ZSgpLCBjb2RlLCBvayA/ICIgT0siIDogIiBGQUlMIik7CgogIGlmKCFvaykgcV90YWlsID0gc2F2ZWRfdGFpbDsKICByZXR1cm4gb2s7Cn0KCnZvaWQgY2hlY2tTZW5zb3JzKCl7CiAgdW5zaWduZWQgbG9uZyBub3cgPSBtaWxsaXMoKTsKICBmb3IoaW50IGNoID0gMDsgY2ggPCBOVU1fQ0g7IGNoKyspewogICAgaW50IHJhdyA9IGRpZ2l0YWxSZWFkKENIX1BJTltjaF0pOwoKICAgIGJvb2wgZWRnZSA9IEFDVElWRV9FREdFX0xPVwogICAgICAgICAgICAgID8gKGxhc3Rfc3RhdGVbY2hdID09IEhJR0ggJiYgcmF3ID09IExPVykgICAvLyDtlZjqsJXsl6Psp4Ao7Ji17YagIE9OPUxPVykKICAgICAgICAgICAgICA6IChsYXN0X3N0YXRlW2NoXSA9PSBMT1cgICYmIHJhdyA9PSBISUdIKTsgLy8g7IOB7Iq57Jej7KeAKOyYte2GoCBPTj1ISUdIKQoKICAgIGlmKGVkZ2UpewogICAgICBpZihub3cgLSBsYXN0X3Nob3RfbXNbY2hdID49IERFQk9VTkNFX01TKXsKICAgICAgICBzaG90X2NvdW50W2NoXSsrOwogICAgICAgIGxhc3Rfc2hvdF9tc1tjaF0gPSBub3c7CiAgICAgICAgLy8g7KCE7Iah7J2AIDEw7LSIIOyjvOq4sChlbnF1ZXVlQ2hhbmdlZCnsl5DshJwg66y27Ja07IScIOyymOumrCDigJQg7Jes6riw7ISgIOy5tOyatO2KuOunjCDspp3qsIAKICAgICAgICBTZXJpYWwucHJpbnRmKCJTSE9UICVzICMlbHUgKOuMgOq4sCwgMTDstIjrp4jri6Qg7KCE7IahKVxuIiwgQ0hfQ09ERVtjaF0sIHNob3RfY291bnRbY2hdKTsKICAgICAgfQogICAgfQogICAgbGFzdF9zdGF0ZVtjaF0gPSByYXc7CiAgfQp9Cgp2b2lkIHByaW50RGlhZygpewogIFNlcmlhbC5wcmludGYoIltESUFHXSBXaUZpPSVzIElQPSVzIHwgIiwKICAgIFdpRmkuc3RhdHVzKCk9PVdMX0NPTk5FQ1RFRCA/IGN1cnJlbnRTU0lELmNfc3RyKCkgOiAiT0ZGIiwgaXBfc3RyKTsKICBmb3IoaW50IGNoID0gMDsgY2ggPCBOVU1fQ0g7IGNoKyspewogICAgaW50IGx2ID0gZGlnaXRhbFJlYWQoQ0hfUElOW2NoXSk7CiAgICBTZXJpYWwucHJpbnRmKCIlcyhHJWQpPSVzIGNudD0lbHUgfCAiLAogICAgICBDSF9DT0RFW2NoXSwgQ0hfUElOW2NoXSwKICAgICAgbHY9PUxPVyA/ICJMT1ciIDogIkhJR0giLCBzaG90X2NvdW50W2NoXSk7CiAgfQogIFNlcmlhbC5wcmludGYoIlE9JWQg64iE6529PSVkXG4iLCBxdWV1ZVNpemUoKSwgcV9kcm9wcGVkKTsKfQoKdm9pZCBzZXR1cCgpewogIFNlcmlhbC5iZWdpbigxMTUyMDApOwogIGRlbGF5KDgwMCk7CiAgU2VyaWFsLnByaW50bG4oKTsKICBTZXJpYWwucHJpbnRsbigiPT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT0iKTsKICBTZXJpYWwucHJpbnRmICgiRVNQX1MxIDLssYTrhJAgU0hPVCBDb3VudGVyIHYyLjIgIFslc11cbiIsIERFVklDRV9JRCk7CiAgU2VyaWFsLnByaW50bG4oIlNFVDEgPSAzLDTtmLjquLAg6rKA7IKs6riwICAoR1BJTzMyLzMzIOuCtOu2gO2SgOyXhSkiKTsKICBTZXJpYWwucHJpbnRmICgiRURHRT0lcyAgREVCT1VOQ0U9JWx1bXMgIFNFTkQ9JWx1c1xuIiwKICAgIEFDVElWRV9FREdFX0xPVyA/ICJGQUxMSU5HKOyYte2GoCBPTj1MT1cpIiA6ICJSSVNJTkco7Ji17YagIE9OPUhJR0gpIiwgREVCT1VOQ0VfTVMsIFNFTkRfUEVSSU9EX01TLzEwMDApOwogIFNlcmlhbC5wcmludGxuKCI9PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PSIpOwogIGZvcihpbnQgY2ggPSAwOyBjaCA8IE5VTV9DSDsgY2grKyl7CiAgICBwaW5Nb2RlKENIX1BJTltjaF0sIElOUFVUX1BVTExVUCk7ICAgICAgIC8vIDMyLzMz7J2AIOuCtOu2gCDtkoDsl4Ug7IKs7JqpIOKGkiDsmbjrtoAg7KCA7ZWtIOu2iO2VhOyalAogICAgbGFzdF9zdGF0ZVtjaF0gPSBkaWdpdGFsUmVhZChDSF9QSU5bY2hdKTsKICAgIFNlcmlhbC5wcmludGYoIkNIJWQ6IEdQSU8lZCAtPiAlc1xuIiwgY2grMSwgQ0hfUElOW2NoXSwgQ0hfQ09ERVtjaF0pOwogIH0KCiAgc2V0dXBXaUZpKCk7CiAgdGVzdFN1cGFiYXNlKCk7CgogIFNlcmlhbC5wcmludGxuKCJcblJlYWR5LiDsi6DtmLgg6rCQ7KeAIOuMgOq4sCDspJEuLi5cbiIpOwogIGxhc3RfZGlhZyA9IG1pbGxpcygpOwp9Cgp2b2lkIGxvb3AoKXsKICBjaGVja1dpRmkoKTsKICBjaGVja1NlbnNvcnMoKTsKCiAgdW5zaWduZWQgbG9uZyBub3cgPSBtaWxsaXMoKTsKICBpZihub3cgLSBsYXN0X3NlbmRfdHJ5ID49IFNFTkRfUEVSSU9EX01TKXsKICAgIGxhc3Rfc2VuZF90cnkgPSBub3c7CiAgICBlbnF1ZXVlQ2hhbmdlZENvdW50cygpOwogIH0KICBpZihub3cgLSBsYXN0X3Bvc3RfdHJ5ID49IFBPU1RfSU5URVJWQUxfTVMpewogICAgbGFzdF9wb3N0X3RyeSA9IG5vdzsKICAgIHByb2Nlc3NPbmVRdWV1ZUl0ZW0oKTsKICB9CgogIGlmKG5vdyAtIGxhc3RfZGlhZyA+PSBESUFHX1BFUklPRF9NUyl7CiAgICBsYXN0X2RpYWcgPSBub3c7CiAgICBwcmludERpYWcoKTsKICB9Cn0K";
+  const FW_GUIDE_B64="IyDqsoDsgqzquLAgU0hPVCDsubTsmrTthLAg4oCUIOuUlOuwlOydtOyKpCDstpTqsIAg6rec6rKpIChFU1AzMiBEZXZLaXRDIFY0KQoKW+yLoO2YuCDsoJXsnZhdCi0g7ZWcIOuztOuTnOuKlCAi6rKA7IKs6riwIOyghOq0ke2MkCDsi6DtmLgiIDLssYTrhJDsnYQg7J2964qU64ukLgotIOqygOyCrOq4sCDsoITqtJHtjJDsl5DshJwg64KY7Jik64qUIOyWke2SiCDsubTsmrTtirgg7Iug7Zi4KOygkeygkC/tjoTsiqQp66W8IEdQSU8g7J6F66Cl7Jy866GcIOuwm+yVhAogIOyXo+yngCjtlZjqsJUpIDHtmowgPSBTSE9UIDHtmozroZwg64iE7KCB7ZWc64ukLgotIOyLoO2YuOybkCDsi6DrorDrj4Qg7Iic7JyEOiDrprTroIjsnbQg66y07KCE7JWV7KCR7KCQID4g7JiI67mEIE5QTiDshLzshJwgPiDrj5nsnpHspJEg65287J24IOu2hOq4sAoKW+uwseyXlOuTnCDigJQgU3VwYWJhc2Ugc2hvdF9jb3VudCDthYzsnbTruJRdCi0gVVJMIDogaHR0cHM6Ly9vbW5ndHlld2RhcXBwaG56ZWF0ZS5zdXBhYmFzZS5jby9yZXN0L3YxL3Nob3RfY291bnQKLSBLRVkgOiBzYl9wdWJsaXNoYWJsZV85ajJZa2tMLTd1bDFUcmhILU5qVmRRX3ZXREcyLTFECi0g7Lus65+8OiBkZXZpY2VfaWQsIG1hY2hpbmVfY29kZSwgc2hvdF9jb3VudCjriITsoIEpLCBzaG90X2ludGVydmFsX21zKEMvVCksIGNyZWF0ZWRfYXQKLSDimIUgc2hvdF9jb3VudCDthYzsnbTruJTsl5DripQgZXNwMzJfaWQg7Lus65+87J20IOyXhuuLpCAo67O064K066m0IDQwMCDsl5Drn6wpCi0gUE9TVCDsi5wgbWFjaGluZV9jb2RlIOuKlCDslYTrnpggQ0hfQ09ERSDqsJLqs7wg7KCV7ZmV7Z6IIOydvOy5mO2VtOyVvCDtlZzri6QuCgpbV2lGaSDigJQgV2lGaU11bHRpIOyekOuPmeyEoO2DnV0KLSBTU0lEOiBUQUVKSU4gLyB0YWVqaW4tQSAvIEFuZHJvaWQwMDMxCi0g67mE67CA67KI7Zi4OiB0YWVqaW5wcmVzcwoKW+uUlOuwlOydtOyKpOuniOuLpCDrsJTqvrjripQg6rCSIOKAlCDtjozsm6jslrQg7IOB64uoIDPqsJzrp4wg7IiY7KCVXQoxKSBERVZJQ0VfSUQgIDog67O065OcIOqzoOycoCBJRC4g67O065Oc66eI64ukIOycoOydvC4g7JiIKSAiRVNQX1MxIiDihpIgIkVTUF9TMiIKMikgQ0hfUElOW10gICA6IOqwgSDssYTrhJAg7J6F66ClIEdQSU8uIERldktpdEMg6raM7J6l7ZWAID0gMzIsIDMzLCAyNSwgMjYsIDI3ICjrgrTrtoAg7ZKA7JeFIOqwgOuKpSDihpIg7Zeb7Lm07Jq07Yq4IOyXhuydjCkKMykgQ0hfQ09ERVtdICA6IOqwgSDssYTrhJDsnZggbWFjaGluZV9jb2RlIOusuOyekOyXtC4g4piF7Zi46riwIOunpO2VkeydmCDtgqTimIUKICAgLSDsi6DtmLjshLjtjIUg7YOt7JeQ7IScIG1hY2hpbmVfY29kZSDihpQg7Zi46riw67KI7Zi466W8IOyXsOqysO2VnOuLpC4KICAgLSDsoITssrTsl5DshJwg7Jyg7J287ZWY6rKMIOu2gOyXrC4g7JiIKSBTMSwgUzIsIFMzLCBTNCDigKYKICAgLSAoTlVNX0NIIOuKlCDssYTrhJAg7IiYLiDsoITqtJHtjJAg7Iug7Zi4IDLssYTrhJDsnbTrqbQgMiDsnKDsp4ApCgpb7ZiE7J6sIOuTseuhnSDrlJTrsJTsnbTsiqRdCi0gU0VUMSAvIERFVklDRV9JRD1FU1BfUzEKICAgIOyxhOuEkDE6IFMxID0gR1BJTzMyICAo6rKA7IKs6riwIOyghOq0ke2MkCDsi6DtmLgpCiAgICDssYTrhJAyOiBTMiA9IEdQSU8zMyAgKOqygOyCrOq4sCDsoITqtJHtjJAg7Iug7Zi4KQoKW0FJIOy2lOqwgCDsmpTssq0g7JiI7IucIOKAlCDsnbTroIfqsowg66eQ7ZWY66m0IOyZhOyEsSDtjozsm6jslrTrpbwg66eM65Ok7Ja0IOykgOuLpF0KIlNFVDIg7Y6M7Juo7Ja0IOunjOuTpOyWtOykmC4gREVWSUNFX0lEPUVTUF9TMiwg7KCE6rSR7YyQIOyLoO2YuCAy7LGE64SQLCBTMT1HUElPMzIsIFMyPUdQSU8zMyIK4oaSIOychCBTRVQxIO2OjOybqOyWtOyXkOyEnCBERVZJQ0VfSUQgLyBDSF9QSU4gLyBDSF9DT0RFIDPqs7Prp4wg67CU6r68IOyZhOyEseuzuOydhCDsg53shLHtlZzri6QuCiAgICjrgpjrqLjsp4Ag66Gc7KeBwrdXaUZpwrdTdXBhYmFzZSDshKTsoJXsnYAg64+Z7J287ZWY6rKMIOycoOyngCkKClvtlYAg7KO87J2YXQotIEdQSU8zNC8zNS8zNi8zOeuKlCDrgrTrtoAg7ZKA7JeF7J20IOyXhuyWtCDshLzshJwg66+47Jew6rKwIOyLnCDtl5vsubTsmrTtirjqsIAg64Kp64uI64ukLiDrsJjrk5zsi5wgMzIvMzMg65OxIOuCtOu2gO2SgOyXhSDtlYAg7IKs7JqpKElOUFVUX1BVTExVUCkuCi0g7KCE7Iah7J2AIDEw7LSI66eI64ukIOuzgO2ZlOu2hOunjCDrs7Trg4Xri4jri6Qo7Ya17IugIOygiOyVvSkuIOy5tOyatO2KuOuKlCDsponsi5wg7IS466+A66GcIOuIhOudvSDsl4bsnYwuCg==";
+  function b64utf8(b64){ try{ return decodeURIComponent(Array.prototype.map.call(atob(b64),function(c){return '%'+('00'+c.charCodeAt(0).toString(16)).slice(-2);}).join('')); }catch(e){ return '(디코드 실패)'; } }
+  let _fwRendered=false;
+  function renderFw(){ if(_fwRendered) return; document.getElementById('fwS1').textContent=b64utf8(FW_S1_B64); document.getElementById('fwGuide').textContent=b64utf8(FW_GUIDE_B64); _fwRendered=true; }
+
+  // ===== 레이아웃 (공정·호기 배치) =====
+  function escHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function saveLayoutLocal(){ try{ localStorage.setItem(LS_PROCESSES,JSON.stringify(processList)); localStorage.setItem(LS_LAYOUT,JSON.stringify(layoutAssign)); }catch(_){} }
+  function renderLayout(){
+    const pc=document.getElementById('processList');
+    if(pc) pc.innerHTML = processList.length
+      ? processList.map(function(p,i){ return '<span class="lay-chip">'+escHtml(p)+'<button onclick="removeProcess('+i+')">✕</button></span>'; }).join('')
+      : '<span class="rhint">공정이 없습니다. 위에서 추가하세요.</span>';
+    const ml=document.getElementById('machineListLay');
+    if(ml) ml.innerHTML = machineList.length
+      ? machineList.map(function(m,i){ return '<span class="lay-chip">'+mLabel(m)+'<button onclick="removeMachineLay('+i+')">✕</button></span>'; }).join('')
+      : '<span class="rhint">호기가 없습니다. 위에서 추가하세요.</span>';
+    const mset=new Set((machineList||[]).map(normMachine).filter(Boolean));
+    try{ Object.keys(repCountByMachine()).forEach(function(k){ if(k) mset.add(normMachine(k)); }); }catch(_){}
+    try{ Object.keys(mapping||{}).forEach(function(dev){ const d=mapping[dev]||{}; Object.keys(d).forEach(function(di){ const nm=normMachine(d[di]&&d[di].machine); if(nm) mset.add(nm); }); }); }catch(_){}
+    const mkeys=[...mset].filter(Boolean).sort(function(a,b){return (parseInt(a)||0)-(parseInt(b)||0);});
+    const la=document.getElementById('layoutAssign');
+    if(la) la.innerHTML = mkeys.length
+      ? mkeys.map(function(m){
+          const opts='<option value="">(미지정)</option>'+processList.map(function(p){ return '<option value="'+escHtml(p)+'"'+(layoutAssign[m]===p?' selected':'')+'>'+escHtml(p)+'</option>'; }).join('');
+          return '<div class="lay-arow"><b>'+mLabel(m)+'</b><select onchange="onAssignChange(\''+m+'\',this.value)">'+opts+'</select></div>';
+        }).join('')
+      : '<span class="rhint">호기가 없습니다. 위 호기 목록에서 추가하세요.</span>';
+  }
+  function addMachineLay(){ const el=document.getElementById('inMachineLay'); let v=normMachine(el.value); if(!v) return; if(!machineList.includes(v)) machineList.push(v); machineList.sort(function(a,b){return (parseInt(a)||0)-(parseInt(b)||0);}); el.value=''; try{localStorage.setItem(LS_MLIST,JSON.stringify(machineList));}catch(_){} renderLayout(); }
+  function removeMachineLay(i){ const m=machineList[i]; if(m==null) return; if(!confirm(m+'호기를 목록에서 삭제할까요?')) return; machineList.splice(i,1); delete layoutAssign[normMachine(m)]; try{localStorage.setItem(LS_MLIST,JSON.stringify(machineList));}catch(_){} saveLayoutLocal(); renderLayout(); }
+  function addProcess(){ const el=document.getElementById('inProcess'); const v=(el.value||'').trim(); if(!v) return; if(processList.includes(v)){ alert('이미 있는 공정입니다.'); return; } processList.push(v); el.value=''; saveLayoutLocal(); renderLayout(); }
+  function removeProcess(i){ const p=processList[i]; if(p==null) return; if(!confirm('"'+p+'" 공정을 삭제할까요? (배치된 호기는 미지정으로 돌아갑니다)')) return; processList.splice(i,1); for(const k in layoutAssign){ if(layoutAssign[k]===p) delete layoutAssign[k]; } saveLayoutLocal(); renderLayout(); }
+  function onAssignChange(m,v){ m=normMachine(m); if(v) layoutAssign[m]=v; else delete layoutAssign[m]; saveLayoutLocal(); }
+  async function saveLayout(){
+    saveLayoutLocal();
+    const btn=document.getElementById('btnSaveLayout'); if(btn){ btn.disabled=true; btn.textContent='저장 중…'; }
+    const res=await saveRepConfig();
+    if(btn){ btn.disabled=false; btn.textContent='💾 레이아웃 저장'; }
+    const s=document.getElementById('layoutSaved');
+    if(res&&res.ok){ if(s){ s.style.display=''; s.textContent='저장되었습니다. 트윈·매핑이 공정별로 공유합니다.'; } }
+    else { alert('저장 실패: '+((res&&res.msg)||'권한/네트워크 확인')); }
+  }
+  function copyFw(id){ const t=document.getElementById(id).textContent||''; if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(t).then(function(){alert('복사되었습니다.');},function(){_fwFallbackCopy(t);}); } else { _fwFallbackCopy(t); } }
+  function _fwFallbackCopy(t){ const ta=document.createElement('textarea'); ta.value=t; ta.style.position='fixed'; ta.style.left='-9999px'; document.body.appendChild(ta); ta.select(); try{ document.execCommand('copy'); alert('복사되었습니다.'); }catch(e){ alert('복사 실패 — 길게 눌러 직접 복사하세요.'); } document.body.removeChild(ta); }
+  // ===== 설정 =====
+  const SUPABASE_URL = 'https://omngtyewdaqpphnzeate.supabase.co';
+  const SUPABASE_KEY = 'sb_publishable_9j2YkkL-7ul1TrhH-NjVdQ_vWDG2-1D';
+  const TABLE = 'shot_count';
+  const BASELINE_TABLE = 'daily_baseline';
+  const POLL_MS = 10000;
+  const RECENT_THRESHOLD_MS = 10000;
+  const DI_LIST = ['DI1','DI2','DI3','DI4','DI5','DI6','DI7','DI8'];
+  const S_LIST  = ['S1','S2'];   // 보드당 신호 2개 (1설비 2신호)
+  // S코드별 실제 ESP32 GPIO 핀 매핑
+  const S_GPIO = { S1:34, S2:35, S3:32, S4:33, S5:25, S6:26, S7:27, S8:14, S9:13, S10:23 };
+  const ALL_CODES = [...DI_LIST, ...S_LIST];
+  const STORAGE_KEY = 'shot_monitor_mapping_v2';
+
+  // ===== 매핑 데이터 구조 =====
+  // mapping = {
+  //   "ESP32_01": {
+  //     "DI1": { machine: "3호기", type: "양품" },
+  //     "DI2": { machine: "3호기", type: "불량" },
+  //     ...
+  //   },
+  //   ...
+  // }
+  let mapping = {};
+
+  // ===== 매핑 로드 / 저장 (Supabase 서버 + localStorage 캐시) =====
+  const MAPPING_TABLE = 'qc_mapping';
+  async function loadMapping(){
+    try{
+      const r = await fetch(`${SUPABASE_URL}/rest/v1/${MAPPING_TABLE}?id=eq.1&select=data`, {
+        headers:{ 'apikey':SUPABASE_KEY, 'Authorization':'Bearer '+SUPABASE_KEY }
+      });
+      if(r.ok){
+        const rows = await r.json();
+        if(rows && rows[0] && rows[0].data){
+          mapping = rows[0].data;
+          try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(mapping)); }catch(_){}
+          return;
+        }
+      }
+      throw new Error('서버 매핑 없음');
+    }catch(e){
+      // 서버 실패 시 localStorage 폴백
+      try{
+        const raw = localStorage.getItem(STORAGE_KEY);
+        mapping = raw ? JSON.parse(raw) : {};
+      }catch(_){ mapping = {}; }
+    }
+  }
+  async function persistMapping(){
+    // 즉시 로컬 캐시
+    try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(mapping)); }catch(_){}
+    // 서버 저장 (upsert id=1)
+    try{
+      await fetch(`${SUPABASE_URL}/rest/v1/${MAPPING_TABLE}?on_conflict=id`, {
+        method:'POST',
+        headers:{
+          'apikey':SUPABASE_KEY,
+          'Authorization':'Bearer '+SUPABASE_KEY,
+          'Content-Type':'application/json',
+          'Prefer':'resolution=merge-duplicates'
+        },
+        body: JSON.stringify([{ id:1, data:mapping }])
+      });
+    }catch(e){ console.error('[매핑 서버 저장 실패]', e); }
+  }
+  // ===== 매핑 조회 (v3.0에서 누락되어 있던 함수 - 복구) =====
+  function getMap(deviceId, di){
+    return mapping[deviceId]?.[di] || null;
+  }
+  // ===== 채널 표시명 =====
+  // ESP_S1 디바이스 + GPIO → ESP32_1_GPIO32 형식
+  function chanLabel(dev, code, gpio){
+    const mDev = dev.match(/^ESP_S(\d+)$/);
+    const g = (gpio != null && gpio !== '' && gpio !== '?') ? `GPIO${gpio}` : code;
+    if(mDev) return `ESP32_${mDev[1]}_${g}`;
+    return `${dev}_${g}`;
+  }
+
+  // ===== KST 시각 =====
+  function fmtKST(iso){
+    if(!iso) return '-';
+    const d = new Date(iso);
+    const pad = n => String(n).padStart(2,'0');
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  }
+  function nowKST(){
+    const d = new Date();
+    const pad = n => String(n).padStart(2,'0');
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  }
+
+  // ===== Supabase 조회 =====
+  async function fetchLatest(){
+    const url = `${SUPABASE_URL}/rest/v1/${TABLE}` +
+                `?machine_code=in.(${ALL_CODES.join(',')})` +
+                `&order=created_at.desc&limit=800`;
+    try{
+      const res = await fetch(url, {
+        headers:{
+          'apikey': SUPABASE_KEY,
+          'Authorization': 'Bearer ' + SUPABASE_KEY
+        }
+      });
+      if(!res.ok){ setConn(false, `HTTP ${res.status}`); return null; }
+      const data = await res.json();
+      setConn(true, '연결됨');
+      console.log('[fetchLatest] rows:', Array.isArray(data) ? data.length : data);
+      return data;
+    }catch(e){
+      setConn(false, '연결 실패');
+      console.error(e);
+      return null;
+    }
+  }
+
+  function setConn(ok, msg){
+    const dot = document.getElementById('connDot');
+    const txt = document.getElementById('connText');
+    dot.className = 'status-dot ' + (ok ? 'online' : 'offline');
+    txt.textContent = msg;
+  }
+
+  // ===== 그룹화 =====
+  function processRows(rows){
+    const grouped = {};
+    for(const r of rows){
+      const dev = r.device_id || (r.esp32_mac ? 'MAC_'+r.esp32_mac.replace(/:/g,'') : 'LEGACY');
+      if(!grouped[dev]) grouped[dev] = {};
+      if(!grouped[dev][r.machine_code]){
+        grouped[dev][r.machine_code] = r;
+      }
+    }
+    return grouped;
+  }
+
+  // ===== KST 오늘 날짜 (YYYY-MM-DD) =====
+  function todayKST(){
+    return new Intl.DateTimeFormat('en-CA', {timeZone:'Asia/Seoul'}).format(new Date());
+  }
+
+  // ===== 일자별 baseline (당일 0점 기준) =====
+  // baselineCache[`${dev}|${code}`] = { date, count }
+  let baselineCache = {};
+  let sessionBase = {};   // 서버 baseline 없을 때 fallback: dev|code -> {date,count} (오늘 첫 관측 누적)
+  let lastGrouped = {};   // 제로세팅용 최신 데이터 캐시
+
+  async function loadBaselines(){
+    const date = todayKST();
+    const url = `${SUPABASE_URL}/rest/v1/${BASELINE_TABLE}` +
+                `?baseline_date=eq.${date}&select=device_id,machine_code,baseline_count`;
+    try{
+      const res = await fetch(url, {
+        headers:{ 'apikey':SUPABASE_KEY, 'Authorization':'Bearer '+SUPABASE_KEY }
+      });
+      if(!res.ok) return;
+      const data = await res.json();
+      baselineCache = {};
+      for(const b of data){
+        baselineCache[`${b.device_id}|${b.machine_code}`] = {
+          date: date, count: Number(b.baseline_count)||0
+        };
+      }
+    }catch(e){ console.error('baseline load', e); }
+  }
+
+  function getBaseline(dev, code){
+    const b = baselineCache[`${dev}|${code}`];
+    return (b && b.date === todayKST()) ? b.count : 0;
+  }
+
+  // 실효 baseline: 서버 확정 baseline 우선, 없으면 '오늘 첫 관측 누적'을 기준점으로 사용
+  // 세션 기준점은 localStorage에 저장 → 같은 날 재접속/새로고침 시 유지 (0 리셋 방지)
+  function effectiveBaseline(dev, code, cumulative){
+    const today = todayKST();
+    const b = baselineCache[`${dev}|${code}`];
+    if(b && b.date === today) return b.count;
+    // 서버 0점이 없으면 0 반환(원시 누적 그대로) → 모든 기기가 같은 값.
+    // autoZeroNewDay가 서버에 오늘 0점을 저장하면 그때부터 당일 기준으로 전환됨(기기별 첫 관측값을 0점으로 잡지 않음)
+    return 0;
+  }
+  function saveSessionBase(){ try{ localStorage.setItem(LS_SESSBASE, JSON.stringify(sessionBase||{})); }catch(_){} }
+  function loadSessionBase(){ try{ sessionBase=JSON.parse(localStorage.getItem(LS_SESSBASE)||'{}'); }catch(_){ sessionBase={}; } }
+
+  // 당일 카운트 = 현재 누적 - 실효 baseline
+  function todayCount(dev, code, cumulative){
+    const base = effectiveBaseline(dev, code, cumulative);
+    const v = (cumulative||0) - base;
+    return v > 0 ? v : 0;
+  }
+
+  // 제로세팅: 현재 누적값을 오늘 baseline으로 UPSERT 저장
+  async function zeroSet(dev, code, cumulative){
+    const date = todayKST();
+    const body = [{
+      device_id: dev, machine_code: code,
+      baseline_date: date, baseline_count: cumulative||0,
+      created_at: new Date().toISOString().replace('Z','+00:00')
+    }];
+    try{
+      const res = await fetch(
+        `${SUPABASE_URL}/rest/v1/${BASELINE_TABLE}?on_conflict=device_id,machine_code,baseline_date`,
+        {
+          method:'POST',
+          headers:{
+            'Content-Type':'application/json',
+            'apikey':SUPABASE_KEY,
+            'Authorization':'Bearer '+SUPABASE_KEY,
+            'Prefer':'resolution=merge-duplicates,return=minimal'
+          },
+          body: JSON.stringify(body)
+        }
+      );
+      if(res.ok){
+        baselineCache[`${dev}|${code}`] = { date, count: cumulative||0 };
+        return true;
+      }
+      console.error('zeroSet fail', res.status, await res.text());
+      return false;
+    }catch(e){ console.error('zeroSet', e); return false; }
+  }
+
+  // 디바이스 전체 채널 제로세팅
+  async function zeroSetDevice(dev){
+    if(!confirm(`${dev}의 모든 채널을 오늘 0점으로 초기화하시겠습니까?\n(누적값은 유지되고, 당일 카운트만 0부터 시작합니다)`)) return;
+    const g = lastGrouped[dev];
+    if(!g) return;
+    const tasks = [];
+    for(const code of Object.keys(g)){
+      const rec = g[code];
+      if(rec) tasks.push(zeroSet(dev, code, rec.shot_count||0));
+    }
+    await Promise.all(tasks);
+    tick();
+  }
+
+  // 단일 채널 제로세팅
+  async function zeroSetChannel(dev, code){
+    const g = lastGrouped[dev];
+    const rec = g && g[code];
+    const cum = rec ? (rec.shot_count||0) : 0;
+    if(!confirm(`${dev} ${code} 채널을 오늘 0점으로 초기화하시겠습니까?`)) return;
+    await zeroSet(dev, code, cum);
+    tick();
+  }
+
+
+  // ===== 호기별 집계 =====
+  // 배출구명에 '불량'/'NG'가 포함되면 불량, 그 외(양품/OK 등)는 양품으로 자동 판정
+  function outletKind(outlet){
+    if(!outlet) return 'pass';
+    const s = outlet.toLowerCase();
+    if(outlet.includes('불량') || s.includes('ng') || s.includes('fail') || outlet.includes('리젝') || s.includes('reject')) return 'fail';
+    return 'pass';
+  }
+  function aggregateByMachine(grouped){
+    const summary = {};
+    for(const dev of Object.keys(grouped)){
+      const channelList = (dev.startsWith('ESP_S')) ? S_LIST : DI_LIST;
+      for(const di of channelList){
+        const rec = grouped[dev][di];
+        if(!rec) continue;
+        const map = getMap(dev, di);
+        if(!map || !map.machine) continue;
+        
+        if(!summary[map.machine]){
+          summary[map.machine] = { pass:0, fail:0, lastTs:null };
+        }
+        const cnt = todayCount(dev, di, rec.shot_count || 0);
+        if(outletKind(map.outlet) === 'fail'){
+          summary[map.machine].fail += cnt;
+        } else {
+          summary[map.machine].pass += cnt;
+        }
+        if(!summary[map.machine].lastTs || new Date(rec.created_at) > new Date(summary[map.machine].lastTs)){
+          summary[map.machine].lastTs = rec.created_at;
+        }
+      }
+    }
+    return summary;
+  }
+
+  // ===== 메인 렌더 =====
+  function render(grouped){
+    const container = document.getElementById('container');
+    // 데이터가 들어온 디바이스 + 매핑만 해둔 디바이스(비가동 시에도 표시)
+    const devices = [...new Set([...Object.keys(grouped), ...Object.keys(mapping)])]
+                      .filter(d => d !== 'LEGACY').sort();
+
+    // 디바이스별 원시 영역
+    if(devices.length === 0){
+      container.innerHTML = `<div class="no-device">아직 데이터도 매핑도 없습니다.<br>ESP32에서 SHOT 신호가 오면 자동 표시되며, 비가동 중에 미리 보려면 우측 상단 <b>⚙️ 호기 매핑 설정</b>에서 디바이스를 등록하세요.</div>`;
+      document.getElementById('deviceCount').textContent = '0';
+      document.getElementById('totalCount').textContent = '0';
+      return;
+    }
+
+    let total = 0;
+    const now = Date.now();
+    let html = '';
+
+    for(const dev of devices){
+      const channels = grouped[dev] || {};
+      let mac = '-', ip = '-', lastTs = null;
+      const hasS = Object.keys(channels).some(k => k.startsWith('S'))
+                || (mapping[dev] && Object.keys(mapping[dev]).some(k => k.startsWith('S')));
+      const chList = (dev.startsWith('ESP_S') || hasS) ? S_LIST : DI_LIST;
+      for(const di of chList){
+        const r = channels[di];
+        if(r){
+          if(!lastTs || new Date(r.created_at) > new Date(lastTs)){
+            lastTs = r.created_at;
+            mac = r.esp32_mac || '-';
+            ip = r.esp32_ip || '-';
+          }
+        }
+      }
+
+      html += `
+        <div class="dev-section">
+          <div class="dev-header">
+            <div class="dev-title">
+              <span class="dev-badge">${dev}</span>
+            </div>
+            <div class="dev-info">
+              <span>MAC: <b>${mac}</b></span>
+              <span>IP: <b>${ip}</b></span>
+              <span>최신: <b>${fmtKST(lastTs)}</b></span>
+              <button class="btn zero-btn" onclick="zeroSetDevice('${dev}')" style="margin-left:8px">전체 당일 0</button>
+            </div>
+          </div>
+          <div class="grid">
+      `;
+      
+      const renderList = (dev.startsWith('ESP_S') || hasS) ? S_LIST : DI_LIST;
+      for(let i = 0; i < renderList.length; i++){
+        const di = renderList[i];
+        const map = getMap(dev, di);
+        const manualGpio = map?.gpio;
+        const gpio = (manualGpio != null && manualGpio !== '') ? manualGpio
+                   : ((dev.startsWith('ESP_S') || hasS) ? (S_GPIO[di] || '?') : (4 + i));
+        const rec = channels[di];
+        const cnt = rec ? (rec.shot_count || 0) : 0;
+        const dayCnt = rec ? todayCount(dev, di, cnt) : 0;
+        total += dayCnt;
+        const ivl = rec ? (rec.shot_interval_ms || 0) : 0;
+        const ts = rec ? rec.created_at : null;
+        
+        let cls = 'card empty';
+        if(rec){
+          const age = now - new Date(rec.created_at).getTime();
+          cls = (age < RECENT_THRESHOLD_MS) ? 'card recent' : 'card has-data';
+        }
+        
+        if(map?.outlet){
+          cls += (outletKind(map.outlet) === 'fail') ? ' fail' : ' pass';
+        }
+        
+        const machineName = map?.machine || '미매핑';
+        const machineCls = map?.machine ? '' : 'empty';
+        const chanId = chanLabel(dev, di, gpio);
+        const outletTxt = map?.outlet ? ` · ${map.outlet}` : '';
+        const sensorTag = map?.sensor ? ` <span style="font-size:9px;color:var(--muted);background:#1a2332;padding:1px 5px;border-radius:3px;vertical-align:middle">${map.sensor}</span>` : '';
+        
+        html += `
+          <div class="${cls}">
+            <div class="ch-head">
+              <div class="machine-label ${machineCls}">${machineName}</div>
+            </div>
+            <div class="chan-id">${chanId}${outletTxt}${sensorTag}</div>
+            <div class="count">${dayCnt.toLocaleString()}</div>
+            <div class="count-label">당일 SHOT</div>
+            <div class="stats">
+              <div class="stat">
+                <div class="stat-label">누적</div>
+                <div class="stat-val">${cnt.toLocaleString()}</div>
+              </div>
+              <div class="stat">
+                <div class="stat-label">간격(ms)</div>
+                <div class="stat-val">${ivl.toLocaleString()}</div>
+              </div>
+            </div>
+            <div class="stats" style="margin-top:6px">
+              <div class="stat">
+                <div class="stat-label">마지막</div>
+                <div class="stat-val">${fmtKST(ts)}</div>
+              </div>
+              <button class="btn zero-btn" onclick="zeroSetChannel('${dev}','${di}')" ${rec?'':'disabled'}>당일 0</button>
+            </div>
+          </div>
+        `;
+      }
+      html += `</div></div>`;
+    }
+    
+    container.innerHTML = html;
+    document.getElementById('deviceCount').textContent = devices.length;
+    document.getElementById('totalCount').textContent = total.toLocaleString();
+    document.getElementById('lastUpdate').textContent = nowKST();
+  }
+
+  // ===== 설정 모달 =====
+  let knownDevices = [];   // 데이터 받은 디바이스 목록
+  
+  function openSettings(){
+    // 현재까지 발견된 디바이스 + localStorage에 있는 디바이스 합치기
+    const fromStorage = Object.keys(mapping);
+    const allDevs = [...new Set([...knownDevices, ...fromStorage])].filter(d=>d!=='LEGACY').sort();
+    
+    // 디바이스 없으면 빈 ESP32_01 추가
+    if(allDevs.length === 0) allDevs.push('ESP32_01');
+    
+    const container = document.getElementById('mappingContainer');
+    let html = '';
+    for(const dev of allDevs){
+      html += `<div class="modal-section">
+        <h3 style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <span>${dev}</span>
+          <button class="btn danger" onclick="deleteDevice('${dev}')" style="padding:4px 12px;font-size:12px">항목삭제</button>
+        </h3>`;
+      const mHasS = mapping[dev] && Object.keys(mapping[dev]).some(k=>k.startsWith('S'));
+      const modalList = (dev.startsWith('ESP_S') || mHasS) ? S_LIST : DI_LIST;
+      for(const di of modalList){
+        const cur = mapping[dev]?.[di] || {};
+        const defGpio = (S_GPIO[di] != null) ? S_GPIO[di] : '';
+        html += `
+          <div class="modal-row">
+            <span class="di-label">${di}</span>
+            <div class="modal-field">
+              <span class="fl">호기명</span>
+              <input type="text" placeholder="예: 9호기" 
+                     data-dev="${dev}" data-di="${di}" data-field="machine"
+                     value="${cur.machine || ''}">
+            </div>
+            <div class="modal-field">
+              <span class="fl">공정</span>
+              <select class="proc-sel" onchange="onMapProcChange(this)">
+                <option value="">(미지정)</option>
+                ${processList.map(function(p){var nm=normMachine(cur.machine);var sel=(nm&&layoutAssign[nm]===p)?'selected':'';return '<option value="'+escHtml(p)+'" '+sel+'>'+escHtml(p)+'</option>';}).join('')}
+              </select>
+            </div>
+            <div class="modal-field">
+              <span class="fl">배출구명</span>
+              <input type="text" placeholder="예: 양품배출" 
+                     data-dev="${dev}" data-di="${di}" data-field="outlet"
+                     value="${cur.outlet || ''}">
+            </div>
+            <div class="modal-field gpio-f">
+              <span class="fl">GPIO</span>
+              <input type="text" placeholder="34" 
+                     data-dev="${dev}" data-di="${di}" data-field="gpio"
+                     value="${cur.gpio != null && cur.gpio !== '' ? cur.gpio : defGpio}" 
+                     style="text-align:center">
+            </div>
+            <div class="modal-field gpio-f">
+              <span class="fl">센서</span>
+              <select data-dev="${dev}" data-di="${di}" data-field="sensor">
+                <option value="">-</option>
+                <option value="NPN" ${cur.sensor==='NPN'?'selected':''}>NPN</option>
+                <option value="PNP" ${cur.sensor==='PNP'?'selected':''}>PNP</option>
+              </select>
+            </div>
+            <button class="btn" onclick="clearRow('${dev}','${di}')" style="padding:6px 10px;align-self:flex-end">내용삭제</button>
+          </div>
+        `;
+      }
+      html += `</div>`;
+    }
+    
+    // 새 디바이스 추가 안내
+    html += `
+      <div class="modal-section" style="border-style:dashed">
+        <h3>➕ 디바이스 수동 추가</h3>
+        <div style="display:flex; gap:8px; align-items:center">
+          <input type="text" id="newDevInput" placeholder="예: ESP32_02" 
+                 style="flex:1; background:#1a2332; border:1px solid var(--border); color:var(--text); padding:8px; border-radius:5px; font-family:inherit">
+          <button class="btn primary" onclick="addNewDevice()">추가</button>
+        </div>
+        <p style="font-size:11px; color:var(--muted); margin-top:8px">
+          ※ 데이터가 들어오면 자동으로 목록에 나타납니다. 미리 매핑하려면 여기서 추가하세요.
+        </p>
+      </div>
+    `;
+    
+    container.innerHTML = html;
+    document.getElementById('modalBg').classList.add('show');
+  }
+  
+  function closeSettings(){
+    document.getElementById('modalBg').classList.remove('show');
+  }
+  
+  function onMapProcChange(sel){
+    const row = sel.closest('.modal-row'); if(!row) return;
+    const mi = row.querySelector('input[data-field="machine"]');
+    const nm = normMachine(mi ? mi.value : '');
+    if(!nm){ alert('먼저 호기명을 입력한 뒤 공정을 선택하세요.'); sel.value=''; return; }
+    const v = sel.value;
+    if(v){ if(!processList.includes(v)) processList.push(v); layoutAssign[nm]=v; }
+    else { delete layoutAssign[nm]; }
+    saveLayoutLocal();
+    try{ renderLayout(); }catch(_){}
+  }
+
+  function clearRow(dev, di){
+    // 내용삭제: 해당 채널 입력값만 비움 (행은 유지)
+    if(mapping[dev]) delete mapping[dev][di];
+    openSettings(); // 새로 그리기
+  }
+
+  function deleteDevice(dev){
+    // 항목삭제: 디바이스 항목 자체를 목록에서 제거
+    if(!confirm(`${dev} 디바이스 항목을 목록에서 삭제하시겠습니까?\n(실시간 데이터가 다시 들어오면 자동으로 재생성됩니다)`)) return;
+    delete mapping[dev];
+    openSettings();
+  }
+  
+  function addNewDevice(){
+    const v = document.getElementById('newDevInput').value.trim();
+    if(!v){ alert('디바이스명을 입력하세요'); return; }
+    if(!mapping[v]) mapping[v] = {};
+    openSettings();
+  }
+  
+  async function saveMapping(){
+    // 모달 안의 모든 input/select 읽기
+    const newMap = {};
+    document.querySelectorAll('[data-dev]').forEach(el => {
+      const dev = el.dataset.dev;
+      const di  = el.dataset.di;
+      const field = el.dataset.field;
+      if(!newMap[dev]) newMap[dev] = {};
+      if(!newMap[dev][di]) newMap[dev][di] = {};
+      newMap[dev][di][field] = el.value.trim();
+    });
+    // 빈 항목 제거
+    for(const dev of Object.keys(newMap)){
+      for(const di of Object.keys(newMap[dev])){
+        const m = newMap[dev][di];
+        if(!m.machine && !m.gpio && !m.sensor && !m.outlet){
+          delete newMap[dev][di];
+        }
+      }
+      if(Object.keys(newMap[dev]).length === 0) delete newMap[dev];
+    }
+    mapping = newMap;
+    await persistMapping();
+    saveLayoutLocal();
+    try{ await saveRepConfig(); }catch(_){}
+    closeSettings();
+    tick(); // 즉시 갱신
+  }
+  
+  async function resetMapping(){
+    if(!confirm('모든 매핑을 삭제하시겠습니까? (서버에서도 삭제됩니다)')) return;
+    mapping = {};
+    await persistMapping();
+    closeSettings();
+    tick();
+  }
+
+  // ===== 메인 폴링 =====
+  async function tick(){
+    const rows = await fetchLatest();
+    if(rows){
+      const grouped = processRows(rows);
+      lastGrouped = grouped;                 // 제로세팅용
+      knownDevices = Object.keys(grouped);  // 설정 모달용
+      console.log('[tick] devices:', knownDevices);
+      await refreshLiveGood();              // 적용 중 슬롯의 양품을 행 개수로 갱신(재부팅 강건)
+      try{
+        render(grouped);
+        if(curTab==='rep') renderReport();
+        renderRealtime();
+      }catch(e){
+        console.error('[render error]', e);
+      }
+    }
+  }
+
+  // baseline 자정 자동 갱신 체크 (날짜 바뀌면 재로드)
+  let lastBaselineDate = todayKST();
+  // 자정 롤오버 시 현재 누적을 새 날 0점으로 자동 저장 (당일 카운트 0부터)
+  async function autoZeroNewDay(){
+    const t=todayKST(); const body=[];
+    for(const dev of Object.keys(lastGrouped||{})){
+      const chs=lastGrouped[dev]; if(!chs) continue;
+      for(const di of Object.keys(chs)){
+        const rec=chs[di]; if(!rec) continue;
+        const key=dev+'|'+di; const b=baselineCache[key];
+        if(b && b.date===t) continue;
+        const cum=rec.shot_count||0;
+        body.push({device_id:dev,machine_code:di,baseline_date:t,baseline_count:cum,created_at:new Date().toISOString().replace('Z','+00:00')});
+      }
+    }
+    if(body.length){
+      try{ await fetch(SUPABASE_URL+'/rest/v1/'+BASELINE_TABLE+'?on_conflict=device_id,machine_code,baseline_date',{method:'POST',headers:{'Content-Type':'application/json','apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Prefer':'resolution=ignore-duplicates,return=minimal'},body:JSON.stringify(body)}); }catch(e){ console.error('autoZero',e); }
+    }
+  }
+
+  async function checkDayRollover(){
+    const t = todayKST();
+    if(t !== lastBaselineDate){
+      lastBaselineDate = t;
+      await loadBaselines();   // 새 날짜 baseline 로드
+      await autoZeroNewDay();  // 없으면 현재 누적을 0점으로 자동 저장
+    }
+  }
+
+
+  // ===================== 작업일보 기능 (QC_mes 카운팅 활용) =====================
+  const HDR_R={ 'apikey':SUPABASE_KEY, 'Authorization':'Bearer '+SUPABASE_KEY };
+  const HDR_RJ={ ...HDR_R, 'Content-Type':'application/json' };
+  const REPORT_TABLE='qc_daily_report';
+  const STOPLOG_TABLE='qc_stop_log';
+  const CONFIG_TABLE='qc_report_config';
+  const SESSION_TABLE='qc_active_session';
+  const LS_INSPECTOR='qcr_inspector', LS_MODELS='qcr_model_list', LS_CURMODEL='qcr_cur_model',
+        LS_BASELINE='qcr_baseline', LS_MACHINES='qcr_machines', LS_MLIST='qcr_machine_list', LS_SESSBASE='qcr_sessbase',
+        LS_SLOTS='qcr_slots', LS_APPLIED='qcr_applied', LS_WORKMIN='qcr_workmin',
+        LS_CUSTOMERS='qcr_customers', LS_CURCUST='qcr_cur_cust',
+        LS_WORKERS='qcr_workers', LS_CURWORKER='qcr_cur_worker', LS_NTFY='qcr_ntfy_topic',
+        LS_PROCESSES='qcr_processes', LS_LAYOUT='qcr_layout', LS_STOPREASONS='qcr_stop_reasons';
+  const MATERIAL_LOT_TABLE='material_stock_lot';
+  const DEFAULT_STOP_REASONS=['기종전환','소재교환','금형교환','점심식사','휴식','설비고장','품질문제','자재대기','계획정지','기타'];
+  let stopReasons=DEFAULT_STOP_REASONS.slice();
+  let repInspector='', modelList=[], currentModel='', baseline={date:'',counts:{},start:''},
+      selectedMachines=[], machineList=[], lastHistRows=[], finishMode='complete', activeFF=null, finishAuto=0, curTab='mon',
+      rtSessions=[], rtTimer=null, rtHistory=[];
+  let slots=[{machine:'',model:'',applied:false,startAt:null},{machine:'',model:'',applied:false,startAt:null}], applyStarted=false, workMinutes=0, finishSlotIdx=-1;
+  let customerList=[], currentCustomer='';
+  let workerList=[], currentWorker='';
+  let processList=[], layoutAssign={};
+  let ntfyTopic='', callTarget=null, callPhotoBlob=null;
+  let selectedHistIdx=-1;
+  const DEFAULT_CUSTOMERS=['SBC'];
+
+  function normMachine(s){ s=String(s==null?'':s).trim(); const m=s.match(/^(\d+)\s*호기?$/); return m?m[1]:s; }
+  function mLabel(m){ return /^\d+$/.test(String(m))? m+'호기' : String(m); }
+  function normList(a){ const out=[]; (a||[]).forEach(x=>{ const n=normMachine(x); if(n && !out.includes(n)) out.push(n); }); return out; }
+  const DEFAULT_MACHINES=['3','4','5','6','7','8','9','10'];
+  function kstDateOf(d){ return new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Seoul'}).format(d); }
+  function todayMD(){ const [,m,d]=todayKST().split('-'); return parseInt(m)+'/'+parseInt(d); }
+  function kstNow(){ const p=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).formatToParts(new Date()); const o={};p.forEach(x=>o[x.type]=x.value); return o.year+'-'+o.month+'-'+o.day+'T'+o.hour+':'+o.minute+':'+o.second+'+09:00'; }
+  function getLoginUser(){ try{ const a=JSON.parse(localStorage.getItem('esg_pin_auth')||'null'); if(a&&a.name&&a.name!=='Guest'&&(!a.exp||a.exp>Date.now())) return a.name; }catch(_){} return ''; }
+  function currentInspector(){ return currentWorker || getLoginUser() || localStorage.getItem(LS_INSPECTOR) || ''; }
+
+  function loadRepLocal(){
+    repInspector=currentInspector();
+    try{ modelList=JSON.parse(localStorage.getItem(LS_MODELS)||'[]'); }catch(_){ modelList=[]; }
+    currentModel=localStorage.getItem(LS_CURMODEL)||'';
+    try{ baseline=JSON.parse(localStorage.getItem(LS_BASELINE)||'{"date":"","counts":{},"start":""}'); }catch(_){ baseline={date:'',counts:{},start:''}; }
+    try{ selectedMachines=JSON.parse(localStorage.getItem(LS_MACHINES)||'[]'); }catch(_){ selectedMachines=[]; }
+    try{ machineList=JSON.parse(localStorage.getItem(LS_MLIST)||'null'); }catch(_){ machineList=null; }
+    if(!machineList||!machineList.length) machineList=DEFAULT_MACHINES.slice();
+    machineList=normList(machineList);
+    if(!machineList.length) machineList=DEFAULT_MACHINES.slice();
+    selectedMachines=normList(selectedMachines).filter(m=>machineList.includes(m));
+    loadSessionBase();
+    try{ const sl=JSON.parse(localStorage.getItem(LS_SLOTS)||'null'); if(Array.isArray(sl)&&sl.length) slots=sl.map(s=>({machine:normMachine(s.machine||''),model:s.model||'',applied:!!s.applied,startAt:s.startAt||null,paused:!!s.paused,pausedAt:s.pausedAt||null,pauseReason:s.pauseReason||'',pauseLot:s.pauseLot||'',stopMin:s.stopMin||0,stopCount:s.stopCount||0,startSnap:(s.startSnap!=null?s.startSnap:null)})); }catch(_){ }
+    if(!slots.length) slots=[{machine:'',model:'',applied:false,startAt:null}];
+    applyStarted=slots.some(function(s){return s.applied;});
+    if(!slots.length) slots=[{machine:'',model:''},{machine:'',model:''}];
+    applyStarted=(localStorage.getItem(LS_APPLIED)==='1');
+    workMinutes=parseInt(localStorage.getItem(LS_WORKMIN)); if(!workMinutes||isNaN(workMinutes)) workMinutes=480;
+    try{ customerList=JSON.parse(localStorage.getItem(LS_CUSTOMERS)||'null'); }catch(_){ customerList=null; }
+    if(!customerList||!customerList.length) customerList=DEFAULT_CUSTOMERS.slice();
+    currentCustomer=localStorage.getItem(LS_CURCUST)||customerList[0]||'';
+    if(!customerList.includes(currentCustomer)) currentCustomer=customerList[0]||'';
+    try{ workerList=JSON.parse(localStorage.getItem(LS_WORKERS)||'null'); }catch(_){ workerList=null; }
+    if(!Array.isArray(workerList)) workerList=[];
+    currentWorker=localStorage.getItem(LS_CURWORKER)||'';
+    if(currentWorker && !workerList.includes(currentWorker)) currentWorker='';
+    ntfyTopic=localStorage.getItem(LS_NTFY)||'';
+    try{ processList=JSON.parse(localStorage.getItem(LS_PROCESSES)||'[]'); }catch(_){ processList=[]; }
+    if(!Array.isArray(processList)) processList=[];
+    try{ layoutAssign=JSON.parse(localStorage.getItem(LS_LAYOUT)||'{}'); }catch(_){ layoutAssign={}; }
+    if(!layoutAssign||typeof layoutAssign!=='object') layoutAssign={};
+    try{ const sr=JSON.parse(localStorage.getItem(LS_STOPREASONS)||'null'); if(Array.isArray(sr)&&sr.length) stopReasons=sr; }catch(_){ }
+    syncSlotsToSel();
+  }
+  function saveSlots(){ localStorage.setItem(LS_SLOTS,JSON.stringify(slots)); }
+  // 슬롯 → selectedMachines/currentModel 동기화 (실시간현황·세션 호환)
+  function syncSlotsToSel(){
+    const ms=[]; slots.forEach(s=>{ const m=normMachine(s.machine); if(m && !ms.includes(m)) ms.push(m); });
+    selectedMachines=ms;
+    const md=slots.find(s=>s.machine&&s.model); currentModel=md?md.model:'';
+  }
+  function modelOf(machine){ const m=normMachine(machine); const s=slots.find(x=>normMachine(x.machine)===m); return s?s.model:''; }
+  function saveBaseline(){ localStorage.setItem(LS_BASELINE,JSON.stringify(baseline)); }
+
+  // 현재 작업(호기·기종+진행상태) 세션 등록 → 실시간현황 + 작업자 진행중 공유
+  async function syncSession(){
+    const insp=currentInspector()||'미지정';
+    try{
+      await fetch(SUPABASE_URL+'/rest/v1/'+SESSION_TABLE+'?inspector=eq.'+encodeURIComponent(insp),{method:'DELETE',headers:HDR_R});
+      const valid=slots.filter(s=>s.machine&&s.model&&s.applied);
+      if(!valid.length) return true;
+      const base=valid.map(function(s){ const m=normMachine(s.machine); return {machine:String(m),inspector:insp,model:s.model,updated_at:kstNow()}; });
+      // 진행중 공유용 확장 필드 (서버에 해당 컬럼이 있으면 저장, 없으면 기본만)
+      const ext=valid.map(function(s){ const m=normMachine(s.machine); return {machine:String(m),inspector:insp,model:s.model,updated_at:kstNow(),baseline_count:null,customer:(currentCustomer||'SBC'),work_minutes:(workMinutes||0),applied:true,started_at:(s.startAt||null),paused:!!s.paused,paused_at:(s.pausedAt||null),pause_reason:(s.pauseReason||''),stop_min:(s.stopMin||0),stop_count:(s.stopCount||0),start_snap:(s.startSnap!=null?s.startSnap:null)}; });
+      let r=await fetch(SUPABASE_URL+'/rest/v1/'+SESSION_TABLE,{method:'POST',headers:{...HDR_RJ,'Prefer':'resolution=merge-duplicates'},body:JSON.stringify(ext)});
+      if(!r.ok){ r=await fetch(SUPABASE_URL+'/rest/v1/'+SESSION_TABLE,{method:'POST',headers:{...HDR_RJ,'Prefer':'resolution=merge-duplicates'},body:JSON.stringify(base)}); if(!r.ok){ console.error('session', await r.text()); return false; } }
+      return true;
+    }catch(e){ console.error('session',e); return false; }
+  }
+  // 선택한 작업자의 진행중 작업을 서버에서 불러와 일보에 복원
+  async function loadActiveForInspector(insp){
+    if(!insp) return;
+    try{
+      const r=await fetch(SUPABASE_URL+'/rest/v1/'+SESSION_TABLE+'?inspector=eq.'+encodeURIComponent(insp)+'&select=*',{headers:HDR_R});
+      if(!r.ok) return;
+      const rows=await r.json();
+      const act=(rows||[]).filter(function(x){ return ('applied' in x) ? !!x.applied : true; });
+      if(!act.length) return;
+      slots=act.map(function(x){ return {machine:normMachine(x.machine),model:x.model||'',applied:true,startAt:x.started_at||kstNow(),paused:!!x.paused,pausedAt:x.paused_at||null,pauseReason:x.pause_reason||'',pauseLot:'',stopMin:Number(x.stop_min)||0,stopCount:Number(x.stop_count)||0,startSnap:(x.start_snap!=null?Number(x.start_snap):null)}; });
+      if(!slots.length) slots=[{machine:'',model:'',applied:false,startAt:null}];
+      applyStarted=slots.some(function(s){return s.applied;});
+      const counts={}; let started=null, hasBase=false;
+      act.forEach(function(x){ const m=normMachine(x.machine); if(x.baseline_count!=null){ counts[m]=Number(x.baseline_count); hasBase=true; } if(x.started_at && !started) started=x.started_at; });
+      if(hasBase) baseline={date:todayKST(),counts:counts,start:started||kstNow()};
+      else baseline={date:todayKST(),counts:{},start:started||kstNow()};  // 서버에 기준점 없으면 당일 0시 누적으로 표시(0 방지)
+      saveBaseline();
+      applyStarted=true; localStorage.setItem(LS_APPLIED,'1');
+      const c=act.find(function(x){return x.customer;}); if(c&&c.customer){ currentCustomer=c.customer; localStorage.setItem(LS_CURCUST,currentCustomer); }
+      const w=act.find(function(x){return x.work_minutes!=null;}); if(w&&w.work_minutes!=null){ workMinutes=Number(w.work_minutes)||workMinutes; localStorage.setItem(LS_WORKMIN,String(workMinutes)); }
+      saveSlots(); syncSlotsToSel();
+    }catch(e){ console.error('loadActive',e); }
+  }
+
+  // 기종·호기 목록 서버 공유 (모든 기기 동일)
+  async function loadRepConfig(){
+    try{
+      const r=await fetch(SUPABASE_URL+'/rest/v1/'+CONFIG_TABLE+'?id=eq.1&select=data',{headers:HDR_R});
+      if(r.ok){ const rows=await r.json(); if(rows&&rows[0]&&rows[0].data){
+        const d=rows[0].data;
+        if(Array.isArray(d.models)) modelList=d.models;
+        if(Array.isArray(d.customers)&&d.customers.length){ customerList=d.customers; if(!customerList.includes(currentCustomer)) currentCustomer=customerList[0]||''; localStorage.setItem(LS_CUSTOMERS,JSON.stringify(customerList)); }
+        if(Array.isArray(d.workers)){ workerList=d.workers; if(currentWorker&&!workerList.includes(currentWorker)) currentWorker=''; localStorage.setItem(LS_WORKERS,JSON.stringify(workerList)); }
+        if(typeof d.ntfy==='string'){ ntfyTopic=d.ntfy; localStorage.setItem(LS_NTFY,ntfyTopic); }
+        if(d.layout&&typeof d.layout==='object'){ processList=Array.isArray(d.layout.processes)?d.layout.processes:[]; layoutAssign=(d.layout.assign&&typeof d.layout.assign==='object')?d.layout.assign:{}; localStorage.setItem(LS_PROCESSES,JSON.stringify(processList)); localStorage.setItem(LS_LAYOUT,JSON.stringify(layoutAssign)); }
+        if(Array.isArray(d.stop_reasons)&&d.stop_reasons.length){ stopReasons=d.stop_reasons; localStorage.setItem(LS_STOPREASONS,JSON.stringify(stopReasons)); }
+        if(Array.isArray(d.machines)&&d.machines.length) machineList=normList(d.machines);
+        if(!machineList.length) machineList=DEFAULT_MACHINES.slice();
+        selectedMachines=normList(selectedMachines).filter(m=>machineList.includes(m));
+        localStorage.setItem(LS_MODELS,JSON.stringify(modelList));
+        localStorage.setItem(LS_MLIST,JSON.stringify(machineList));
+      }}
+    }catch(e){ console.error('config load',e); }
+  }
+  async function saveRepConfig(){
+    try{
+      const r=await fetch(SUPABASE_URL+'/rest/v1/'+CONFIG_TABLE,{method:'POST',headers:{...HDR_RJ,'Prefer':'resolution=merge-duplicates,return=representation'},body:JSON.stringify([{id:1,data:{models:modelList,machines:machineList,customers:customerList,workers:workerList,ntfy:ntfyTopic,layout:{processes:processList,assign:layoutAssign},stop_reasons:stopReasons},updated_at:kstNow()}])});
+      if(!r.ok){ const t=await r.text(); console.error('config save', t); return {ok:false,msg:t}; }
+      const chk=await fetch(SUPABASE_URL+'/rest/v1/'+CONFIG_TABLE+'?id=eq.1&select=data',{headers:HDR_R});
+      if(chk.ok){ const cj=await chk.json(); const d=cj&&cj[0]&&cj[0].data; if(d&&Array.isArray(d.models)&&d.models.length===modelList.length) return {ok:true}; return {ok:false,msg:'서버 저장 후 검증 불일치(권한/캐시 확인)'}; }
+      return {ok:true};
+    }catch(e){ console.error('config save',e); return {ok:false,msg:e.message}; }
+  }
+
+  // QC_mes 카운팅 활용: 호기별(숫자키) 당일 합격수량(pass)
+  function repCountByMachine(){
+    const agg=aggregateByMachine(lastGrouped||{});
+    const o={};
+    for(const mc in agg){ o[normMachine(mc)]=(o[normMachine(mc)]||0)+(agg[mc].pass||0); }
+    return o;
+  }
+  // 호기별 '원시 누적'(raw shot_count 합, 양품만) — effectiveBaseline/일별보정 미적용
+  function rawCountByMachine(){
+    const grouped=lastGrouped||{}; const o={};
+    for(const dev of Object.keys(grouped)){
+      const channelList=(dev.startsWith('ESP_S'))?S_LIST:DI_LIST;
+      for(const di of channelList){
+        const rec=grouped[dev][di]; if(!rec) continue;
+        const map=getMap(dev,di); if(!map||!map.machine) continue;
+        if(outletKind(map.outlet)==='fail') continue;  // 양품만
+        o[normMachine(map.machine)]=(o[normMachine(map.machine)]||0)+(rec.shot_count||0);
+      }
+    }
+    return o;
+  }
+  // 작업일보 수량 = 현황과 동일한 당일 누적(호기별). 호기 선택 시 적용 여부와 무관하게 실시간 표시
+  function workByMachine(){
+    const cur=repCountByMachine(); const byM={};
+    for(const m of selectedMachines){ byM[m]=cur[normMachine(m)]||0; }
+    return byM;
+  }
+  function snapCounts(){ return rawCountByMachine(); }
+  // ── 재부팅 강건 집계: 적용 시각 이후 '행 개수'로 양품 산정 (센서 누적이 0으로 리셋돼도 행은 계속 쌓임) ──
+  function devToMac(dev){ if(dev&&dev.indexOf('MAC_')===0){ const h=dev.slice(4); const p=h.match(/.{1,2}/g); return p?p.join(':'):h; } return null; }
+  // 호기의 양품 채널 목록 [{mac, code}] (매핑+최신데이터 기반)
+  function goodChannelsOf(machine){
+    const mc=normMachine(machine); const out=[]; const grouped=lastGrouped||{};
+    for(const dev of Object.keys(grouped)){
+      const list=dev.startsWith('ESP_S')?S_LIST:DI_LIST;
+      for(const code of list){
+        const rec=grouped[dev][code]; if(!rec) continue;
+        const map=getMap(dev,code); if(!map||normMachine(map.machine)!==mc) continue;
+        if(outletKind(map.outlet)==='fail') continue;
+        const mac=rec.esp32_mac||devToMac(dev); if(!mac) continue;
+        out.push({mac:mac, code:code});
+      }
+    }
+    return out;
+  }
+  // (mac, code)의 since(ISO) 이후 행 개수 — PostgREST count=exact 의 Content-Range 파싱
+  async function countSince(mac, code, sinceISO){
+    try{
+      const url=SUPABASE_URL+'/rest/v1/'+TABLE+'?select=id&esp32_mac=eq.'+encodeURIComponent(mac)+'&machine_code=eq.'+encodeURIComponent(code)+'&created_at=gte.'+encodeURIComponent(sinceISO);
+      const r=await fetch(url,{headers:{...HDR_R,'Prefer':'count=exact','Range':'0-0'}});
+      const cr=r.headers.get('content-range')||r.headers.get('Content-Range')||'';
+      const m=cr.match(/\/(\d+)\s*$/); if(m) return parseInt(m[1])||0;
+      const j=await r.json().catch(()=>[]); return Array.isArray(j)?j.length:null;
+    }catch(e){ console.error('countSince',e); return null; }
+  }
+  // 적용 중 슬롯의 실시간 양품(행 개수)을 서버에서 받아 캐시(s.liveGood). 실패 시 캐시 유지
+  async function refreshLiveGood(){
+    const tasks=[];
+    slots.forEach(function(s){
+      if(!s.applied||!s.startAt) return;
+      const chans=goodChannelsOf(s.machine); if(!chans.length) return;
+      tasks.push(Promise.all(chans.map(function(c){return countSince(c.mac,c.code,s.startAt);})).then(function(arr){
+        if(arr.some(function(v){return v==null;})) return;
+        s.liveGood=arr.reduce(function(a,b){return a+(b||0);},0);
+      }));
+    });
+    if(tasks.length) await Promise.all(tasks);
+  }
+  // 슬롯 양품수량: 적용 중이면 행 개수(COUNT) 우선 → 없으면 증분(스냅) 폴백 → 미적용은 당일 누적(미리보기)
+  function slotGood(s){
+    const m=normMachine(s&&s.machine); if(!m) return 0;
+    if(s.applied){
+      if(s.liveGood!=null) return s.liveGood;
+      if(s.startSnap!=null){ const raw=rawCountByMachine(); return Math.max(0,(raw[m]||0)-s.startSnap); }
+    }
+    const byM=workByMachine(); return byM[m]||0;
+  }
+
+  // 슬롯 동적 렌더 (행 추가/삭제 가능, 적용 중엔 잠금)
+  function renderChips(){ renderSlots(); fillCustomerSelect(); fillWorkerSelect(); }
+  function slotQtyText(i){ const s=slots[i]; return normMachine(s&&s.machine) ? slotGood(s).toLocaleString() : '-'; }
+  function renderSlots(){
+    const c=document.getElementById('slotRows'); if(!c) return;
+    if(!slots.length) slots=[{machine:'',model:'',applied:false,startAt:null}];
+    // 비정상 상태 복구: 호기 없이 적용 중인 슬롯은 적용 해제 → 호기 선택 가능
+    slots.forEach(function(s){ if(s.applied && !normMachine(s.machine)){ s.applied=false; s.startAt=null; } });
+    applyStarted=slots.some(function(s){return s.applied;});
+    // 슬롯 호기 옵션 = 레이아웃 호기목록 ∪ 공정배치 호기 ∪ 매핑 호기
+    var mset=new Set((machineList||[]).map(normMachine).filter(Boolean));
+    try{ Object.keys(layoutAssign||{}).forEach(function(k){ var nm=normMachine(k); if(nm) mset.add(nm); }); }catch(_){}
+    try{ Object.keys(mapping||{}).forEach(function(dev){ var d=mapping[dev]||{}; Object.keys(d).forEach(function(di){ var nm=normMachine(d[di]&&d[di].machine); if(nm) mset.add(nm); }); }); }catch(_){}
+    var mlist=[...mset].sort(function(a,b){ var na=parseInt(a),nb=parseInt(b); na=isNaN(na)?99999:na; nb=isNaN(nb)?99999:nb; return na!==nb?na-nb:String(a).localeCompare(String(b)); });
+    if(!mlist.length) mlist=DEFAULT_MACHINES.slice();
+    c.innerHTML=slots.map(function(s,i){
+      const dis=s.applied?' disabled':'';
+      // 슬롯의 호기가 목록에 없으면 옵션에 포함시켜 표시 보존
+      var opts=mlist.slice(); const sm=normMachine(s.machine);
+      if(sm && opts.map(normMachine).indexOf(sm)<0) opts.push(s.machine);
+      const mOpts='<option value="">호기 선택</option>'+opts.map(function(m){const nm=normMachine(m);return '<option value="'+nm+'"'+(normMachine(s.machine)===nm?' selected':'')+'>'+mLabel(nm)+'</option>';}).join('');
+      const mdOpts='<option value="">기종 선택</option>'+modelList.map(function(m){return '<option value="'+m.replace(/"/g,'&quot;')+'"'+(s.model===m?' selected':'')+'>'+m+'</option>';}).join('');
+      const paused=s.applied && !!s.paused;
+      const running=s.applied && !s.paused;
+      const rowCls=paused?' paused':(s.applied?' applied':'');
+      const delBtn=s.applied?'':'<button class="slot-del" onclick="removeSlot('+i+')">✕</button>';
+      let l3;
+      if(!s.applied){
+        l3='<button class="slot-go" onclick="applyStartSlot('+i+')">▶ 적용</button>'
+          +'<button class="slot-stop off" disabled>■ 정지</button>';
+      } else if(running){
+        l3='<button class="slot-stop" onclick="openPauseModal('+i+')">■ 정지</button>'
+          +'<button class="slot-finish" onclick="openFinishModal('+i+')">✅ 마무리</button>';
+      } else {
+        l3='<button class="slot-resume" onclick="resumeSlot('+i+')">▶ 재개</button>'
+          +'<button class="slot-finish" onclick="openFinishModal('+i+')">✅ 마무리</button>';
+      }
+      let pauseBar='';
+      if(paused){
+        pauseBar='<div class="slot-pausebar"><span class="pb-dot"></span>정지중 · '+escHtml(s.pauseReason||'-')
+          +(s.pauseLot?(' · LOT '+escHtml(s.pauseLot)):'')
+          +' <span class="pb-elapsed" data-pausedat="'+(s.pausedAt||'')+'">'+pauseElapsedText(s.pausedAt)+'</span></div>';
+      }
+      let stopInfo='';
+      if(s.applied && (s.stopCount||0)>0){
+        stopInfo='<div class="slot-stopinfo">정지 <b>'+(s.stopCount||0)+'회</b> · 누적 <b>'+(s.stopMin||0)+'분</b></div>';
+      }
+      return '<div class="slot-row'+rowCls+'">'
+        +'<div class="slot-l1"><select onchange="onSlotChange()"'+dis+'>'+mOpts+'</select><select onchange="onSlotChange()"'+dis+'>'+mdOpts+'</select></div>'
+        +'<div class="slot-l2"><span class="slot-qwrap">합격수량 <b class="slot-qty">'+slotQtyText(i)+'</b></span><span class="slot-icons"><button class="slot-call" onclick="openCallModal('+i+')">📢 콜</button>'+delBtn+'</span></div>'
+        +pauseBar
+        +'<div class="slot-l3">'+l3+'</div>'
+        +stopInfo
+        +'</div>';
+    }).join('');
+    applyStarted=slots.some(function(s){return s.applied;});
+  }
+  function readSlotsFromDOM(){
+    const rows=document.querySelectorAll('#slotRows .slot-row');
+    const arr=[];
+    rows.forEach(function(r,i){ const sels=r.querySelectorAll('select'); const prev=slots[i]||{}; arr.push({machine:normMachine(sels[0].value), model:sels[1].value, applied:!!prev.applied, startAt:prev.startAt||null, paused:!!prev.paused, pausedAt:prev.pausedAt||null, pauseReason:prev.pauseReason||'', pauseLot:prev.pauseLot||'', stopMin:prev.stopMin||0, stopCount:prev.stopCount||0, startSnap:(prev.startSnap!=null?prev.startSnap:null), liveGood:(prev.liveGood!=null?prev.liveGood:null)}); });
+    if(arr.length) slots=arr;
+  }
+  function onSlotChange(){
+    readSlotsFromDOM();
+    // 미적용 슬롯끼리 호기 중복만 정리 (적용 중 슬롯은 건드리지 않음)
+    const seen={};
+    slots.forEach(function(s){ if(s.applied&&s.machine) seen[s.machine]=true; });
+    for(let i=0;i<slots.length;i++){ const s=slots[i]; if(s.applied||!s.machine) continue; if(seen[s.machine]){ alert(s.machine+'호기가 중복되어 한 곳을 비웠습니다.'); slots[i].machine=''; } else seen[s.machine]=true; }
+    saveSlots(); syncSlotsToSel(); renderSlots(); renderReport();
+  }
+  function addSlot(){ readSlotsFromDOM(); slots.push({machine:'',model:'',applied:false,startAt:null,paused:false,pausedAt:null,pauseReason:'',pauseLot:'',stopMin:0,stopCount:0}); saveSlots(); renderSlots(); renderReport(); }
+  function removeSlot(i){ readSlotsFromDOM(); if(slots[i]&&slots[i].applied){ alert('적용 중인 호기는 삭제할 수 없습니다. 정지 후 삭제하세요.'); return; } slots.splice(i,1); if(!slots.length) slots=[{machine:'',model:'',applied:false,startAt:null}]; saveSlots(); syncSlotsToSel(); renderSlots(); renderReport(); }
+  function fmtWorkMin(m){ const h=Math.floor(m/60), mm=m%60; return (h?h+'시간':'')+(mm?mm+'분':(h?'':'0분')); }
+  function fillModelSelect(sel,val){ if(!sel)return; sel.innerHTML='<option value="">기종 선택</option>'+modelList.map(m=>'<option value="'+m.replace(/"/g,'&quot;')+'"'+(m===val?' selected':'')+'>'+m+'</option>').join(''); }
+
+  function renderReport(){
+    repInspector=currentInspector();
+    var e;
+    if(e=document.getElementById('rDate')) e.textContent=todayMD();
+    if(e=document.getElementById('rInspector')) e.textContent=repInspector||'(로그인 필요)';
+    if(e=document.getElementById('rWorkMin')) e.textContent=workMinutes?fmtWorkMin(workMinutes):'숫자모달';
+    if(e=document.getElementById('rCust')) e.textContent='SBC';
+    const byM=workByMachine();
+    const qs=document.querySelectorAll('#slotRows .slot-qty');
+    slots.forEach(function(s,i){ if(!qs[i]) return; qs[i].textContent=normMachine(s.machine)?slotGood(s).toLocaleString():'-'; });
+    document.querySelectorAll('#slotRows .pb-elapsed').forEach(function(el){ const pa=el.getAttribute('data-pausedat'); if(pa) el.textContent=pauseElapsedText(pa); });
+    if(e=document.getElementById('repUpd')) e.textContent='갱신 '+new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(new Date());
+  }
+
+  // 호기별 적용시작: 그 호기/기종 확정 + 진행중 세션 등록
+  async function applyStartSlot(i){
+    readSlotsFromDOM();
+    const s=slots[i]; if(!s||!s.machine||!s.model){ alert('호기와 기종을 먼저 선택하세요.'); return; }
+    if(slots.some(function(x,j){return j!==i && x.applied && normMachine(x.machine)===normMachine(s.machine);})){ alert(s.machine+'호기는 이미 적용 중입니다.'); return; }
+    if(!currentInspector()){ alert('작업자를 선택하거나 설정에서 작업자명을 등록하세요.'); return; }
+    slots[i].applied=true; slots[i].startAt=kstNow();
+    slots[i].paused=false; slots[i].pausedAt=null; slots[i].pauseReason=''; slots[i].pauseLot=''; slots[i].stopMin=0; slots[i].stopCount=0;
+    { const raw=rawCountByMachine(); slots[i].startSnap=raw[normMachine(s.machine)]||0; }
+    slots[i].liveGood=0;
+    saveSlots(); syncSlotsToSel();
+    applyStarted=slots.some(function(x){return x.applied;});
+    const ok=await syncSession();
+    renderSlots(); renderReport();
+    loadRtSessions().then(renderRealtime);
+    if(!ok) alert('적용 시작됨 — 단 세션 등록 실패(qc_active_session 확인)');
+  }
+  // 시간차(분) 계산 / 정지 경과 표시 / 정지로그 기록
+  function durMin(startISO,endISO){ if(!startISO||!endISO) return 0; const d=(new Date(endISO).getTime()-new Date(startISO).getTime())/60000; return d>0?Math.round(d):0; }
+  function pauseElapsedText(pausedAt){ if(!pausedAt) return ''; return '(경과 '+durMin(pausedAt,kstNow())+'분)'; }
+  async function postStopLog(row){
+    try{ const r=await fetch(SUPABASE_URL+'/rest/v1/'+STOPLOG_TABLE,{method:'POST',headers:HDR_RJ,body:JSON.stringify([row])}); if(!r.ok){ console.error('stoplog',await r.text()); return false; } return true; }
+    catch(e){ console.error('stoplog',e); return false; }
+  }
+
+  // ■ 정지(일시정지): 사유만 선택 → paused 상태로 전환 (정지시간은 재가동/마무리 시 자동 기록)
+  function openPauseModal(i){
+    readSlotsFromDOM();
+    const s=slots[i]; if(!s||!s.applied||s.paused){ return; }
+    if(!currentInspector()){ alert('작업자명을 등록하세요.'); return; }
+    finishSlotIdx=i;
+    selectedStopReason=''; renderStopReasons();
+    const lotEl=document.getElementById('ff_lot'); if(lotEl) lotEl.value='';
+    const lp=document.getElementById('lotPickList'); if(lp){ lp.style.display='none'; lp.innerHTML=''; }
+    const m=normMachine(s.machine);
+    document.getElementById('pauseTitle').textContent=mLabel(m)+(s.model?' · '+s.model:'')+' ■ 정지 · 사유';
+    document.getElementById('pauseModal').classList.add('on');
+  }
+  function closePause(){ document.getElementById('pauseModal').classList.remove('on'); }
+  async function confirmPause(){
+    const i=finishSlotIdx; const s=slots[i];
+    if(!s){ closePause(); return; }
+    if(!selectedStopReason){ alert('정지 사유를 먼저 선택하세요.'); return; }
+    const lotEl=document.getElementById('ff_lot');
+    const lot=(selectedStopReason==='소재교환'&&lotEl)?lotEl.value.trim():'';
+    slots[i].paused=true; slots[i].pausedAt=kstNow(); slots[i].pauseReason=selectedStopReason; slots[i].pauseLot=lot||'';
+    saveSlots(); applyStarted=slots.some(function(x){return x.applied;});
+    await syncSession();
+    closePause(); renderSlots(); renderReport();
+  }
+  // ▶ 재개: 정지 종료 → 정지시간을 qc_stop_log에 기록하고 누적
+  async function resumeSlot(i){
+    readSlotsFromDOM();
+    const s=slots[i]; if(!s||!s.applied||!s.paused){ return; }
+    const m=normMachine(s.machine); const dur=durMin(s.pausedAt,kstNow());
+    await postStopLog({report_date:todayKST(),inspector:currentInspector()||'미지정',customer:(currentCustomer||'SBC'),machine:String(m),model:s.model||'',reason:s.pauseReason||'',material_lot:s.pauseLot||null,stop_start:s.pausedAt||null,stop_end:kstNow(),duration_min:dur});
+    slots[i].stopMin=(slots[i].stopMin||0)+dur;
+    slots[i].stopCount=(slots[i].stopCount||0)+1;
+    slots[i].paused=false; slots[i].pausedAt=null; slots[i].pauseReason=''; slots[i].pauseLot='';
+    saveSlots(); applyStarted=slots.some(function(x){return x.applied;});
+    await syncSession();
+    renderSlots(); renderReport();
+  }
+  // ✅ 기종작업 마무리: 양품(자동)+불량(수동)+근무시간 → qc_daily_report 실적 1행
+  function openFinishModal(i){
+    readSlotsFromDOM();
+    const s=slots[i]; if(!s||!s.applied){ return; }
+    if(!currentInspector()){ alert('작업자명을 등록하세요.'); return; }
+    finishSlotIdx=i;
+    const m=normMachine(s.machine); const q=slotGood(s);
+    const snapTxt=s.applied?'이번 작업분':'당일 누적';
+    document.getElementById('finishTitle').textContent=mLabel(m)+(s.model?' · '+s.model:'')+' 마무리';
+    let extra=0, extraCnt=0;
+    if(s.paused){ extra=durMin(s.pausedAt,kstNow()); extraCnt=1; }
+    const totMin=(s.stopMin||0)+extra; const totCnt=(s.stopCount||0)+extraCnt;
+    const sumEl=document.getElementById('finishStopSummary');
+    if(sumEl) sumEl.innerHTML='정지 누적 <b style="color:#fbbf24">'+totCnt+'회 · '+totMin+'분</b>'+(s.paused?' <span style="color:#f59e0b">(현재 정지중 — 마무리 시 종료처리)</span>':'');
+    let html='<div class="ff-row"><div class="ff-info"><div class="ff-model">근무시간(분)</div><div class="ff-auto">예: 480=8시간</div></div><input readonly id="ff_workmin" value="'+(workMinutes||0)+'" onclick="setActiveFF(\'ff_workmin\')"></div>';
+    html+='<div class="ff-row"><div class="ff-info"><div class="ff-model">양품(자동)</div><div class="ff-auto">'+snapTxt+' '+q.toLocaleString()+'</div></div><input readonly id="ff_good" value="'+q+'" onclick="setActiveFF(\'ff_good\')"></div>';
+    html+='<div class="ff-row"><div class="ff-info"><div class="ff-model">불량(수동)</div><div class="ff-auto">없으면 0</div></div><input readonly id="ff_bad" value="0" onclick="setActiveFF(\'ff_bad\')"></div>';
+    document.getElementById('finishFields').innerHTML=html;
+    activeFF=null; setActiveFF('ff_bad');
+    document.getElementById('finishModal').classList.add('on');
+  }
+  // ===== 정지 사유 =====
+  let selectedStopReason='';
+  function renderStopReasons(){
+    const c=document.getElementById('stopReasonChips'); if(!c) return;
+    c.innerHTML=(stopReasons||[]).map(function(r){ return '<span class="chip'+(selectedStopReason===r?' on':'')+'" onclick="selectStopReason(this.dataset.r)" data-r="'+escHtml(r)+'">'+escHtml(r)+'</span>'; }).join('');
+    const lw=document.getElementById('lotWrap'); if(lw) lw.style.display=(selectedStopReason==='소재교환')?'':'none';
+  }
+  function selectStopReason(r){ selectedStopReason=(selectedStopReason===r?'':r); renderStopReasons(); }
+  // 입고완료 소재 LOT 선택(소재교환 시) — 연동 테이블이 있으면 목록, 없으면 직접입력
+  async function openLotPicker(){
+    const box=document.getElementById('lotPickList'); if(!box) return;
+    if(box.style.display!=='none'){ box.style.display='none'; return; }
+    box.style.display=''; box.innerHTML='<div class="rhint">입고소재 불러오는 중…</div>';
+    try{
+      const url=SUPABASE_URL+'/rest/v1/'+MATERIAL_LOT_TABLE+'?select=*&order=receipt_date.desc&limit=50';
+      const r=await fetch(url,{headers:HDR_R});
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      const rows=await r.json();
+      if(!rows||!rows.length){ box.innerHTML='<div class="rhint">입고소재 내역이 없습니다. 직접 입력하세요.</div>'; return; }
+      box.innerHTML=rows.map(function(x){
+        const lot=x.heat_no||x.lot_no||x.lot||x.HEAT_NO||'';
+        const name=x.item_name||x.material_name||x.item_code||x.ITEM_CODE||'';
+        const sp=x.spec||x.item_spec||'';
+        return '<div class="ritem" style="cursor:pointer" onclick="pickLot(this.dataset.lot)" data-lot="'+escHtml(lot)+'"><span>'+escHtml(name)+(sp?' · '+escHtml(sp):'')+'</span><b style="color:#fbbf24">'+escHtml(lot)+'</b></div>';
+      }).join('');
+    }catch(e){ box.innerHTML='<div class="rhint">입고소재 목록을 불러올 수 없습니다(테이블 미연동: '+MATERIAL_LOT_TABLE+'). 직접 입력하세요.</div>'; }
+  }
+  function pickLot(lot){ const el=document.getElementById('ff_lot'); if(el) el.value=lot||''; const box=document.getElementById('lotPickList'); if(box) box.style.display='none'; }
+  function setActiveFF(id){ if(activeFF){const e=document.getElementById(activeFF);if(e)e.classList.remove('active');} activeFF=id; const e=document.getElementById(id); if(e)e.classList.add('active'); }
+  function numKey(k){ if(!activeFF)return; const e=document.getElementById(activeFF); if(!e)return; if(k==='C')e.value='0'; else if(k==='bs')e.value=(e.value.length>1?e.value.slice(0,-1):'0'); else e.value=(e.value==='0'?'':e.value)+k; }
+  function closeFinish(){ document.getElementById('finishModal').classList.remove('on'); }
+  async function postReport(rows){ try{ const r=await fetch(SUPABASE_URL+'/rest/v1/'+REPORT_TABLE,{method:'POST',headers:HDR_RJ,body:JSON.stringify(rows)}); return r.ok; }catch(e){ console.error(e); return false; } }
+  // 신규 컬럼(material_lot/stop_reason/work_minutes)이 없는 DB에서도 저장되도록 단계적으로 제거하며 재시도
+  async function postReportSafe(row){
+    const body=Object.assign({},row);
+    if(await postReport([body])) return true;
+    for(const k of ['bad_qty','stop_minutes','stop_count','material_lot','stop_reason','work_minutes']){
+      if(k in body){ delete body[k]; if(await postReport([body])) return true; }
+    }
+    return false;
+  }
+  // 자정 자동 마감: 적용 중인데 날짜가 바뀌면(0시 경과) 적용시작 이후 작업수량을 자동 저장하고 적용종료
+  async function saveFinishWork(){
+    const insp=currentInspector(); const i=finishSlotIdx; const s=slots[i];
+    if(!s){ closeFinish(); return; }
+    const m=normMachine(s.machine); const auto=slotGood(s);
+    const wmEl=document.getElementById('ff_workmin'); const wm=parseInt(wmEl?wmEl.value:workMinutes)||0;
+    const goodEl=document.getElementById('ff_good'); const good=parseInt(goodEl?goodEl.value:auto)||0;
+    const badEl=document.getElementById('ff_bad'); const bad=parseInt(badEl?badEl.value:0)||0;
+    // 현재 정지중이면 마지막 정지 구간을 종료처리하여 로그 기록
+    let stopMin=s.stopMin||0, stopCount=s.stopCount||0;
+    if(s.paused){
+      const dur=durMin(s.pausedAt,kstNow());
+      await postStopLog({report_date:todayKST(),inspector:insp||'미지정',customer:(currentCustomer||'SBC'),machine:String(m),model:s.model||'',reason:s.pauseReason||'',material_lot:s.pauseLot||null,stop_start:s.pausedAt||null,stop_end:kstNow(),duration_min:dur});
+      stopMin+=dur; stopCount+=1;
+    }
+    const reportDate=s.startAt?String(s.startAt).slice(0,10):todayKST();
+    const row={report_date:reportDate,inspector:insp,customer:(currentCustomer||'SBC'),model:s.model,machine:String(m),qty:good,count_qty:auto,bad_qty:bad,work_minutes:wm,stop_minutes:stopMin,stop_count:stopCount,start_time:s.startAt||null,end_time:kstNow(),stop_reason:null,material_lot:null};
+    let ok=await postReportSafe(row);
+    if(!ok){ alert('저장 실패 — qc_daily_report 테이블/RLS를 확인하세요.'); return; }
+    workMinutes=wm; localStorage.setItem(LS_WORKMIN,String(wm));
+    slots[i].applied=false; slots[i].startAt=null; slots[i].paused=false; slots[i].pausedAt=null; slots[i].pauseReason=''; slots[i].pauseLot=''; slots[i].stopMin=0; slots[i].stopCount=0; slots[i].startSnap=null; slots[i].liveGood=null;
+    saveSlots(); applyStarted=slots.some(function(x){return x.applied;});
+    await syncSession();
+    closeFinish(); renderSlots(); renderReport();
+    alert(mLabel(m)+' 마무리 — 양품 '+good.toLocaleString()+' / 불량 '+bad+(stopCount?(' / 정지 '+stopCount+'회 '+stopMin+'분'):'')+' 저장되었습니다.');
+  }
+  // 근무시간 숫자모달
+  function openWorkModal(){ const e=document.getElementById('ff_work'); if(e) e.value=String(workMinutes||480); setActiveFF('ff_work'); document.getElementById('workModal').classList.add('on'); }
+  function closeWorkModal(){ document.getElementById('workModal').classList.remove('on'); }
+  function saveWorkModal(){ const e=document.getElementById('ff_work'); workMinutes=parseInt(e?e.value:0)||0; localStorage.setItem(LS_WORKMIN,String(workMinutes)); closeWorkModal(); renderReport(); }
+
+  function showTab(t){
+    curTab=t;
+    document.getElementById('viewRealtime').style.display=(t==='rt')?'':'none';
+    document.getElementById('viewMonitor').style.display=(t==='mon')?'':'none';
+    document.getElementById('viewReport').classList.toggle('rep-hidden',t!=='rep');
+    document.getElementById('viewHist').classList.toggle('rep-hidden',t!=='hist');
+    document.getElementById('viewSetup').classList.toggle('rep-hidden',t!=='setup');
+    document.getElementById('viewFw').classList.toggle('rep-hidden',t!=='fw');
+    document.getElementById('viewLayout').classList.toggle('rep-hidden',t!=='layout');
+    document.getElementById('tabRtBtn').classList.toggle('on',t==='rt');
+    document.getElementById('tabMonBtn').classList.toggle('on',t==='mon');
+    document.getElementById('tabRepBtn').classList.toggle('on',t==='rep');
+    document.getElementById('tabHistBtn').classList.toggle('on',t==='hist');
+    document.getElementById('tabSetupBtn').classList.toggle('on',t==='setup');
+    document.getElementById('tabFwBtn').classList.toggle('on',t==='fw');
+    document.getElementById('tabLayoutBtn').classList.toggle('on',t==='layout');
+    if(rtTimer){ clearInterval(rtTimer); rtTimer=null; }
+    if(t==='rt'){ tick(); loadRtSessions().then(renderRealtime); renderRealtime(); rtTimer=setInterval(()=>loadRtSessions().then(renderRealtime),10000); }
+    if(t==='rep'){ renderChips(); renderReport(); }
+    if(t==='hist'){
+      if(!document.getElementById('fTo').value){ const y=kstDateOf(new Date(Date.now()-86400000)); document.getElementById('fFrom').value=y; document.getElementById('fTo').value=y; }
+      loadHistory();
+    }
+    if(t==='setup'){ document.getElementById('inInspector').value=currentInspector(); renderModelList(); renderMachineList(); renderCustomerList(); renderWorkerList(); renderStopReasonList(); const nt=document.getElementById('inNtfy'); if(nt) nt.value=ntfyTopic; }
+    if(t==='fw'){ renderFw(); }
+    if(t==='layout'){ renderLayout(); }
+  }
+
+  // ===== 실시간현황 (호기별) =====
+  async function loadRtSessions(){
+    try{
+      const start=todayKST()+'T00:00:00+09:00';
+      const r=await fetch(SUPABASE_URL+'/rest/v1/'+SESSION_TABLE+'?select=*&updated_at=gte.'+encodeURIComponent(start),{headers:HDR_R});
+      if(r.ok) rtSessions=await r.json()||[];
+    }catch(e){ console.error('rt sessions',e); }
+  }
+  async function clearBox(k){
+    const cur=repCountByMachine(); const off=cur[normMachine(k)]||0;
+    if(!confirm(k+'호기 박스수량을 0으로 비웁니다.\n현재 누적 '+off.toLocaleString()+' 을 박스 0점으로 잡습니다.\n(누적 양품은 유지, 트윈의 박스수만 0)')) return;
+    try{
+      const r=await fetch(SUPABASE_URL+'/rest/v1/qc_box_offset',{method:'POST',headers:{...HDR_RJ,'Prefer':'resolution=merge-duplicates'},body:JSON.stringify([{machine:String(normMachine(k)),offset_qty:off,updated_at:kstNow()}])});
+      if(!r.ok) throw new Error(await r.text());
+      alert(k+'호기 박스를 비웠습니다. (기준 누적 '+off.toLocaleString()+')');
+    }catch(e){ alert('박스비우기 실패: '+e.message+'\nqc_box_offset 테이블/RLS를 확인하세요.'); }
+  }
+  function renderRealtime(){
+    const mb=document.getElementById('rtMachineBody');
+    if(!mb) return;
+    const cur=repCountByMachine();
+    const sessByM={}; (rtSessions||[]).forEach(s=>{ sessByM[normMachine(s.machine)]=s; });
+    // 호기별 (실시간 센서 카운트) — 설정 호기 ∪ 매핑 호기
+    const mset=new Set((machineList||[]).map(normMachine).filter(k=>k));
+    Object.keys(cur).forEach(k=>{ if(k) mset.add(k); });
+    const mkeys=[...mset].sort((a,b)=>(parseInt(a)||0)-(parseInt(b)||0));
+    if(!mkeys.length){ mb.innerHTML='<tr><td colspan="4" class="rempty">설정에서 호기를 등록하거나 신호세팅에서 매핑하세요.</td></tr>'; }
+    else{
+      let h='',tot=0;
+      mkeys.forEach(k=>{ const q=cur[k]||0; tot+=q; const s=sessByM[k]; const model=s?s.model:'-'; const worker=s&&s.inspector?s.inspector:'-'; h+='<tr><td class="machine">'+mLabel(k)+'</td><td>'+worker+'</td><td>'+(model||'-')+'</td><td class="num pass">'+q.toLocaleString()+'</td></tr>'; });
+      h+='<tr class="total"><td colspan="3">합계</td><td class="num pass">'+tot.toLocaleString()+'</td></tr>';
+      mb.innerHTML=h;
+    }
+    const up=document.getElementById('rtUpd'); if(up) up.textContent='갱신 '+new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(new Date());
+  }
+
+  // ===== 이력 CRUD =====
+  function openPicker(id){ const e=document.getElementById(id); try{ e.showPicker(); }catch(_){ e.focus(); e.click(); } }
+  function calcCT(row){ if(!row.start_time||!row.end_time||!row.qty||row.qty<=0) return '-'; const sec=(new Date(row.end_time).getTime()-new Date(row.start_time).getTime())/1000; if(sec<=0) return '-'; return (sec/row.qty).toFixed(1)+'s'; }
+  function calcSPM(row){ if(!row.start_time||!row.end_time||!row.qty||row.qty<=0) return '-'; const sec=(new Date(row.end_time).getTime()-new Date(row.start_time).getTime())/1000; if(sec<=0) return '-'; return Math.round(row.qty*60/sec); }
+  function fmtTime(t){ if(!t) return ''; try{ return new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(t)); }catch(_){ return ''; } }
+  function csvCell(v){ v=(v==null?'':String(v)); return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; }
+  async function loadHistory(){
+    const from=document.getElementById('fFrom').value, to=document.getElementById('fTo').value;
+    let url=SUPABASE_URL+'/rest/v1/'+REPORT_TABLE+'?select=*&order=report_date.desc,id.desc&limit=500';
+    if(from) url+='&report_date=gte.'+from;
+    if(to) url+='&report_date=lte.'+to;
+    const tb=document.getElementById('histBody');
+    try{
+      const r=await fetch(url,{headers:HDR_R});
+      if(!r.ok){ const t=await r.text(); tb.innerHTML='<tr><td colspan="12" class="rempty">조회 실패('+r.status+') — qc_daily_report 테이블/RLS 확인<br><span style="font-size:11px">'+(t||'').slice(0,150)+'</span></td></tr>'; lastHistRows=[]; selectedHistIdx=-1; return; }
+      const rows=await r.json(); lastHistRows=rows||[]; selectedHistIdx=-1;
+      if(!rows||rows.length===0){ tb.innerHTML='<tr><td colspan="12" class="rempty">이력이 없습니다. (작업일보 탭에서 ✅ 마무리 시 저장됩니다)</td></tr>'; return; }
+      tb.innerHTML=rows.map(function(x,i){ var stopTxt=(((x.stop_count||0)>0)||((x.stop_minutes||0)>0))?((x.stop_count||0)+'회·'+(x.stop_minutes||0)+'분'):(x.stop_reason?escHtml(x.stop_reason):'-'); return '<tr onclick="selectHist('+i+')" data-hi="'+i+'"><td>'+(x.report_date||'')+'</td><td>'+(x.inspector||'')+'</td><td>'+(x.model||'')+'</td><td class="machine">'+mLabel(x.machine||'')+'</td><td class="num">'+(x.count_qty!=null?Number(x.count_qty).toLocaleString():'-')+'</td><td class="num pass">'+(x.qty||0).toLocaleString()+'</td><td class="num" style="color:#ef4444">'+(x.bad_qty||0).toLocaleString()+'</td><td class="num">'+(fmtTime(x.start_time)||'-')+'</td><td class="num">'+(fmtTime(x.end_time)||'-')+'</td><td class="num">'+calcCT(x)+'</td><td class="num">'+calcSPM(x)+'</td><td>'+stopTxt+'</td></tr>'; }).join('');
+    }catch(e){ tb.innerHTML='<tr><td colspan="12" class="rempty">조회 실패: '+e.message+'</td></tr>'; }
+  }
+  function selectHist(i){ selectedHistIdx=i; const tb=document.getElementById('histBody'); Array.prototype.forEach.call(tb.querySelectorAll('tr'),function(tr){tr.classList.remove('sel');}); const tr=tb.querySelector('tr[data-hi="'+i+'"]'); if(tr) tr.classList.add('sel'); }
+  function editSelectedHist(){ if(selectedHistIdx<0||!lastHistRows[selectedHistIdx]){ alert('수정할 이력을 표에서 먼저 선택하세요.'); return; } openHistEdit(lastHistRows[selectedHistIdx]); }
+  function deleteSelectedHist(){ if(selectedHistIdx<0||!lastHistRows[selectedHistIdx]){ alert('삭제할 이력을 표에서 먼저 선택하세요.'); return; } delHist(lastHistRows[selectedHistIdx].id); }
+  function openHistEditIdx(i){ openHistEdit(lastHistRows[i]); }
+  function tsToLocalInput(ts){ if(!ts) return ''; try{ const d=new Date(ts); const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).formatToParts(d); const o={}; parts.forEach(p=>o[p.type]=p.value); const hh=(o.hour==='24')?'00':o.hour; return o.year+'-'+o.month+'-'+o.day+'T'+hh+':'+o.minute; }catch(_){ return ''; } }
+  function localInputToISO(v){ if(!v) return null; return (v.length===16? v+':00' : v)+'+09:00'; }
+  function openHistEdit(row){
+    document.getElementById('histModalTitle').textContent=row?'이력 수정':'이력 추가';
+    document.getElementById('hId').value=row?row.id:'';
+    document.getElementById('hDate').value=row?row.report_date:todayKST();
+    document.getElementById('hInspector').value=row?(row.inspector||''):currentInspector();
+    fillModelSelect(document.getElementById('hModel'),row?row.model:currentModel);
+    document.getElementById('hMachine').value=row?(row.machine||''):'';
+    document.getElementById('hCount').value=row?(row.count_qty!=null?row.count_qty:0):0;
+    document.getElementById('hQty').value=row?(row.qty||0):0;
+    document.getElementById('hBad').value=row?(row.bad_qty||0):0;
+    document.getElementById('hStopMin').value=row?(row.stop_minutes||0):0;
+    document.getElementById('hStart').value=row?tsToLocalInput(row.start_time):'';
+    document.getElementById('hEnd').value=row?tsToLocalInput(row.end_time):'';
+    document.getElementById('histModal').classList.add('on');
+  }
+  function closeHistEdit(){ document.getElementById('histModal').classList.remove('on'); }
+  async function saveHist(){
+    const id=document.getElementById('hId').value;
+    const body={ report_date:document.getElementById('hDate').value, inspector:document.getElementById('hInspector').value.trim(), customer:(currentCustomer||'SBC'), model:document.getElementById('hModel').value, machine:document.getElementById('hMachine').value.trim(), count_qty:parseInt(document.getElementById('hCount').value)||0, qty:parseInt(document.getElementById('hQty').value)||0, bad_qty:parseInt(document.getElementById('hBad').value)||0, stop_minutes:parseInt(document.getElementById('hStopMin').value)||0, start_time:localInputToISO(document.getElementById('hStart').value), end_time:localInputToISO(document.getElementById('hEnd').value) };
+    try{
+      let r;
+      if(id) r=await fetch(SUPABASE_URL+'/rest/v1/'+REPORT_TABLE+'?id=eq.'+id,{method:'PATCH',headers:HDR_RJ,body:JSON.stringify(body)});
+      else r=await fetch(SUPABASE_URL+'/rest/v1/'+REPORT_TABLE,{method:'POST',headers:HDR_RJ,body:JSON.stringify([body])});
+      if(!r.ok) throw new Error(await r.text());
+      closeHistEdit(); loadHistory();
+    }catch(e){ alert('저장 실패: '+e.message); }
+  }
+  async function delHist(id){
+    if(!confirm('이 이력을 삭제하시겠습니까?')) return;
+    try{ const r=await fetch(SUPABASE_URL+'/rest/v1/'+REPORT_TABLE+'?id=eq.'+id,{method:'DELETE',headers:HDR_R}); if(!r.ok) throw new Error(await r.text()); loadHistory(); }catch(e){ alert('삭제 실패: '+e.message); }
+  }
+  function downloadExcel(){
+    if(!lastHistRows.length){ alert('조회된 이력이 없습니다. 먼저 조회하세요.'); return; }
+    const head=['일자','작업자','기종','호기','카운팅','양품','불량','시작','종료','C/T(s)','SPM','정지횟수','정지분'];
+    const lines=[head.join(',')];
+    lastHistRows.forEach(x=>{ const ct=calcCT(x).replace('s',''); const spm=calcSPM(x); const cq=(x.count_qty!=null?x.count_qty:''); lines.push([x.report_date,x.inspector,x.model,x.machine,cq,x.qty,(x.bad_qty||0),fmtTime(x.start_time),fmtTime(x.end_time),ct,spm,(x.stop_count||0),(x.stop_minutes||0)].map(csvCell).join(',')); });
+    const csv='\uFEFF'+lines.join('\r\n');
+    const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+    const from=(document.getElementById('fFrom').value||'').replace(/-/g,''), to=(document.getElementById('fTo').value||'').replace(/-/g,'');
+    const fname='inspection_'+from+'_'+to+'.csv';
+    if(window.navigator&&window.navigator.msSaveOrOpenBlob){ window.navigator.msSaveOrOpenBlob(blob,fname); return; }
+    const url=URL.createObjectURL(blob); const a=document.createElement('a');
+    a.href=url; a.download=fname; a.rel='noopener'; a.target='_blank';
+    document.body.appendChild(a); a.click();
+    setTimeout(function(){ try{document.body.removeChild(a);}catch(_){} URL.revokeObjectURL(url); },1500);
+  }
+  async function deleteRange(){
+    const from=document.getElementById('fFrom').value, to=document.getElementById('fTo').value;
+    if(!from||!to){ alert('삭제할 기간을 선택하세요.'); return; }
+    if(!confirm(from+' ~ '+to+' 기간의 모든 이력을 삭제합니다.\n되돌릴 수 없습니다. 진행할까요?')) return;
+    try{ const r=await fetch(SUPABASE_URL+'/rest/v1/'+REPORT_TABLE+'?report_date=gte.'+from+'&report_date=lte.'+to,{method:'DELETE',headers:HDR_R}); if(!r.ok) throw new Error(await r.text()); alert('삭제되었습니다.'); loadHistory(); }catch(e){ alert('기간삭제 실패: '+e.message); }
+  }
+
+  // ===== 정지내역 조회 (qc_stop_log) =====
+  let lastStopLogRows=[];
+  async function openStopLog(){
+    const from=document.getElementById('fFrom').value, to=document.getElementById('fTo').value;
+    document.getElementById('stopLogRange').textContent=(from||'전체')+' ~ '+(to||'전체');
+    const tb=document.getElementById('stopLogBody'); tb.innerHTML='<tr><td colspan="8" class="rempty">불러오는 중…</td></tr>';
+    document.getElementById('stopLogModal').classList.add('on');
+    let url=SUPABASE_URL+'/rest/v1/'+STOPLOG_TABLE+'?select=*&order=stop_start.desc,id.desc&limit=500';
+    if(from) url+='&report_date=gte.'+from;
+    if(to) url+='&report_date=lte.'+to;
+    try{
+      const r=await fetch(url,{headers:HDR_R});
+      if(!r.ok){ const t=await r.text(); tb.innerHTML='<tr><td colspan="8" class="rempty">조회 실패('+r.status+') — qc_stop_log 테이블/RLS 확인<br><span style="font-size:11px">'+(t||'').slice(0,150)+'</span></td></tr>'; lastStopLogRows=[]; return; }
+      const rows=await r.json(); lastStopLogRows=rows||[];
+      if(!rows||!rows.length){ tb.innerHTML='<tr><td colspan="8" class="rempty">정지내역이 없습니다.</td></tr>'; document.getElementById('stopLogSum').textContent=''; return; }
+      let tot=0; const byReason={};
+      tb.innerHTML=rows.map(function(x){ tot+=(x.duration_min||0); byReason[x.reason||'-']=(byReason[x.reason||'-']||0)+(x.duration_min||0); return '<tr><td>'+(x.report_date||'')+'</td><td class="machine">'+mLabel(x.machine||'')+'</td><td>'+(x.model||'')+'</td><td>'+escHtml(x.reason||'')+'</td><td class="num">'+(fmtTime(x.stop_start)||'-')+'</td><td class="num">'+(fmtTime(x.stop_end)||'-')+'</td><td class="num">'+(x.duration_min||0)+'</td><td>'+escHtml(x.material_lot||'')+'</td></tr>'; }).join('');
+      const rsum=Object.keys(byReason).sort((a,b)=>byReason[b]-byReason[a]).map(k=>k+' '+byReason[k]+'분').join(' · ');
+      document.getElementById('stopLogSum').textContent='총 '+rows.length+'건 · '+tot+'분  ('+rsum+')';
+    }catch(e){ tb.innerHTML='<tr><td colspan="8" class="rempty">조회 실패: '+e.message+'</td></tr>'; }
+  }
+  function closeStopLog(){ document.getElementById('stopLogModal').classList.remove('on'); }
+  function downloadStopLog(){
+    if(!lastStopLogRows.length){ alert('조회된 정지내역이 없습니다.'); return; }
+    const head=['일자','호기','기종','사유','시작','종료','정지분','소재LOT'];
+    const lines=[head.join(',')];
+    lastStopLogRows.forEach(x=>{ lines.push([x.report_date,x.machine,x.model,x.reason,fmtTime(x.stop_start),fmtTime(x.stop_end),(x.duration_min||0),(x.material_lot||'')].map(csvCell).join(',')); });
+    const csv='\uFEFF'+lines.join('\r\n');
+    const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+    const from=(document.getElementById('fFrom').value||'').replace(/-/g,''), to=(document.getElementById('fTo').value||'').replace(/-/g,'');
+    const fname='stoplog_'+from+'_'+to+'.csv';
+    const url=URL.createObjectURL(blob); const a=document.createElement('a');
+    a.href=url; a.download=fname; a.rel='noopener'; a.target='_blank';
+    document.body.appendChild(a); a.click();
+    setTimeout(function(){ try{document.body.removeChild(a);}catch(_){} URL.revokeObjectURL(url); },1500);
+  }
+
+  // ===== 일보 설정 (기종/호기) =====
+  function renderModelList(){ const el=document.getElementById('modelList'); if(!modelList.length){ el.innerHTML='<div class="rhint">등록된 기종이 없습니다.</div>'; return; } el.innerHTML=modelList.map((m,i)=>'<div class="ritem"><span>'+m+'</span><button class="btn danger" onclick="removeModel('+i+')">삭제</button></div>').join(''); }
+  function addModel(){ const v=document.getElementById('newModel').value.trim(); if(!v) return; if(!modelList.includes(v)) modelList.push(v); document.getElementById('newModel').value=''; renderModelList(); }
+  function removeModel(i){ modelList.splice(i,1); renderModelList(); }
+  function renderMachineList(){ const el=document.getElementById('machineListEl'); if(!machineList.length){ el.innerHTML='<div class="rhint">등록된 호기가 없습니다.</div>'; return; } el.innerHTML=machineList.map((m,i)=>'<div class="ritem"><span>'+mLabel(m)+'</span><button class="btn danger" onclick="removeMachine('+i+')">삭제</button></div>').join(''); }
+  function addMachine(){ let v=normMachine(document.getElementById('newMachine').value); if(!v) return; if(!machineList.includes(v)) machineList.push(v); machineList.sort((a,b)=>(parseInt(a)||0)-(parseInt(b)||0)); document.getElementById('newMachine').value=''; renderMachineList(); }
+  function removeMachine(i){ machineList.splice(i,1); renderMachineList(); }
+  function renderCustomerList(){ const el=document.getElementById('customerListEl'); if(!el) return; if(!customerList.length){ el.innerHTML='<div class="rhint">등록된 고객사가 없습니다.</div>'; return; } el.innerHTML=customerList.map((c,i)=>'<div class="ritem"><span>'+c+'</span><button class="btn danger" onclick="removeCustomer('+i+')">삭제</button></div>').join(''); }
+  function addCustomer(){ const v=document.getElementById('newCustomer').value.trim(); if(!v) return; if(!customerList.includes(v)) customerList.push(v); document.getElementById('newCustomer').value=''; renderCustomerList(); }
+  function removeCustomer(i){ customerList.splice(i,1); renderCustomerList(); }
+  function fillCustomerSelect(){ const s=document.getElementById('custSelect'); if(!s) return; if(!customerList.length) customerList=DEFAULT_CUSTOMERS.slice(); if(!customerList.includes(currentCustomer)) currentCustomer=customerList[0]||''; s.innerHTML=customerList.map(c=>'<option value="'+c.replace(/"/g,'&quot;')+'"'+(c===currentCustomer?' selected':'')+'>'+c+'</option>').join(''); s.value=currentCustomer; }
+  function onCustChange(){ const s=document.getElementById('custSelect'); currentCustomer=s?s.value:''; localStorage.setItem(LS_CURCUST,currentCustomer); }
+  function renderWorkerList(){ const el=document.getElementById('workerListEl'); if(!el) return; if(!workerList.length){ el.innerHTML='<div class="rhint">등록된 작업자가 없습니다. (미등록 시 로그인/설정 작업자명 사용)</div>'; return; } el.innerHTML=workerList.map((w,i)=>'<div class="ritem"><span>'+w+'</span><button class="btn danger" onclick="removeWorker('+i+')">삭제</button></div>').join(''); }
+  function renderStopReasonList(){ const el=document.getElementById('stopReasonListEl'); if(!el) return; if(!stopReasons.length){ el.innerHTML='<div class="rhint">등록된 정지사유가 없습니다.</div>'; return; } el.innerHTML=stopReasons.map((r,i)=>'<div class="ritem"><span>'+escHtml(r)+'</span><button class="btn danger" onclick="removeStopReason('+i+')">삭제</button></div>').join(''); }
+  function addStopReason(){ const el=document.getElementById('newStopReason'); const v=(el.value||'').trim(); if(!v) return; if(stopReasons.includes(v)){ alert('이미 있는 사유입니다.'); return; } stopReasons.push(v); el.value=''; localStorage.setItem(LS_STOPREASONS,JSON.stringify(stopReasons)); renderStopReasonList(); }
+  function removeStopReason(i){ stopReasons.splice(i,1); localStorage.setItem(LS_STOPREASONS,JSON.stringify(stopReasons)); renderStopReasonList(); }
+  function addWorker(){ const v=document.getElementById('newWorker').value.trim(); if(!v) return; if(!workerList.includes(v)) workerList.push(v); document.getElementById('newWorker').value=''; renderWorkerList(); }
+  function removeWorker(i){ workerList.splice(i,1); renderWorkerList(); }
+  function fillWorkerSelect(){ const s=document.getElementById('workerSelect'); if(!s) return; const auto='(자동: 로그인/설정)'; s.innerHTML='<option value="">'+auto+'</option>'+workerList.map(w=>'<option value="'+w.replace(/"/g,'&quot;')+'"'+(w===currentWorker?' selected':'')+'>'+w+'</option>').join(''); s.value=currentWorker||''; }
+  async function onWorkerChange(){
+    const s=document.getElementById('workerSelect'); currentWorker=s?s.value:''; localStorage.setItem(LS_CURWORKER,currentWorker);
+    // 선택한 작업자의 진행중 작업을 서버에서 불러와 일보에 반영
+    if(currentWorker && !applyStarted){ await loadActiveForInspector(currentWorker); }
+    renderChips(); renderReport();
+  }
+  // ===== 호출(콜) → ntfy =====
+  function openCallModal(i){
+    if(!applyStarted) readSlotsFromDOM();
+    const s=slots[i]; if(!s||!s.machine){ alert('호기를 먼저 선택하세요.'); return; }
+    callTarget={machine:s.machine,model:s.model||''};
+    clearCallPhoto();
+    const info=document.getElementById('callInfo'); if(info) info.textContent=mLabel(s.machine)+(s.model?' · '+s.model:'')+' — 호출 종류를 선택하세요';
+    document.getElementById('callModal').classList.add('on');
+  }
+  function closeCallModal(){ document.getElementById('callModal').classList.remove('on'); clearCallPhoto(); }
+  function clearCallPhoto(){ callPhotoBlob=null; const inp=document.getElementById('callPhotoInput'); if(inp) inp.value=''; const p=document.getElementById('callPhotoPrev'); if(p){ p.style.display='none'; p.removeAttribute('src'); } const st=document.getElementById('callPhotoStat'); if(st) st.textContent=''; const cb=document.getElementById('callPhotoClear'); if(cb) cb.style.display='none'; }
+  function onCallPhoto(input){ const f=input.files&&input.files[0]; if(!f) return; compressCallPhoto(f); }
+  // 사진을 20KB 이하로 압축 (화질→해상도 순으로 단계 축소)
+  function compressCallPhoto(file){
+    const stat=document.getElementById('callPhotoStat'); if(stat) stat.textContent='압축 중…';
+    const MAX=20480; const img=new Image(); const url=URL.createObjectURL(file);
+    img.onload=function(){
+      let w=img.width, h=img.height; const maxDim=1280;
+      if(w>maxDim||h>maxDim){ const r=Math.min(maxDim/w,maxDim/h); w=Math.round(w*r); h=Math.round(h*r); }
+      function render(W,H,q,cb){ const cv=document.createElement('canvas'); cv.width=W; cv.height=H; const ctx=cv.getContext('2d'); ctx.fillStyle='#fff'; ctx.fillRect(0,0,W,H); ctx.drawImage(img,0,0,W,H); cv.toBlob(cb,'image/jpeg',q); }
+      let q=0.7, W=w, H=h;
+      function step(){
+        render(W,H,q,function(b){
+          if(!b){ if(stat) stat.textContent='압축 실패'; URL.revokeObjectURL(url); return; }
+          if(b.size<=MAX){ setCallPhoto(b); URL.revokeObjectURL(url); return; }
+          if(q>0.35){ q-=0.1; step(); }
+          else if(W>180){ W=Math.round(W*0.8); H=Math.round(H*0.8); q=0.6; step(); }
+          else { setCallPhoto(b); URL.revokeObjectURL(url); }   // 한계까지 줄였으면 그대로 사용
+        });
+      }
+      step();
+    };
+    img.onerror=function(){ if(stat) stat.textContent='이미지를 읽지 못했습니다.'; URL.revokeObjectURL(url); };
+    img.src=url;
+  }
+  function setCallPhoto(b){ callPhotoBlob=b; const p=document.getElementById('callPhotoPrev'); if(p){ p.src=URL.createObjectURL(b); p.style.display=''; } const st=document.getElementById('callPhotoStat'); if(st) st.textContent='사진 첨부됨 · '+Math.round(b.size/1024)+'KB'; const cb=document.getElementById('callPhotoClear'); if(cb) cb.style.display=''; }
+  function callTag(kind){ return kind==='안전'?'rotating_light':(kind==='설비'?'wrench':(kind==='제품'?'package':'grey_question')); }
+  // ntfy 헤더는 ASCII만 허용(한글 헤더는 안드로이드에서 전송이 조용히 실패) → 비ASCII 제거
+  function asciiHdr(s){ const v=String(s||'').replace(/[^\x20-\x7E]/g,'').trim(); return v||'Call'; }
+  async function sendCall(kind){
+    if(!ntfyTopic){ alert('메뉴에서 ntfy 방 이름을 먼저 설정하세요.'); closeCallModal(); return; }
+    const t=callTarget||{}; const insp=currentInspector()||'-';
+    const when=new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',dateStyle:'short',timeStyle:'short'}).format(new Date());
+    const body=mLabel(t.machine)+(t.model?' ('+t.model+')':'')+' '+kind+' 호출\n작업자: '+insp+'\n'+when;
+    try{
+      let r;
+      if(callPhotoBlob){
+        // 사진 첨부: body=이미지, 메시지/제목은 query(한글 URL 인코딩) — 헤더 한글 실패 회피
+        const qs='?message='+encodeURIComponent(body)+'&title='+encodeURIComponent(asciiHdr('Call '+(t.machine||'-')))+'&priority=high&tags='+callTag(kind);
+        r=await fetch('https://ntfy.sh/'+encodeURIComponent(ntfyTopic)+qs,{method:'PUT',headers:{'Filename':'call.jpg'},body:callPhotoBlob});
+      } else {
+        r=await fetch('https://ntfy.sh/'+encodeURIComponent(ntfyTopic),{method:'POST',headers:{'Title':asciiHdr('Call '+(t.machine||'-')),'Priority':'high','Tags':callTag(kind)},body:body});
+      }
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      const hadPhoto=!!callPhotoBlob;
+      closeCallModal(); alert(mLabel(t.machine)+' '+kind+' 호출을 보냈습니다.'+(hadPhoto?' (사진 포함)':''));
+    }catch(e){ alert('호출 전송 실패: '+e.message+'\nntfy 방 이름/네트워크를 확인하세요.'); }
+  }
+  function openRepSettings(){ showTab('setup'); }
+  function closeRepSettings(){ showTab('rep'); }
+  async function saveRepSettings(){
+    const ins=document.getElementById('inInspector').value.trim();
+    localStorage.setItem(LS_INSPECTOR,ins);
+    localStorage.setItem(LS_MODELS,JSON.stringify(modelList));
+    localStorage.setItem(LS_MLIST,JSON.stringify(machineList));
+    if(!customerList.length) customerList=DEFAULT_CUSTOMERS.slice();
+    localStorage.setItem(LS_CUSTOMERS,JSON.stringify(customerList));
+    if(!customerList.includes(currentCustomer)){ currentCustomer=customerList[0]||''; localStorage.setItem(LS_CURCUST,currentCustomer); }
+    localStorage.setItem(LS_WORKERS,JSON.stringify(workerList));
+    if(currentWorker && !workerList.includes(currentWorker)){ currentWorker=''; localStorage.setItem(LS_CURWORKER,''); }
+    const nt=document.getElementById('inNtfy'); ntfyTopic=nt?nt.value.trim():ntfyTopic; localStorage.setItem(LS_NTFY,ntfyTopic);
+    localStorage.setItem(LS_STOPREASONS,JSON.stringify(stopReasons));
+    if(currentModel && !modelList.includes(currentModel)){ currentModel=''; localStorage.setItem(LS_CURMODEL,''); }
+    selectedMachines=selectedMachines.filter(m=>machineList.includes(m)); localStorage.setItem(LS_MACHINES,JSON.stringify(selectedMachines));
+    const res=await saveRepConfig();
+    closeRepSettings(); renderChips(); renderReport();
+    alert(res.ok ? '기종·호기 목록이 서버에 저장되었습니다.\n(다른 PC에서도 새로고침하면 동일하게 표시됩니다)' : '서버 저장 실패 — 로컬에만 저장됨.\n원인: '+(res.msg||'알 수 없음')+'\n\nqc_report_config 테이블 RLS 해제/권한을 확인하세요.');
+  }
+
+
+  // 초기화
+  (async ()=>{
+    await loadMapping();   // 서버에서 매핑 먼저 로드 (실패 시 localStorage 폴백)
+    await loadBaselines();
+    loadRepLocal(); renderChips(); showTab('rep');
+    loadRepConfig().then(()=>{ renderChips(); renderReport(); });
+    await tick();
+    await autoZeroNewDay();   // 오늘 0점이 없는 채널만 서버에 저장(ignore-duplicates, 기존값 보존)
+    await loadBaselines();    // 서버의 확정 0점을 다시 읽어 표시값 동기화 (덮어쓰기 방지)
+    tick();
+    // 자정 자동마감 없음 — ✅마무리를 누를 때까지 하나의 작업으로 계속 누적(연속 진행)
+    // 이 기기가 미적용이어도 서버에 진행중 세션이 있으면 복원 (접속자 간 카운터 지속)
+    if(!applyStarted){ const _insp=currentInspector(); if(_insp){ await loadActiveForInspector(_insp); renderChips(); renderReport(); } }
+    setInterval(async ()=>{ await checkDayRollover(); tick(); }, POLL_MS);
+  })();
+</script>
+
+</body>
+</html>
