@@ -6,7 +6,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<title>로드모니터 하중 일일점검 v9.7</title>
+<title>로드모니터 하중 일일점검 v9.8</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
@@ -167,7 +167,7 @@ table.hist tr:hover{background:#f0f7ff}
 <div class="hdr">
   <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
     <div>
-      <h1>📊 로드모니터 하중 일일점검 <span class="rev-badge">Rev. 9.7</span> <span class="rev-badge" style="background:rgba(255,193,7,.3);cursor:pointer" onclick="window._npDebug=!window._npDebug;alert('진단 모드: '+(window._npDebug?'ON':'OFF'))" title="진단 모드 토글">🔍</span></h1>
+      <h1>📊 로드모니터 하중 일일점검 <span class="rev-badge">Rev. 9.8</span> <span class="rev-badge" style="background:rgba(255,193,7,.3);cursor:pointer" onclick="window._npDebug=!window._npDebug;alert('진단 모드: '+(window._npDebug?'ON':'OFF'))" title="진단 모드 토글">🔍</span></h1>
       <p>프레스 Smart Load Monitor · 하루 3회 측정 (08:30 / 13:30 / 16:30)</p>
     </div>
     <div id="hdrInspector" style="background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.35);color:#fff;padding:8px 12px;border-radius:10px;font-size:12px;font-weight:600;white-space:nowrap;display:flex;align-items:center;gap:6px;backdrop-filter:blur(4px);min-width:fit-content;flex-shrink:0">
@@ -1420,6 +1420,7 @@ function loadInspector(){
 let cachedCustomers=[];
 let cachedModels=[];          // general_model_tj
 let cachedDefectModels=[];    // defect_model
+let cachedMaterialModels=[];  // material_master_tj.mapped_models
 
 const LS_LAST_CUSTOMER='lmc_last_customer';
 const LS_LAST_MODEL='lmc_last_model';
@@ -1485,10 +1486,31 @@ async function loadDefectModels(){
   }
 }
 
+// 소재마스터(material_master_tj)의 mapped_models(콤마구분)에서 기종명 추출
+async function loadMaterialModels(){
+  try{
+    const d=await sbSelect('material_master_tj',{},'customer.asc',5000);
+    const out=[];
+    d.forEach(r=>{
+      const cust=r.customer||'';
+      String(r.mapped_models||'').split(/[,;\n]/).forEach(nm=>{
+        const n=nm.trim();
+        if(n)out.push({name:n,customer:cust});
+      });
+    });
+    cachedMaterialModels=out;
+    console.log('[기종] material_master_tj',cachedMaterialModels.length,'건');
+  }catch(e){
+    console.log('소재마스터 기종 로드 실패:',e.message);
+    cachedMaterialModels=[];
+  }
+}
+
 async function loadModels(){
   await loadGeneralModels();
   await loadDefectModels();
-  console.log('[기종] 통합:',cachedModels.length+cachedDefectModels.length,'건');
+  await loadMaterialModels();
+  console.log('[기종] 통합:',cachedModels.length+cachedDefectModels.length+cachedMaterialModels.length,'건');
   restoreLastModelSelection();
 }
 
@@ -1546,6 +1568,7 @@ function getFilteredModels(query){
   const q=(query||'').trim().toLowerCase();
   let models=cachedModels.map(m=>({name:m.name,customer:m.customer}));
   cachedDefectModels.forEach(dm=>{if(!models.find(m=>m.name===dm.name))models.push({name:dm.name,customer:dm.customer})});
+  cachedMaterialModels.forEach(mm=>{if(!models.find(m=>m.name===mm.name&&m.customer===mm.customer))models.push({name:mm.name,customer:mm.customer})});
   if(cust)models=models.filter(m=>custMatch(m.customer,cust));
   if(q)models=models.filter(m=>m.name.toLowerCase().includes(q)||m.customer.toLowerCase().includes(q));
   models.sort((a,b)=>(a.customer||'').localeCompare(b.customer||'','ko')||a.name.localeCompare(b.name,'ko'));
@@ -1585,8 +1608,9 @@ function onModelSearch(query){
       const set=new Set();
       cachedModels.forEach(m=>{if(m.customer)set.add(m.customer)});
       cachedDefectModels.forEach(m=>{if(m.customer)set.add(m.customer)});
+      cachedMaterialModels.forEach(m=>{if(m.customer)set.add(m.customer)});
       const list=[...set].sort((a,b)=>a.localeCompare(b,'ko'));
-      const total=cachedModels.length+cachedDefectModels.length;
+      const total=cachedModels.length+cachedDefectModels.length+cachedMaterialModels.length;
       extra='<div class="md-empty" style="text-align:left;line-height:1.6">'+
         '<b>['+_escH(cust)+'] 매칭 기종 0건</b><br>'+
         '기종 마스터 총 '+total+'건 / 저장된 고객사명:<br>'+
