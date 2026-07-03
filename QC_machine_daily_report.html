@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>작업일보 v14.2</title>
+<title>작업일보 v14.3</title>
 <style>
   :root{
     --bg:#0f1419; --panel:#1a2332; --border:#2a3a52;
@@ -330,7 +330,7 @@
 <body>
 
 <div class="header">
-  <h1>📋 작업일보 v14.2</h1>
+  <h1>📋 작업일보 v14.3</h1>
   <div class="meta">
     <span><span class="status-dot" id="connDot"></span><b id="connText">연결 확인 중</b></span>
     <span>장비: <b id="deviceCount">0</b></span>
@@ -478,7 +478,7 @@
 
 <div class="footer">
   <span>Supabase <b>shot_count</b> · 폴링 <b>10초</b> · 매핑은 <b>Supabase</b>에 저장 (localStorage 캐시)</span>
-  <span>v14.2</span>
+  <span>v14.3</span>
 </div>
 
 <!-- 설정 모달 -->
@@ -598,7 +598,8 @@
     <div class="rfld"><label>기종</label><select id="rtRegModel"></select></div>
     <div class="rmodal-actions">
       <button class="btn" onclick="closeRtReg()">닫기</button>
-      <button class="btn" style="color:#f0883e" onclick="clearRtReg()">해제</button>
+      <button class="btn" style="color:#f0883e" onclick="clearRtReg()">해제(마감)</button>
+      <button class="btn" onclick="openRtCall()">📢 호출</button>
       <button class="btn primary" onclick="saveRtReg()">저장</button>
     </div>
   </div>
@@ -1901,13 +1902,47 @@
   }
   async function clearRtReg(){
     const m=document.getElementById('rtRegMachine').value;
-    if(!confirm(mLabel(m)+' 등록을 해제하시겠습니까?')) return;
+    const s=(rtSessions||[]).find(x=>normMachine(x.machine)===normMachine(m));
+    if(!s){ // 등록이 없으면 그냥 닫기
+      closeRtReg(); return;
+    }
+    const cur=repCountByMachine();
+    const qty=cur[normMachine(m)]||0;
+    if(!confirm(mLabel(m)+' 작업을 마감할까요?\n(현재까지 수량 '+qty.toLocaleString()+'개를 이력에 저장하고 등록을 해제합니다)')) return;
     try{
+      // 1) 현재까지 실적을 qc_daily_report에 저장 (중간 마감)
+      const row={
+        report_date: todayKST(),
+        inspector: s.inspector||'',
+        customer: (s.customer||currentCustomer||'SBC'),
+        model: s.model||'',
+        machine: String(normMachine(m)),
+        count_qty: qty,
+        qty: qty,
+        bad_qty: 0,
+        start_time: (s.started_at||todayKST()+'T00:00:00+09:00'),
+        end_time: kstNow()
+      };
+      const rr=await fetch(SUPABASE_URL+'/rest/v1/'+REPORT_TABLE,{method:'POST',headers:HDR_RJ,body:JSON.stringify([row])});
+      if(!rr.ok) throw new Error(await rr.text());
+      // 2) 세션 삭제 (등록 해제)
       const r=await fetch(SUPABASE_URL+'/rest/v1/'+SESSION_TABLE+'?machine=eq.'+encodeURIComponent(m),{method:'DELETE',headers:HDR_R});
       if(!r.ok) throw new Error(await r.text());
       closeRtReg();
       await loadRtSessions(); renderRealtime();
-    }catch(e){ alert('해제 실패: '+e.message); }
+      alert('마감 저장 완료 — 조회 탭에서 확인할 수 있습니다.');
+    }catch(e){ alert('마감 실패: '+e.message); }
+  }
+  // 등록 모달 → 호출(ntfy)
+  function openRtCall(){
+    const m=document.getElementById('rtRegMachine').value;
+    if(!m){ alert('호기 정보가 없습니다.'); return; }
+    const model=document.getElementById('rtRegModel').value||'';
+    const worker=document.getElementById('rtRegWorker').value||'';
+    callTarget={machine:m,model:model,worker:worker};
+    clearCallPhoto();
+    const info=document.getElementById('callInfo'); if(info) info.textContent=mLabel(m)+(model?' · '+model:'')+' — 호출 종류를 선택하세요';
+    document.getElementById('callModal').classList.add('on');
   }
 
   // ===== 이력 CRUD =====
@@ -2092,7 +2127,7 @@
   function asciiHdr(s){ const v=String(s||'').replace(/[^\x20-\x7E]/g,'').trim(); return v||'Call'; }
   async function sendCall(kind){
     if(!ntfyTopic){ alert('메뉴에서 ntfy 방 이름을 먼저 설정하세요.'); closeCallModal(); return; }
-    const t=callTarget||{}; const insp=currentInspector()||'-';
+    const t=callTarget||{}; const insp=(t.worker||currentInspector()||'-');
     const when=new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',dateStyle:'short',timeStyle:'short'}).format(new Date());
     const body=mLabel(t.machine)+(t.model?' ('+t.model+')':'')+' '+kind+' 호출\n작업자: '+insp+'\n'+when;
     try{
