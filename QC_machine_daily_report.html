@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>작업일보 v13.8</title>
+<title>작업일보 v14.0</title>
 <style>
   :root{
     --bg:#0f1419; --panel:#1a2332; --border:#2a3a52;
@@ -330,7 +330,7 @@
 <body>
 
 <div class="header">
-  <h1>📋 작업일보 v13.8</h1>
+  <h1>📋 작업일보 v14.0</h1>
   <div class="meta">
     <span><span class="status-dot" id="connDot"></span><b id="connText">연결 확인 중</b></span>
     <span>장비: <b id="deviceCount">0</b></span>
@@ -340,11 +340,9 @@
 </div>
 
 <div class="tabs">
-  <button class="tab on" id="tabRepBtn" onclick="showTab('rep')">📋 일보</button>
-  <button class="tab" id="tabRtBtn" onclick="showTab('rt')">📡 현황</button>
+  <button class="tab on" id="tabRtBtn" onclick="showTab('rt')">📡 현황</button>
   <button class="tab" id="tabHistBtn" onclick="showTab('hist')">📜 조회</button>
   <button class="tab" id="tabSetupBtn" onclick="showTab('setup')">⚙️ 메뉴</button>
-  <button class="tab" id="tabLayoutBtn" onclick="showTab('layout')">🗺️ 레이아웃</button>
   <button class="tab" id="tabMonBtn" onclick="showTab('mon')">📡 매핑</button>
   <button class="tab" id="tabFwBtn" onclick="showTab('fw')">🔌 펌웨어</button>
 </div>
@@ -352,7 +350,7 @@
 <!-- 실시간현황 -->
 <div id="viewRealtime">
   <div class="rcard">
-    <div class="rhint" style="margin-bottom:10px">실시간 카운팅</div>
+    <div class="rhint" style="margin-bottom:10px">실시간 카운팅 — 행을 누르면 작업자·기종을 등록합니다</div>
     <table class="rtable">
       <thead><tr><th>호기</th><th>작업자</th><th>기종</th><th>합격수량</th></tr></thead>
       <tbody id="rtMachineBody"><tr><td colspan="4" class="rempty">불러오는 중...</td></tr></tbody>
@@ -480,7 +478,7 @@
 
 <div class="footer">
   <span>Supabase <b>shot_count</b> · 폴링 <b>10초</b> · 매핑은 <b>Supabase</b>에 저장 (localStorage 캐시)</span>
-  <span>v13.5</span>
+  <span>v14.0</span>
 </div>
 
 <!-- 설정 모달 -->
@@ -587,6 +585,22 @@
     </div>
     <div class="rupd" id="stopLogSum" style="margin-top:8px"></div>
     <div class="rmodal-foot"><button class="btn" onclick="downloadStopLog()">📥 엑셀</button><button class="btn primary" onclick="closeStopLog()">닫기</button></div>
+  </div>
+</div>
+
+<!-- 현황 등록 모달 (호기별 작업자·기종) -->
+<div class="rmodal" id="rtRegModal">
+  <div class="rmodal-box">
+    <h2 id="rtRegTitle">작업 등록</h2>
+    <input type="hidden" id="rtRegMachine">
+    <div class="rfld"><label>호기</label><input type="text" id="rtRegMachineShow" disabled></div>
+    <div class="rfld"><label>작업자</label><select id="rtRegWorker"></select></div>
+    <div class="rfld"><label>기종</label><select id="rtRegModel"></select></div>
+    <div class="rmodal-actions">
+      <button class="btn" onclick="closeRtReg()">닫기</button>
+      <button class="btn" style="color:#f0883e" onclick="clearRtReg()">해제</button>
+      <button class="btn primary" onclick="saveRtReg()">저장</button>
+    </div>
   </div>
 </div>
 
@@ -842,9 +856,13 @@
   function loadSessionBase(){ try{ sessionBase=JSON.parse(localStorage.getItem(LS_SESSBASE)||'{}'); }catch(_){ sessionBase={}; } }
 
   // 당일 카운트 = 현재 누적 - 실효 baseline
+  // 보드 재부팅/재플래시로 누적이 0부터 다시 시작하면 누적 < 0점이 됨
+  // → 리셋으로 판단하고 누적값 자체를 당일 카운트로 사용 (0 고정 방지)
   function todayCount(dev, code, cumulative){
     const base = effectiveBaseline(dev, code, cumulative);
-    const v = (cumulative||0) - base;
+    const cum = cumulative||0;
+    if(base > 0 && cum < base) return cum;   // 카운터 리셋 감지
+    const v = cum - base;
     return v > 0 ? v : 0;
   }
 
@@ -1742,21 +1760,20 @@
   function saveWorkModal(){ const e=document.getElementById('ff_work'); workMinutes=parseInt(e?e.value:0)||0; localStorage.setItem(LS_WORKMIN,String(workMinutes)); closeWorkModal(); renderReport(); }
 
   function showTab(t){
+    if(t==='rep'||t==='layout') t='rt';   // 일보/레이아웃 탭 제거됨
     curTab=t;
     document.getElementById('viewRealtime').style.display=(t==='rt')?'':'none';
     document.getElementById('viewMonitor').style.display=(t==='mon')?'':'none';
-    document.getElementById('viewReport').classList.toggle('rep-hidden',t!=='rep');
+    document.getElementById('viewReport').classList.toggle('rep-hidden',true);
     document.getElementById('viewHist').classList.toggle('rep-hidden',t!=='hist');
     document.getElementById('viewSetup').classList.toggle('rep-hidden',t!=='setup');
     document.getElementById('viewFw').classList.toggle('rep-hidden',t!=='fw');
-    document.getElementById('viewLayout').classList.toggle('rep-hidden',t!=='layout');
+    document.getElementById('viewLayout').classList.toggle('rep-hidden',true);
     document.getElementById('tabRtBtn').classList.toggle('on',t==='rt');
     document.getElementById('tabMonBtn').classList.toggle('on',t==='mon');
-    document.getElementById('tabRepBtn').classList.toggle('on',t==='rep');
     document.getElementById('tabHistBtn').classList.toggle('on',t==='hist');
     document.getElementById('tabSetupBtn').classList.toggle('on',t==='setup');
     document.getElementById('tabFwBtn').classList.toggle('on',t==='fw');
-    document.getElementById('tabLayoutBtn').classList.toggle('on',t==='layout');
     if(rtTimer){ clearInterval(rtTimer); rtTimer=null; }
     if(t==='rt'){ tick(); loadRtSessions().then(renderRealtime); renderRealtime(); rtTimer=setInterval(()=>loadRtSessions().then(renderRealtime),10000); }
     if(t==='rep'){ renderChips(); renderReport(); }
@@ -1798,11 +1815,53 @@
     if(!mkeys.length){ mb.innerHTML='<tr><td colspan="4" class="rempty">설정에서 호기를 등록하거나 신호세팅에서 매핑하세요.</td></tr>'; }
     else{
       let h='',tot=0;
-      mkeys.forEach(k=>{ const q=cur[k]||0; tot+=q; const s=sessByM[k]; const model=s?s.model:'-'; const worker=s&&s.inspector?s.inspector:'-'; h+='<tr><td class="machine">'+mLabel(k)+'</td><td>'+worker+'</td><td>'+(model||'-')+'</td><td class="num pass">'+q.toLocaleString()+'</td></tr>'; });
+      mkeys.forEach(k=>{ const q=cur[k]||0; tot+=q; const s=sessByM[k]; const model=s?s.model:'-'; const worker=s&&s.inspector?s.inspector:'-'; h+='<tr class="rt-row" style="cursor:pointer" onclick="openRtReg(\''+String(k).replace(/'/g,"\\'")+'\')"><td class="machine">'+mLabel(k)+'</td><td>'+worker+'</td><td>'+(model||'-')+'</td><td class="num pass">'+q.toLocaleString()+'</td></tr>'; });
       h+='<tr class="total"><td colspan="3">합계</td><td class="num pass">'+tot.toLocaleString()+'</td></tr>';
       mb.innerHTML=h;
     }
     const up=document.getElementById('rtUpd'); if(up) up.textContent='갱신 '+new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(new Date());
+  }
+
+  // ===== 현황 행 클릭 → 작업자·기종 등록 =====
+  function openRtReg(machine){
+    const m=normMachine(machine);
+    document.getElementById('rtRegMachine').value=m;
+    document.getElementById('rtRegMachineShow').value=mLabel(m);
+    const s=(rtSessions||[]).find(x=>normMachine(x.machine)===m);
+    // 작업자 select
+    const ws=document.getElementById('rtRegWorker');
+    const curW=s&&s.inspector?s.inspector:'';
+    ws.innerHTML='<option value="">작업자 선택</option>'+(workerList||[]).map(w=>'<option value="'+w.replace(/"/g,'&quot;')+'"'+(w===curW?' selected':'')+'>'+w+'</option>').join('');
+    // 기종 select
+    fillModelSelect(document.getElementById('rtRegModel'), s?s.model:'');
+    document.getElementById('rtRegModal').classList.add('on');
+  }
+  function closeRtReg(){ document.getElementById('rtRegModal').classList.remove('on'); }
+  async function saveRtReg(){
+    const m=document.getElementById('rtRegMachine').value;
+    const worker=document.getElementById('rtRegWorker').value.trim();
+    const model=document.getElementById('rtRegModel').value;
+    if(!worker){ alert('작업자를 선택하세요. (메뉴 탭에서 작업자 등록)'); return; }
+    if(!model){ alert('기종을 선택하세요. (메뉴 탭에서 기종 등록)'); return; }
+    try{
+      await fetch(SUPABASE_URL+'/rest/v1/'+SESSION_TABLE+'?machine=eq.'+encodeURIComponent(m),{method:'DELETE',headers:HDR_R});
+      const ext=[{machine:String(m),inspector:worker,model:model,updated_at:kstNow(),customer:(currentCustomer||'SBC'),applied:true,started_at:kstNow()}];
+      const base=[{machine:String(m),inspector:worker,model:model,updated_at:kstNow()}];
+      let r=await fetch(SUPABASE_URL+'/rest/v1/'+SESSION_TABLE,{method:'POST',headers:{...HDR_RJ,'Prefer':'resolution=merge-duplicates'},body:JSON.stringify(ext)});
+      if(!r.ok){ r=await fetch(SUPABASE_URL+'/rest/v1/'+SESSION_TABLE,{method:'POST',headers:{...HDR_RJ,'Prefer':'resolution=merge-duplicates'},body:JSON.stringify(base)}); if(!r.ok) throw new Error(await r.text()); }
+      closeRtReg();
+      await loadRtSessions(); renderRealtime();
+    }catch(e){ alert('저장 실패: '+e.message); }
+  }
+  async function clearRtReg(){
+    const m=document.getElementById('rtRegMachine').value;
+    if(!confirm(mLabel(m)+' 등록을 해제하시겠습니까?')) return;
+    try{
+      const r=await fetch(SUPABASE_URL+'/rest/v1/'+SESSION_TABLE+'?machine=eq.'+encodeURIComponent(m),{method:'DELETE',headers:HDR_R});
+      if(!r.ok) throw new Error(await r.text());
+      closeRtReg();
+      await loadRtSessions(); renderRealtime();
+    }catch(e){ alert('해제 실패: '+e.message); }
   }
 
   // ===== 이력 CRUD =====
@@ -1821,7 +1880,7 @@
       const r=await fetch(url,{headers:HDR_R});
       if(!r.ok){ const t=await r.text(); tb.innerHTML='<tr><td colspan="12" class="rempty">조회 실패('+r.status+') — qc_daily_report 테이블/RLS 확인<br><span style="font-size:11px">'+(t||'').slice(0,150)+'</span></td></tr>'; lastHistRows=[]; selectedHistIdx=-1; return; }
       const rows=await r.json(); lastHistRows=rows||[]; selectedHistIdx=-1;
-      if(!rows||rows.length===0){ tb.innerHTML='<tr><td colspan="12" class="rempty">이력이 없습니다. (작업일보 탭에서 ✅ 마무리 시 저장됩니다)</td></tr>'; return; }
+      if(!rows||rows.length===0){ tb.innerHTML='<tr><td colspan="12" class="rempty">이력이 없습니다.</td></tr>'; return; }
       tb.innerHTML=rows.map(function(x,i){ var stopTxt=(((x.stop_count||0)>0)||((x.stop_minutes||0)>0))?((x.stop_count||0)+'회·'+(x.stop_minutes||0)+'분'):(x.stop_reason?escHtml(x.stop_reason):'-'); return '<tr onclick="selectHist('+i+')" data-hi="'+i+'"><td>'+(x.report_date||'')+'</td><td>'+(x.inspector||'')+'</td><td>'+(x.model||'')+'</td><td class="machine">'+mLabel(x.machine||'')+'</td><td class="num">'+(x.count_qty!=null?Number(x.count_qty).toLocaleString():'-')+'</td><td class="num pass">'+(x.qty||0).toLocaleString()+'</td><td class="num" style="color:#ef4444">'+(x.bad_qty||0).toLocaleString()+'</td><td class="num">'+(fmtTime(x.start_time)||'-')+'</td><td class="num">'+(fmtTime(x.end_time)||'-')+'</td><td class="num">'+calcCT(x)+'</td><td class="num">'+calcSPM(x)+'</td><td>'+stopTxt+'</td></tr>'; }).join('');
     }catch(e){ tb.innerHTML='<tr><td colspan="12" class="rempty">조회 실패: '+e.message+'</td></tr>'; }
   }
@@ -2030,7 +2089,7 @@
   (async ()=>{
     await loadMapping();   // 서버에서 매핑 먼저 로드 (실패 시 localStorage 폴백)
     await loadBaselines();
-    loadRepLocal(); renderChips(); showTab('rep');
+    loadRepLocal(); renderChips(); showTab('rt');
     loadRepConfig().then(()=>{ renderChips(); renderReport(); });
     await tick();
     await autoZeroNewDay();   // 오늘 0점이 없는 채널만 서버에 저장(ignore-duplicates, 기존값 보존)
