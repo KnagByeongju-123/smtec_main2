@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>소재입고 등록 (Rev5.3)</title>
+  <title>소재입고 등록 (Rev5.4)</title>
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
@@ -102,7 +102,7 @@
 </head>
 <body>
 <div class="hdr">
-  <h1>📤 소재입고 등록 (Rev5.3)</h1>
+  <h1>📤 소재입고 등록 (Rev5.4)</h1>
   <p>소재업체 템플릿 업로드 → DB 저장 · <span style="color:#ffeb3b;font-weight:700">성적서, 밀시트 첨부 가능</span></p>
 </div>
 <div class="tabs">
@@ -870,7 +870,7 @@ async function doRegister(){
       }
     }
 
-    let certAutoOk=0,certAutoFail=0;
+    let certAutoOk=0,certAutoFail=0,_certAutoErr='';
     if(_certBatch&&_certBatch.length){
       const SB_URL=getSbUrl(),SB_KEY=getSbKey();
       const emptyPayloads=_certBatch.filter(c=>!c.done).map(c=>({
@@ -887,13 +887,13 @@ async function doRegister(){
         receipt_date:c.receipt_date,
         cert_data:null,
         has_millsheet:false,
-        final_judge:'미검사',
+        final_judge:'대기',  /* [Rev5.4] '미검사'→'대기' — IQC 검사대기 판정 기준과 일치 */
         charge:'',
         sign:'',
         created_at:kstISOString(new Date())
       }));
       if(emptyPayloads.length){
-        try{
+        const postCerts=async(payloads)=>{
           const res=await fetch(SB_URL+'/rest/v1/inspection_certs',{
             method:'POST',
             headers:{
@@ -902,19 +902,32 @@ async function doRegister(){
               'Authorization':'Bearer '+SB_KEY,
               'Prefer':'return=minimal'
             },
-            body:JSON.stringify(emptyPayloads)
+            body:JSON.stringify(payloads)
           });
-          if(res.ok){
+          const txt=res.ok?'':await res.text().catch(()=>'');
+          return {ok:res.ok,status:res.status,text:txt};
+        };
+        try{
+          /* 1차: 풀 페이로드 */
+          let r=await postCerts(emptyPayloads);
+          if(!r.ok&&/PGRST204|column.*does not exist|Could not find/i.test(r.text)){
+            /* [Rev5.4] 컬럼 누락(coil_count/lots_detail 등) → 기본 컬럼만으로 재시도 */
+            console.warn('빈 성적서: 컬럼 누락 - 안전모드 재시도.',r.status,r.text.substring(0,200));
+            const safe=emptyPayloads.map(p=>{const {coil_count,lots_detail,...rest}=p;return rest});
+            r=await postCerts(safe);
+          }
+          if(r.ok){
             certAutoOk=emptyPayloads.length;
             _certBatch.forEach(c=>{if(!c.done)c.autoCreated=true});
           }else{
             certAutoFail=emptyPayloads.length;
-            const err=await res.text().catch(()=>'');
-            console.error('빈 성적서 자동 생성 실패:',res.status,err);
+            _certAutoErr='HTTP '+r.status+' '+r.text.substring(0,150);
+            console.error('빈 성적서 자동 생성 실패:',r.status,r.text);
           }
         }catch(e){
           console.error('빈 성적서 자동 생성 오류:',e);
           certAutoFail=emptyPayloads.length;
+          _certAutoErr=e.message||String(e);
         }
       }
     }
@@ -923,6 +936,7 @@ async function doRegister(){
     if(sbEl){
       let extra='';
       if(certAutoOk>0)extra=`<br>📋 IQC 빈 성적서 ${certAutoOk}건 자동 생성 (수입검사 대기)`;
+      if(certAutoFail>0)extra+=`<br><span style="color:#c62828;font-weight:700">❌ IQC 성적서 ${certAutoFail}건 생성 실패 — 수입검사 대기에 표시되지 않습니다!<br>사유: ${_certAutoErr}</span>`;
       if(sbOk>0&&sbFail===0){
         sbEl.innerHTML='✅ Supabase 저장 완료: '+sbOk+'건 → 5분 이내 MES 자동등록 예정'+extra;
         sbEl.style.color='#2e7d32';
