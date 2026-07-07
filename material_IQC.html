@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>소재 수입검사 v3.1.4 | (주)태진다이텍</title>
+<title>소재 수입검사 v3.1.5 | (주)태진다이텍</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Malgun Gothic','맑은 고딕','Segoe UI',sans-serif;background:#f4f6f9;color:#222;font-size:14px;line-height:1.5}
@@ -143,7 +143,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 
 <div class="hdr">
   <div>
-    <h1>📋 소재 수입검사 시스템 v3.1.4</h1>
+    <h1>📋 소재 수입검사 시스템 v3.1.5</h1>
     <div class="sub">(주)태진다이텍 · 품질관리팀 · 그룹 자동 통합 (공급자+재질+두께+폭)</div>
   </div>
   <div class="user-info" id="userInfoBar">검사자: <b id="loginUser">로그인 필요</b></div>
@@ -310,6 +310,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}
       <div style="margin-top:12px;display:flex;gap:6px;flex-wrap:wrap">
         <button class="btn btn-warn btn-sm" onclick="migrateGroupKeys()" title="로컬 inspections의 옛 그룹키(LOT 포함)를 새 그룹키(LOT 제외)로 변환">🔧 그룹키 마이그레이션</button>
         <button class="btn btn-sec btn-sm" onclick="resetFinalJudgeToWait()" title="모든 inspection_certs.final_judge를 '대기'로 일괄 되돌리기 (이전 검사완료 처리 취소)" style="background:#0ea5e9;color:#fff">↺ final_judge 초기화</button>
+        <button class="btn btn-suc btn-sm" onclick="recoverMissingCerts()" title="raw_material_receipt에는 있으나 inspection_certs에 없는 입고건을 찾아 빈 성적서를 일괄 생성">🩹 누락 성적서 복구</button>
         <button class="btn btn-dng btn-sm" onclick="clearLocalCache()">🗑 로컬 캐시 초기화</button>
       </div>
     </div>
@@ -447,7 +448,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 
 <script>
 /* ============================================================
-   소재 수입검사 시스템 v3.1.4
+   소재 수입검사 시스템 v3.1.5
    - 그룹 = 공급자 + 재질 + 두께 + 폭 (LOT 무관)
    - 검사자 = 로그인 정보 자동
    - Supabase 연결 정보 고정
@@ -2316,6 +2317,119 @@ ALTER TABLE public.iqc_inspections ADD COLUMN IF NOT EXISTS approver_role TEXT;`
    - 새 그룹 기준으로 다시 검사하기 위해 전체 초기화
    - 안전: 2단계 확인 + 코드 입력
 */
+/* [v3.1.5] 누락 성적서 복구
+   raw_material_receipt에는 있으나 inspection_certs에 매칭되지 않는 입고건을 찾아
+   업체+재질+두께+폭+입고일 단위로 묶어 빈 성적서(final_judge='대기')를 생성 */
+async function recoverMissingCerts(){
+  const btnMsg = m => showToast(m);
+  const days = prompt('최근 며칠간의 입고분을 검사할까요? (기본 30)', '30');
+  if(days === null) return;
+  const nDays = parseInt(days) || 30;
+  const fromDate = (()=>{ const d=new Date(); d.setDate(d.getDate()-nDays);
+    const k=new Date(d.getTime()-d.getTimezoneOffset()*60000+9*3600*1000);
+    return k.toISOString().split('T')[0]; })();
+
+  btnMsg('🔍 입고 데이터 조회 중...');
+  const hdr = { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY, 'Content-Type': 'application/json' };
+
+  let receipts=[], certs=[];
+  try{
+    const r1 = await fetch(SB_URL + '/rest/v1/raw_material_receipt?select=id,receipt_date,vendor_site_id,vendor_name,material_type,thickness,width_mm,heat_no,net_weight&receipt_date=gte.' + fromDate + '&order=receipt_date.desc&limit=2000', { headers: hdr });
+    if(!r1.ok) throw new Error('raw_material_receipt HTTP ' + r1.status);
+    receipts = await r1.json();
+    const r2 = await fetch(SB_URL + '/rest/v1/inspection_certs?select=id,supplier,vendor_site_id,material_type,thickness,width_mm,lot_no,heat_no,lots_detail,receipt_date&order=created_at.desc&limit=2000', { headers: hdr });
+    if(!r2.ok) throw new Error('inspection_certs HTTP ' + r2.status);
+    certs = await r2.json();
+  }catch(e){
+    alert('❌ 조회 실패: ' + e.message);
+    return;
+  }
+  if(!receipts.length){ alert('최근 ' + nDays + '일 입고 데이터가 없습니다.'); return; }
+
+  const normHeat = s => String(s||'').replace(/^LOT[-_\s]*/i,'').replace(/\s/g,'').toUpperCase();
+  const fnum = v => { const n=parseFloat(v); return isNaN(n)?'':String(n); };
+
+  /* 성적서 인덱스: 재질|두께|폭 → [ {heats:Set} ] */
+  const certIdx = new Map();
+  certs.forEach(c=>{
+    const key = [String(c.material_type||'').trim().toUpperCase(), fnum(c.thickness), fnum(c.width_mm)].join('|');
+    if(!certIdx.has(key)) certIdx.set(key, []);
+    const heats = new Set();
+    if(c.heat_no) heats.add(normHeat(c.heat_no));
+    if(c.lot_no) heats.add(normHeat(c.lot_no));
+    String(c.lots_detail||'').split(',').forEach(l=>{ const h=normHeat(l); if(h) heats.add(h); });
+    certIdx.get(key).push(heats);
+  });
+
+  /* 누락 입고건 판정 */
+  const missing = receipts.filter(r=>{
+    const key = [String(r.material_type||'').trim().toUpperCase(), fnum(r.thickness), fnum(r.width_mm)].join('|');
+    const h = normHeat(r.heat_no);
+    if(!h) return false;
+    const list = certIdx.get(key);
+    if(!list) return true;
+    return !list.some(heats => heats.has(h));
+  });
+
+  if(!missing.length){
+    alert('✅ 최근 ' + nDays + '일 입고분(' + receipts.length + '건) 모두 성적서가 존재합니다.\n누락 없음.');
+    return;
+  }
+
+  /* 업체+재질+두께+폭+입고일 그룹핑 → 성적서 1건씩 */
+  const groups = new Map();
+  missing.forEach(r=>{
+    const gk = [(r.vendor_site_id||r.vendor_name||'').toUpperCase(), String(r.material_type||'').trim().toUpperCase(), fnum(r.thickness), fnum(r.width_mm), r.receipt_date||''].join('|');
+    if(!groups.has(gk)) groups.set(gk, {
+      supplier: r.vendor_name || '', vendor_site_id: r.vendor_site_id || '',
+      material_type: r.material_type || '', thickness: parseFloat(r.thickness)||null,
+      width_mm: parseFloat(r.width_mm)||null, receipt_date: r.receipt_date || '',
+      heats: [], weight: 0
+    });
+    const g = groups.get(gk);
+    const h = normHeat(r.heat_no);
+    if(h && !g.heats.includes(h)) g.heats.push(h);
+    g.weight += parseFloat(r.net_weight)||0;
+  });
+
+  const gArr = Array.from(groups.values());
+  const preview = gArr.map(g=>`  • ${g.receipt_date} ${g.supplier} ${g.material_type} ${g.thickness}T x ${g.width_mm}W — 코일 ${g.heats.length}개 (${g.heats.slice(0,3).join(', ')}${g.heats.length>3?' 외':''})`).join('\n');
+  if(!confirm('🩹 누락 성적서 복구\n\n누락 입고 ' + missing.length + '건 → 성적서 ' + gArr.length + '건 생성:\n\n' + preview + '\n\n생성하시겠습니까? (final_judge=대기 → 검사 대기 탭에 표시)')) return;
+
+  const payloads = gArr.map(g=>({
+    supplier: g.supplier, vendor_site_id: g.vendor_site_id,
+    material_type: g.material_type, thickness: g.thickness, width_mm: g.width_mm,
+    lot_no: g.heats[0]||'', heat_no: g.heats[0]||'',
+    weight: g.weight||null, coil_count: g.heats.length,
+    lots_detail: g.heats.join(','), receipt_date: g.receipt_date,
+    cert_data: null, has_millsheet: false, final_judge: '대기',
+    charge: '', sign: '', created_at: nowKstISO()
+  }));
+
+  const postCerts = async body => {
+    const res = await fetch(SB_URL + '/rest/v1/inspection_certs', {
+      method: 'POST', headers: { ...hdr, 'Prefer': 'return=minimal' }, body: JSON.stringify(body)
+    });
+    const txt = res.ok ? '' : await res.text().catch(()=> '');
+    return { ok: res.ok, status: res.status, text: txt };
+  };
+
+  btnMsg('💾 성적서 생성 중...');
+  let r = await postCerts(payloads);
+  if(!r.ok && /PGRST204|column.*does not exist|Could not find/i.test(r.text)){
+    const safe = payloads.map(p=>{ const { coil_count, lots_detail, ...rest } = p; return rest; });
+    r = await postCerts(safe);
+  }
+  if(r.ok){
+    alert('✅ 성적서 ' + payloads.length + '건 생성 완료\n검사 대기 탭에서 확인하세요.');
+    await loadFromSupabase();
+    showTab('wait');
+  }else{
+    alert('❌ 생성 실패: HTTP ' + r.status + '\n' + r.text.substring(0,300));
+  }
+}
+
+
 async function resetFinalJudgeToWait(){
   await loadFromSupabase();  // 최신 데이터 다시 받아서 표시
 
