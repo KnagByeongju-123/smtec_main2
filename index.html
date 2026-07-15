@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>ESG Smart Factory v3.42</title>
+<title>ESG Smart Factory v3.45</title>
 <meta name="theme-color" content="#0f172a">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -190,11 +190,11 @@ body.locked{overflow:hidden}
 </div>
 
 <div class="hdr">
-  <div class="hdr-title">ESG Smart Factory <span style="font-size:11px;color:#fbbf24;font-weight:600;margin-left:6px;background:rgba(251,191,36,0.12);padding:2px 8px;border-radius:8px;border:1px solid rgba(251,191,36,0.3);vertical-align:middle">v3.42</span></div>
+  <div class="hdr-title">ESG Smart Factory <span style="font-size:11px;color:#fbbf24;font-weight:600;margin-left:6px;background:rgba(251,191,36,0.12);padding:2px 8px;border-radius:8px;border:1px solid rgba(251,191,36,0.3);vertical-align:middle">v3.45</span></div>
   <div class="hdr-bar" id="hdrBar" style="display:none">
     <div class="hdr-bar-left">
       <button class="edit-toggle" id="editToggleBtn" onclick="toggleEditMode()">🔧 편집</button>
-      <button type="button" class="counter-btn" id="elBtn" title="El">El</button>
+      <button type="button" class="counter-btn" id="elBtn" onclick="toggleCallLight()" title="2층 경광등 호출">El</button>
       <button type="button" class="counter-btn" onclick="location.href='https://knagbyeongju-123.github.io/smtec_main2/QC_machine_daily_report.html'" title="작업일보(검사/공정)">In</button>
       <button type="button" class="counter-btn" onclick="location.href='https://knagbyeongju-123.github.io/smtec_main2/env_dashboard.html'" title="환경 모니터링">En</button>
     </div>
@@ -1376,5 +1376,85 @@ function openCounterPopup(){
 })();
 </script>
 
+
+<script>
+/* ===== 2층 경광등 호출 (El) ===== */
+const EL_SB_URL = 'https://omngtyewdaqpphnzeate.supabase.co';
+const EL_SB_KEY = 'sb_publishable_9j2YkkL-7ul1TrhH-NjVdQ_vWDG2-1D';
+const EL_ID = 'floor2';
+const EL_HOLD_SEC = 10;
+var _elBusy = false;
+
+function _elHdr(){
+  return {'apikey':EL_SB_KEY,'Authorization':'Bearer '+EL_SB_KEY,'Content-Type':'application/json','Prefer':'return=representation'};
+}
+function _elKST(offsetSec){
+  var d = new Date(Date.now() + (offsetSec||0)*1000 + 9*3600*1000);
+  return d.toISOString().replace('Z','').replace('T',' ') + '+09:00';
+}
+function _elPaint(on){
+  var b = document.getElementById('elBtn'); if(!b) return;
+  if(on){ b.classList.add('running'); b.innerHTML='🚨 호출중'; }
+  else  { b.classList.remove('running'); b.innerHTML='El'; }
+}
+async function _elFetchState(){
+  try{
+    var r = await fetch(EL_SB_URL+'/rest/v1/call_light?id=eq.'+EL_ID+'&select=state,expire_at',{headers:{'apikey':EL_SB_KEY,'Authorization':'Bearer '+EL_SB_KEY}});
+    var j = await r.json();
+    if(!j || !j.length){ _elPaint(false); return false; }
+    var on = j[0].state === true && (!j[0].expire_at || new Date(j[0].expire_at).getTime() > Date.now());
+    _elPaint(on);
+    return on;
+  }catch(e){ return false; }
+}
+async function toggleCallLight(){
+  if(_elBusy) return;
+  _elBusy = true;
+  try{
+    var on = await _elFetchState();
+    var body = on
+      ? { state:false, msg:null, called_by:(window.CURRENT_USER||''), updated_at:_elKST(0), expire_at:null }
+      : { state:true,  msg:'2층 호출', called_by:(window.CURRENT_USER||''), updated_at:_elKST(0), expire_at:_elKST(EL_HOLD_SEC) };
+    var r = await fetch(EL_SB_URL+'/rest/v1/call_light?id=eq.'+EL_ID,{method:'PATCH',headers:_elHdr(),body:JSON.stringify(body)});
+    if(!r.ok){
+      showElModal('⚠️','호출 실패','서버 응답 오류 ('+r.status+')\n네트워크 상태를 확인하세요.','#fca5a5');
+    } else {
+      _elPaint(!on);
+      if(on) showElModal('🔕','호출 취소','2층 경광등 호출을 취소했습니다.','#9ca3af');
+      else   showElModal('🚨','알림 발송 완료','2층 경광등이 '+EL_HOLD_SEC+'초간 작동합니다.','#fbbf24');
+    }
+  }catch(e){ showElModal('⚠️','네트워크 오류','호출을 전송하지 못했습니다.','#fca5a5'); }
+  _elBusy = false;
+}
+function showElModal(icon,title,msg,color){
+  var m = document.getElementById('elModal'); if(!m) return;
+  document.getElementById('elModalIcon').textContent = icon;
+  var t = document.getElementById('elModalTitle');
+  t.textContent = title; t.style.color = color || '#fbbf24';
+  document.getElementById('elModalMsg').textContent = msg;
+  m.style.display = 'flex';
+}
+function closeElModal(){
+  var m = document.getElementById('elModal'); if(m) m.style.display = 'none';
+}
+document.addEventListener('DOMContentLoaded', function(){
+  var m = document.getElementById('elModal');
+  if(m) m.addEventListener('click', function(e){ if(e.target === m) closeElModal(); });
+});
+
+_elFetchState();
+setInterval(_elFetchState, 5000);
+document.addEventListener('visibilitychange', function(){ if(!document.hidden) _elFetchState(); });
+</script>
+
+<!-- 2층 경광등 호출 결과 모달 -->
+<div id="elModal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.6);align-items:center;justify-content:center;padding:20px">
+  <div style="background:#111827;border:1px solid #374151;border-radius:16px;padding:24px 20px;max-width:320px;width:100%;text-align:center;box-shadow:0 20px 50px rgba(0,0,0,.5)">
+    <div id="elModalIcon" style="font-size:44px;line-height:1;margin-bottom:12px">🚨</div>
+    <div id="elModalTitle" style="font-size:17px;font-weight:800;color:#fbbf24;margin-bottom:8px">알림 발송</div>
+    <div id="elModalMsg" style="font-size:13px;color:#9ca3af;line-height:1.7;margin-bottom:18px">2층 경광등을 호출했습니다.</div>
+    <button type="button" onclick="closeElModal()" style="width:100%;background:rgba(251,191,36,.15);border:1px solid rgba(251,191,36,.45);color:#fbbf24;padding:11px;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent">닫기</button>
+  </div>
+</div>
 </body>
 </html>
