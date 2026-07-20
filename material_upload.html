@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>소재입고 등록 (Rev5.4)</title>
+  <title>소재입고 등록 (Rev5.5)</title>
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
@@ -102,7 +102,7 @@
 </head>
 <body>
 <div class="hdr">
-  <h1>📤 소재입고 등록 (Rev5.4)</h1>
+  <h1>📤 소재입고 등록 (Rev5.5)</h1>
   <p>소재업체 템플릿 업로드 → DB 저장 · <span style="color:#ffeb3b;font-weight:700">성적서, 밀시트 첨부 가능</span></p>
 </div>
 <div class="tabs">
@@ -826,14 +826,19 @@ async function doRegister(){
   summary+='<br><span id="ntfyStatusLive" style="color:#888;font-size:11px">📧 알림 발송 대기중</span>';
   document.getElementById('doneSummary').innerHTML=summary;
   document.getElementById('btnRegister').disabled=false;
+  /* [Rev5.5] _certBatch 스냅샷 - goStep(4)의 500ms prepareCertBatch 재빌드/자동복귀 초기화와 무관하게 보존 */
+  const _certSnapshot=(_certBatch&&_certBatch.length)?_certBatch.filter(c=>!c.done).map(c=>({...c})):[];
   goStep(4);
-  startAutoReturn(10);
+  /* [Rev5.5] 자동복귀는 Supabase 저장(입고+성적서) 완료 후 시작 - 저장 전 화면 이탈로 인한 수입검사 누락 방지 */
 
   const matSummary=rows.slice(0,5).map(r=>r.material_info||'-').join('\n  ');
   (async()=>{
+    const SB_URL=getSbUrl(),SB_KEY=getSbKey();
+
+    /* [Rev5.5] ① 입고 저장 - 별도 async 함수로 분리 */
     let sbOk=0,sbFail=0;
-    if(dbRows.length){
-      const SB_URL=getSbUrl(),SB_KEY=getSbKey();
+    const postReceipts=async()=>{
+      if(!dbRows.length)return;
       try{
         for(let i=0;i<dbRows.length;i+=100){
           const batch=dbRows.slice(i,i+100);
@@ -849,7 +854,8 @@ async function doRegister(){
                 'Prefer':'return=minimal'
               },
               body:JSON.stringify(batch),
-              signal:ctrl.signal
+              signal:ctrl.signal,
+              keepalive:batch.length<=30 /* [Rev5.5] 소량 배치는 페이지 이탈 후에도 전송 유지 */
             });
             clearTimeout(tid);
             if(res.ok)sbOk+=batch.length;
@@ -868,12 +874,13 @@ async function doRegister(){
         console.error('Supabase 저장 오류:',e);
         sbFail=dbRows.length-sbOk;
       }
-    }
+    };
 
+    /* [Rev5.5] ② IQC 빈 성적서 생성 - 입고 저장과 병렬 실행 (직렬 대기 중 탭 종료로 인한 수입검사 누락 방지) */
     let certAutoOk=0,certAutoFail=0,_certAutoErr='';
-    if(_certBatch&&_certBatch.length){
-      const SB_URL=getSbUrl(),SB_KEY=getSbKey();
-      const emptyPayloads=_certBatch.filter(c=>!c.done).map(c=>({
+    const postCertBatch=async()=>{
+      if(!_certSnapshot.length)return;
+      const emptyPayloads=_certSnapshot.map(c=>({
         supplier:c.supplier,
         vendor_site_id:c.supplier_code,
         material_type:c.material_type,
@@ -918,7 +925,7 @@ async function doRegister(){
           }
           if(r.ok){
             certAutoOk=emptyPayloads.length;
-            _certBatch.forEach(c=>{if(!c.done)c.autoCreated=true});
+            if(_certBatch&&_certBatch.length)_certBatch.forEach(c=>{if(!c.done)c.autoCreated=true});
           }else{
             certAutoFail=emptyPayloads.length;
             _certAutoErr='HTTP '+r.status+' '+r.text.substring(0,150);
@@ -930,7 +937,13 @@ async function doRegister(){
           _certAutoErr=e.message||String(e);
         }
       }
-    }
+    };
+
+    /* [Rev5.5] 입고 저장 + 성적서 생성 병렬 실행 (둘 다 완료될 때까지 대기) */
+    await Promise.all([
+      postReceipts().catch(e=>console.error('입고 저장 오류:',e)),
+      postCertBatch().catch(e=>{console.error('성적서 생성 오류:',e);certAutoFail=_certSnapshot.length;_certAutoErr=e.message||String(e)})
+    ]);
 
     const sbEl=document.getElementById('sbStatusLive');
     if(sbEl){
@@ -967,6 +980,14 @@ async function doRegister(){
     const titleEl=document.getElementById('doneTitle');
     if(titleEl&&sbOk>0){
       titleEl.textContent='✅ '+sbOk+'건 처리 완료';
+    }
+
+    /* [Rev5.5] 저장 전부 완료 후에만 자동복귀 시작.
+       성적서 생성 실패 시 자동복귀 생략 → 화면에 남은 오류를 작업자가 확인 */
+    if(certAutoFail>0||sbFail>0){
+      showToast('⚠ 저장 오류 발생 - 화면의 상태를 확인하세요');
+    }else{
+      startAutoReturn(10);
     }
   })();
 }
