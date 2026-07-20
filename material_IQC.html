@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>소재 수입검사 v3.1.4 | (주)태진다이텍</title>
+<title>소재 수입검사 v3.2 | (주)태진다이텍</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Malgun Gothic','맑은 고딕','Segoe UI',sans-serif;background:#f4f6f9;color:#222;font-size:14px;line-height:1.5}
@@ -143,7 +143,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 
 <div class="hdr">
   <div>
-    <h1>📋 소재 수입검사 시스템 v3.1.4</h1>
+    <h1>📋 소재 수입검사 시스템 v3.2</h1>
     <div class="sub">(주)태진다이텍 · 품질관리팀 · 그룹 자동 통합 (공급자+재질+두께+폭)</div>
   </div>
   <div class="user-info" id="userInfoBar">검사자: <b id="loginUser">로그인 필요</b></div>
@@ -813,11 +813,33 @@ function computeWaitGroups(){
   // ① 로컬 inspections에서 finalJudge=OK/NG/보류 → 완료
   // ② inspection_certs.final_judge는 "그룹 내 모든 코일"이 완료일 때만 그룹 완료로 인정
   //    (일부 코일만 OK이고 나머지가 '대기'면 그룹 전체는 대기)
-  const completedKeys = new Set(
-    inspections
-      .filter(x => x.finalJudge==='OK' || x.finalJudge==='NG' || x.finalJudge==='보류')
-      .map(x => x.groupKey)
-  );
+  // [v3.2] 검사발행 이후 재입고 인식:
+  //   과거에 같은 그룹(공급자|재질|두께|폭)이 검사완료로 발행됐어도,
+  //   발행 시각(updatedAt/inspDate) 이후 created_at인 '대기' 성적서가 있으면
+  //   재입고로 판단 → 완료 처리하지 않고 검사대기에 다시 표시
+  const lastDoneAt = new Map();  // groupKey → 최종 검사발행 시각(ms)
+  inspections
+    .filter(x => x.finalJudge==='OK' || x.finalJudge==='NG' || x.finalJudge==='보류')
+    .forEach(x => {
+      let t = new Date(x.updatedAt || 0).getTime();
+      if(!t && x.inspDate) t = new Date(x.inspDate + 'T23:59:59+09:00').getTime();
+      if(!t) t = 0;
+      const prev = lastDoneAt.get(x.groupKey) || 0;
+      if(t >= prev) lastDoneAt.set(x.groupKey, t);
+    });
+
+  const completedKeys = new Set();
+  for(const [k, doneAt] of lastDoneAt){
+    // 발행 이후 새로 생성된 미검사('대기'/'미검사'/공백) 성적서가 있으면 재입고 → 완료 아님
+    const hasNewPending = raw.some(r => {
+      if(groupKeyOf(r) !== k) return false;
+      const fj = (r.final_judge || '').trim();
+      if(fj && fj !== '대기' && fj !== '미검사') return false;
+      const ct = new Date(r.created_at || 0).getTime();
+      return ct > doneAt;
+    });
+    if(!hasNewPending) completedKeys.add(k);
+  }
 
   // 그룹별 코일 수와 완료 코일 수 카운트
   const groupCoils = new Map();  // key → { total, done }
