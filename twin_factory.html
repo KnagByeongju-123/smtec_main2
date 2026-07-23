@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>트윈팩토리 3D v13.29 - 치수알림 Spec·Act 표시</title>
+<title>트윈팩토리 3D v13.32 - 일상점검 알림 08~17시 매시</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;}
@@ -81,7 +81,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 <body>
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🏭 트윈팩토리 3D<span class="v">v13.29</span></h1>
+    <h1>🏭 트윈팩토리 3D<span class="v">v13.32</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="upd">연결 중…</span> · <span id="cd">30</span>s</div>
   </div>
   <div class="sum">
@@ -1627,7 +1627,7 @@ async function load(){
   cachedData=data;byHo={};
   data.forEach(function(d){var ho=hoOf(d.machine_name);if(ho!=null)byHo[ho]=d});
   updateSummary(); if(!(patrolOn||mpatrolOn)) buildScene();  // 순회 중엔 씬 재구성 보류(좌표 흔들림 방지)
-  /* v13.28: 디스플레이 자동알림 — 5분 간격 검사(중복은 발송함수 내 1시간 dedup) */
+  /* v13.28: 디스플레이 자동알림 — 5분 간격 검사(점검=08~17시 매시·치수=08:10/13:10 슬롯 dedup) */
   if(!load._autoMsgAt || Date.now()-load._autoMsgAt>300000){ load._autoMsgAt=Date.now(); sendAutoDisplayMsgs(); }
   var dt=data[0]&&data[0].updated_at?new Date(data[0].updated_at):new Date();
   document.getElementById('upd').textContent=dt.toLocaleTimeString('ko-KR');
@@ -1638,9 +1638,25 @@ function tick(){cd--;if(cd<=0)load();document.getElementById('cd').textContent=M
 
 /* ===== v13.28: 디스플레이(andon_msg) 자동알림 — 가동중 설비 대상 ===== */
 /* 1) 일상점검 미실시  2) 치수 위험(정상 외) Worst3
-   · 호기별·종류별 1시간 1회만 발송(중복방지: andon_msg 최근 1시간 조회)
+   · 일상점검: 08~17시 매시 1회 / 치수: 08:10·13:10 각 1회 (중복방지: andon_msg 조회)
    · 미해결 시 1시간 경과 후 자동 재발송 → 디스플레이 TTL(1시간)과 연동 유지 */
-var AUTO_MSG_DEDUP_MIN=60;
+/* 일상점검 알림슬롯(KST): 08~17시, 매시 정각 기준 1시간에 1회. 그 외 시간 미발송 */
+function kstChkSlotStartIso(){
+  var k=new Date(Date.now()+9*3600000);
+  var h=k.getUTCHours();
+  if(h<8||h>17)return null;
+  var start=Date.UTC(k.getUTCFullYear(),k.getUTCMonth(),k.getUTCDate(),h,0,0);
+  return new Date(start-9*3600000).toISOString();
+}
+/* 치수알림 발송슬롯(KST): 08:10, 13:10 — 각 슬롯 이후 1회만 발송. 슬롯 전(00:00~08:09)은 미발송 */
+function kstDimSlotStartIso(){
+  var k=new Date(Date.now()+9*3600000);
+  var mins=k.getUTCHours()*60+k.getUTCMinutes();
+  var slot=(mins>=13*60+10)?(13*60+10):(mins>=8*60+10)?(8*60+10):null;
+  if(slot==null)return null;
+  var start=Date.UTC(k.getUTCFullYear(),k.getUTCMonth(),k.getUTCDate(),0,slot,0);
+  return new Date(start-9*3600000).toISOString();
+}
 function dimSev(x){
   if(x.state==='초과'||x.state==='미달')return 1000+Math.abs(x.margin||0)*100;
   var p=(x.pct==null)?0:x.pct;
@@ -1650,20 +1666,27 @@ async function sendAutoDisplayMsgs(){
   try{
     var runs=(cachedData||[]).filter(function(d){return d&&d.machine_status==='N'});
     if(!runs.length)return;
-    var since=new Date(Date.now()-AUTO_MSG_DEDUP_MIN*60000).toISOString();
-    var recent=await sbGet('andon_msg','select=ho_code,source&created_at=gte.'+encodeURIComponent(since)+'&source=in.(auto_check,auto_dim)');
-    var sent={};(recent||[]).forEach(function(r){sent[String(r.ho_code)+'|'+r.source]=1});
+    var sinceChk=kstChkSlotStartIso();   // null=발송시간대 아님(08~17시 외)
+    var sinceDim=kstDimSlotStartIso();   // null=아직 발송시간 아님
+    if(!sinceChk&&!sinceDim)return;
+    var since=(sinceChk&&sinceDim)?(sinceDim<sinceChk?sinceDim:sinceChk):(sinceChk||sinceDim);
+    var recent=await sbGet('andon_msg','select=ho_code,source,created_at&created_at=gte.'+encodeURIComponent(since)+'&source=in.(auto_check,auto_dim)');
+    var sent={};
+    (recent||[]).forEach(function(r){
+      var lim=(r.source==='auto_dim')?sinceDim:sinceChk;
+      if(lim&&r.created_at>=lim)sent[String(r.ho_code)+'|'+r.source]=1;
+    });
     var now=new Date().toISOString(), outs=[];
     runs.forEach(function(d){
       var ho=hoOf(d.machine_name); if(ho==null)return;
       var hc=String(ho);
-      /* 1) 일상점검 미실시 */
+      /* 1) 일상점검 미실시 — 08~17시 매시 1회 */
       var insp=inspByHo[ho]||{};
-      if(!insp.chkDone && !sent[hc+'|auto_check'])
+      if(sinceChk && !insp.chkDone && !sent[hc+'|auto_check'])
         outs.push({ho_code:hc,msg:'일상점검 미실시 - 점검 후 가동',source:'auto_check',created_at:now});
-      /* 2) 치수 위험 Worst3 (정상 제외) */
+      /* 2) 치수 위험 Worst3 (정상 제외) — 08:10 / 13:10 슬롯 이후에만 */
       var dim=dimOfMachine(d);
-      if(dim&&dim.risk && !sent[hc+'|auto_dim']){
+      if(sinceDim && dim&&dim.risk && !sent[hc+'|auto_dim']){
         var worst=dim.items.filter(function(x){return x.state!=='정상'})
           .sort(function(a,b){return dimSev(b)-dimSev(a)}).slice(0,3);
         if(worst.length){
