@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>트윈팩토리 3D v13.27 - 디스플레이 전송·매핑 제거</title>
+<title>트윈팩토리 3D v13.29 - 치수알림 Spec·Act 표시</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;}
@@ -81,7 +81,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 <body>
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🏭 트윈팩토리 3D<span class="v">v13.27</span></h1>
+    <h1>🏭 트윈팩토리 3D<span class="v">v13.29</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="upd">연결 중…</span> · <span id="cd">30</span>s</div>
   </div>
   <div class="sum">
@@ -1627,12 +1627,58 @@ async function load(){
   cachedData=data;byHo={};
   data.forEach(function(d){var ho=hoOf(d.machine_name);if(ho!=null)byHo[ho]=d});
   updateSummary(); if(!(patrolOn||mpatrolOn)) buildScene();  // 순회 중엔 씬 재구성 보류(좌표 흔들림 방지)
+  /* v13.28: 디스플레이 자동알림 — 5분 간격 검사(중복은 발송함수 내 1시간 dedup) */
+  if(!load._autoMsgAt || Date.now()-load._autoMsgAt>300000){ load._autoMsgAt=Date.now(); sendAutoDisplayMsgs(); }
   var dt=data[0]&&data[0].updated_at?new Date(data[0].updated_at):new Date();
   document.getElementById('upd').textContent=dt.toLocaleTimeString('ko-KR');
   document.getElementById('dot').style.background=(Date.now()-dt.getTime())/60000>10?'var(--amber)':'var(--green)';
   cd=30;
 }
 function tick(){cd--;if(cd<=0)load();document.getElementById('cd').textContent=Math.max(cd,0)}
+
+/* ===== v13.28: 디스플레이(andon_msg) 자동알림 — 가동중 설비 대상 ===== */
+/* 1) 일상점검 미실시  2) 치수 위험(정상 외) Worst3
+   · 호기별·종류별 1시간 1회만 발송(중복방지: andon_msg 최근 1시간 조회)
+   · 미해결 시 1시간 경과 후 자동 재발송 → 디스플레이 TTL(1시간)과 연동 유지 */
+var AUTO_MSG_DEDUP_MIN=60;
+function dimSev(x){
+  if(x.state==='초과'||x.state==='미달')return 1000+Math.abs(x.margin||0)*100;
+  var p=(x.pct==null)?0:x.pct;
+  return (x.type==='제로근접형')?p:Math.max(p,100-p);
+}
+async function sendAutoDisplayMsgs(){
+  try{
+    var runs=(cachedData||[]).filter(function(d){return d&&d.machine_status==='N'});
+    if(!runs.length)return;
+    var since=new Date(Date.now()-AUTO_MSG_DEDUP_MIN*60000).toISOString();
+    var recent=await sbGet('andon_msg','select=ho_code,source&created_at=gte.'+encodeURIComponent(since)+'&source=in.(auto_check,auto_dim)');
+    var sent={};(recent||[]).forEach(function(r){sent[String(r.ho_code)+'|'+r.source]=1});
+    var now=new Date().toISOString(), outs=[];
+    runs.forEach(function(d){
+      var ho=hoOf(d.machine_name); if(ho==null)return;
+      var hc=String(ho);
+      /* 1) 일상점검 미실시 */
+      var insp=inspByHo[ho]||{};
+      if(!insp.chkDone && !sent[hc+'|auto_check'])
+        outs.push({ho_code:hc,msg:'일상점검 미실시 - 점검 후 가동',source:'auto_check',created_at:now});
+      /* 2) 치수 위험 Worst3 (정상 제외) */
+      var dim=dimOfMachine(d);
+      if(dim&&dim.risk && !sent[hc+'|auto_dim']){
+        var worst=dim.items.filter(function(x){return x.state!=='정상'})
+          .sort(function(a,b){return dimSev(b)-dimSev(a)}).slice(0,3);
+        if(worst.length){
+          var txt=worst.map(function(x){
+            var spec=(x.type==='제로근접형')?('≤'+(isNaN(x.hi)?'-':x.hi)):((isNaN(x.lo)?'-':x.lo)+'~'+(isNaN(x.hi)?'-':x.hi));
+            return (x.g?('#'+x.g+' '):'')+x.state+(x.pct!=null?' '+Math.round(x.pct)+'%':'')
+              +' [Spec '+spec+' / Act '+x.val.toFixed(3)+']';
+          }).join(' / ');
+          outs.push({ho_code:hc,msg:'치수주의 '+txt,source:'auto_dim',created_at:now});
+        }
+      }
+    });
+    if(outs.length)await sbPost('andon_msg',outs);
+  }catch(e){console.warn('자동알림 발송 실패:',e)}
+}
 
 // 탭 위치(헤더 높이 아래)
 function placeTabs(){var h=document.querySelector('.hdr').offsetHeight;document.querySelector('.tabs').style.top=(h+8)+'px';document.querySelector('.ctrls').style.top=(h+8)+'px'}
