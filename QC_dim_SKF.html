@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>치수관리 위험 모니터링 (SKF씰)</title>
+<title>치수관리 위험 모니터링 (SKF씰) v1.1</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;900&display=swap">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
@@ -56,12 +56,23 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
 .cfg-item:last-child{border:none}
 .cfg-item .cfg-label{flex:1;font-size:12px;font-weight:600;color:var(--text2)}
 .cfg-item input{flex:2;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;font-family:inherit;background:var(--bg);color:var(--text)}
+.act-area{border-top:1px dashed var(--border);margin:0 14px;padding:10px 0 14px}
+.act-title{font-size:11px;font-weight:700;color:var(--accent);margin-bottom:6px;display:flex;align-items:center;gap:6px}
+.act-area textarea{width:100%;min-height:56px;padding:8px 10px;font-size:12px;font-family:inherit;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;color:var(--text);resize:vertical;line-height:1.5}
+.act-area textarea:focus{outline:none;border-color:var(--accent)}
+.act-row{display:flex;gap:6px;margin-top:6px;align-items:center}
+.act-row select{flex:1;padding:8px 10px;font-size:12px;font-family:inherit;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;color:var(--text)}
+.act-info{font-size:10px;color:var(--text3);margin-top:5px}
+.act-badge{font-size:10px;padding:2px 8px;border-radius:10px;font-weight:700;margin-left:auto}
+.act-badge.none{background:var(--ng-bg);color:var(--ng)}
+.act-badge.ing{background:var(--warn-bg);color:var(--warn)}
+.act-badge.done{background:var(--ok-bg);color:var(--ok)}
 </style>
 </head>
 <body>
 <div class="hdr">
 <button class="home-btn" onclick="location.href='QC_dim.html'">‹</button>
-<h1>📐 치수관리 위험 모니터링 (SKF씰)</h1>
+<h1>📐 치수관리 위험 모니터링 (SKF씰) v1.1</h1>
 <p>구글시트 연동 · 공차한계 임박 분석 · 관리도 조회</p>
 </div>
 <div class="tabs">
@@ -174,6 +185,36 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
 const LS_KEY='DIM_CHECK_STG';
 const ZERO_APPROACH_ITEMS=['진원도','평면도','동심도','원통도','직각도','내경 Burr','외경 Burr','흔들림'];
 const CUST_NAME='SKF씰';
+const ACT_KEY='DIM_ACTION_SKF';
+
+// ===== 조치사항 =====
+function getActs(){try{return JSON.parse(localStorage.getItem(ACT_KEY)||'{}')}catch(e){return{}}}
+function saveActs(a){localStorage.setItem(ACT_KEY,JSON.stringify(a))}
+function actKey(w){return w.partNo+'|'+w.gVal+'|'+w.item+'|'+w.date}
+function escH(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+function actBadge(res){if(res==='조치완료')return'<span class="act-badge done">✅ 조치완료</span>';if(res==='조치중')return'<span class="act-badge ing">🔧 조치중</span>';return'<span class="act-badge none">⏳ 미조치</span>'}
+function buildActHtml(i,w){
+  const a=getActs()[actKey(w)]||{};
+  return '<div class="act-area"><div class="act-title">🛠 조치사항'+actBadge(a.result)+'</div>'
+    +'<textarea id="actTxt_'+i+'" placeholder="조치내용 입력 (예: 금형 연마 실시, 펀치 교체 등)">'+escH(a.text||'')+'</textarea>'
+    +'<div class="act-row"><select id="actRes_'+i+'">'
+    +['미조치','조치중','조치완료'].map(o=>'<option value="'+o+'"'+((a.result||'미조치')===o?' selected':'')+'>'+o+'</option>').join('')
+    +'</select><button class="btn-sm" onclick="saveAction('+i+')" style="background:var(--ok);color:#000;padding:8px 16px">💾 저장</button></div>'
+    +'<div class="act-info" id="actInfo_'+i+'">'+(a.savedAt?'마지막 저장: '+a.savedAt+(a.savedBy?' · '+a.savedBy:''):'')+'</div></div>';
+}
+function saveAction(i){
+  const w=(_curList||[])[i];if(!w){toast('⚠ 대상 없음');return}
+  const text=document.getElementById('actTxt_'+i).value.trim();
+  const result=document.getElementById('actRes_'+i).value;
+  const acts=getActs();const k=actKey(w);
+  const kst=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date()).replace(',','');
+  if(!text&&result==='미조치'){delete acts[k]}else{acts[k]={text,result,savedAt:kst,partNo:w.partNo,gVal:w.gVal,item:w.item,date:w.date}}
+  saveActs(acts);
+  document.getElementById('actInfo_'+i).textContent='마지막 저장: '+kst;
+  const badge=document.getElementById('actTxt_'+i).closest('.act-area').querySelector('.act-badge');
+  if(badge)badge.outerHTML=actBadge(result);
+  toast('💾 조치사항 저장');
+}
 
 // ===== 기간 설정 =====
 let _periods={0:'1y',1:'1y'}; // 탭별 기간
@@ -209,7 +250,7 @@ async function cfgHistExcel(){const st=document.getElementById('cfgHistStatus');
 async function cfgHistDelete(){const st=document.getElementById('cfgHistStatus');const s=getStg();if(!s.gasUrl){st.textContent='GAS URL 설정 필요';return}if(!_rawData.length){try{_rawData=(await fetchData()).data||[]}catch(e){st.textContent='❌ '+e.message;return}}const r=cfgHistFilter();if(!r.length){st.textContent='⚠ 없음';return}if(!confirm(r.length+'건 삭제?\n되돌릴 수 없습니다.'))return;if(!confirm('최종 확인: '+r.length+'건 삭제?'))return;st.textContent='삭제 중...';try{const dp=r.map(x=>({date:String(x.c0||'').replace(/[^0-9]/g,''),partNo:String(x.c1||'')}));const res=await fetch(s.gasUrl,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({mode:'deleteByDatePart',datePartList:dp})});const j=await res.json();if(j.status==='success'){st.innerHTML='✅ '+j.deletedRows+'건 삭제';st.style.color='var(--ok)';_rawData=[];toast('🗑 삭제 완료')}else st.textContent='❌ '+j.message}catch(e){st.textContent='❌ '+e.message}}
 
 // ===== 공통 =====
-let _rawData=[],_warnings=[],_allGroups=[];
+let _rawData=[],_warnings=[],_allGroups=[],_curList=[];
 function _C(){return{DATE:0,PART:1,SPEC:15,G:6,ITEM:7,LOWER:20,UPPER:21,AVG:35}}
 
 async function fetchData(){const s=getStg();if(!s.gasUrl)throw new Error('GAS URL 미설정 — ⚙설정에서 입력');const r=await fetch(s.gasUrl+'?action=getData',{redirect:'follow'});if(!r.ok)throw new Error('HTTP '+r.status);const d=await r.json();if(!d.success)throw new Error(d.message||'API 오류');return d}
@@ -258,12 +299,12 @@ function analyzeData(){
 }
 function toggleFilter(el){document.querySelectorAll('#filterChips .filter-chip').forEach(c=>c.classList.remove('on'));el.classList.add('on');renderWarnings(el.dataset.part)}
 function renderWarnings(pf){
-  const c=document.getElementById('warningList');let list=pf?_warnings.filter(w=>w.partNo===pf):_warnings;
+  const c=document.getElementById('warningList');let list=pf?_warnings.filter(w=>w.partNo===pf):_warnings;_curList=list;
   if(!list.length){c.innerHTML=_warnings.length===0?'<div class="card" style="text-align:center;padding:24px"><div style="font-size:28px;margin-bottom:8px">✅</div><div style="font-size:14px;font-weight:700;color:var(--ok)">특이사항 없음</div><div style="font-size:11px;color:var(--text3);margin-top:4px">관리한계 초과 항목 없음</div></div>':'<div style="text-align:center;padding:16px;color:var(--text3);font-size:12px">필터 결과 없음</div>';return}
   const thPct=(getStg().threshold||80);
   c.innerHTML=list.map((w,i)=>{
     const cu=buildChartUrl(w),lt=w.isUpper?'상한':'하한',icon=w.isUpper?'⬆️':'⬇️',bc=w.isUpper?'var(--ng)':'var(--warn)';
-    return '<div class="warn-card '+(w.isUpper?'danger':'warning')+'" style="padding:0;overflow:hidden"><div style="background:#fff;padding:4px"><img src="'+cu+'" alt="관리도" style="width:100%;display:block;border-radius:8px 8px 0 0" onerror="this.style.display=\'none\'"></div><div style="padding:12px 14px 8px;display:flex;align-items:center;gap:8px"><span style="font-size:16px">🚨</span><span style="font-size:14px;font-weight:800;color:'+bc+'">경고 '+(i+1)+'/'+list.length+'</span><span style="font-size:11px;padding:2px 8px;border-radius:10px;background:'+(w.isUpper?'var(--ng-bg)':'var(--warn-bg)')+';color:'+bc+';font-weight:700">'+icon+' '+w.type+'('+thPct+'%)</span></div><div style="padding:4px 14px 10px;font-size:12px;line-height:2.0"><div>🔧 <span class="cr-label">부품번호:</span> <b>'+w.partNo+'</b></div><div>📐 <span class="cr-label">규격:</span> <b>'+(w.spec||'-')+'</b></div><div>📋 <span class="cr-label">G열:</span> '+w.gVal+'</div><div>📏 <span class="cr-label">항목:</span> '+w.item+' ('+w.itemType+')</div><div>💥 <span class="cr-label">상태:</span> <b style="color:'+bc+'">관리'+lt+' '+thPct+'% 위험구간</b></div><div>📉 <span class="cr-label">측정값:</span> <b style="color:var(--ng);font-size:14px">'+w.currentValue.toFixed(3)+'</b></div><div>🚧 <span class="cr-label">경고기준:</span> '+w.thresholdVal.toFixed(3)+'</div><div>'+icon+' <span class="cr-label">관리'+lt+':</span> '+w.limitVal+'</div><div>📅 <span class="cr-label">발생일자:</span> '+w.date+'</div></div><div id="fileArea_warn_'+i+'" style="padding:0 14px 14px"></div></div>';
+    return '<div class="warn-card '+(w.isUpper?'danger':'warning')+'" style="padding:0;overflow:hidden"><div style="background:#fff;padding:4px"><img src="'+cu+'" alt="관리도" style="width:100%;display:block;border-radius:8px 8px 0 0" onerror="this.style.display=\'none\'"></div><div style="padding:12px 14px 8px;display:flex;align-items:center;gap:8px"><span style="font-size:16px">🚨</span><span style="font-size:14px;font-weight:800;color:'+bc+'">경고 '+(i+1)+'/'+list.length+'</span><span style="font-size:11px;padding:2px 8px;border-radius:10px;background:'+(w.isUpper?'var(--ng-bg)':'var(--warn-bg)')+';color:'+bc+';font-weight:700">'+icon+' '+w.type+'('+thPct+'%)</span></div><div style="padding:4px 14px 10px;font-size:12px;line-height:2.0"><div>🔧 <span class="cr-label">부품번호:</span> <b>'+w.partNo+'</b></div><div>📐 <span class="cr-label">규격:</span> <b>'+(w.spec||'-')+'</b></div><div>📋 <span class="cr-label">G열:</span> '+w.gVal+'</div><div>📏 <span class="cr-label">항목:</span> '+w.item+' ('+w.itemType+')</div><div>💥 <span class="cr-label">상태:</span> <b style="color:'+bc+'">관리'+lt+' '+thPct+'% 위험구간</b></div><div>📉 <span class="cr-label">측정값:</span> <b style="color:var(--ng);font-size:14px">'+w.currentValue.toFixed(3)+'</b></div><div>🚧 <span class="cr-label">경고기준:</span> '+w.thresholdVal.toFixed(3)+'</div><div>'+icon+' <span class="cr-label">관리'+lt+':</span> '+w.limitVal+'</div><div>📅 <span class="cr-label">발생일자:</span> '+w.date+'</div></div><div id="fileArea_warn_'+i+'" style="padding:0 14px 10px"></div>'+buildActHtml(i,w)+'</div>';
   }).join('');
   list.forEach((w,i)=>searchFile(i,w.partNo,'warn'));
 }
@@ -347,8 +388,9 @@ function buildChartUrl(w){
 // ===== 엑셀 =====
 function exportWarnings(){
   if(!_warnings.length){toast('없음');return}const wb=XLSX.utils.book_new();
-  const hd=['부품번호','규격','G열','항목','항목유형','상태','측정값','경고기준','하한','상한','위치%','발생일자'];
-  const rows=_warnings.map(w=>[w.partNo,w.spec,w.gVal,w.item,w.itemType,w.type,w.currentValue,w.thresholdVal,w.lowerLimit,w.upperLimit,Math.round(w.pct)+'%',w.date]);
+  const hd=['부품번호','규격','G열','항목','항목유형','상태','측정값','경고기준','하한','상한','위치%','발생일자','조치내용','조치결과','조치일시'];
+  const acts=getActs();
+  const rows=_warnings.map(w=>{const a=acts[actKey(w)]||{};return[w.partNo,w.spec,w.gVal,w.item,w.itemType,w.type,w.currentValue,w.thresholdVal,w.lowerLimit,w.upperLimit,Math.round(w.pct)+'%',w.date,a.text||'',a.result||'미조치',a.savedAt||'']});
   const ws=XLSX.utils.aoa_to_sheet([hd,...rows]);ws['!cols']=hd.map(()=>({wch:14}));
   XLSX.utils.book_append_sheet(wb,ws,'위험항목');XLSX.writeFile(wb,'치수위험_'+CUST_NAME+'_'+new Date().toISOString().split('T')[0].replace(/-/g,'')+'.xlsx');toast('📥 다운로드')
 }
