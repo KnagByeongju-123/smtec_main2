@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>트윈팩토리 3D v13.35 - 측정치수 즉시발송</title>
+<title>트윈팩토리 3D v13.38 - 발송이력 분리(터치삭제 대응)</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;}
@@ -81,7 +81,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 <body>
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🏭 트윈팩토리 3D<span class="v">v13.35</span></h1>
+    <h1>🏭 트윈팩토리 3D<span class="v">v13.38</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="upd">연결 중…</span> · <span id="cd">30</span>s</div>
   </div>
   <div class="sum">
@@ -173,7 +173,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
       <span id="alPopCnt" style="font-size:12px;font-weight:700;color:#8b97ad">0 / 48자</span>
     </div>
     <div id="alPopCur" style="display:none;background:#0e2018;border:1px solid #1f4a36;border-radius:9px;padding:10px;margin-bottom:12px;max-height:180px;overflow-y:auto"></div>
-    <button onclick="sendDimNow()" style="width:100%;margin-bottom:8px;padding:12px;border:1px solid #2a4a6a;border-radius:9px;background:#132436;color:#8fd0ff;font-size:14px;font-weight:700;cursor:pointer">📏 측정치수 보내기 (최종치수 Top3 · Spec/Act/추세)</button>
+    <button onclick="sendDimNow()" style="width:100%;margin-bottom:8px;padding:12px;border:1px solid #2a4a6a;border-radius:9px;background:#132436;color:#8fd0ff;font-size:14px;font-weight:700;cursor:pointer">📏 측정치수 보내기 (최종치수 Top3 · Spec/Act)</button>
     <div style="display:flex;gap:8px">
       <button onclick="closeAlertPopup()" style="flex:1;padding:12px;border:1px solid #2a3142;border-radius:9px;background:#1a2236;color:#8b97ad;font-size:14px;font-weight:700;cursor:pointer">닫기</button>
       <button onclick="clearDisplayAlert()" style="padding:12px 14px;border:1px solid #5b3a3a;border-radius:9px;background:#2a1a1a;color:#ffb4b4;font-size:14px;font-weight:700;cursor:pointer">🗑 전체삭제</button>
@@ -1380,10 +1380,12 @@ async function sendDimNow(){
   var dim=d?dimOfMachine(d):null;
   if(!dim||!dim.items.length){alert('이 호기의 측정치수 데이터가 없습니다\n(생산품번-측정DB 매핑 확인)');return}
   var top=dim.items.slice().sort(function(a,b){return dimSev(b)-dimSev(a)}).slice(0,3);
-  var msg=(dim.risk?'치수주의 ':'치수현황 ')+dimMsgText(top);
+  var rows=dimMsgLines(top,(dim.risk?'치수주의 ':'치수현황 ')).map(function(m){
+    return {ho_code:_alHo,msg:m,source:'manual_dim',created_at:kstNow()};
+  });
   try{
-    var res=await sbPost('andon_msg',[{ho_code:_alHo,msg:msg,source:'manual_dim',created_at:kstNow()}]);
-    if(res.ok){alert('📏 '+_alHo+'호기 측정치수 전송 완료');loadCurrentMsgs()}
+    var res=await sbPost('andon_msg',rows);
+    if(res.ok){alert('📏 '+_alHo+'호기 측정치수 '+rows.length+'건 전송 완료');loadCurrentMsgs()}
     else{var t=await res.text();alert('전송 실패: '+res.status+'\n'+t)}
   }catch(e){alert('전송 오류: '+e.message)}
 }
@@ -1785,14 +1787,13 @@ function dimSpark(x){
     return SPARK_CH[Math.round(t*7)];
   }).join('');
 }
-/* 치수 항목 → 발송 문자열 (Spec/Act/추세 포함) */
-function dimMsgText(items){
+/* 치수 항목 → 항목별 개별 문자 배열 (디스플레이 3줄 이내, 2초 순환으로 자연스럽게 흘러감) */
+function dimMsgLines(items,prefix){
   return items.map(function(x){
     var spec=(x.type==='제로근접형')?('≤'+(isNaN(x.hi)?'-':x.hi)):((isNaN(x.lo)?'-':x.lo)+'~'+(isNaN(x.hi)?'-':x.hi));
-    var sp=dimSpark(x);
-    return (x.g?('#'+x.g+' '):'')+x.state+(x.pct!=null?' '+Math.round(x.pct)+'%':'')
-      +' [Spec '+spec+' / Act '+x.val.toFixed(3)+']'+(sp?' 추세'+sp:'');
-  }).join(' / ');
+    return prefix+(x.g?('#'+x.g+' '):'')+x.state+(x.pct!=null?' '+Math.round(x.pct)+'%':'')
+      +' ['+spec+'/'+x.val.toFixed(3)+']';
+  });
 }
 async function sendAutoDisplayMsgs(){
   try{
@@ -1802,29 +1803,39 @@ async function sendAutoDisplayMsgs(){
     var sinceDim=kstDimSlotStartIso();   // null=아직 발송시간 아님
     if(!sinceChk&&!sinceDim)return;
     var since=(sinceChk&&sinceDim)?(sinceDim<sinceChk?sinceDim:sinceChk):(sinceChk||sinceDim);
-    var recent=await sbGet('andon_msg','select=ho_code,source,created_at&created_at=gte.'+encodeURIComponent(since)+'&source=in.(auto_check,auto_dim)');
+    /* 발송이력은 ho_code='SENTLOG' 행에 별도 기록 — 터치로 실제 메시지가 삭제돼도 재발송 방지 */
+    var recent=await sbGet('andon_msg','ho_code=eq.SENTLOG&created_at=gte.'+encodeURIComponent(since)+'&select=msg,created_at');
     var sent={};
     (recent||[]).forEach(function(r){
-      var lim=(r.source==='auto_dim')?sinceDim:sinceChk;
-      if(lim&&r.created_at>=lim)sent[String(r.ho_code)+'|'+r.source]=1;
+      var p=(r.msg||'').split('|'); if(p.length<2)return;
+      var lim=(p[1]==='auto_dim')?sinceDim:sinceChk;
+      if(lim&&r.created_at>=lim)sent[p[0]+'|'+p[1]]=1;
     });
-    var now=new Date().toISOString(), outs=[];
+    var now=new Date().toISOString(), outs=[], logs={};
     runs.forEach(function(d){
       var ho=hoOf(d.machine_name); if(ho==null)return;
       var hc=String(ho);
       /* 1) 일상점검 미실시 — 08~17시 매시 1회 */
       var insp=inspByHo[ho]||{};
-      if(sinceChk && !insp.chkDone && !sent[hc+'|auto_check'])
+      if(sinceChk && !insp.chkDone && !sent[hc+'|auto_check']){
         outs.push({ho_code:hc,msg:'일상점검 미실시 - 점검 후 가동',source:'auto_check',created_at:now});
+        logs[hc+'|auto_check']=1;
+      }
       /* 2) 치수 위험 Worst3 (정상 제외) — 08:10 / 13:10 슬롯 이후에만 */
       var dim=dimOfMachine(d);
       if(sinceDim && dim&&dim.risk && !sent[hc+'|auto_dim']){
         var worst=dim.items.filter(function(x){return x.state!=='정상'})
           .sort(function(a,b){return dimSev(b)-dimSev(a)}).slice(0,3);
         if(worst.length){
-          outs.push({ho_code:hc,msg:'치수주의 '+dimMsgText(worst),source:'auto_dim',created_at:now});
+          dimMsgLines(worst,'치수주의 ').forEach(function(m){
+            outs.push({ho_code:hc,msg:m,source:'auto_dim',created_at:now});
+          });
+          logs[hc+'|auto_dim']=1;
         }
       }
+    });
+    Object.keys(logs).forEach(function(k){
+      outs.push({ho_code:'SENTLOG',msg:k,source:'sentlog',created_at:now});
     });
     if(outs.length)await sbPost('andon_msg',outs);
   }catch(e){console.warn('자동알림 발송 실패:',e)}
