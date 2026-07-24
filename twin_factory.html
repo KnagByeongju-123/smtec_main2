@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>트윈팩토리 3D v13.38 - 발송이력 분리(터치삭제 대응)</title>
+<title>트윈팩토리 3D v13.39 - 일상점검 서버발송 이관</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;}
@@ -81,7 +81,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 <body>
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🏭 트윈팩토리 3D<span class="v">v13.38</span></h1>
+    <h1>🏭 트윈팩토리 3D<span class="v">v13.39</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="upd">연결 중…</span> · <span id="cd">30</span>s</div>
   </div>
   <div class="sum">
@@ -1750,18 +1750,10 @@ async function load(){
 }
 function tick(){cd--;if(cd<=0)load();document.getElementById('cd').textContent=Math.max(cd,0)}
 
-/* ===== v13.28: 디스플레이(andon_msg) 자동알림 — 가동중 설비 대상 ===== */
-/* 1) 일상점검 미실시  2) 치수 위험(정상 외) Worst3
-   · 일상점검: 08~17시 매시 1회 / 치수: 08:10·13:10 각 1회 (중복방지: andon_msg 조회)
-   · 미해결 시 1시간 경과 후 자동 재발송 → 디스플레이 TTL(1시간)과 연동 유지 */
-/* 일상점검 알림슬롯(KST): 08~17시, 매시 정각 기준 1시간에 1회. 그 외 시간 미발송 */
-function kstChkSlotStartIso(){
-  var k=new Date(Date.now()+9*3600000);
-  var h=k.getUTCHours();
-  if(h<8||h>17)return null;
-  var start=Date.UTC(k.getUTCFullYear(),k.getUTCMonth(),k.getUTCDate(),h,0,0);
-  return new Date(start-9*3600000).toISOString();
-}
+/* ===== v13.39: 디스플레이(andon_msg) 자동알림 — 가동중 설비 대상 ===== */
+/* · 일상점검 미실시: Supabase pg_cron(auto_check_alert, KST 08~17시 매시)이 서버에서 직접 발송 — 브라우저 불필요
+   · 치수 Worst3: 측정데이터가 Google Sheets(GAS)에 있어 클라이언트 발송 유지, 08:10·13:10 각 1회
+   · 발송이력은 ho_code='SENTLOG' 행에 기록 — 터치삭제와 무관하게 재발송 방지 */
 /* 치수알림 발송슬롯(KST): 08:10, 13:10 — 각 슬롯 이후 1회만 발송. 슬롯 전(00:00~08:09)은 미발송 */
 function kstDimSlotStartIso(){
   var k=new Date(Date.now()+9*3600000);
@@ -1799,31 +1791,22 @@ async function sendAutoDisplayMsgs(){
   try{
     var runs=(cachedData||[]).filter(function(d){return d&&d.machine_status==='N'});
     if(!runs.length)return;
-    var sinceChk=kstChkSlotStartIso();   // null=발송시간대 아님(08~17시 외)
     var sinceDim=kstDimSlotStartIso();   // null=아직 발송시간 아님
-    if(!sinceChk&&!sinceDim)return;
-    var since=(sinceChk&&sinceDim)?(sinceDim<sinceChk?sinceDim:sinceChk):(sinceChk||sinceDim);
+    if(!sinceDim)return;
     /* 발송이력은 ho_code='SENTLOG' 행에 별도 기록 — 터치로 실제 메시지가 삭제돼도 재발송 방지 */
-    var recent=await sbGet('andon_msg','ho_code=eq.SENTLOG&created_at=gte.'+encodeURIComponent(since)+'&select=msg,created_at');
+    var recent=await sbGet('andon_msg','ho_code=eq.SENTLOG&created_at=gte.'+encodeURIComponent(sinceDim)+'&select=msg,created_at');
     var sent={};
     (recent||[]).forEach(function(r){
-      var p=(r.msg||'').split('|'); if(p.length<2)return;
-      var lim=(p[1]==='auto_dim')?sinceDim:sinceChk;
-      if(lim&&r.created_at>=lim)sent[p[0]+'|'+p[1]]=1;
+      var p=(r.msg||'').split('|'); if(p.length<2||p[1]!=='auto_dim')return;
+      if(r.created_at>=sinceDim)sent[p[0]]=1;
     });
     var now=new Date().toISOString(), outs=[], logs={};
     runs.forEach(function(d){
       var ho=hoOf(d.machine_name); if(ho==null)return;
       var hc=String(ho);
-      /* 1) 일상점검 미실시 — 08~17시 매시 1회 */
-      var insp=inspByHo[ho]||{};
-      if(sinceChk && !insp.chkDone && !sent[hc+'|auto_check']){
-        outs.push({ho_code:hc,msg:'일상점검 미실시 - 점검 후 가동',source:'auto_check',created_at:now});
-        logs[hc+'|auto_check']=1;
-      }
-      /* 2) 치수 위험 Worst3 (정상 제외) — 08:10 / 13:10 슬롯 이후에만 */
+      /* 치수 위험 Worst3 (정상 제외) — 08:10 / 13:10 슬롯 이후 각 1회 */
       var dim=dimOfMachine(d);
-      if(sinceDim && dim&&dim.risk && !sent[hc+'|auto_dim']){
+      if(dim&&dim.risk && !sent[hc]){
         var worst=dim.items.filter(function(x){return x.state!=='정상'})
           .sort(function(a,b){return dimSev(b)-dimSev(a)}).slice(0,3);
         if(worst.length){
