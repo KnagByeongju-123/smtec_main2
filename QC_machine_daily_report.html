@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>작업일보 v14.5</title>
+<title>작업일보 v14.6</title>
 <style>
   :root{
     --bg:#0f1419; --panel:#1a2332; --border:#2a3a52;
@@ -330,7 +330,7 @@
 <body>
 
 <div class="header">
-  <h1>📋 작업일보 v14.5</h1>
+  <h1>📋 작업일보 v14.6</h1>
   <div class="meta">
     <span><span class="status-dot" id="connDot"></span><b id="connText">연결 확인 중</b></span>
     <span>장비: <b id="deviceCount">0</b></span>
@@ -1288,11 +1288,19 @@
     }
   }
 
-  // 00시 자동 마감: 등록된 호기(작업자·기종)의 전일 카운트를 qc_daily_report에 저장하고 세션 해지
+  // 00시 자동 마감: 마무리하지 않은 세션을 전일 실적으로 자동 저장(정지시간 제외) + 세션 해지 + 슬롯 해제
   async function autoSaveDailyReport(prevDate){
     try{
-      const sess=(rtSessions||[]).filter(s=>s.machine&&s.model&&s.inspector);
+      // 세션은 서버에서 직접 재조회 (00시 직후 rtTimer가 rtSessions를 비워버리는 레이스 방지)
+      let raw=[];
+      try{
+        const r=await fetch(SUPABASE_URL+'/rest/v1/'+SESSION_TABLE+'?select=*&updated_at=gte.'+encodeURIComponent(prevDate+'T00:00:00+09:00'),{headers:HDR_R});
+        if(r.ok) raw=(await r.json())||[];
+      }catch(_){}
+      if(!raw.length) raw=rtSessions||[];
+      const sess=raw.filter(s=>s.machine&&s.model&&s.inspector);
       if(!sess.length) return;
+      const endISO=prevDate+'T23:59:59+09:00';   // 마감 기준시각(00시)
       const cur=repCountByMachine();   // 아직 전일 0점 기준 → 전일 최종 카운트
       // 중복 방지: 이미 전일 이력이 있는 호기는 건너뜀 (다중 접속 기기 대비)
       let existed=[];
@@ -1300,13 +1308,21 @@
         const r=await fetch(SUPABASE_URL+'/rest/v1/'+REPORT_TABLE+'?report_date=eq.'+prevDate+'&select=machine',{headers:HDR_R});
         if(r.ok){ existed=(await r.json()).map(x=>normMachine(x.machine)); }
       }catch(_){}
-      const rows=[];
       const doneMachines=[];
-      sess.forEach(s=>{
+      for(const s of sess){
         const m=normMachine(s.machine);
-        if(existed.includes(m)) { doneMachines.push(m); return; }
+        if(existed.includes(m)) { doneMachines.push(m); continue; }
+        // 정지시간 집계: 세션 누적 + (00시 현재 정지중이면 00시까지로 종료처리 후 합산)
+        let stopMin=Number(s.stop_min)||0, stopCount=Number(s.stop_count)||0;
+        if(s.paused && s.paused_at){
+          const dur=durMin(s.paused_at, endISO);
+          await postStopLog({report_date:prevDate,inspector:s.inspector||'미지정',customer:(s.customer||currentCustomer||'SBC'),machine:String(m),model:s.model||'',reason:(s.pause_reason||'자정마감'),material_lot:null,stop_start:s.paused_at,stop_end:endISO,duration_min:dur});
+          stopMin+=dur; stopCount+=1;
+        }
+        const startISO=s.started_at||prevDate+'T00:00:00+09:00';
+        const wm=Math.max(0, durMin(startISO, endISO)-stopMin);   // 근무시간 = 경과 − 정지 (정지시간 제외)
         const qty=cur[m]||0;
-        rows.push({
+        const ok=await postReportSafe({
           report_date: prevDate,
           inspector: s.inspector,
           customer: (s.customer||currentCustomer||'SBC'),
@@ -1315,18 +1331,32 @@
           count_qty: qty,
           qty: qty,
           bad_qty: 0,
-          start_time: (s.started_at||prevDate+'T00:00:00+09:00'),
-          end_time: prevDate+'T23:59:59+09:00'
+          work_minutes: wm,
+          stop_minutes: stopMin,
+          stop_count: stopCount,
+          start_time: startISO,
+          end_time: endISO,
+          stop_reason: null,
+          material_lot: null
         });
+        if(!ok){ console.error('일일 자동저장 실패:', m); continue; }
         doneMachines.push(m);
-      });
-      if(rows.length){
-        const r=await fetch(SUPABASE_URL+'/rest/v1/'+REPORT_TABLE,{method:'POST',headers:HDR_RJ,body:JSON.stringify(rows)});
-        if(!r.ok) console.error('일일 자동저장 실패', await r.text());
       }
       // 세션 해지 (등록 해제)
       for(const m of doneMachines){
         try{ await fetch(SUPABASE_URL+'/rest/v1/'+SESSION_TABLE+'?machine=eq.'+encodeURIComponent(m),{method:'DELETE',headers:HDR_R}); }catch(_){}
+      }
+      // 이 기기의 로컬 슬롯도 해제 (자동마감된 호기)
+      let changed=false;
+      (slots||[]).forEach(function(sl){
+        if(sl.applied && doneMachines.includes(normMachine(sl.machine))){
+          sl.applied=false; sl.startAt=null; sl.paused=false; sl.pausedAt=null; sl.pauseReason=''; sl.pauseLot=''; sl.stopMin=0; sl.stopCount=0; sl.startSnap=null; sl.liveGood=null;
+          changed=true;
+        }
+      });
+      if(changed){
+        saveSlots(); applyStarted=slots.some(function(x){return x.applied;});
+        try{ renderSlots(); renderReport(); }catch(_){}
       }
     }catch(e){ console.error('autoSaveDailyReport', e); }
   }
@@ -2187,7 +2217,7 @@
     await autoZeroNewDay();   // 오늘 0점이 없는 채널만 서버에 저장(ignore-duplicates, 기존값 보존)
     await loadBaselines();    // 서버의 확정 0점을 다시 읽어 표시값 동기화 (덮어쓰기 방지)
     tick();
-    // 자정 자동마감 없음 — ✅마무리를 누를 때까지 하나의 작업으로 계속 누적(연속 진행)
+    // 자정(00시) 자동마감: checkDayRollover → autoSaveDailyReport (정지시간 제외 저장 + 세션·슬롯 해제)
     // 이 기기가 미적용이어도 서버에 진행중 세션이 있으면 복원 (접속자 간 카운터 지속)
     if(!applyStarted){ const _insp=currentInspector(); if(_insp){ await loadActiveForInspector(_insp); renderChips(); renderReport(); } }
     setInterval(async ()=>{ await checkDayRollover(); tick(); }, POLL_MS);
