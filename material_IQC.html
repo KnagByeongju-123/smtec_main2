@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>소재 수입검사 v3.2 | (주)태진다이텍</title>
+<title>소재 수입검사 v3.3 | (주)태진다이텍</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Malgun Gothic','맑은 고딕','Segoe UI',sans-serif;background:#f4f6f9;color:#222;font-size:14px;line-height:1.5}
@@ -143,7 +143,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 
 <div class="hdr">
   <div>
-    <h1>📋 소재 수입검사 시스템 v3.2</h1>
+    <h1>📋 소재 수입검사 시스템 v3.3</h1>
     <div class="sub">(주)태진다이텍 · 품질관리팀 · 그룹 자동 통합 (공급자+재질+두께+폭)</div>
   </div>
   <div class="user-info" id="userInfoBar">검사자: <b id="loginUser">로그인 필요</b></div>
@@ -828,20 +828,32 @@ function computeWaitGroups(){
       if(t >= prev) lastDoneAt.set(x.groupKey, t);
     });
 
+  // [v3.3] 그룹 완료 판정 재정의:
+  //   inspection_certs.final_judge='OK'는 "공급자 판정"일 수 있으므로
+  //   (구버전 소재입고 페이지가 공급자 판정을 final_judge에 저장)
+  //   cert 판정만으로는 절대 그룹을 완료 처리하지 않는다.
+  //   완료 = 수요자 검사 발행(inspections) 존재 + 발행시각 이후 신규 cert 없음.
+  //   과거 호환: V33_CUTOFF 이전에 생성된 "전 코일 판정완료 + 미발행" 그룹은
+  //   기존대로 완료 취급 (옛 데이터가 대기로 쏟아지는 것 방지)
+  const V33_CUTOFF = new Date('2026-07-27T00:00:00+09:00').getTime();
+
+  const groupsAll = new Set(raw.map(r => groupKeyOf(r)));
   const completedKeys = new Set();
-  for(const [k, doneAt] of lastDoneAt){
-    // 발행 이후 새로 생성된 미검사('대기'/'미검사'/공백) 성적서가 있으면 재입고 → 완료 아님
-    const hasNewPending = raw.some(r => {
+  for(const k of groupsAll){
+    const doneAt = lastDoneAt.get(k) || 0;
+    const hasPending = raw.some(r => {
       if(groupKeyOf(r) !== k) return false;
-      const fj = (r.final_judge || '').trim();
-      if(fj && fj !== '대기' && fj !== '미검사') return false;
       const ct = new Date(r.created_at || 0).getTime();
-      return ct > doneAt;
+      if(ct <= doneAt) return false;  // 검사발행이 커버한 성적서
+      const fj = (r.final_judge || '').trim();
+      if(!fj || fj === '대기' || fj === '미검사') return true;  // 미검사 신규 입고
+      // 판정(OK 등)이 있어도 CUTOFF 이후 생성 = 구버전 페이지의 공급자 판정 → 수요자 검사 필요
+      return ct >= V33_CUTOFF;
     });
-    if(!hasNewPending) completedKeys.add(k);
+    if(!hasPending) completedKeys.add(k);
   }
 
-  // 그룹별 코일 수와 완료 코일 수 카운트
+  // 그룹별 코일 수와 완료 코일 수 카운트 (디버그용 통계만, 완료 판정에는 사용하지 않음)
   const groupCoils = new Map();  // key → { total, done }
   raw.forEach(r => {
     const k = groupKeyOf(r);
@@ -849,13 +861,8 @@ function computeWaitGroups(){
     const g = groupCoils.get(k);
     g.total++;
     const fj = (r.final_judge || '').trim();
-    // [v3.1.4] '미검사'(소재입고 자동생성 상태)도 검사 대기로 취급
     if(fj && fj !== '대기' && fj !== '미검사') g.done++;
   });
-  // 모든 코일이 완료된 그룹만 completedKeys에 추가
-  for(const [k, c] of groupCoils){
-    if(c.total > 0 && c.done === c.total) completedKeys.add(k);
-  }
 
   // 디버그 출력 (브라우저 콘솔에서 확인 가능)
   if(typeof window !== 'undefined'){
