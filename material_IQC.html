@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>소재 수입검사 v3.3 | (주)태진다이텍</title>
+<title>소재 수입검사 v3.4 | (주)태진다이텍</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Malgun Gothic','맑은 고딕','Segoe UI',sans-serif;background:#f4f6f9;color:#222;font-size:14px;line-height:1.5}
@@ -143,7 +143,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 
 <div class="hdr">
   <div>
-    <h1>📋 소재 수입검사 시스템 v3.3</h1>
+    <h1>📋 소재 수입검사 시스템 v3.4</h1>
     <div class="sub">(주)태진다이텍 · 품질관리팀 · 그룹 자동 통합 (공급자+재질+두께+폭)</div>
   </div>
   <div class="user-info" id="userInfoBar">검사자: <b id="loginUser">로그인 필요</b></div>
@@ -678,11 +678,15 @@ async function loadFromSupabase(){
    - updated_at 더 최신인 쪽 채택
    - 서버에만 있는 항목은 로컬에 추가 (다른 PC에서 발행한 결과)
 */
+/* [v3.4] 검사 레코드 식별자 = 그룹키 + 입고일
+   재입고 시 과거 성적서를 덮어쓰지 않고 새 검사 레코드로 발행 */
+function inspKeyOf(gk, rd){ return gk + '@' + (rd || ''); }
+
 function mergeServerInspections(serverInsps){
   if(!Array.isArray(serverInsps)) return;
 
   const byKey = new Map();
-  inspections.forEach(x => byKey.set(x.groupKey, x));
+  inspections.forEach(x => byKey.set(inspKeyOf(x.groupKey, x.recvDate), x));
 
   let added = 0, updated = 0;
   serverInsps.forEach(srv => {
@@ -719,7 +723,7 @@ function mergeServerInspections(serverInsps){
       createdAt: srv.updated_at || ''
     };
 
-    const local = byKey.get(k);
+    const local = byKey.get(inspKeyOf(k, srv.receipt_date || ''));
     if(!local){
       inspections.push(srvInsp);
       added++;
@@ -768,7 +772,7 @@ async function pushInspToSupabase(insp){
   };
 
   try{
-    const url = SB_URL + '/rest/v1/iqc_inspections?on_conflict=group_key';
+    const url = SB_URL + '/rest/v1/iqc_inspections?on_conflict=group_key,receipt_date';  /* [v3.4] 재입고 = 새 레코드 */
     const res = await fetch(url, {
       method: 'POST',
       headers: {
@@ -898,6 +902,8 @@ function computeWaitGroups(){
       });
     }
     const g = map.get(k);
+    /* [v3.4] 그룹 대표 입고일 = 최신 입고일 (검사 레코드 식별자에 사용) */
+    if((r.receipt_date || '') > (g.recvDate || '')) g.recvDate = r.receipt_date;
     const lot = r.lot_no || r.lot || '';
     if(lot && !g.lotsDetail.includes(lot)) g.lotsDetail.push(lot);
     if(r.heat_no && !g.heats.includes(r.heat_no)) g.heats.push(r.heat_no);
@@ -1589,11 +1595,19 @@ function openInsp(groupKey){
 
   const groups = computeWaitGroups();
   let g = groups.find(x => x.groupKey === groupKey);
-  const existing = inspections.find(x => x.groupKey === groupKey);
+  /* [v3.4] 같은 그룹 + 같은 입고일 레코드만 "기존 검사"로 취급.
+     입고일이 다르면 재입고 → 신규 검사 (과거 발행분에서 규격만 참조) */
+  const targetRecv = g ? (g.recvDate || '') : '';
+  let existing = inspections.find(x => x.groupKey === groupKey && (x.recvDate || '') === targetRecv);
+  if(!g && !existing) existing = inspections.find(x => x.groupKey === groupKey);
+  const prevInsp = existing || [...inspections]
+    .filter(x => x.groupKey === groupKey)
+    .sort((a,b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))[0] || null;
 
   // ★ 취소 시 복원용: 모달 열기 전 상태 깊은 복사로 백업
   _modalBackup = {
     groupKey: groupKey,
+    recvDate: existing ? (existing.recvDate || '') : targetRecv,
     existing: existing ? JSON.parse(JSON.stringify(existing)) : null,
     existingIdx: existing ? inspections.indexOf(existing) : -1
   };
@@ -1670,6 +1684,13 @@ function openInsp(groupKey){
     if(g.width != null){
       document.getElementById('m_width_spec').value = `${parseFloat(g.width).toFixed(2)} ± 0.1`;
     }
+    /* [v3.4] 재입고 신규 검사: 과거 발행 성적서의 "규격"만 이어받음 (측정값/판정은 새로 작성) */
+    if(prevInsp && prevInsp.meas){
+      MEAS_ITEMS.forEach(it => {
+        const m = prevInsp.meas[it.key] || {};
+        if(m.spec) document.getElementById('m_'+it.key+'_spec').value = m.spec;
+      });
+    }
     // 공급자 cert_data가 있으면 측정값 자동 채움
     const firstRaw = raw.find(r => groupKeyOf(r) === groupKey);
     if(firstRaw && firstRaw.cert_data){
@@ -1735,7 +1756,7 @@ function cancelInsp(){
     } else {
       // 신규 작성 중이었음 → openInsp 후 inspections에 추가된 게 있다면 제거
       // (현재 openInsp는 inspections를 수정하지 않으므로 실제 동작 없음 - 안전망)
-      const curIdx = inspections.findIndex(x => x.groupKey === _modalBackup.groupKey);
+      const curIdx = inspections.findIndex(x => x.groupKey === _modalBackup.groupKey && (x.recvDate || '') === (_modalBackup.recvDate || ''));
       if(curIdx >= 0 && idx === -1){
         inspections.splice(curIdx, 1);
       }
@@ -1821,7 +1842,9 @@ async function saveInsp(complete){
     if(!finalJudge){ alert('⚠ 최종 판정을 선택하세요 (OK/NG/보류)'); return; }
   }
 
-  let existingIdx = inspections.findIndex(x => x.groupKey === groupKey);
+  /* [v3.4] 그룹키 + 입고일로 기존 레코드 탐색 - 재입고는 새 레코드(새 성적서번호) */
+  const recvDateVal = document.getElementById('i_recvDate').value || '';
+  let existingIdx = inspections.findIndex(x => x.groupKey === groupKey && (x.recvDate || '') === recvDateVal);
   let existing = existingIdx >= 0 ? inspections[existingIdx] : null;
 
   let certNo = existing && existing.certNo ? existing.certNo : '';
@@ -2297,7 +2320,7 @@ async function diagnoseServer(){
       html += `-- iqc_inspections 테이블 생성
 CREATE TABLE IF NOT EXISTS public.iqc_inspections (
   id SERIAL PRIMARY KEY,
-  group_key TEXT UNIQUE NOT NULL,
+  group_key TEXT NOT NULL,  -- [v3.4] UNIQUE(group_key, receipt_date)
   cert_no TEXT,
   supplier TEXT,
   material_type TEXT,
