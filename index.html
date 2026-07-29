@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>ESG Smart Factory v3.48</title>
+<title>ESG Smart Factory v3.53</title>
 <meta name="theme-color" content="#0f172a">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -190,13 +190,13 @@ body.locked{overflow:hidden}
 </div>
 
 <div class="hdr">
-  <div class="hdr-title">ESG Smart Factory <span style="font-size:11px;color:#fbbf24;font-weight:600;margin-left:6px;background:rgba(251,191,36,0.12);padding:2px 8px;border-radius:8px;border:1px solid rgba(251,191,36,0.3);vertical-align:middle">v3.48</span></div>
+  <div class="hdr-title">ESG Smart Factory <span style="font-size:11px;color:#fbbf24;font-weight:600;margin-left:6px;background:rgba(251,191,36,0.12);padding:2px 8px;border-radius:8px;border:1px solid rgba(251,191,36,0.3);vertical-align:middle">v3.53</span></div>
   <div class="hdr-bar" id="hdrBar" style="display:none">
     <div class="hdr-bar-left">
-      <button class="edit-toggle" id="editToggleBtn" onclick="toggleEditMode()">🔧 편집</button>
-      <button type="button" class="counter-btn" id="elBtn" onclick="toggleCallLight()" title="2층 경광등 호출">El</button>
-      <button type="button" class="counter-btn" onclick="location.href='https://knagbyeongju-123.github.io/smtec_main2/QC_machine_daily_report.html'" title="작업일보(검사/공정)">In</button>
-      <button type="button" class="counter-btn" onclick="location.href='https://knagbyeongju-123.github.io/smtec_main2/env_dashboard.html'" title="환경 모니터링">En</button>
+      <button class="edit-toggle" id="editToggleBtn" onclick="toggleEditMode()">🔧</button>
+      <button type="button" class="counter-btn" id="elBtn" onclick="toggleCallLight()" title="2층 경광등 호출">엘콜</button>
+      <button type="button" class="counter-btn" onclick="openCallPanel()" title="현장 콜/알림 확인" style="background:rgba(59,130,246,.18);border-color:rgba(59,130,246,.5);color:#7fb3ff">콜처리</button>
+      <button type="button" class="counter-btn" onclick="location.href='https://knagbyeongju-123.github.io/smtec_main2/env_dashboard.html'" title="환경 모니터링">온습</button>
     </div>
     <div class="hdr-bar-right">
       <span class="user-info">👤 <span class="uid" id="uidDisplay"></span></span>
@@ -265,7 +265,8 @@ const CATS=[
   {id:'twinfactory',icon:'🏭',name:'트윈팩토리 (생산)',desc:'B동·C동 입체 배치 실시간 가동 모니터링 (디지털 트윈)',single:true,href:B+'twin_factory.html'},
   {id:'qcinspect',icon:'🔎',name:'품질검사',desc:'외관검사 · 치수검사 통합관리',subs:[
     {icon:'👁️',name:'외관검사',desc:'기판 영역별 불량등록 · 이력추적 · 통계분석',href:B+'defect.html'},
-    {icon:'📐',name:'치수검사',desc:'치수측정 등록 · 관리도 · 추이분석',href:'https://0528ohm-ui.github.io/TaeJin_ESG/qc_process_input.html'}
+    {icon:'📐',name:'치수검사',desc:'치수측정 등록 · 관리도 · 추이분석',href:'https://0528ohm-ui.github.io/TaeJin_ESG/qc_process_input.html'},
+    {icon:'🖥️',name:'검사기검사',desc:'검사기 작업일보 · 실적입력 · 콜 응답',href:B+'QC_machine_daily_report.html'}
   ]},
   {id:'kpi',icon:'📊',name:'KPI관리',desc:'IATF 16949 프로세스별 성과지표 등록·실적·추이분석',single:true,href:'https://kimsanggi85-del.github.io/ESG_KIP-Team-process/'},
   {id:'check',icon:'🔧',name:'일상점검',desc:'일상점검 종합현황 · 월말결재 · 생산설비 · 측정기 · 측정실 온습도 · 검사기 · 세척기 · 현장조도 · 출하공정 · 로드모니터',subs:[
@@ -432,7 +433,7 @@ function toggleEditMode(){
   var isEdit=document.body.classList.toggle('edit-mode');
   document.getElementById('editBar').classList.toggle('show',isEdit);
   document.getElementById('editToggleBtn').classList.toggle('active',isEdit);
-  document.getElementById('editToggleBtn').textContent=isEdit?'✓ 편집중':'🔧 편집';
+  document.getElementById('editToggleBtn').textContent=isEdit?'✓':'🔧';
   // 편집 진입시 열려있는 카드 닫기
   if(isEdit){
     document.querySelectorAll('.cat.open').forEach(x=>{x.classList.remove('open');var p=x.querySelector('.cat-panel');if(p)p.style.maxHeight='0'});
@@ -1450,6 +1451,36 @@ document.addEventListener('DOMContentLoaded', function(){
 _elFetchState();
 setInterval(_elFetchState, 5000);
 document.addEventListener('visibilitychange', function(){ if(!document.hidden) _elFetchState(); });
+
+/* ============= 현장 콜/알림 패널 (수동 새로고침, 부하 최소) ============= */
+const ANDON_H={'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Content-Type':'application/json'};
+function openCallPanel(){document.getElementById('callPanel').style.display='block';loadCallList();}
+function closeCallPanel(){document.getElementById('callPanel').style.display='none';}
+function callAgo(t){const s=Math.floor((Date.now()-new Date(t).getTime())/1000);if(s<60)return s+'초 전';const m=Math.floor(s/60);if(m<60)return m+'분 전';return Math.floor(m/60)+'시간 '+(m%60)+'분 전';}
+async function loadCallList(){
+  const box=document.getElementById('callList');
+  box.innerHTML='<div style="color:#8b97ad;padding:20px;text-align:center">불러오는 중…</div>';
+  try{
+    const r=await fetch(SUPABASE_URL+'/rest/v1/andon_msg?order=created_at.desc&limit=30&select=id,ho_code,msg,source,created_at',{headers:ANDON_H});
+    const rows=(await r.json()).filter(x=>{const a=(Date.now()-new Date(x.created_at).getTime())/1000;return a>=0&&a<3600;});
+    if(!rows.length){box.innerHTML='<div style="color:#8b97ad;padding:24px;text-align:center">표시중인 콜/알림이 없습니다</div>';return;}
+    box.innerHTML=rows.map(x=>{
+      const tag=x.source==='auto'?'<span style="color:#fbbf24">자동</span>':(x.source==='call'?'<span style="color:#ff8a5c">호출</span>':'수동');
+      return '<div style="border:1px solid #22304a;border-radius:10px;padding:10px 12px;margin-bottom:8px;display:flex;gap:10px;align-items:center">'
+        +'<div style="min-width:52px;text-align:center;font-weight:800;color:#9cc2ff">'+(x.ho_code||'-')+'<div style="font-size:10px;color:#8b97ad;font-weight:400">호기</div></div>'
+        +'<div style="flex:1"><div style="word-break:break-all">'+String(x.msg||'').replace(/</g,'&lt;')+'</div>'
+        +'<div style="font-size:11px;color:#8b97ad;margin-top:3px">'+callAgo(x.created_at)+' · '+tag+'</div></div>'
+        +'<button onclick="ackCall('+x.id+')" style="border:none;background:linear-gradient(135deg,#2f6df0,#1e4fc0);color:#fff;border-radius:8px;padding:9px 12px;font-size:13px;font-weight:800;cursor:pointer;white-space:nowrap">처리</button>'
+        +'</div>';
+    }).join('');
+  }catch(e){box.innerHTML='<div style="color:#ef4444;padding:20px;text-align:center">조회 실패: '+e.message+'</div>';}
+}
+async function ackCall(id){
+  try{
+    await fetch(SUPABASE_URL+'/rest/v1/andon_msg?id=eq.'+id,{method:'DELETE',headers:ANDON_H});
+    loadCallList();
+  }catch(e){showToast('처리 실패: '+e.message);}
+}
 </script>
 
 <!-- 2층 경광등 호출 결과 모달 -->
@@ -1459,6 +1490,18 @@ document.addEventListener('visibilitychange', function(){ if(!document.hidden) _
     <div id="elModalTitle" style="font-size:17px;font-weight:800;color:#fbbf24;margin-bottom:8px">알림 발송</div>
     <div id="elModalMsg" style="font-size:13px;color:#9ca3af;line-height:1.7;margin-bottom:18px">2층 경광등을 호출했습니다.</div>
     <button type="button" onclick="closeElModal()" style="width:100%;background:rgba(251,191,36,.15);border:1px solid rgba(251,191,36,.45);color:#fbbf24;padding:11px;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent">닫기</button>
+  </div>
+</div>
+
+<!-- === 현장 콜/알림 패널 === -->
+<div id="callPanel" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999" onclick="if(event.target===this)closeCallPanel()">
+  <div style="max-width:520px;margin:8vh auto 0;background:#141a26;border:1px solid #2a3142;border-radius:16px;padding:16px;max-height:78vh;display:flex;flex-direction:column">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+      <h3 style="margin:0;font-size:16px;color:#e6ecf5;flex:1">📟 현장 콜 / 알림 (1시간 이내)</h3>
+      <button onclick="loadCallList()" style="border:1px solid #2a3142;background:#1a2236;color:#9cc2ff;border-radius:8px;padding:6px 10px;font-size:12px;font-weight:700;cursor:pointer">⟳ 새로고침</button>
+      <button onclick="closeCallPanel()" style="border:1px solid #2a3142;background:#1a2236;color:#8b97ad;border-radius:8px;padding:6px 10px;font-size:12px;font-weight:700;cursor:pointer">✕</button>
+    </div>
+    <div id="callList" style="overflow-y:auto;flex:1;font-size:14px;color:#e6ecf5"></div>
   </div>
 </div>
 </body>
