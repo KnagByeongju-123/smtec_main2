@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>트윈팩토리 3D v13.39 - 일상점검 서버발송 이관</title>
+<title>트윈팩토리 3D v13.40 - 일상점검 서버발송 이관</title>
 <style>
 :root{--bg:#0c0f16;--card:#151a24;--border:#26304a;--txt:#e6ecf5;--sub:#8b97ad;
 --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--accent:#38bdf8;--blue:#3b6fd4;}
@@ -914,9 +914,27 @@ function buildMachinePatrolList(){
 }
 // buildScene과 동일한 설비 중심 좌표를 ZONES에서 직접 계산 (mesh 재생성과 무관 → 순회 좌표 안정)
 /* ============ 엔지니어(정비) — 동별 인원 순회 + 수리중 설비 배치 ============ */
-function loadEngCount(){ try{return JSON.parse(localStorage.getItem('twin_eng')||'{}')}catch(e){return{}} }
-function saveEngCount(){ try{localStorage.setItem('twin_eng',JSON.stringify(ENG))}catch(e){} }
-var ENG=loadEngCount(), engineers=[];
+// [공유] 동별 관리인원 수 — Supabase twin_eng(단일행) 저장. 로드 1회+변경시 1회만 요청
+var ENG={}, engineers=[];
+async function loadEngCount(){
+  try{
+    var r=await sbGet('twin_eng','id=eq.1&select=data&limit=1');
+    if(r&&r.length&&r[0].data){ ENG=r[0].data||{}; }
+  }catch(e){}
+  // 구버전 localStorage 값이 있고 서버가 비어있으면 1회 이관
+  try{
+    if(!Object.keys(ENG).length){
+      var loc=JSON.parse(localStorage.getItem('twin_eng')||'{}');
+      if(Object.keys(loc).length){ ENG=loc; saveEngCount(); }
+    }
+  }catch(e){}
+}
+function saveEngCount(){
+  try{
+    fetch(SB_URL+'/rest/v1/twin_eng?on_conflict=id',{method:'POST',headers:Object.assign({},sbH,{'Content-Type':'application/json','Prefer':'resolution=merge-duplicates,return=minimal'}),body:JSON.stringify([{id:1,data:ENG}])});
+    localStorage.setItem('twin_eng',JSON.stringify(ENG));
+  }catch(e){}
+}
 var REPAIR_SUF=['A002','M008','A001','A004','M004'];   // 설비이상·금형수리·금형교환·부품교체·부품연마
 function isMeasWait(d){
   if(!d)return false;
@@ -1833,6 +1851,8 @@ placeTabs();
 window.addEventListener('resize',placeTabs);
 loadCamViews().then(function(){
   return loadMachineViews();
+}).then(function(){
+  return loadEngCount();     // [공유] 동별 관리인원 (Supabase 1회)
 }).then(function(){
   return loadMaster();
 }).then(function(){
