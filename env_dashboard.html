@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>환경 모니터링 v2.8</title>
+<title>환경 모니터링 v3.0</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
   :root{
@@ -48,6 +48,7 @@
   .loc{font-size:14px;font-weight:700}
   .status{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted)}
   .sdot{width:9px;height:9px;border-radius:50%}
+  /* v3.0: 카드는 항상 3칸. 3번째 칸이 결로여유(센서 있음) 또는 체감(센서 없음) */
   .vals{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;text-align:center}
   .v .lab{font-size:11px;color:var(--muted);margin-bottom:3px}
   .v .num{font-size:28px;font-weight:800;line-height:1}
@@ -81,7 +82,7 @@
 <body>
 <header>
   <div class="bar">
-    <h1>환경 모니터링</h1><span class="ver" id="ver">v2.8</span>
+    <h1>환경 모니터링</h1><span class="ver" id="ver">v3.0</span>
     <span class="clock" id="clock">--:--:--</span>
   </div>
   <div class="tabs">
@@ -140,7 +141,7 @@
         <button class="btn go" onclick="testNtfy()">테스트 발송</button>
       </div>
       <div style="color:var(--muted);font-size:12px;margin-top:8px;line-height:1.5">
-        휴대폰 <b>ntfy</b> 앱에서 위 토픽을 구독하면, 각 기기의 <b>온도·습도·체감이 설정한 상·하한을 벗어날 때만</b> 알림이 옵니다(오프라인은 알림 없음, 화면 표시만). 같은 문제는 30분마다 1회 재알림됩니다(정상 복구 알림 없음). (대시보드가 켜져 있는 동안 감시·발송)</div>
+        휴대폰 <b>ntfy</b> 앱에서 위 토픽을 구독하면, 각 기기의 <b>온도·습도·체감이 설정한 상·하한을 벗어날 때만</b> 알림이 옵니다(오프라인은 알림 없음, 화면 표시만). <b>표면온도 센서가 달린 기기는 체감 대신 결로 위험(여유 ≤ 경고값 또는 ≤ 0)으로 알림</b>이 가며, 결로는 온습도보다 먼저 판정합니다. 같은 문제는 30분마다 1회 재알림됩니다(정상 복구 알림 없음). (대시보드가 켜져 있는 동안 감시·발송)</div>
     </div>
     <div id="cfgList"></div>
   </section>
@@ -309,13 +310,54 @@ const uint16_t LBL_FEEL[] PROGMEM = { 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x
   </section>
 </main>
 
-<footer>태진다이텍 환경 모니터링 · <span>v2.8</span></footer>
+<footer>태진다이텍 환경 모니터링 · <span>v3.0</span></footer>
 <div class="toast" id="toast"></div>
 
 <script>
-const SB_URL='https://omngtyewdaqpphnzeate.supabase.co';
-const SB_KEY='sb_publishable_9j2YkkL-7ul1TrhH-NjVdQ_vWDG2-1D';
-const H={apikey:SB_KEY,Authorization:'Bearer '+SB_KEY,'Content-Type':'application/json'};
+/* ============================================================
+   다중 소스 (이관 과도기)
+   ------------------------------------------------------------
+   온습도계가 회사 프로젝트 → 개인 프로젝트로 순차 이관되는 중.
+   두 곳을 모두 조회해 device_id 기준으로 병합한다.
+
+   이 구조의 이점: 기기를 이관할 때 이 파일을 고칠 필요가 없다.
+   펌웨어를 새 URL 로 구우면 회사 쪽 갱신이 멈추고 개인 쪽에서
+   뜨기 시작하므로, 화면은 자동으로 따라간다.
+   회사 프로젝트가 완전히 비면 아래 배열에서 한 줄만 지우면 끝.
+
+   컬럼명이 서로 달라 어댑터로 흡수한다.
+     회사: temperature / humidity      (결로 컬럼 없음)
+     개인: temp        / humi          (+ surface_temp, dew_point, dew_margin)
+   내부 표준은 temperature / humidity 로 통일한다.
+   ============================================================ */
+const SOURCES=[
+  { key:'company', name:'회사',
+    url:'https://omngtyewdaqpphnzeate.supabase.co',
+    apikey:'sb_publishable_9j2YkkL-7ul1TrhH-NjVdQ_vWDG2-1D',
+    t:'temperature', h:'humidity', dew:false },
+  { key:'personal', name:'개인',
+    url:'https://trhjeongphtendkounig.supabase.co',
+    apikey:'sb_publishable_B6mrGhmPO7XrCzVijyDlhA_Jo-Mhnyk',
+    t:'temp', h:'humi', dew:true },
+];
+const SRC={};SOURCES.forEach(s=>SRC[s.key]=s);
+const DEFAULT_SRC='personal';      // 신규 기기 설정을 쓸 기본 위치
+let SRC_ERR={};                    // 소스별 마지막 오류 (한쪽이 죽어도 나머지는 표시)
+
+function hdr(s){return {apikey:s.apikey,Authorization:'Bearer '+s.apikey,'Content-Type':'application/json'};}
+/* 소스별 select 컬럼 목록 */
+function colsCur(s){return `device_id,zone,${s.t},${s.h},feels_like,measured_at,updated_at`+(s.dew?',surface_temp,dew_point,dew_margin':'');}
+function colsLog(s){return `device_id,zone,${s.t},${s.h},feels_like,measured_at`+(s.dew?',surface_temp,dew_point,dew_margin':'');}
+/* 소스별 원본 row → 내부 표준 형태로 변환 */
+function normRow(s,r){
+  if(!r)return null;
+  const o=Object.assign({},r);
+  o.temperature=(r[s.t]==null||r[s.t]==='')?null:+r[s.t];
+  o.humidity   =(r[s.h]==null||r[s.h]==='')?null:+r[s.h];
+  if(!s.dew){o.surface_temp=null;o.dew_point=null;o.dew_margin=null;}
+  o._src=s.key;
+  return o;
+}
 let NTFY_TOPIC=localStorage.getItem('env_ntfy_topic')||'taejin_env_alert';   // ★ ntfy.sh 토픽명 (설정 탭에서 변경 가능)
 
 let USER=null;
@@ -341,16 +383,57 @@ function valState(v,min,max){if(v==null||isNaN(v))return 'off';if(v<min||v>max)r
   const sp=(max-min)||1;if(v<min+sp*0.1||v>max-sp*0.1)return 'warn';return 'ok';}
 const num=v=>(v==null||isNaN(v))?'--':Number(v).toFixed(1);
 
-async function sbGet(path){const r=await fetch(SB_URL+'/rest/v1/'+path,{headers:H});
-  if(!r.ok)throw new Error('GET '+r.status);return r.json();}
-async function sbGetAll(base,cap=40000){let out=[],off=0,page=1000;
-  while(out.length<cap){const rows=await sbGet(base+'&limit='+page+'&offset='+off);
+/* 단일 소스 조회 */
+async function srcGet(s,path){const r=await fetch(s.url+'/rest/v1/'+path,{headers:hdr(s)});
+  if(!r.ok)throw new Error(s.name+' GET '+r.status);return r.json();}
+async function srcGetAll(s,base,cap=40000){let out=[],off=0,page=1000;
+  while(out.length<cap){const rows=await srcGet(s,base+'&limit='+page+'&offset='+off);
     out=out.concat(rows);if(rows.length<page)break;off+=page;}return out;}
-async function sbUpsert(row){const r=await fetch(SB_URL+'/rest/v1/env_device?on_conflict=device_id',{
-  method:'POST',headers:{...H,Prefer:'resolution=merge-duplicates,return=minimal'},body:JSON.stringify(row)});
-  if(!r.ok)throw new Error('저장 실패 '+r.status+' '+await r.text());}
-async function sbDelete(id){const r=await fetch(SB_URL+'/rest/v1/env_device?device_id=eq.'+encodeURIComponent(id),{
-  method:'DELETE',headers:{...H,Prefer:'return=minimal'}});if(!r.ok)throw new Error('삭제 실패 '+r.status);}
+
+/* 전 소스 조회 후 병합. 한쪽이 실패해도 나머지는 그대로 표시한다.
+   pathFn(s) 는 소스별 경로를 만들어 주는 함수 (컬럼명이 달라서 필요) */
+async function allGet(pathFn,paged=false){
+  SRC_ERR={};const out=[];
+  await Promise.all(SOURCES.map(async s=>{
+    try{
+      const rows=paged?await srcGetAll(s,pathFn(s)):await srcGet(s,pathFn(s));
+      rows.forEach(r=>out.push(normRow(s,r)));
+    }catch(e){SRC_ERR[s.key]=e.message;}
+  }));
+  return out;
+}
+/* device_id 기준 병합. 중복이면 measured_at 이 최신인 쪽 채택 */
+function mergeByDevice(rows){
+  const m={};
+  for(const r of rows){
+    const cur=m[r.device_id];
+    if(!cur){m[r.device_id]=r;continue;}
+    const a=new Date(r.updated_at||r.measured_at||0).getTime();
+    const b=new Date(cur.updated_at||cur.measured_at||0).getTime();
+    if(a>b)m[r.device_id]=r;
+  }
+  return m;
+}
+function srcErrText(){
+  const k=Object.keys(SRC_ERR);
+  return k.length?' · '+k.map(x=>SRC[x].name+' 연결실패').join(', '):'';
+}
+
+/* 설정 저장/삭제는 그 기기가 실제로 살고 있는 소스로 보낸다.
+   (SHT41_3 은 회사로, SHT41_6 은 개인으로) */
+let DEV_SRC={};                    // device_id -> 소스 key
+function srcOf(id){return SRC[DEV_SRC[id]]||SRC[DEFAULT_SRC];}
+async function sbUpsert(row){
+  const s=srcOf(row.device_id);
+  const r=await fetch(s.url+'/rest/v1/env_device?on_conflict=device_id',{
+    method:'POST',headers:{...hdr(s),Prefer:'resolution=merge-duplicates,return=minimal'},
+    body:JSON.stringify(row)});
+  if(!r.ok)throw new Error('저장 실패('+s.name+') '+r.status+' '+await r.text());}
+async function sbDelete(id){
+  const s=srcOf(id);
+  const r=await fetch(s.url+'/rest/v1/env_device?device_id=eq.'+encodeURIComponent(id),{
+    method:'DELETE',headers:{...hdr(s),Prefer:'return=minimal'}});
+  if(!r.ok)throw new Error('삭제 실패('+s.name+') '+r.status);}
 
 /* ntfy 경고 (정상->경고 전환 시 1회, 같은 문제는 30분마다 재알림) */
 let NTFY_ON=localStorage.getItem('env_ntfy_on')!=='0';
@@ -390,12 +473,22 @@ function deviceProblem(cfg,r){
   const ts=r?(r.updated_at||r.measured_at):null;
   if(!ts||ageSec(ts)>1200) return null;   // 오프라인은 알림 제외(화면 표시만) — 상하한 초과만 알림
   const t=+r.temperature,h=+r.humidity,f=+r.feels_like;
+  // 결로는 설비/제품 손상과 직결되므로 온습도 이탈보다 먼저 알린다
+  const hasDew=(r.surface_temp!=null&&r.dew_margin!=null);
+  if(hasDew){
+    const warn=(cfg.dew_margin_warn!=null)?+cfg.dew_margin_warn:3;
+    if(r.dew_margin<=0) return '결로 발생 (표면 '+(+r.surface_temp).toFixed(1)+'C / 이슬점 '+(+r.dew_point).toFixed(1)+'C)';
+    if(r.dew_margin<=warn) return '결로 임박 여유 '+r.dew_margin.toFixed(1)+'C';
+  }
   if(t<cfg.temp_min) return '온도 낮음 '+t.toFixed(1)+'C';
   if(t>cfg.temp_max) return '온도 높음 '+t.toFixed(1)+'C';
   if(h<cfg.humi_min) return '습도 낮음 '+h.toFixed(1)+'%';
   if(h>cfg.humi_max) return '습도 높음 '+h.toFixed(1)+'%';
-  if(cfg.feels_min!=null && f<cfg.feels_min) return '체감 낮음 '+f.toFixed(1)+'C';
-  if(cfg.feels_max!=null && f>cfg.feels_max) return '체감 높음 '+f.toFixed(1)+'C';
+  // v3.0: 결로 기기는 카드에 체감을 표시하지 않으므로 체감 경고도 보내지 않는다
+  if(!hasDew){
+    if(cfg.feels_min!=null && f<cfg.feels_min) return '체감 낮음 '+f.toFixed(1)+'C';
+    if(cfg.feels_max!=null && f>cfg.feels_max) return '체감 높음 '+f.toFixed(1)+'C';
+  }
   return null;
 }
 
@@ -418,13 +511,12 @@ function showTab(t){
 /* 현황 */
 let DEVICES={},selDevice=null,chart=null;
 
-/* 외부 측정실 환경 소스 (팀원 시스템 · 별도 Supabase, 읽기 전용) */
-const ROOM_SRC={
-  url:'https://trhjeongphtendkounig.supabase.co',
-  key:'sb_publishable_B6mrGhmPO7XrCzVijyDlhA_Jo-Mhnyk',
-  table:'env_log', id:'SHT45_1', zone:'측정실'
-};
-function roomFeels(T,RH){   // 측정실 페이지와 동일 공식
+/* 체감온도 — 화면에서 항상 이 공식으로 재계산한다.
+   [이유] 펌웨어(SHT41_*)는 NWS 열지수 간이식을 쓰고 이 페이지는 Steadman 식을 써서
+          같은 온습도에도 0.7°C 가량 차이가 났다. 게다가 보정값이 걸린 기기만
+          페이지 공식으로 덮어써져, 같은 기기가 보정 유무에 따라 다른 값을 보였다.
+          저장된 feels_like 를 쓰지 않고 전부 여기서 계산해 기준을 하나로 맞춘다. */
+function roomFeels(T,RH){
   if(T>=27){
     const Tf=T*9/5+32;
     let HI=-42.379+2.04901523*Tf+10.14333127*RH-0.22475541*Tf*RH-0.00683783*Tf*Tf
@@ -436,35 +528,49 @@ function roomFeels(T,RH){   // 측정실 페이지와 동일 공식
   const e=(RH/100)*6.105*Math.exp(17.27*T/(237.7+T));
   return T+0.348*e-0.70*0.1-4.25;
 }
-async function fetchRoom(){
-  try{
-    const u=ROOM_SRC.url+'/rest/v1/'+ROOM_SRC.table
-      +'?select=measured_at,temp,humi&order=measured_at.desc&limit=1';
-    const r=await fetch(u,{headers:{apikey:ROOM_SRC.key,Authorization:'Bearer '+ROOM_SRC.key}});
-    if(!r.ok)return null;
-    const a=await r.json();if(!a||!a.length)return null;
-    const x=a[0],T=+x.temp,RH=+x.humi;
-    return {device_id:ROOM_SRC.id,zone:ROOM_SRC.zone,temperature:T,humidity:RH,
-      feels_like:+roomFeels(T,RH).toFixed(1),updated_at:x.measured_at,measured_at:x.measured_at};
-  }catch(e){return null;}
-}
+/* 보정 적용 + 체감온도 재계산 (보정 유무와 무관하게 항상 같은 공식) */
 function calibrate(id,r){
   if(!r)return r;
   const c=DEVICES[id]||{},to=+c.temp_offset||0,ho=+c.humi_offset||0;
-  if(!to&&!ho)return r;
-  const t=+r.temperature+to,h=+r.humidity+ho;
-  return Object.assign({},r,{temperature:t,humidity:h,feels_like:+roomFeels(t,h).toFixed(1)});
+  const t=(r.temperature==null)?null:+r.temperature+to;
+  const h=(r.humidity==null)?null:+r.humidity+ho;
+  const f=(t==null||h==null)?null:+roomFeels(t,h).toFixed(1);
+  // 표면온도가 있으면 이슬점 여유도 보정 온습도 기준으로 다시 계산
+  let dp=r.dew_point,dm=r.dew_margin;
+  if(r.surface_temp!=null&&t!=null&&h!=null){
+    dp=+dewPoint(t,h).toFixed(1);
+    dm=+(+r.surface_temp-dp).toFixed(1);
+  }
+  return Object.assign({},r,{temperature:t,humidity:h,feels_like:f,dew_point:dp,dew_margin:dm});
+}
+/* 이슬점 (Magnus 식) */
+function dewPoint(T,RH){
+  const a=17.27,b=237.7;
+  const g=(a*T)/(b+T)+Math.log(Math.max(RH,0.1)/100);
+  return (b*g)/(a-g);
+}
+/* 결로 상태 판정: bad=결로발생, warn=임박, ok=정상, off=센서없음 */
+function dewState(r,cfg){
+  if(!r||r.surface_temp==null||r.dew_margin==null)return 'off';
+  const warn=(cfg&&cfg.dew_margin_warn!=null)?+cfg.dew_margin_warn:3;
+  if(r.dew_margin<=0)return 'bad';
+  if(r.dew_margin<=warn)return 'warn';
+  return 'ok';
 }
 async function loadStatus(){
   try{
-    const [cfg,cur,room]=await Promise.all([
-      sbGet('env_device?select=*'),
-      sbGet('env_current?select=*'),
-      fetchRoom()
+    const [cfgRows,curRows]=await Promise.all([
+      allGet(s=>'env_device?select=*'),
+      allGet(s=>'env_current?select='+colsCur(s))
     ]);
-    DEVICES={};cfg.forEach(c=>DEVICES[c.device_id]=c);
-    const latest={};cur.forEach(r=>{latest[r.device_id]=r;});
-    if(room)latest[room.device_id]=room;
+    DEVICES=mergeByDevice(cfgRows);
+    const latest=mergeByDevice(curRows);
+
+    // 기기 출처 확정: 실제로 데이터가 올라오는 쪽 > 설정만 있는 쪽 > 기본값
+    DEV_SRC={};
+    cfgRows.forEach(c=>{if(!DEV_SRC[c.device_id])DEV_SRC[c.device_id]=c._src;});
+    Object.keys(latest).forEach(id=>{DEV_SRC[id]=latest[id]._src;});
+
     Object.keys(latest).forEach(id=>{latest[id]=calibrate(id,latest[id]);});
     const ids=[...new Set([...Object.keys(DEVICES),...Object.keys(latest)])].sort();
     const wrap=document.getElementById('cards');
@@ -472,7 +578,7 @@ async function loadStatus(){
       :'<div class="empty">표시할 기기가 없습니다. 보드 데이터가 들어오면 표시됩니다.</div>';
     // 경고 점검 (설정+사용 기기만)
     ids.forEach(id=>{const c=DEVICES[id];if(c)checkAlert(id,c.location||'',deviceProblem(c,latest[id]));});
-    document.getElementById('lastUpdate').textContent='마지막 갱신 '+fmtClock(new Date());
+    document.getElementById('lastUpdate').textContent='마지막 갱신 '+fmtClock(new Date())+srcErrText();
   }catch(e){document.getElementById('lastUpdate').textContent='불러오기 오류: '+e.message;}
 }
 function cardHTML(id,cfg,r){
@@ -482,13 +588,18 @@ function cardHTML(id,cfg,r){
   const sc=!r?'var(--off)':(online?'var(--ok)':'var(--off)'),stxt=!r?'데이터 없음':(online?'정상':'오프라인');
   const unconf=!cfg?'<span class="badge" style="color:#f5d97a;border-color:#5a4d1e">미설정</span>':'';
   const t=r?r.temperature:null,h=r?r.humidity:null,f=r?r.feels_like:null;
+  // v3.0: 3번째 칸 택일 — 표면온도 센서(DS18B20)가 달린 기기는 결로여유, 없으면 체감
+  const ds=dewState(r,cfg),hasDew=ds!=='off';
+  const thirdCell=hasDew
+    ? `<div class="v ${ds}"><div class="lab">결로여유</div><div class="num">${num(r.dew_margin)}<span class="unit">°C</span></div></div>`
+    : `<div class="v ok"><div class="lab">체감</div><div class="num">${num(f)}<span class="unit">°C</span></div></div>`;
   return `<div class="card${selDevice===id?' sel':''}" onclick="selectDevice('${id}',event)">
     <div class="chead"><span class="badge">${id}</span><span class="loc">${loc}</span>${unconf}
       <span class="status"><span class="sdot" style="background:${sc}"></span>${stxt}</span></div>
     <div class="vals">
       <div class="v ${valState(t,tmin,tmax)}"><div class="lab">온도</div><div class="num" style="color:var(--temp)">${num(t)}<span class="unit">°C</span></div></div>
       <div class="v ${valState(h,hmin,hmax)}"><div class="lab">습도</div><div class="num" style="color:var(--humi)">${num(h)}<span class="unit">%</span></div></div>
-      <div class="v ok"><div class="lab">체감</div><div class="num">${num(f)}<span class="unit">°C</span></div></div>
+      ${thirdCell}
     </div>
     <div class="updt">${ts?relTime(ts):'-'}</div></div>`;
 }
@@ -502,33 +613,32 @@ async function selectDevice(id,ev){
   document.getElementById('detailTitle').textContent=id+' '+loc+' · 최근 24시간';
   try{
     const since=kstISO(new Date(Date.now()-24*3600*1000));
-    const cc=DEVICES[id]||{},to=+cc.temp_offset||0,ho=+cc.humi_offset||0;
-    let labels,T,F,H;
-    if(id===ROOM_SRC.id){
-      const u=ROOM_SRC.url+'/rest/v1/'+ROOM_SRC.table
-        +'?select=measured_at,temp,humi&measured_at=gte.'+encodeURIComponent(since)
-        +'&order=measured_at.asc&limit=5000';
-      const res=await fetch(u,{headers:{apikey:ROOM_SRC.key,Authorization:'Bearer '+ROOM_SRC.key}});
-      const rows=res.ok?await res.json():[];
-      labels=rows.map(r=>fmtClock(new Date(r.measured_at)).slice(0,5));
-      T=rows.map(r=>+r.temp+to);H=rows.map(r=>+r.humi+ho);
-      F=rows.map(r=>+roomFeels(+r.temp+to,+r.humi+ho).toFixed(1));
-    }else{
-      const rows=await sbGet('env_log?select=temperature,humidity,feels_like,measured_at&device_id=eq.'
-        +encodeURIComponent(id)+'&measured_at=gte.'+encodeURIComponent(since)+'&order=measured_at.asc&limit=3000');
-      labels=rows.map(r=>fmtClock(new Date(r.measured_at)).slice(0,5));
-      T=rows.map(r=>+r.temperature+to);H=rows.map(r=>+r.humidity+ho);
-      F=(to||ho)?rows.map(r=>+roomFeels(+r.temperature+to,+r.humidity+ho).toFixed(1)):rows.map(r=>r.feels_like);
+    // 이관 과도기라 기기가 어느 소스에 있든 찾도록 양쪽 모두 조회
+    const raw=await allGet(s=>'env_log?select='+colsLog(s)
+      +'&device_id=eq.'+encodeURIComponent(id)
+      +'&measured_at=gte.'+encodeURIComponent(since)+'&order=measured_at.asc&limit=5000');
+    const rows=raw.map(r=>calibrate(id,r))
+      .sort((a,b)=>new Date(a.measured_at)-new Date(b.measured_at));
+    const labels=rows.map(r=>fmtClock(new Date(r.measured_at)).slice(0,5));
+    const T=rows.map(r=>r.temperature), H=rows.map(r=>r.humidity), F=rows.map(r=>r.feels_like);
+    // 표면온도 센서가 달린 기기면 표면온도·이슬점 선을 함께 그린다 (교차 지점 = 결로)
+    const extra=[];
+    if(rows.some(r=>r.surface_temp!=null)){
+      extra.push({label:'표면 °C',data:rows.map(r=>r.surface_temp),
+        borderColor:'#a78bfa',borderWidth:2,pointRadius:0,tension:.3,yAxisID:'y1'});
+      extra.push({label:'이슬점 °C',data:rows.map(r=>r.dew_point),
+        borderColor:'#f87171',borderWidth:1.5,borderDash:[5,4],pointRadius:0,tension:.3,yAxisID:'y1'});
     }
-    drawChart('chart',labels,T,F,H,'chartObj');
+    drawChart('chart',labels,T,F,H,'chartObj',extra);
     d.scrollIntoView({behavior:'smooth',block:'nearest'});
   }catch(e){toast('차트 오류: '+e.message);}
 }
-function drawChart(canvasId,labels,t,f,h,store){
+function drawChart(canvasId,labels,t,f,h,store,extra){
   const cfg={type:'line',data:{labels,datasets:[
     {label:'온도 °C',data:t,borderColor:'#facc15',borderWidth:2,pointRadius:0,tension:.3,yAxisID:'y1'},
     {label:'체감 °C',data:f,borderColor:'#e8edf4',borderWidth:1.5,pointRadius:0,tension:.3,yAxisID:'y1'},
-    {label:'습도 %',data:h,borderColor:'#38bdf8',borderWidth:2,pointRadius:0,tension:.3,yAxisID:'y2'}]},
+    {label:'습도 %',data:h,borderColor:'#38bdf8',borderWidth:2,pointRadius:0,tension:.3,yAxisID:'y2'}]
+    .concat(extra||[])},
     options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
       plugins:{legend:{labels:{color:'#8a97a8',boxWidth:14}}},
       scales:{x:{ticks:{color:'#8a97a8',maxTicksLimit:8},grid:{color:'#2a3340'}},
@@ -549,13 +659,16 @@ async function loadStats(){
   else since=kstISO(new Date(Date.now()-STAT_DAYS*86400*1000));
   try{
     const [rows,cfg]=await Promise.all([
-      sbGetAll('env_log?select=device_id,zone,temperature,humidity,feels_like,measured_at'
-        +'&measured_at=gte.'+encodeURIComponent(since)+'&order=measured_at.asc'),
-      sbGet('env_device?select=device_id,location')
+      allGet(s=>'env_log?select='+colsLog(s)
+        +'&measured_at=gte.'+encodeURIComponent(since)+'&order=measured_at.asc',true),
+      allGet(s=>'env_device?select=*')
     ]);
-    STAT_ROWS=rows;
-    cfg.forEach(c=>{DEVICES[c.device_id]=Object.assign(DEVICES[c.device_id]||{},{location:c.location});});
-    info.textContent=STAT_ROWS.length.toLocaleString()+'건';
+    const cfgMap=mergeByDevice(cfg);
+    Object.keys(cfgMap).forEach(k=>{DEVICES[k]=Object.assign(DEVICES[k]||{},cfgMap[k]);});
+    // 보정·체감·이슬점을 현황 카드와 동일한 기준으로 재계산
+    STAT_ROWS=rows.map(r=>calibrate(r.device_id,r))
+      .sort((a,b)=>new Date(a.measured_at)-new Date(b.measured_at));
+    info.textContent=STAT_ROWS.length.toLocaleString()+'건'+srcErrText();
     buildStatTable();
     fillDeviceSelect();
     renderStatChart();
@@ -564,11 +677,13 @@ async function loadStats(){
 function summarize(rows){
   const by={};
   for(const r of rows){let g=by[r.device_id];
-    if(!g)g=by[r.device_id]={zone:r.zone||'',n:0,ts:0,tc:0,tn:1e9,tx:-1e9,hs:0,hc:0,hn:1e9,hx:-1e9,fs:0,fc:0};
+    if(!g)g=by[r.device_id]={zone:r.zone||'',n:0,ts:0,tc:0,tn:1e9,tx:-1e9,hs:0,hc:0,hn:1e9,hx:-1e9,fs:0,fc:0,dn:1e9,dc:0};
     g.zone=r.zone||g.zone;g.n++;
     const t=+r.temperature;if(!isNaN(t)){g.ts+=t;g.tc++;if(t<g.tn)g.tn=t;if(t>g.tx)g.tx=t;}
     const h=+r.humidity;if(!isNaN(h)){g.hs+=h;g.hc++;if(h<g.hn)g.hn=h;if(h>g.hx)g.hx=h;}
-    const f=+r.feels_like;if(!isNaN(f)){g.fs+=f;g.fc++;}}
+    const f=+r.feels_like;if(!isNaN(f)){g.fs+=f;g.fc++;}
+    // 결로 여유는 '최저값'이 기록으로서 의미가 있음 (평균은 무의미)
+    if(r.dew_margin!=null){const d=+r.dew_margin;if(!isNaN(d)){g.dc++;if(d<g.dn)g.dn=d;}}}
   return by;
 }
 function locOf(id,zoneFallback){return (DEVICES[id]&&DEVICES[id].location)||zoneFallback||'-';}
@@ -576,13 +691,15 @@ function buildStatTable(){
   const by=summarize(STAT_ROWS);const ids=Object.keys(by).sort();
   const f=v=>(v==null||!isFinite(v))?'-':v.toFixed(1);
   let html='<thead><tr><th>기기</th><th>위치</th><th>건수</th>'
-    +'<th>온도 평균</th><th>최저</th><th>최고</th><th>습도 평균</th><th>최저</th><th>최고</th><th>체감 평균</th></tr></thead><tbody>';
-  if(ids.length===0) html+='<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:24px">데이터 없음</td></tr>';
+    +'<th>온도 평균</th><th>최저</th><th>최고</th><th>습도 평균</th><th>최저</th><th>최고</th><th>체감 평균</th>'
+    +'<th>결로여유 최저</th></tr></thead><tbody>';
+  if(ids.length===0) html+='<tr><td colspan="11" style="text-align:center;color:var(--muted);padding:24px">데이터 없음</td></tr>';
   ids.forEach(id=>{const g=by[id];
+    const dcol=g.dc?`<span style="color:${g.dn<=0?'var(--bad)':(g.dn<=3?'var(--warn)':'inherit')}">${f(g.dn)}</span>`:'-';
     html+=`<tr><td><b>${id}</b></td><td>${locOf(id,g.zone)}</td><td>${g.n.toLocaleString()}</td>
       <td>${f(g.tc?g.ts/g.tc:null)}</td><td>${f(g.tc?g.tn:null)}</td><td>${f(g.tc?g.tx:null)}</td>
       <td>${f(g.hc?g.hs/g.hc:null)}</td><td>${f(g.hc?g.hn:null)}</td><td>${f(g.hc?g.hx:null)}</td>
-      <td>${f(g.fc?g.fs/g.fc:null)}</td></tr>`;});
+      <td>${f(g.fc?g.fs/g.fc:null)}</td><td>${dcol}</td></tr>`;});
   document.getElementById('statTbl').innerHTML=html+'</tbody>';
 }
 function fillDeviceSelect(){
@@ -610,10 +727,12 @@ function renderStatChart(){
 }
 function exportCSV(){
   if(!STAT_ROWS.length){toast('내보낼 데이터가 없습니다');return;}
-  const head=['기기ID','위치','온도','습도','체감','측정시각(KST)'];
+  const head=['기기ID','위치','온도','습도','체감','표면온도','이슬점','결로여유','측정시각(KST)'];
   const lines=[head.join(',')];
   for(const r of STAT_ROWS) lines.push([r.device_id,'"'+locOf(r.device_id,r.zone).replace(/"/g,'""')+'"',
-    r.temperature??'',r.humidity??'',r.feels_like??'',fmtFull(r.measured_at)].join(','));
+    r.temperature??'',r.humidity??'',r.feels_like??'',
+    r.surface_temp??'',r.dew_point??'',r.dew_margin??'',
+    fmtFull(r.measured_at)].join(','));
   const blob=new Blob(['\uFEFF'+lines.join('\r\n')],{type:'text/csv;charset=utf-8'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);
   a.download='env_log_'+kstDateStr(new Date())+'.csv';a.click();
@@ -625,9 +744,16 @@ async function loadConfig(){
   document.getElementById('roNote').textContent=READONLY?'(게스트 · 읽기전용)':'';
   document.getElementById('addBtn').style.display=READONLY?'none':'';
   try{
-    const [cfg,seen]=await Promise.all([
-      sbGet('env_device?select=*&order=device_id.asc'),
-      sbGet('env_current?select=device_id,zone')]);
+    const [cfgRows,seenRows]=await Promise.all([
+      allGet(s=>'env_device?select=*&order=device_id.asc'),
+      allGet(s=>'env_current?select=device_id,zone')]);
+    // 출처 기록 (저장/삭제를 원래 프로젝트로 보내기 위함)
+    DEV_SRC={};
+    cfgRows.forEach(c=>{if(!DEV_SRC[c.device_id])DEV_SRC[c.device_id]=c._src;});
+    seenRows.forEach(r=>{DEV_SRC[r.device_id]=r._src;});
+    const cfgMap=mergeByDevice(cfgRows);
+    const cfg=Object.keys(cfgMap).sort().map(k=>cfgMap[k]);
+    const seen=Object.values(mergeByDevice(seenRows));
     const ids=new Set(cfg.map(c=>c.device_id)),newOnes={};
     seen.forEach(r=>{if(!ids.has(r.device_id)&&!newOnes[r.device_id])newOnes[r.device_id]={device_id:r.device_id,zone:r.zone};});
     const newList=Object.values(newOnes);
@@ -662,6 +788,9 @@ function rowHTML(c){const dis=READONLY?'disabled':'';
         <div style="display:flex;gap:4px">
           <input type="text" inputmode="decimal" data-k="humi_offset" value="${c.humi_offset??0}" style="flex:1;min-width:0" ${dis}>
           <button type="button" class="btn" style="padding:4px 10px" onclick="flipSign(this)" ${dis?'disabled':''}>±</button></div></div>
+      ${(SRC[DEV_SRC[c.device_id]]||SRC[DEFAULT_SRC]).dew
+        ? `<div class="f"><label>결로 경고여유 °C</label><input type="number" step="0.5" data-k="dew_margin_warn" value="${c.dew_margin_warn??3}" ${dis}></div>`
+        : ''}
       <div class="f"><label>사용</label><select data-k="enabled" ${dis}>
         <option value="true" ${c.enabled!==false?'selected':''}>사용</option>
         <option value="false" ${c.enabled===false?'selected':''}>중지</option></select></div></div>
@@ -674,7 +803,7 @@ function flipSign(btn){const inp=btn.parentNode.querySelector('input');
 function collect(rowEl){const o={};
   rowEl.querySelectorAll('[data-k]').forEach(inp=>{const k=inp.dataset.k;let v=inp.value;
     if(k==='save_interval')v=parseInt(v||'0',10);
-    else if(['temp_min','temp_max','humi_min','humi_max','feels_min','feels_max','temp_offset','humi_offset'].includes(k))v=parseFloat(v||'0');
+    else if(['temp_min','temp_max','humi_min','humi_max','feels_min','feels_max','temp_offset','humi_offset','dew_margin_warn'].includes(k))v=parseFloat(v||'0');
     else if(k==='enabled')v=(v==='true');o[k]=v;});
   if(!o.device_id)o.device_id=rowEl.dataset.id;o.updated_at=kstISO(new Date());return o;}
 async function saveRow(btn){const o=collect(btn.closest('.srow'));
