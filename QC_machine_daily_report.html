@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>작업일보 v14.7</title>
+<title>작업일보 v14.8</title>
 <style>
   :root{
     --bg:#0f1419; --panel:#1a2332; --border:#2a3a52;
@@ -330,7 +330,7 @@
 <body>
 
 <div class="header">
-  <h1>📋 작업일보 v14.7</h1>
+  <h1>📋 작업일보 v14.8</h1>
   <div class="meta">
     <span><span class="status-dot" id="connDot"></span><b id="connText">연결 확인 중</b></span>
     <span>장비: <b id="deviceCount">0</b></span>
@@ -1282,6 +1282,7 @@
       const prevDate = lastBaselineDate;   // 전일 (실적 저장용)
       lastBaselineDate = t;
       await autoSaveDailyReport(prevDate); // 00시: 전일 실적 자동 저장 + 세션 해지
+      await catchupCloseStale();           // 그 이전 날짜의 미마감 세션도 소급 마감
       await loadBaselines();   // 새 날짜 baseline 로드
       await autoZeroNewDay();  // 없으면 현재 누적을 0점으로 자동 저장
       try{ await loadRtSessions(); renderRealtime(); }catch(_){}
@@ -1312,16 +1313,22 @@
       for(const s of sess){
         const m=normMachine(s.machine);
         if(existed.includes(m)) { doneMachines.push(m); continue; }
-        // 정지시간 집계: 세션 누적 + (00시 현재 정지중이면 00시까지로 종료처리 후 합산)
+        const startISO=s.started_at||prevDate+'T00:00:00+09:00';
+        // 마감시각 = 해당일 마지막 생산카운트 시각 (없으면 23:59:59)
+        const chans=goodChannelsOf(s.machine);
+        let closeISO=endISO;
+        if(chans.length){ const ls=await lastShotBetween(chans, startISO, endISO); if(ls) closeISO=ls; }
+        // 정지시간 집계: 세션 누적 + (마감시각 현재 정지중이면 마감시각까지로 종료처리 후 합산)
         let stopMin=Number(s.stop_min)||0, stopCount=Number(s.stop_count)||0;
         if(s.paused && s.paused_at){
-          const dur=durMin(s.paused_at, endISO);
-          await postStopLog({report_date:prevDate,inspector:s.inspector||'미지정',customer:(s.customer||currentCustomer||'SBC'),machine:String(m),model:s.model||'',reason:(s.pause_reason||'자정마감'),material_lot:null,stop_start:s.paused_at,stop_end:endISO,duration_min:dur});
+          const dur=durMin(s.paused_at, closeISO);
+          await postStopLog({report_date:prevDate,inspector:s.inspector||'미지정',customer:(s.customer||currentCustomer||'SBC'),machine:String(m),model:s.model||'',reason:(s.pause_reason||'자정마감'),material_lot:null,stop_start:s.paused_at,stop_end:closeISO,duration_min:dur});
           stopMin+=dur; stopCount+=1;
         }
-        const startISO=s.started_at||prevDate+'T00:00:00+09:00';
-        const wm=Math.max(0, durMin(startISO, endISO)-stopMin);   // 근무시간 = 경과 − 정지 (정지시간 제외)
-        const qty=cur[m]||0;
+        const wm=Math.max(0, durMin(startISO, closeISO)-stopMin);   // 근무시간 = 경과 − 정지 (정지시간 제외)
+        // 수량 = 서버 행 개수(적용시각~마감시각) 우선 → 실패 시 화면 누적 폴백
+        let qty=await qtyBetween(chans, startISO, closeISO);
+        if(qty==null) qty=cur[m]||0;
         const ok=await postReportSafe({
           report_date: prevDate,
           inspector: s.inspector,
@@ -1335,7 +1342,7 @@
           stop_minutes: stopMin,
           stop_count: stopCount,
           start_time: startISO,
-          end_time: endISO,
+          end_time: closeISO,
           stop_reason: null,
           material_lot: null
         });
@@ -1359,6 +1366,94 @@
         try{ renderSlots(); renderReport(); }catch(_){}
       }
     }catch(e){ console.error('autoSaveDailyReport', e); }
+  }
+
+  // ===== 소급 자동마감 (catch-up) =====
+  // 자정에 브라우저가 꺼져 있어 00시 자동마감이 실행되지 못한 경우:
+  // 페이지 접속 시 qc_active_session에 남아있는 '전일 이전 시작' 세션을 찾아
+  // 해당 작업일의 마지막 생산카운트 시각까지로 소급 마감·저장하고 세션을 해지한다.
+  async function catchupCloseStale(){
+    try{
+      const today=todayKST();
+      let raw=[];
+      const r=await fetch(SUPABASE_URL+'/rest/v1/'+SESSION_TABLE+'?select=*',{headers:HDR_R});
+      if(r.ok) raw=(await r.json())||[]; else return;
+      const stale=raw.filter(function(s){
+        if(!s.machine||!s.model||!s.inspector) return false;
+        const base=s.started_at||s.updated_at; if(!base) return false;
+        return kstDateOf(new Date(base)) < today;
+      });
+      if(!stale.length) return;
+      const doneMachines=[];
+      for(const s of stale){
+        const m=normMachine(s.machine);
+        const workDate=kstDateOf(new Date(s.started_at||s.updated_at));
+        const startISO=s.started_at||workDate+'T00:00:00+09:00';
+        const capISO=workDate+'T23:59:59+09:00';
+        // 중복 방지: 이미 해당일 이력 있으면 세션만 해지
+        let dup=false;
+        try{
+          const rr=await fetch(SUPABASE_URL+'/rest/v1/'+REPORT_TABLE+'?report_date=eq.'+workDate+'&machine=eq.'+encodeURIComponent(String(m))+'&select=id&limit=1',{headers:HDR_R});
+          if(rr.ok){ const jj=await rr.json(); dup=Array.isArray(jj)&&jj.length>0; }
+        }catch(_){}
+        if(dup){ doneMachines.push(m); continue; }
+        // 마감시각 = 해당일 마지막 생산카운트 시각 (없으면 23:59:59)
+        const chans=goodChannelsOf(s.machine);
+        let closeISO=capISO;
+        if(chans.length){ const ls=await lastShotBetween(chans, startISO, capISO); if(ls) closeISO=ls; }
+        let stopMin=Number(s.stop_min)||0, stopCount=Number(s.stop_count)||0;
+        if(s.paused && s.paused_at){
+          const dur=durMin(s.paused_at, closeISO);
+          if(dur>0){
+            await postStopLog({report_date:workDate,inspector:s.inspector||'미지정',customer:(s.customer||currentCustomer||'SBC'),machine:String(m),model:s.model||'',reason:(s.pause_reason||'자정마감'),material_lot:null,stop_start:s.paused_at,stop_end:closeISO,duration_min:dur});
+            stopMin+=dur; stopCount+=1;
+          }
+        }
+        const wm=Math.max(0, durMin(startISO, closeISO)-stopMin);
+        let qty=await qtyBetween(chans, startISO, closeISO);
+        if(qty==null){
+          // 서버 집계 실패 시: start_snap이 있으면 원시누적-스냅으로 근사, 아니면 0
+          if(s.start_snap!=null){ const rawC=rawCountByMachine(); qty=Math.max(0,(rawC[m]||0)-Number(s.start_snap)); }
+          else qty=0;
+        }
+        const ok=await postReportSafe({
+          report_date: workDate,
+          inspector: s.inspector,
+          customer: (s.customer||currentCustomer||'SBC'),
+          model: s.model,
+          machine: String(m),
+          count_qty: qty,
+          qty: qty,
+          bad_qty: 0,
+          work_minutes: wm,
+          stop_minutes: stopMin,
+          stop_count: stopCount,
+          start_time: startISO,
+          end_time: closeISO,
+          stop_reason: null,
+          material_lot: null
+        });
+        if(!ok){ console.error('소급 자동마감 저장 실패:', m, workDate); continue; }
+        console.log('[소급마감]', workDate, mLabel(m), '수량', qty, '마감시각', closeISO);
+        doneMachines.push(m);
+      }
+      // 세션 해지 + 이 기기 로컬 슬롯 해제
+      for(const m of doneMachines){
+        try{ await fetch(SUPABASE_URL+'/rest/v1/'+SESSION_TABLE+'?machine=eq.'+encodeURIComponent(String(m)),{method:'DELETE',headers:HDR_R}); }catch(_){}
+      }
+      let changed=false;
+      (slots||[]).forEach(function(sl){
+        if(sl.applied && doneMachines.includes(normMachine(sl.machine))){
+          sl.applied=false; sl.startAt=null; sl.paused=false; sl.pausedAt=null; sl.pauseReason=''; sl.pauseLot=''; sl.stopMin=0; sl.stopCount=0; sl.startSnap=null; sl.liveGood=null;
+          changed=true;
+        }
+      });
+      if(changed){
+        saveSlots(); applyStarted=slots.some(function(x){return x.applied;});
+        try{ renderSlots(); renderReport(); }catch(_){}
+      }
+      if(doneMachines.length){ try{ await loadRtSessions(); renderRealtime(); }catch(_){} }
+    }catch(e){ console.error('catchupCloseStale', e); }
   }
 
 
@@ -1566,6 +1661,39 @@
       const m=cr.match(/\/(\d+)\s*$/); if(m) return parseInt(m[1])||0;
       const j=await r.json().catch(()=>[]); return Array.isArray(j)?j.length:null;
     }catch(e){ console.error('countSince',e); return null; }
+  }
+  // (mac, code)의 구간 [sinceISO ~ untilISO] 행 개수
+  async function countBetween(mac, code, sinceISO, untilISO){
+    try{
+      const url=SUPABASE_URL+'/rest/v1/'+TABLE+'?select=id&esp32_mac=eq.'+encodeURIComponent(mac)+'&machine_code=eq.'+encodeURIComponent(code)+'&created_at=gte.'+encodeURIComponent(sinceISO)+'&created_at=lte.'+encodeURIComponent(untilISO);
+      const r=await fetch(url,{headers:{...HDR_R,'Prefer':'count=exact','Range':'0-0'}});
+      const cr=r.headers.get('content-range')||r.headers.get('Content-Range')||'';
+      const m=cr.match(/\/(\d+)\s*$/); if(m) return parseInt(m[1])||0;
+      const j=await r.json().catch(()=>[]); return Array.isArray(j)?j.length:null;
+    }catch(e){ console.error('countBetween',e); return null; }
+  }
+  // 채널들의 구간 내 마지막 카운트 시각 (생산카운터되었던 시간) — 없으면 null
+  async function lastShotBetween(chans, sinceISO, untilISO){
+    let latest=null;
+    for(const c of (chans||[])){
+      try{
+        const url=SUPABASE_URL+'/rest/v1/'+TABLE+'?select=created_at&esp32_mac=eq.'+encodeURIComponent(c.mac)+'&machine_code=eq.'+encodeURIComponent(c.code)+'&created_at=gte.'+encodeURIComponent(sinceISO)+'&created_at=lte.'+encodeURIComponent(untilISO)+'&order=created_at.desc&limit=1';
+        const r=await fetch(url,{headers:HDR_R});
+        if(!r.ok) continue;
+        const j=await r.json();
+        if(j&&j[0]&&j[0].created_at){ if(!latest || new Date(j[0].created_at)>new Date(latest)) latest=j[0].created_at; }
+      }catch(_){}
+    }
+    return latest;
+  }
+  // 호기 양품 채널들의 구간 합계 (서버 행 개수 기준) — 실패 시 null
+  async function qtyBetween(chans, sinceISO, untilISO){
+    if(!chans||!chans.length) return null;
+    try{
+      const arr=await Promise.all(chans.map(c=>countBetween(c.mac,c.code,sinceISO,untilISO)));
+      if(arr.some(v=>v==null)) return null;
+      return arr.reduce((a,b)=>a+(b||0),0);
+    }catch(e){ return null; }
   }
   // 적용 중 슬롯의 실시간 양품(행 개수)을 서버에서 받아 캐시(s.liveGood). 실패 시 캐시 유지
   async function refreshLiveGood(){
@@ -2219,6 +2347,7 @@
     loadRepLocal(); renderChips(); showTab('rt');
     loadRepConfig().then(()=>{ renderChips(); renderReport(); });
     await tick();
+    await catchupCloseStale();   // 자정에 브라우저가 꺼져 있었어도 전일 미마감 세션을 소급 마감·저장
     await autoZeroNewDay();   // 오늘 0점이 없는 채널만 서버에 저장(ignore-duplicates, 기존값 보존)
     await loadBaselines();    // 서버의 확정 0점을 다시 읽어 표시값 동기화 (덮어쓰기 방지)
     tick();
