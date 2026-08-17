@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ESP32 생산일보 Rev.7.11</title>
+<title>ESP32 생산일보 Rev.7.12</title>
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html { color-scheme: light; }
@@ -4083,7 +4083,7 @@ function openMoldEdit(id) {
   v('fThickness', m ? m.thickness : '');
   v('fWidth', m ? m.width : '');
   v('fPitch', m ? m.pitch : '');
-  v('fStandardSpm', m ? getMoldStandardSpm(m) : '');
+  v('fStandardSpm', m ? (getMoldStandardSpm(m) || '') : '');
   v('fItemNo', m ? m.item_no : '');
   v('fMoldNo', m ? m.mold_no : '');
   v('fModelCode', m ? m.model_code : '');
@@ -4119,23 +4119,25 @@ async function saveMold() {
     unit_weight_g: calcUnitWeight() || null,
     customer: document.getElementById('fCustomer').value.trim() || null,
     qr_code: document.getElementById('fQr').value.trim() || moldNo,
+    standard_spm: standardSpm,
+    spm: standardSpm,
     active: true,
     updated_at: kstNowISO()
   };
   const id = document.getElementById('fMoldId').value;
   try {
-    if (id) await pd('PATCH', T_MOLD + '?id=eq.' + id, row, { 'Prefer': 'return=minimal' });
-    else await pd('POST', T_MOLD, [row], { 'Prefer': 'return=minimal' });
-
-    // 기존 DB에 standard_spm 컬럼이 있으면 서버에도 저장하고,
-    // 아직 컬럼이 없는 환경은 브라우저 로컬값으로 즉시 사용할 수 있게 fallback한다.
-    let spmDbSaved = false;
+    let spmDbSaved = true;
     try {
-      const q = id ? ('?id=eq.' + encodeURIComponent(id)) : ('?mold_no=eq.' + encodeURIComponent(moldNo));
-      await pd('PATCH', T_MOLD + q, { standard_spm: standardSpm }, { 'Prefer': 'return=minimal' });
-      spmDbSaved = true;
-    } catch (spmErr) {
-      console.log('standard_spm DB 컬럼 미지원 → 로컬 저장', spmErr);
+      if (id) await pd('PATCH', T_MOLD + '?id=eq.' + id, row, { 'Prefer': 'return=minimal' });
+      else await pd('POST', T_MOLD, [row], { 'Prefer': 'return=minimal' });
+    } catch (e1) {
+      // standard_spm 컬럼이 없는 구버전 DB → 해당 키만 제외하고 재시도 + 로컬 보관
+      if (/standard_spm/i.test(e1.message || '')) {
+        spmDbSaved = false;
+        delete row.standard_spm;
+        if (id) await pd('PATCH', T_MOLD + '?id=eq.' + id, row, { 'Prefer': 'return=minimal' });
+        else await pd('POST', T_MOLD, [row], { 'Prefer': 'return=minimal' });
+      } else throw e1;
     }
     saveLocalMoldSpm(moldNo, standardSpm);
 
@@ -4144,7 +4146,7 @@ async function saveMold() {
     renderMoldTable();
     restoreSelection();
     alert('✅ 금형이 저장되었습니다\n기준 SPM: ' + standardSpm + ' SPM' +
-          (spmDbSaved ? '' : '\n\n※ 현재 DB에 standard_spm 컬럼이 없어 이 기기에 기준 SPM을 저장했습니다.'));
+          (spmDbSaved ? ' (DB 저장)' : '\n\n※ DB에 standard_spm 컬럼이 없어 이 기기에만 저장했습니다.'));
   } catch (e) { alert('저장 실패: ' + e.message); }
 }
 async function deleteMold() {
