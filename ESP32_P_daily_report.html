@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ESP32 생산일보 Rev.7.8</title>
+<title>ESP32 생산일보 Rev.7.9</title>
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html { color-scheme: light; }
@@ -76,6 +76,12 @@
   .stop-now.stopped .dot { background: #dc2626; animation: espBlink 1.2s infinite; }
   .stop-now .mini-btn { margin-left: auto; }
   .runstop-row { display: flex; gap: 28px; justify-content: center; margin: 14px 0 4px; }
+.prod-action-row { display:flex; gap:8px; margin:10px 0 2px; }
+.prod-act { flex:1; padding:11px 8px; border:none; border-radius:10px; font-size:13px; font-weight:800; color:#fff; cursor:pointer; font-family:inherit; }
+.prod-act.material { background:#16a34a; }
+.prod-act.end { background:#7c3aed; }
+.prod-act:disabled { background:#94a3b8; opacity:.55; cursor:not-allowed; }
+.prod-act:active:not(:disabled) { transform:scale(.97); }
   .rs-circle {
     width: 106px; height: 106px; border-radius: 50%; border: none;
     font-size: 21px; font-weight: 800; color: #fff; cursor: pointer; font-family: inherit;
@@ -549,7 +555,7 @@
 
 <div class="top-bar">
   <button class="ham-btn" onclick="openDrawer()">☰<span class="tab-dot ham-dot"></span></button>
-  <h1>📡 ESP32 생산일보 <span class="cur-menu" id="curMenuName">설비가동</span><span class="rev-tag">Rev.7.8</span></h1>
+  <h1>📡 ESP32 생산일보 <span class="cur-menu" id="curMenuName">설비가동</span><span class="rev-tag">Rev.7.9</span></h1>
   <div class="top-meta">
     <span class="worker-chip" id="workerChip">확인중...</span>
     <span class="sync-badge" id="syncBadge">⏸ 대기</span>
@@ -560,7 +566,7 @@
 <div class="drawer-bg" id="drawerBg" onclick="closeDrawer()"></div>
 <nav class="drawer" id="drawer">
   <div class="drawer-head">
-    <span>📡 ESP32 생산일보 <small>Rev.7.8</small></span>
+    <span>📡 ESP32 생산일보 <small>Rev.7.9</small></span>
     <button class="drawer-x" onclick="closeDrawer()">✕</button>
   </div>
   <button class="tab-btn active" data-tab="t-prod" onclick="switchTab('t-prod', this)"><span class="tab-ico">⚙️</span>설비가동<span class="tab-dot"></span></button>
@@ -599,6 +605,10 @@
   <div class="runstop-row">
     <button class="rs-circle run" id="btnRunCircle" onclick="mainRunStart()">설비가동</button>
     <button class="rs-circle stop" id="btnStopCircle" onclick="openStopModal()">설비정지</button>
+  </div>
+  <div class="prod-action-row">
+    <button class="prod-act material" id="btnMaterialComplete" onclick="completeCurrentMaterial()">📦 소재완료</button>
+    <button class="prod-act end" id="btnProductionEnd" onclick="endProduction()">🏁 생산종료</button>
   </div>
   <div class="sel-hint" id="selHint" style="text-align:center"></div>
   <div class="active-banner" id="activeBanner"></div>
@@ -653,6 +663,9 @@
     <div class="pred-row"><span class="pl">총 정지 / 계획정지</span><span class="pv" id="rsStopSum">—</span></div>
     <div class="pred-row"><span class="pl">실제 가동시간</span><span class="pv" id="rsActual">—</span></div>
     <div class="pred-row"><span class="pl">가동률</span><span class="pv" id="rsOpRate">—</span></div>
+    <div class="pred-row"><span class="pl">금형 기준 SPM</span><span class="pv muted" id="rsStdSpm">—</span></div>
+    <div class="pred-row"><span class="pl">이론 생산수량</span><span class="pv muted" id="rsTheoryQty">생산종료 시 확정</span></div>
+    <div class="pred-row"><span class="pl">생산효율</span><span class="pv muted" id="rsEfficiency">생산종료 시 확정</span></div>
   </div>
 
   <!-- 🧾 금형별 작업 내역 (로트·정지·수량 포함) + 마지막 Σ 합계 블록 -->
@@ -666,7 +679,7 @@
   <span id="espHint" style="display:none"></span><span id="espTotal" style="display:none"></span>
 
   <div class="save-bar">
-    <button class="btn-save" id="btnReportSave" onclick="saveProductionReport()">💾 생산일보 저장 (작업 종료)</button>
+    <button class="btn-save" id="btnReportSave" onclick="saveProductionReport()">💾 생산일보 저장</button>
   </div>
 </div>
 
@@ -889,6 +902,7 @@
       <div class="fld"><label>두께</label><input type="number" step="0.01" id="fThickness" placeholder="" oninput="calcMoldSpec()"></div>
       <div class="fld"><label>폭</label><input type="number" step="0.1" id="fWidth" placeholder="" oninput="calcMoldSpec()"></div>
       <div class="fld"><label>피치</label><input type="number" step="0.1" id="fPitch" placeholder="" oninput="calcMoldSpec()"></div>
+      <div class="fld"><label>기준 SPM *</label><input type="number" min="1" max="999" step="1" id="fStandardSpm" placeholder="예: 60" inputmode="numeric"></div>
       <div class="spec-pin" id="fSpecPin">📌 —</div>
       <div class="fld"><label>비중</label><input type="number" step="0.01" id="fGravity" placeholder="" oninput="calcMoldSpec()"></div>
       <div class="fld"><label>고객사</label><input type="text" id="fCustomer" placeholder=""></div>
@@ -930,7 +944,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.js"></script>
 <script>
 /* ============================================================
-   ESP32 생산일보 Rev.7.8 — 비상용 독립 시스템
+   ESP32 생산일보 Rev.7.9 — 비상용 독립 시스템
    마스터 DB : jgvikmakenpllwxwdugk (pd_machine / pd_mold / pd_work_log)
    카운팅 DB : 설정 탭에서 변경 가능 (기본 omngtyewdaqpphnzeate.shot_count)
    ============================================================ */
@@ -1105,10 +1119,43 @@ async function loadMachines() {
   }
 }
 
+/* ===== 금형 기준 SPM (DB standard_spm 우선, 미지원 DB는 로컬 fallback) ===== */
+const LS_MOLD_STD_SPM = 'pdMoldStandardSpm_v1';
+function readLocalMoldSpm() {
+  try { return JSON.parse(localStorage.getItem(LS_MOLD_STD_SPM) || '{}') || {}; }
+  catch (e) { return {}; }
+}
+function saveLocalMoldSpm(moldNo, v) {
+  if (!moldNo) return;
+  try {
+    const all = readLocalMoldSpm();
+    const n = Math.max(0, Math.min(999, Number(v) || 0));
+    if (n > 0) all[String(moldNo)] = n;
+    else delete all[String(moldNo)];
+    localStorage.setItem(LS_MOLD_STD_SPM, JSON.stringify(all));
+  } catch (e) {}
+}
+function getMoldStandardSpm(mold) {
+  if (!mold) return 0;
+  const db = Number(mold.standard_spm);
+  if (db > 0) return db;
+  const all = readLocalMoldSpm();
+  return Math.max(0, Number(all[String(mold.mold_no || '')]) || 0);
+}
+function moldByNo(no) {
+  return molds.find(function(m) { return String(m.mold_no || '') === String(no || ''); }) || null;
+}
+
 async function loadMolds() {
   try {
     molds = await pd('GET', T_MOLD + '?select=*&order=mold_no.asc&limit=3000') || [];
   } catch (e) { molds = []; }
+  molds.forEach(function(m) {
+    if (!(Number(m.standard_spm) > 0)) {
+      const localSpm = getMoldStandardSpm(m);
+      if (localSpm > 0) m.standard_spm = localSpm;
+    }
+  });
   const act = molds.filter(function(m) { return m.active !== false; });
 
   const ms = document.getElementById('moldSelect');
@@ -1425,6 +1472,101 @@ function pauseActualRun(atMs) {
 function resetActualRunClock() {
   setRunClock({ totalMs: 0, startedAt: null });
 }
+/* ===== 🏁 생산종료 스냅샷 =====
+   생산종료 버튼을 누른 순간의 실제가동시간/이론수량을 고정한다.
+*/
+const LS_PROD_END = 'pdProductionEnd_v1';
+function getProductionEndSnapshot() {
+  try {
+    const all = JSON.parse(localStorage.getItem(LS_PROD_END) || '{}');
+    return all[runKey()] || null;
+  } catch (e) { return null; }
+}
+function setProductionEndSnapshot(v) {
+  try {
+    const all = JSON.parse(localStorage.getItem(LS_PROD_END) || '{}');
+    if (v) all[runKey()] = v; else delete all[runKey()];
+    localStorage.setItem(LS_PROD_END, JSON.stringify(all));
+  } catch (e) {}
+}
+function clearProductionEndSnapshot() { setProductionEndSnapshot(null); }
+
+function calcProductionEndSnapshot(endMs) {
+  const actualMs = Math.max(0, getActualRunMs(endMs));
+  const runs = getRunHist();
+  let theory = 0;
+  const spms = [];
+  const runCalc = runs.map(function(r, idx) {
+    let std = Math.max(0, Number(r.standard_spm) || 0);
+    if (!(std > 0)) std = getMoldStandardSpm(moldByNo(r.mold_no));
+    if (std > 0 && spms.indexOf(std) < 0) spms.push(std);
+
+    let startRunMs = Number(r.run_ms_at_start);
+    let endRunMs = idx + 1 < runs.length ? Number(runs[idx + 1].run_ms_at_start) : actualMs;
+    let runMs;
+    if (Number.isFinite(startRunMs) && Number.isFinite(endRunMs)) {
+      runMs = Math.max(0, endRunMs - startRunMs);
+    } else {
+      // 구버전 이력 fallback: 작업구간 경과시간 - 정지시간
+      const st = new Date(r.at).getTime();
+      const en = idx + 1 < runs.length ? new Date(runs[idx + 1].at).getTime() : endMs;
+      runMs = Math.max(0, (Number.isFinite(en) && Number.isFinite(st) ? en - st : 0) - stopsForRun(idx).total);
+    }
+    const tq = std > 0 ? std * runMs / 60000 : 0;
+    theory += tq;
+    return {
+      mold_no: r.mold_no,
+      item_no: r.item_no,
+      standard_spm: std,
+      actual_run_sec: Math.floor(runMs / 1000),
+      theoretical_qty: Math.floor(tq)
+    };
+  });
+  const plannedMs = getPlannedMs();
+  return {
+    ended_at: new Date(endMs).toISOString(),
+    actual_ms: actualMs,
+    planned_ms: plannedMs,
+    op_rate: plannedMs > 0 ? actualMs / plannedMs * 100 : 0,
+    theoretical_qty: Math.floor(theory),
+    standard_spms: spms,
+    runs: runCalc
+  };
+}
+function restoreProductionEndSnapshotFromServer(row) {
+  if (!row || row.status === 'working') return;
+  if (getProductionEndSnapshot()) return;
+  let hist = row.run_history;
+  if (typeof hist === 'string') {
+    try { hist = JSON.parse(hist); } catch (e) { hist = []; }
+  }
+  if (!Array.isArray(hist) || !hist.length) return;
+  const runs = hist.map(function(r) {
+    return {
+      mold_no: r.mold_no || '',
+      item_no: r.item_no || '',
+      standard_spm: Math.max(0, Number(r.standard_spm) || 0),
+      actual_run_sec: Math.max(0, Number(r.actual_run_sec) || 0),
+      theoretical_qty: Math.max(0, Number(r.theoretical_qty) || 0)
+    };
+  });
+  const theory = runs.reduce(function(a, r) { return a + r.theoretical_qty; }, 0);
+  if (!(theory > 0)) return;
+  const spms = [];
+  runs.forEach(function(r) { if (r.standard_spm > 0 && spms.indexOf(r.standard_spm) < 0) spms.push(r.standard_spm); });
+  const actualMs = Math.max(0, Number(row.actual_work_sec) || 0) * 1000;
+  const plannedMs = Math.max(0, Number(row.planned_min) || 0) * 60000;
+  setProductionEndSnapshot({
+    ended_at: row.updated_at || kstNowISO(),
+    actual_ms: actualMs,
+    planned_ms: plannedMs,
+    op_rate: Number(row.op_rate) || (plannedMs > 0 ? actualMs / plannedMs * 100 : 0),
+    theoretical_qty: Math.floor(theory),
+    standard_spms: spms,
+    runs: runs
+  });
+}
+
 function restoreActualRunClockFromServer(row) {
   const c = getRunClock();
   const serverMs = Math.max(0, Number(row && row.actual_work_sec) || 0) * 1000;
@@ -1475,10 +1617,11 @@ function pushStopEvent(code) {
   list.push({ code: code, start: Date.now(), end: null });
   setStopEvents(list);
 }
-function closeStopEvents() {
+function closeStopEvents(atMs) {
   const list = getStopEvents();
   let ch = false;
-  list.forEach(function(e) { if (e.end === null) { e.end = Date.now(); ch = true; } });
+  const t = atMs || Date.now();
+  list.forEach(function(e) { if (e.end === null) { e.end = t; ch = true; } });
   if (ch) setStopEvents(list);
 }
 function addManualStopEvent(code, deltaMs) {
@@ -1521,6 +1664,8 @@ function recordRun(force) {
     item_no: sel.item,
     model_code: sel.mold.model_code || '',
     spm: spm || 0,
+    standard_spm: getMoldStandardSpm(sel.mold),
+    run_ms_at_start: getActualRunMs(),
     at: kstNowISO()
   });
   setRunHist(list);
@@ -1938,6 +2083,16 @@ function updateUI() {
     sc3.disabled = !session.active;
     sc3.title = session.active ? '설비정지 관리' : '설비가동을 먼저 시작하세요';
   }
+  const mb = document.getElementById('btnMaterialComplete');
+  if (mb) {
+    mb.disabled = !sel.lot;
+    mb.title = sel.lot ? ('현재 LOT ' + sel.lot + ' 완료처리') : '소재 LOT를 먼저 선택하세요';
+  }
+  const eb = document.getElementById('btnProductionEnd');
+  if (eb) {
+    eb.disabled = !session.active;
+    eb.title = session.active ? '현재 시점으로 가동률·효율 기준시간 확정' : '설비가동 중에 사용할 수 있습니다';
+  }
   if (hint && Date.now() > _hintUntil) {
     if (runCode) {
       const s3 = STOP_CODES.find(function(x) { return x.code === runCode; });
@@ -2224,11 +2379,14 @@ async function loadWorkFromServer() {
 
       // 서버의 누적 실제가동시간 + 현재 가동 시작시각을 로컬 시계에 복원한다.
       restoreActualRunClockFromServer(row);
+      // 생산종료 후 다른 기기/새로고침에서도 run_history의 기준SPM 계산값으로 종료 스냅샷을 복원한다.
+      restoreProductionEndSnapshotFromServer(row);
       updateUI();
 
       // 완료된 작업은 다시 자동 시작하지 않는다. 작업중인 서버행만 상태를 복원한다.
       session.active = row.status === 'working';
       if (session.active) {
+        clearProductionEndSnapshot();
         startSyncTimer();
         restartEspPoll(true);
       } else {
@@ -2246,6 +2404,7 @@ async function loadWorkFromServer() {
         state[sc.code] = { totalMs: 0, startedAt: null };
       });
       resetActualRunClock();
+      clearProductionEndSnapshot();
       saveState();
       updateUI();
     }
@@ -2320,7 +2479,9 @@ async function startWork() {
     }
   }
 
-  // 서버 저장 성공 후, 사용자가 버튼을 클릭했던 정확한 시각부터 실제가동 누적을 시작한다.
+  // 서버 저장 성공 후, 이전 생산종료 스냅샷을 무효화하고
+  // 사용자가 버튼을 클릭했던 정확한 시각부터 실제가동 누적을 시작한다.
+  clearProductionEndSnapshot();
   startActualRun(runStartMs);
   session.active = true;
   session.dirty = false;
@@ -2729,7 +2890,11 @@ function dbRowToMaterialReceipt(r) {
     item_nos: p ? p.items.slice() : (r.item_no ? [r.item_no] : []),
     worker_name: r.worker_name || '',
     created_at: r.attached_at || '',
-    raw_qr: r.raw_qr || ''
+    raw_qr: r.raw_qr || '',
+    completed_at: (function() {
+      const m = String(r.raw_qr || '').match(/\|DONE:([^|]+)/);
+      return m ? decodeURIComponent(m[1]) : null;
+    })()
   };
 }
 // 소재입고 DB 조회도 짧은 시간 내 반복 호출하지 않도록 캐시합니다.
@@ -2942,7 +3107,9 @@ function materialReceiptMatchesMold(r, mold) {
 }
 function compatibleMaterialReceipts() {
   if (!sel.mold) return [];
-  return materialReceipts.filter(function(r) { return materialReceiptMatchesMold(r, sel.mold); });
+  return materialReceipts.filter(function(r) {
+    return !r.completed_at && materialReceiptMatchesMold(r, sel.mold);
+  });
 }
 function refreshMaterialChoicesForMold() {
   const compatible = compatibleMaterialReceipts();
@@ -3010,6 +3177,47 @@ async function registerMaterialReceiptUse(r) {
   if (navigator.vibrate) navigator.vibrate(100);
   return true;
 }
+async function completeCurrentMaterial() {
+  if (!sel.lot) { alert('완료 처리할 소재 LOT를 먼저 선택하세요'); return; }
+  const r = materialReceipts.find(function(x) {
+    return x.lot_no === sel.lot && (!sel.mold || materialReceiptMatchesMold(x, sel.mold));
+  }) || materialReceipts.find(function(x) { return x.lot_no === sel.lot; });
+  if (!r) { alert('현재 LOT의 소재입고 원본을 찾지 못했습니다'); return; }
+  if (r.completed_at) {
+    sel.lot = ''; saveSelection(); refreshMaterialChoicesForMold(); renderProdInfo();
+    return;
+  }
+  if (!confirm('📦 소재완료 처리하시겠습니까?\\n\\nLOT: ' + r.lot_no +
+               '\\n완료 후 이 LOT는 설비가동의 LOT 선택 목록에서 제외됩니다.')) return;
+
+  const doneAt = kstNowISO();
+  try {
+    if (r._remote && r._dbId) {
+      const baseMarker = String(r.raw_qr || MATSTOCK_PREFIX + 'MANUAL');
+      const marker = baseMarker.replace(/\\|DONE:[^|]+/g, '') + '|DONE:' + encodeURIComponent(doneAt);
+      await pd('PATCH', T_LOT + '?id=eq.' + encodeURIComponent(r._dbId),
+               { raw_qr: marker }, { 'Prefer': 'return=minimal' });
+      invalidateMaterialRemoteCache();
+    } else {
+      const list = readMaterialReceipts();
+      const x = list.find(function(v) { return String(v.id) === String(r.id) || (v.lot_no === r.lot_no && v.in_date === r.in_date); });
+      if (x) x.completed_at = doneAt;
+      writeMaterialReceipts(list);
+    }
+    sel.lot = '';
+    saveSelection();
+    await loadMaterialReceipts();
+    refreshMaterialChoicesForMold();
+    renderProdInfo();
+    updateUI();
+    showHint('✅ 소재완료 · <b>' + escHtml(r.lot_no) + '</b> · LOT 선택목록에서 제외됨');
+    if (navigator.vibrate) navigator.vibrate([100,50,100]);
+  } catch (e) {
+    console.error(e);
+    alert('소재완료 처리 실패:\\n' + e.message);
+  }
+}
+
 function renderMaterialReceipts() {
   const tb = document.querySelector('#matReceiptTable tbody');
   if (!tb) return;
@@ -3038,15 +3246,17 @@ function renderMaterialReceipts() {
     tb.innerHTML = '<tr><td colspan="4"><div class="empty">등록된 소재입고 내역이 없습니다</div></td></tr>';
   } else list.forEach(function(r) {
     const spec = [r.material, r.thickness ? r.thickness + 'T' : '', r.width ? r.width + 'W' : ''].filter(Boolean).join(' · ') || r.mat_spec || '-';
-    const usable = !!(sel.mold && materialReceiptMatchesMold(r, sel.mold));
+    const completed = !!r.completed_at;
+    const usable = !!(!completed && sel.mold && materialReceiptMatchesMold(r, sel.mold));
     const tr = document.createElement('tr');
     tr.className = (usable ? 'mat-useable' : '') + (sel.lot === r.lot_no ? ' mat-selected' : '');
-    tr.title = !sel.mold ? '금형을 먼저 선택하세요' : (usable ? '클릭하면 이 LOT를 설비사용 소재로 선택합니다' : '현재 금형과 소재규격이 맞지 않습니다');
-    const dbBadge = r._remote ? ' <span class="mat-source-chip">DB</span>' : ' <span class="mat-source-chip">로컬</span>';
+    tr.title = completed ? '소재완료 처리된 LOT입니다' : (!sel.mold ? '금형을 먼저 선택하세요' : (usable ? '클릭하면 이 LOT를 설비사용 소재로 선택합니다' : '현재 금형과 소재규격이 맞지 않습니다'));
+    const dbBadge = (r._remote ? ' <span class="mat-source-chip">DB</span>' : ' <span class="mat-source-chip">로컬</span>') +
+                    (completed ? ' <span class="mat-source-chip" style="background:#e2e8f0;color:#475569">완료</span>' : '');
     tr.innerHTML = '<td><b>' + escHtml(r.in_date || '-') + '</b>' + dbBadge + '<br><span style="font-size:10px;color:#64748b">' + escHtml(r.lot_no || '-') + '</span></td>' +
       '<td>' + escHtml(spec) + '<br><span style="font-size:10px;color:#94a3b8">' + escHtml((r.mold_nos || []).slice(0,3).join(', ') || '-') + '</span></td>' +
       '<td class="num">' + (r.weight_kg ? Number(r.weight_kg).toLocaleString() + 'kg' : '-') + '<br><span style="font-size:10px;color:#94a3b8">' + (r.qty || 1) + '개</span></td>' +
-      '<td style="text-align:right;white-space:nowrap"><button class="mini-btn edit use-mat"' + (usable ? '' : ' disabled title="현재 금형과 규격이 맞는 소재만 사용할 수 있습니다"') + '>설비사용</button> <button class="mini-btn del del-mat">삭제</button></td>';
+      '<td style="text-align:right;white-space:nowrap"><button class="mini-btn edit use-mat"' + (usable ? '' : ' disabled title="' + (completed ? '소재완료 LOT' : '현재 금형과 규격이 맞는 소재만 사용할 수 있습니다') + '"') + '>' + (completed ? '완료' : '설비사용') + '</button> <button class="mini-btn del del-mat">삭제</button></td>';
     tr.onclick = function(ev) {
       if (!usable) return;
       if (ev.target && ev.target.closest && ev.target.closest('.del-mat')) return;
@@ -3412,8 +3622,9 @@ function renderReportSummary() {
   });
 
   const plannedMs = getPlannedMs();
-  const actual = getActualRunMs();
-  const rate = plannedMs > 0 ? (actual / plannedMs * 100) : 0;
+  const endSnap = getProductionEndSnapshot();
+  const actual = endSnap ? Number(endSnap.actual_ms || 0) : getActualRunMs();
+  const rate = endSnap ? Number(endSnap.op_rate || 0) : (plannedMs > 0 ? (actual / plannedMs * 100) : 0);
   document.getElementById('rsPlanned').textContent =
     fmtHHMM(workTime.startMin) + ' ~ ' + fmtHHMM(workTime.endMin) + ' (' + fmtTime(plannedMs) + ')';
   document.getElementById('rsStopSum').textContent = fmtTime(total) + ' / ' + fmtTime(plannedStop);
@@ -3421,6 +3632,146 @@ function renderReportSummary() {
   const rEl = document.getElementById('rsOpRate');
   rEl.textContent = rate.toFixed(1) + ' %';
   rEl.className = 'pv ' + (rate >= 85 ? 'ok' : rate >= 70 ? 'warn' : 'danger');
+  updateEfficiencySummary();
+}
+
+async function endProduction() {
+  if (!session.logId || !session.active) {
+    alert('현재 진행 중인 설비가동이 없습니다');
+    return;
+  }
+  const runs = getRunHist();
+  if (!runs.length) { alert('작업 이력이 없습니다'); return; }
+
+  const missing = [];
+  runs.forEach(function(r) {
+    const std = Math.max(0, Number(r.standard_spm) || getMoldStandardSpm(moldByNo(r.mold_no)));
+    if (!(std > 0) && missing.indexOf(r.mold_no) < 0) missing.push(r.mold_no);
+  });
+  if (missing.length) {
+    alert('⚠ 기준 SPM이 등록되지 않은 금형이 있습니다.\\n\\n' + missing.join(', ') +
+          '\\n\\n금형설정에서 기준 SPM을 등록한 후 생산종료를 눌러주세요.');
+    return;
+  }
+
+  const endMs = Date.now();
+  const preview = calcProductionEndSnapshot(endMs);
+  const spmText = preview.standard_spms.join(' / ') + ' SPM';
+  if (!confirm('🏁 생산종료 하시겠습니까?\\n\\n' +
+               '실제 가동시간: ' + fmtTime(preview.actual_ms) + '\\n' +
+               '기준 SPM: ' + spmText + '\\n' +
+               '이론 생산수량: ' + preview.theoretical_qty.toLocaleString() + ' EA\\n' +
+               '가동률: ' + preview.op_rate.toFixed(1) + ' %\\n\\n' +
+               '※ 확인 시 이 시점으로 가동시간·가동률·효율 계산 기준이 고정됩니다.')) return;
+
+  const btn = document.getElementById('btnProductionEnd');
+  if (btn) { btn.disabled = true; btn.textContent = '처리중'; }
+  try {
+    // 종료 클릭 시점까지 진행 중 정지를 확정하고 실제가동 시계를 동결한다.
+    Object.keys(state).forEach(function(k) {
+      if (state[k].startedAt) {
+        state[k].totalMs += Math.max(0, endMs - state[k].startedAt);
+        state[k].startedAt = null;
+      }
+    });
+    closeStopEvents(endMs);
+    pauseActualRun(endMs);
+    saveState();
+
+    const snap = calcProductionEndSnapshot(endMs);
+    setProductionEndSnapshot(snap);
+
+    const payload = buildLogPayload(false);
+    payload.status = 'standby';
+    payload.current_code = null;
+    payload.current_started_at = null;
+    payload.actual_work_sec = Math.floor(snap.actual_ms / 1000);
+    payload.op_rate = parseFloat(snap.op_rate.toFixed(2));
+    payload.updated_at = snap.ended_at;
+
+    // 생산종료 시점의 금형별 기준SPM/이론수량도 작업이력 JSON에 남긴다.
+    const rh = getRunHist();
+    const withCalc = rh.map(function(r, idx) {
+      const o = Object.assign({}, r);
+      const c = snap.runs[idx] || {};
+      o.standard_spm = c.standard_spm || o.standard_spm || 0;
+      o.actual_run_sec = c.actual_run_sec || 0;
+      o.theoretical_qty = c.theoretical_qty || 0;
+      return o;
+    });
+    payload.run_history = withCalc.length ? JSON.stringify(withCalc) : null;
+
+    await pd('PATCH', T_LOG + '?id=eq.' + session.logId, payload, { 'Prefer': 'return=minimal' });
+
+    session.active = false;
+    session.dirty = false;
+    stopSyncTimer();
+    pauseEspPoll();
+    saveSession();
+    renderBanner();
+    updateUI();
+    renderReportSummary();
+    updateReportSummary();
+    setSyncStatus('ok', '✓ 생산종료');
+
+    const reportBtn = document.querySelector('.drawer .tab-btn[data-tab="t-report"]');
+    switchTab('t-report', reportBtn);
+    alert('✅ 생산종료 완료\\n\\n실제 가동시간 ' + fmtTime(snap.actual_ms) +
+          '\\n이론 생산수량 ' + snap.theoretical_qty.toLocaleString() + ' EA' +
+          '\\n\\n생산일보에서 양품·불량 수량을 입력하면 생산효율이 계산됩니다.');
+  } catch (e) {
+    console.error(e);
+    alert('생산종료 처리 실패:\\n' + e.message);
+    // 서버 저장 실패 시 종료 스냅샷은 취소하고 가동을 재개한다.
+    clearProductionEndSnapshot();
+    startActualRun(endMs);
+    session.active = true;
+    saveSession();
+    startSyncTimer();
+    restartEspPoll(true);
+    updateUI();
+  } finally {
+    if (btn) { btn.textContent = '🏁 생산종료'; updateUI(); }
+  }
+}
+
+function updateEfficiencySummary() {
+  const snap = getProductionEndSnapshot();
+  const stdEl = document.getElementById('rsStdSpm');
+  const tqEl = document.getElementById('rsTheoryQty');
+  const efEl = document.getElementById('rsEfficiency');
+  if (!stdEl || !tqEl || !efEl) return;
+
+  const runs = getRunHist();
+  const spms = [];
+  runs.forEach(function(r) {
+    const v = Math.max(0, Number(r.standard_spm) || getMoldStandardSpm(moldByNo(r.mold_no)));
+    if (v > 0 && spms.indexOf(v) < 0) spms.push(v);
+  });
+  stdEl.textContent = spms.length ? spms.join(' / ') + ' SPM' : '미등록';
+  stdEl.className = 'pv ' + (spms.length ? '' : 'danger');
+
+  if (!snap) {
+    tqEl.textContent = '생산종료 시 확정';
+    tqEl.className = 'pv muted';
+    efEl.textContent = '생산종료 시 확정';
+    efEl.className = 'pv muted';
+    return;
+  }
+
+  tqEl.textContent = Number(snap.theoretical_qty || 0).toLocaleString() + ' EA';
+  tqEl.className = 'pv';
+  const t = runTotals();
+  const actualQty = t.pass + t.bad;
+  const theory = Number(snap.theoretical_qty) || 0;
+  if (theory <= 0 || actualQty <= 0) {
+    efEl.textContent = '수량 입력 후 계산';
+    efEl.className = 'pv muted';
+    return;
+  }
+  const eff = actualQty / theory * 100;
+  efEl.textContent = eff.toFixed(1) + ' %';
+  efEl.className = 'pv ' + (eff >= 90 ? 'ok' : eff >= 75 ? 'warn' : 'danger');
 }
 
 /* ===== 일보 ===== */
@@ -3440,11 +3791,16 @@ function updateReportSummary() {
       (cnt > 0 ? ' (정확도 ' + (100 - Math.abs(diff) / cnt * 100).toFixed(1) + '%)' : '');
     sd.style.color = (cnt > 0 && Math.abs(diff) / cnt > 0.02) ? '#dc2626' : '#15803d';
   }
+  updateEfficiencySummary();
   renderPrediction();
 }
 async function saveProductionReport() {
   if (!sel.machine) { alert('호기를 선택하세요'); return; }
-  if (!session.logId) { alert('진행 중인 작업이 없습니다 (호기 선택 시 자동 시작)'); return; }
+  if (!session.logId) { alert('진행 중인 작업이 없습니다'); return; }
+  if (session.active || !getProductionEndSnapshot()) {
+    alert('먼저 설비가동 화면에서 🏁 생산종료를 눌러 가동시간·가동률·효율 기준시점을 확정하세요.');
+    return;
+  }
   if (!sel.item) { if (!confirm('품번이 선택되지 않았습니다.\n그래도 저장하시겠습니까?')) return; }
 
   const countQty = parseInt(document.getElementById('countQty').value) || 0;
@@ -3467,7 +3823,7 @@ async function saveProductionReport() {
                (perRun ? perRun + '\n' : '작업 이력 없음\n') +
                '📡 카운팅(참조): ' + countQty.toLocaleString() + ' EA\n' +
                '✅ 양품 합계: ' + passQty.toLocaleString() + ' / ❌ 불량 합계: ' + badQty.toLocaleString() + ' EA' +
-               '\n\n※ 저장 후 작업이 종료됩니다.')) return;
+               '\n\n※ 생산종료 시점의 가동시간·효율 기준으로 저장됩니다.')) return;
 
   const btn = document.getElementById('btnReportSave');
   btn.disabled = true; btn.textContent = '⏳ 저장 중...';
@@ -3478,6 +3834,7 @@ async function saveProductionReport() {
     saveState(); updateUI();
 
     const payload = buildLogPayload(true);
+    const endSnap = getProductionEndSnapshot();
     const runHist = getRunHist().map(function(r, idx) {
       const o = Object.assign({}, r);
       o.lots = lotsForRun(idx).map(function(l) { return l.lot_no; });
@@ -3485,6 +3842,12 @@ async function saveProductionReport() {
       o.stops = {};
       Object.keys(stp.map).forEach(function(c) { o.stops[c] = Math.floor(stp.map[c] / 1000); });
       o.stop_total_sec = Math.floor(stp.total / 1000);
+      const c = endSnap && endSnap.runs ? (endSnap.runs[idx] || {}) : {};
+      o.standard_spm = c.standard_spm || o.standard_spm || 0;
+      o.actual_run_sec = c.actual_run_sec || o.actual_run_sec || 0;
+      o.theoretical_qty = c.theoretical_qty || o.theoretical_qty || 0;
+      const rq = (Number(o.pass) || 0) + (Number(o.bad) || 0);
+      o.efficiency_pct = o.theoretical_qty > 0 ? parseFloat((rq / o.theoretical_qty * 100).toFixed(2)) : null;
       return o;
     });
     payload.run_history = runHist.length ? JSON.stringify(runHist) : null;
@@ -3502,6 +3865,10 @@ async function saveProductionReport() {
     payload.total_qty = totalQty;
     payload.current_code = null;
     payload.current_started_at = null;
+    if (endSnap) {
+      payload.actual_work_sec = Math.floor(Number(endSnap.actual_ms || 0) / 1000);
+      payload.op_rate = parseFloat(Number(endSnap.op_rate || 0).toFixed(2));
+    }
 
     setSyncStatus('syncing', '⏳ 저장');
     await pd('PATCH', T_LOG + '?id=eq.' + session.logId, payload, { 'Prefer': 'return=minimal' });
@@ -3520,23 +3887,27 @@ async function saveProductionReport() {
     setRunHist([]);
     setStopEvents([]);
     resetActualRunClock();
+    clearProductionEndSnapshot();
     renderRunList();
     document.getElementById('countQty').value = '';
     renderReportSummary();
     updateReportSummary();
 
+    const theoryQty = endSnap ? Number(endSnap.theoretical_qty || 0) : 0;
+    const eff = theoryQty > 0 ? totalQty / theoryQty * 100 : 0;
     alert('✅ 생산일보 저장 완료\n\n🏭 ' + savedMachine + ' · ' + (sel.item || '-') +
           '\n📡 카운팅 ' + countQty.toLocaleString() + ' EA' +
           '\n✅ 양품 ' + passQty.toLocaleString() + ' EA' +
           '\n❌ 불량 ' + badQty.toLocaleString() + ' EA' +
-          '\n📊 가동률 ' + opRate.toFixed(1) + '%');
+          '\n📊 가동률 ' + opRate.toFixed(1) + '%' +
+          (theoryQty > 0 ? '\n⚡ 생산효율 ' + eff.toFixed(1) + '% (이론 ' + theoryQty.toLocaleString() + ' EA)' : ''));
   } catch (e) {
     console.error(e);
     setSyncStatus('error', '❌ 저장 실패');
     alert('생산일보 저장 실패:\n' + e.message);
   } finally {
     btn.disabled = false;
-    btn.textContent = '💾 생산일보 저장 (작업 종료)';
+    btn.textContent = '💾 생산일보 저장';
   }
 }
 
@@ -3634,6 +4005,7 @@ function openMoldEdit(id) {
   v('fThickness', m ? m.thickness : '');
   v('fWidth', m ? m.width : '');
   v('fPitch', m ? m.pitch : '');
+  v('fStandardSpm', m ? getMoldStandardSpm(m) : '');
   v('fItemNo', m ? m.item_no : '');
   v('fMoldNo', m ? m.mold_no : '');
   v('fModelCode', m ? m.model_code : '');
@@ -3654,6 +4026,8 @@ async function saveMold() {
   const itemNo = document.getElementById('fItemNo').value.trim();
   if (!moldNo) { alert('금형제번을 입력하세요'); return; }
   if (!itemNo) { alert('품번을 입력하세요'); return; }
+  const standardSpm = Math.max(0, parseInt(document.getElementById('fStandardSpm').value) || 0);
+  if (!(standardSpm > 0)) { alert('기준 SPM을 입력하세요'); return; }
   const row = {
     mold_no: moldNo,
     item_no: itemNo,
@@ -3674,11 +4048,25 @@ async function saveMold() {
   try {
     if (id) await pd('PATCH', T_MOLD + '?id=eq.' + id, row, { 'Prefer': 'return=minimal' });
     else await pd('POST', T_MOLD, [row], { 'Prefer': 'return=minimal' });
+
+    // 기존 DB에 standard_spm 컬럼이 있으면 서버에도 저장하고,
+    // 아직 컬럼이 없는 환경은 브라우저 로컬값으로 즉시 사용할 수 있게 fallback한다.
+    let spmDbSaved = false;
+    try {
+      const q = id ? ('?id=eq.' + encodeURIComponent(id)) : ('?mold_no=eq.' + encodeURIComponent(moldNo));
+      await pd('PATCH', T_MOLD + q, { standard_spm: standardSpm }, { 'Prefer': 'return=minimal' });
+      spmDbSaved = true;
+    } catch (spmErr) {
+      console.log('standard_spm DB 컬럼 미지원 → 로컬 저장', spmErr);
+    }
+    saveLocalMoldSpm(moldNo, standardSpm);
+
     closeMoldEdit();
     await loadMolds();
     renderMoldTable();
     restoreSelection();
-    alert('✅ 금형이 저장되었습니다');
+    alert('✅ 금형이 저장되었습니다\n기준 SPM: ' + standardSpm + ' SPM' +
+          (spmDbSaved ? '' : '\n\n※ 현재 DB에 standard_spm 컬럼이 없어 이 기기에 기준 SPM을 저장했습니다.'));
   } catch (e) { alert('저장 실패: ' + e.message); }
 }
 async function deleteMold() {
@@ -3709,7 +4097,9 @@ function renderMoldTable() {
     const tr = document.createElement('tr');
     tr.innerHTML = '<td><b>' + m.mold_no + '</b></td>' +
       '<td>' + (m.item_no || '-') + '<br><span style="font-size:10px;color:#94a3b8">' + (m.model_code || '') + (m.customer ? ' · ' + m.customer : '') + '</span></td>' +
-      '<td>' + (m.mat_spec || '-') + '<br><span style="font-size:10px;color:#94a3b8">' + (m.unit_weight_g ? m.unit_weight_g + 'g/피치' : '') + '</span></td>' +
+      '<td>' + (m.mat_spec || '-') + '<br><span style="font-size:10px;color:#94a3b8">' +
+      (m.unit_weight_g ? m.unit_weight_g + 'g/피치 · ' : '') +
+      (getMoldStandardSpm(m) > 0 ? '기준 ' + getMoldStandardSpm(m) + ' SPM' : '기준 SPM 미등록') + '</span></td>' +
       '<td style="text-align:right"><button class="mini-btn edit" onclick="openMoldEdit(' + m.id + ')">수정</button></td>';
     tb.appendChild(tr);
   });
