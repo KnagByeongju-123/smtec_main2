@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ESP32 생산일보 Rev.7.18</title>
+<title>ESP32 생산일보 Rev.7.19</title>
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html { color-scheme: light; }
@@ -600,7 +600,7 @@
   <button class="ham-btn" onclick="openDrawer()">☰<span class="tab-dot ham-dot"></span></button>
   <h1>📡 ESP32 생산일보 <span class="cur-menu" id="curMenuName">설비가동</span><span class="rev-tag">Rev.7.11</span></h1>
   <div class="top-meta">
-    <span class="worker-chip" id="workerChip">확인중...</span>
+    <span class="worker-chip" id="workerChip" onclick="openWorkerModal()" style="cursor:pointer">확인중...</span>
     <span class="sync-badge" id="syncBadge">⏸ 대기</span>
   </div>
 </div>
@@ -609,7 +609,7 @@
 <div class="drawer-bg" id="drawerBg" onclick="closeDrawer()"></div>
 <nav class="drawer" id="drawer">
   <div class="drawer-head">
-    <span>📡 ESP32 생산일보 <small>Rev.7.18</small></span>
+    <span>📡 ESP32 생산일보 <small>Rev.7.19</small></span>
     <button class="drawer-x" onclick="closeDrawer()">✕</button>
   </div>
   <button class="tab-btn active" data-tab="t-prod" onclick="switchTab('t-prod', this)"><span class="tab-ico">⚙️</span>설비가동<span class="tab-dot"></span></button>
@@ -621,7 +621,7 @@
   <div class="drawer-sep">시스템</div>
   <button class="tab-btn" data-tab="t-help" onclick="switchTab('t-help', this)"><span class="tab-ico">📖</span>사용안내</button>
   <button class="tab-btn" data-tab="t-config" onclick="switchTab('t-config', this)"><span class="tab-ico">🧰</span>DB설정</button>
-  <div class="drawer-foot" id="drawerWorker">—</div>
+  <div class="drawer-foot" id="drawerWorker" onclick="openWorkerModal()" style="cursor:pointer">—</div>
 </nav>
 
 <!-- ===== 가동 ===== -->
@@ -880,6 +880,7 @@
           <li>계획 가동시간을 넘겨 작업하면 <b>잔업</b>으로 표시되고 가동률은 실조업 기준으로 계산됩니다</li>
           <li>연습 기록이 남았을 때는 <b>DB설정 → 로컬 작업기록 초기화</b>를 사용하세요</li>
           <li>QR 카메라는 <b>HTTPS 접속 + 카메라 권한 허용</b>이 필요합니다</li>
+          <li>이 앱은 <b>사내 PIN 로그인과 무관</b>하게 접속됩니다. 우측 상단 <b>작업자 이름을 터치</b>해 변경하세요</li>
         </ul>
       </div>
     </div>
@@ -1008,6 +1009,19 @@
     <h2>⏱️ 정지사유 선택 <button class="x" onclick="closeReasonPicker()" style="margin-left:auto">✕</button></h2>
     <div class="reason-list" id="reasonList"></div>
     <div class="edit-actions"><button class="edit-cancel" onclick="closeReasonPicker()">취소</button></div>
+  </div>
+</div>
+
+<div class="modal-bg" id="workerModal">
+  <div class="modal" style="max-width:400px">
+    <h2>👷 작업자 설정 <button class="x" onclick="closeWorkerModal()" style="margin-left:auto">✕</button></h2>
+    <div class="sel-hint" style="margin-bottom:10px">이 앱 전용 작업자 정보입니다. 사내 PIN 로그인과 무관하게 사용할 수 있습니다.</div>
+    <div class="form-grid">
+      <div class="fld full"><label>작업자명</label><input type="text" id="wkName" placeholder=""></div>
+      <div class="fld full"><label>부서</label><select id="wkDept"></select></div>
+    </div>
+    <button class="btn-primary" onclick="applyWorker()">✅ 저장</button>
+    <div style="margin-top:6px"><button class="btn-gray" onclick="useGuestWorker()">게스트로 사용</button></div>
   </div>
 </div>
 
@@ -1153,7 +1167,7 @@ const LS_WORK_KEYS = [
 // 전체 초기화 대상 (설정/캐시 포함)
 const LS_ALL_KEYS = LS_WORK_KEYS.concat([
   'pdCountCfg_v1', 'pdSpmByMachine_v1', 'pdMoldStandardSpm_v1',
-  'pdProdInfoFold_v1', 'pdWorkTime_v1', 'pdMaterialSeed5_v1'
+  'pdProdInfoFold_v1', 'pdWorkTime_v1', 'pdMaterialSeed5_v1', 'pdWorker_v1'
 ]);
 
 function localWorkDataSize() {
@@ -1240,8 +1254,7 @@ const MENU_NAMES = { 't-prod': '설비가동', 't-report': '생산일보', 't-ma
 function openDrawer() {
   document.getElementById('drawer').classList.add('open');
   document.getElementById('drawerBg').classList.add('show');
-  const dw = document.getElementById('drawerWorker');
-  if (dw) dw.textContent = '👷 ' + worker.name + (worker.dept ? ' · ' + worker.dept : '');
+  renderWorkerChip();
 }
 function closeDrawer() {
   document.getElementById('drawer').classList.remove('open');
@@ -1264,28 +1277,57 @@ function switchTab(id, btn) {
   restartEspPoll(id === 't-prod' || id === 't-report');
 }
 
-/* ===== 작업자 ===== */
-const PIN_DEPT_MAP = { '0':'대표이사','1':'개발팀','2':'생산팀','3':'설계팀','4':'품질관리팀','5':'영업관리팀','6':'공장장' };
+/* ===== 작업자 (이 앱 전용 · 기존 PIN 시스템과 무관) =====
+   ESG PIN 로그인 여부와 상관없이 바로 사용할 수 있고,
+   작업자 이름은 이 앱만의 키(pdWorker_v1)로 별도 보관한다. */
+const LS_WORKER = 'pdWorker_v1';
+const DEPT_LIST = ['생산팀', '품질관리팀', '개발팀', '설계팀', '영업관리팀', '공장장', '대표이사'];
 function detectWorker() {
   try {
-    const a = JSON.parse(localStorage.getItem('esg_pin_auth') || 'null');
-    if (a && a.name && (!a.exp || Date.now() < a.exp))
-      return { id: a.emp_id || a.id || '', name: a.name, dept: a.dept || (a.pin ? PIN_DEPT_MAP[String(a.pin)[0]] : '') || '' };
+    const a = JSON.parse(localStorage.getItem(LS_WORKER) || 'null');
+    if (a && a.name) return { id: a.id || a.name, name: a.name, dept: a.dept || '' };
   } catch (e) {}
-  try {
-    const a = JSON.parse(localStorage.getItem('user_pin_auth') || 'null');
-    if (a && a.name && (!a.exp || Date.now() < a.exp))
-      return { id: a.emp_id || '', name: a.name, dept: a.dept || '' };
-  } catch (e) {}
-  const sn = sessionStorage.getItem('ESG_USER');
-  if (sn) return { id: '', name: sn, dept: '' };
   return { id: 'GUEST', name: '게스트', dept: '' };
 }
 let worker = detectWorker();
+function saveWorker(name, dept) {
+  const nm = String(name || '').trim();
+  if (!nm) {
+    try { localStorage.removeItem(LS_WORKER); } catch (e) {}
+    worker = { id: 'GUEST', name: '게스트', dept: '' };
+  } else {
+    worker = { id: nm, name: nm, dept: String(dept || '').trim() };
+    try { localStorage.setItem(LS_WORKER, JSON.stringify(worker)); } catch (e) {}
+  }
+  renderWorkerChip();
+  markDirty();
+}
 function renderWorkerChip() {
   const c = document.getElementById('workerChip');
   c.textContent = worker.name + (worker.dept ? ' · ' + worker.dept : '');
-  c.classList.toggle('guest', worker.id === 'GUEST' || !worker.id);
+  c.classList.toggle('guest', worker.id === 'GUEST');
+  c.title = '터치하여 작업자 변경';
+  const dw = document.getElementById('drawerWorker');
+  if (dw) dw.textContent = '👷 ' + worker.name + (worker.dept ? ' · ' + worker.dept : '') + ' (터치하여 변경)';
+}
+// 작업자 설정 팝업
+function openWorkerModal() {
+  document.getElementById('wkName').value = (worker.id === 'GUEST') ? '' : worker.name;
+  const ds = document.getElementById('wkDept');
+  ds.innerHTML = '<option value="">— 부서 선택 —</option>' +
+    DEPT_LIST.map(function(d) { return '<option value="' + d + '">' + d + '</option>'; }).join('');
+  ds.value = worker.dept || '';
+  document.getElementById('workerModal').classList.add('show');
+}
+function closeWorkerModal() { document.getElementById('workerModal').classList.remove('show'); }
+function applyWorker() {
+  saveWorker(document.getElementById('wkName').value, document.getElementById('wkDept').value);
+  closeWorkerModal();
+  showHint('👷 작업자 <b>' + escHtml(worker.name) + '</b> 설정됨');
+}
+function useGuestWorker() {
+  saveWorker('', '');
+  closeWorkerModal();
 }
 
 /* ===== 마스터 데이터 ===== */
