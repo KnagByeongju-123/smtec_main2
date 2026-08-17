@@ -549,7 +549,7 @@
 
 <div class="top-bar">
   <button class="ham-btn" onclick="openDrawer()">☰<span class="tab-dot ham-dot"></span></button>
-  <h1>📡 ESP32 생산일보 <span class="cur-menu" id="curMenuName">설비가동/설비정지</span><span class="rev-tag">Rev.7.1</span></h1>
+  <h1>📡 ESP32 생산일보 <span class="cur-menu" id="curMenuName">설비가동/설비정지</span><span class="rev-tag">Rev.7.2</span></h1>
   <div class="top-meta">
     <span class="worker-chip" id="workerChip">확인중...</span>
     <span class="sync-badge" id="syncBadge">⏸ 대기</span>
@@ -696,7 +696,7 @@
 
   <div class="card">
     <div class="sec-title">📋 소재입고 내역 <span class="right" id="matReceiptCount">0건</span></div>
-    <div class="mat-match" id="matMoldFilterHint" style="margin-bottom:8px">금형을 선택하면 해당 금형에 적합한 입고 소재만 표시됩니다.</div>
+    <div class="mat-match" id="matMoldFilterHint" style="margin-bottom:8px">소재입고 내역은 전체 표시됩니다. 현재 선택 금형과 규격이 맞는 LOT만 설비사용할 수 있습니다.</div>
     <div class="search-row"><input type="text" id="matReceiptSearch" placeholder="LOT / 재질 / 규격 / 업체 / 금형 검색" oninput="renderMaterialReceipts()"></div>
     <table class="mtable" id="matReceiptTable">
       <thead><tr><th>입고일 / LOT</th><th>금형 기준 규격</th><th>중량</th><th></th></tr></thead>
@@ -2844,8 +2844,10 @@ function renderMaterialReceipts() {
   const tb = document.querySelector('#matReceiptTable tbody');
   if (!tb) return;
   const q = String((document.getElementById('matReceiptSearch') || {}).value || '').trim().toUpperCase();
-  const base = sel.mold ? compatibleMaterialReceipts() : materialReceipts.slice();
-  const list = base.filter(function(r) {
+
+  // 소재입고 내역은 현재 호기/금형과 관계없이 전체 이력을 표시한다.
+  // 설비사용 가능 여부만 현재 선택 금형의 소재규격으로 판단한다.
+  const list = materialReceipts.filter(function(r) {
     if (!q) return true;
     return [r.in_date,r.lot_no,r.material,r.mat_spec,r.vendor,(r.mold_nos || []).join(','),(r.item_nos || []).join(',')]
       .some(function(v) { return String(v || '').toUpperCase().indexOf(q) >= 0; });
@@ -2855,35 +2857,40 @@ function renderMaterialReceipts() {
   if (fh) {
     if (sel.mold) {
       const sp = materialSpecOf(sel.mold);
-      fh.innerHTML = '🧩 현재 금형 <b>' + escHtml(sel.mold.mold_no) + '</b> · <b>' + escHtml(sp ? sp.label : (sel.mold.mat_spec || '-')) + '</b>에 적합한 입고 소재만 표시';
+      fh.innerHTML = '📋 전체 소재입고 이력 표시 · 현재 금형 <b>' + escHtml(sel.mold.mold_no) + '</b> · <b>' + escHtml(sp ? sp.label : (sel.mold.mat_spec || '-')) + '</b>과 규격이 맞는 LOT만 설비사용 가능';
     } else {
-      fh.textContent = '금형을 선택하면 해당 금형에 적합한 입고 소재만 표시됩니다.';
+      fh.textContent = '📋 소재입고 내역은 전체 표시됩니다. 금형을 선택하면 사용 가능한 LOT만 설비사용 버튼이 활성화됩니다.';
     }
   }
 
   tb.innerHTML = '';
   if (!list.length) {
-    tb.innerHTML = '<tr><td colspan="4"><div class="empty">' + (sel.mold ? '현재 금형에 적합한 입고 소재가 없습니다' : '등록된 소재입고 내역이 없습니다') + '</div></td></tr>';
+    tb.innerHTML = '<tr><td colspan="4"><div class="empty">등록된 소재입고 내역이 없습니다</div></td></tr>';
   } else list.forEach(function(r) {
     const spec = [r.material, r.thickness ? r.thickness + 'T' : '', r.width ? r.width + 'W' : ''].filter(Boolean).join(' · ') || r.mat_spec || '-';
+    const usable = !!(sel.mold && materialReceiptMatchesMold(r, sel.mold));
     const tr = document.createElement('tr');
-    tr.className = 'mat-useable' + (sel.lot === r.lot_no ? ' mat-selected' : '');
-    tr.title = sel.mold ? '클릭하면 이 LOT를 설비사용 소재로 선택합니다' : '금형을 먼저 선택하세요';
+    tr.className = (usable ? 'mat-useable' : '') + (sel.lot === r.lot_no ? ' mat-selected' : '');
+    tr.title = !sel.mold ? '금형을 먼저 선택하세요' : (usable ? '클릭하면 이 LOT를 설비사용 소재로 선택합니다' : '현재 금형과 소재규격이 맞지 않습니다');
     const dbBadge = r._remote ? ' <span class="mat-source-chip">DB</span>' : ' <span class="mat-source-chip">로컬</span>';
     tr.innerHTML = '<td><b>' + escHtml(r.in_date || '-') + '</b>' + dbBadge + '<br><span style="font-size:10px;color:#64748b">' + escHtml(r.lot_no || '-') + '</span></td>' +
       '<td>' + escHtml(spec) + '<br><span style="font-size:10px;color:#94a3b8">' + escHtml((r.mold_nos || []).slice(0,3).join(', ') || '-') + '</span></td>' +
       '<td class="num">' + (r.weight_kg ? Number(r.weight_kg).toLocaleString() + 'kg' : '-') + '<br><span style="font-size:10px;color:#94a3b8">' + (r.qty || 1) + '개</span></td>' +
-      '<td style="text-align:right;white-space:nowrap"><button class="mini-btn edit use-mat">설비사용</button> <button class="mini-btn del del-mat">삭제</button></td>';
+      '<td style="text-align:right;white-space:nowrap"><button class="mini-btn edit use-mat"' + (usable ? '' : ' disabled title="현재 금형과 규격이 맞는 소재만 사용할 수 있습니다"') + '>설비사용</button> <button class="mini-btn del del-mat">삭제</button></td>';
     tr.onclick = function(ev) {
+      if (!usable) return;
       if (ev.target && ev.target.closest && ev.target.closest('.del-mat')) return;
       useMaterialReceiptAsLot(r.id);
     };
-    tr.querySelector('.use-mat').onclick = function(ev) { ev.stopPropagation(); useMaterialReceiptAsLot(r.id); };
+    tr.querySelector('.use-mat').onclick = function(ev) {
+      ev.stopPropagation();
+      if (usable) useMaterialReceiptAsLot(r.id);
+    };
     tr.querySelector('.del-mat').onclick = function(ev) { ev.stopPropagation(); deleteMaterialReceipt(r.id); };
     tb.appendChild(tr);
   });
   const c = document.getElementById('matReceiptCount');
-  if (c) c.textContent = (sel.mold ? '적합 ' + base.length + ' / 전체 ' : '') + materialReceipts.length + '건';
+  if (c) c.textContent = (q ? '검색 ' + list.length + ' / 전체 ' : '전체 ') + materialReceipts.length + '건';
 }
 async function useMaterialReceiptAsLot(id) {
   const r = materialReceipts.find(function(x) { return String(x.id) === String(id); });
