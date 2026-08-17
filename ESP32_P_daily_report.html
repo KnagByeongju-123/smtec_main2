@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ESP32 생산일보 Rev.7.16</title>
+<title>ESP32 생산일보 Rev.7.17</title>
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html { color-scheme: light; }
@@ -466,6 +466,8 @@
   .btn-primary { width: 100%; padding: 13px; border: none; border-radius: 10px; background: #16a34a; color: #fff; font-size: 15px; font-weight: 800; cursor: pointer; font-family: inherit; }
   .btn-primary:active { transform: scale(.98); }
   .btn-gray { width: 100%; padding: 11px; border: none; border-radius: 10px; background: #64748b; color: #fff; font-size: 14px; font-weight: 800; cursor: pointer; font-family: inherit; }
+  .btn-danger { width: 100%; padding: 13px; border: none; border-radius: 10px; background: #dc2626; color: #fff; font-size: 15px; font-weight: 800; cursor: pointer; font-family: inherit; }
+  .btn-danger:active { transform: scale(.98); }
   .search-row { display: flex; gap: 6px; margin-bottom: 8px; }
   .search-row input { flex: 1; padding: 9px 10px; border: 1.5px solid #cbd5e1; border-radius: 8px; font-size: 13px; font-family: inherit; }
   .empty { padding: 18px; text-align: center; color: #94a3b8; font-size: 12px; }
@@ -774,6 +776,13 @@
     <button class="btn-primary" onclick="saveCountConfig()">💾 소스 저장</button>
     <div class="sel-hint" style="margin-top:8px">채널명 = <b>호기번호 + 접미어</b> (예: 01, 01_카운트)<br>서버부하 절감 모드: <b>설비가동 중 + 설비가동/생산일보 화면이 보일 때만</b> 조회하며, 백그라운드·대기·다른 메뉴에서는 조회를 멈춥니다. 최소 60초, 권장 300초입니다.</div>
   </div>
+
+  <div class="card">
+    <div class="sec-title">🧹 로컬 작업기록 초기화 <span class="right" id="lsInfo">—</span></div>
+    <div class="sel-hint" style="margin-bottom:8px">이 기기(브라우저)에 남은 <b>작업 이력 · 정지 기록 · 가동시간 · 진행 세션</b>을 지웁니다.<br>호기·금형·소재입고 등 <b>DB 데이터는 삭제되지 않습니다.</b></div>
+    <button class="btn-danger" onclick="resetLocalWorkData()">🧹 진행중 작업기록 초기화</button>
+    <div style="margin-top:6px"><button class="btn-gray" onclick="resetLocalAll()">⚠ 이 기기 전체 설정까지 초기화</button></div>
+  </div>
 </div>
 
 <!-- 모달들 -->
@@ -1000,6 +1009,55 @@ function loadCountConfig() {
   document.getElementById('cfgSuffix').value = cntCfg.suffix || '';
   document.getElementById('cfgPollSec').value = cntCfg.pollSec;
 }
+/* ===== 🧹 로컬 작업기록 초기화 (Rev.7.17) ===== */
+// 작업 진행 데이터만 (마스터/설정 유지)
+const LS_WORK_KEYS = [
+  'pdRunHistory_v1', 'pdStopEvents_v1', 'pdActualRunClock_v1', 'pdProductionEnd_v1',
+  'pdStopState_v1', 'pdSession_v1', 'pdSelection_v1',
+  'pdEspBaseline_v1', 'pdEspAdjust_v1',
+  'pdMaterialReceipt_v1', 'pdMaterialLotFallback_v1'
+];
+// 전체 초기화 대상 (설정/캐시 포함)
+const LS_ALL_KEYS = LS_WORK_KEYS.concat([
+  'pdCountCfg_v1', 'pdSpmByMachine_v1', 'pdMoldStandardSpm_v1',
+  'pdProdInfoFold_v1', 'pdWorkTime_v1', 'pdMaterialSeed5_v1'
+]);
+
+function localWorkDataSize() {
+  let n = 0, bytes = 0;
+  LS_ALL_KEYS.forEach(function(k) {
+    const v = localStorage.getItem(k);
+    if (v !== null) { n++; bytes += v.length + k.length; }
+  });
+  return { count: n, kb: (bytes / 1024).toFixed(1) };
+}
+function updateLocalInfo() {
+  const el = document.getElementById('lsInfo');
+  if (!el) return;
+  const i = localWorkDataSize();
+  el.textContent = i.count > 0 ? (i.count + '개 항목 · ' + i.kb + ' KB') : '남은 기록 없음';
+}
+function resetLocalWorkData() {
+  const runs = (function() { try { return getRunHist().length; } catch (e) { return 0; } })();
+  if (!confirm('🧹 이 기기의 진행중 작업기록을 초기화할까요?\n\n' +
+               '· 금형별 작업 이력' + (runs > 0 ? ' (' + runs + '건)' : '') + '\n' +
+               '· 설비정지 기록 / 실제 가동시간\n' +
+               '· 진행 세션 / 선택 상태 / 카운팅 기준시각\n\n' +
+               '※ 호기·금형·소재입고 등 DB 데이터는 그대로 유지됩니다.')) return;
+  LS_WORK_KEYS.forEach(function(k) { try { localStorage.removeItem(k); } catch (e) {} });
+  alert('✅ 초기화되었습니다.\n화면을 새로 불러옵니다.');
+  location.reload();
+}
+function resetLocalAll() {
+  if (!confirm('⚠ 이 기기의 모든 저장값을 초기화합니다.\n\n' +
+               '작업기록 + DB소스 설정 + 기준SPM 로컬값 + 근무시간 설정까지 삭제됩니다.\n' +
+               '(서버 DB 데이터는 유지)\n\n계속할까요?')) return;
+  if (!confirm('한 번 더 확인합니다.\n정말 전체 초기화하시겠습니까?')) return;
+  LS_ALL_KEYS.forEach(function(k) { try { localStorage.removeItem(k); } catch (e) {} });
+  alert('✅ 전체 초기화되었습니다.\n화면을 새로 불러옵니다.');
+  location.reload();
+}
+
 function saveCountConfig() {
   cntCfg.url = document.getElementById('cfgCntUrl').value.trim().replace(/\/+$/, '');
   cntCfg.key = document.getElementById('cfgCntKey').value.trim();
@@ -1068,6 +1126,7 @@ function switchTab(id, btn) {
   if (id === 't-material') { renderMaterialPresets(); loadMaterialReceipts(); }
   if (id === 't-master') renderMachineTable();
   if (id === 't-mold') renderMoldTable();
+  if (id === 't-config') updateLocalInfo();
   // 카운팅 DB는 설비가동/생산일보 화면에서만 동작합니다. 다른 메뉴로 이동하면 즉시 중지합니다.
   restartEspPoll(id === 't-prod' || id === 't-report');
 }
