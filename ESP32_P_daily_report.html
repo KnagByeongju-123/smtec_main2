@@ -545,7 +545,7 @@
 
 <div class="top-bar">
   <button class="ham-btn" onclick="openDrawer()">☰<span class="tab-dot ham-dot"></span></button>
-  <h1>📡 ESP32 생산일보 <span class="cur-menu" id="curMenuName">설비가동/설비정지</span><span class="rev-tag">Rev.6.9</span></h1>
+  <h1>📡 ESP32 생산일보 <span class="cur-menu" id="curMenuName">설비가동/설비정지</span><span class="rev-tag">Rev.7.0</span></h1>
   <div class="top-meta">
     <span class="worker-chip" id="workerChip">확인중...</span>
     <span class="sync-badge" id="syncBadge">⏸ 대기</span>
@@ -2601,44 +2601,81 @@ async function loadMaterialReceipts() {
   renderMaterialReceipts();
 }
 async function ensureFiveMaterialReceipts() {
+  // 금일 기준, 금형 마스터에서 사용 빈도가 높은 소재규격 5종을 항상 확보합니다.
+  // 과거 입고/과거 seed 여부와 무관하게 "오늘" 5종이 없으면 부족한 규격만 DB에 추가합니다.
   const quick = materialPresets.slice(0, 5);
   if (quick.length === 0 || machines.length === 0) return;
 
-  let seededLocal = false;
-  try { seededLocal = localStorage.getItem(LS_MAT_SEED5) === '1'; } catch (e) {}
-
+  const day = kstTodayStr();
+  const dayTag = day.replace(/-/g, '');
+  let existing = [];
   try {
-    const existing = await loadRemoteMaterialReceiptRows();
-    const alreadySeeded = existing.some(function(r) { return String(r.raw_qr || '').indexOf(MATSTOCK_SEED_PREFIX) === 0; });
-    if (alreadySeeded) {
-      try { localStorage.setItem(LS_MAT_SEED5, '1'); } catch (e) {}
-      return;
-    }
-    // 동일 브라우저에서 사용자가 5종 초기입고를 모두 삭제했다면 자동으로 다시 만들지 않습니다.
-    if (seededLocal) return;
-
-    const day = kstTodayStr();
-    const now = kstNowISO();
-    const rows = quick.map(function(p, idx) {
-      const receipt = {
-        in_date: day,
-        lot_no: 'MAT-' + day.replace(/-/g, '') + '-' + String(idx + 1).padStart(2, '0'),
-        material: p.material || null,
-        thickness: p.thickness,
-        width: p.width,
-        weight_kg: null,
-        vendor: '초기 입고',
-        worker_name: worker.name,
-        created_at: now
-      };
-      return materialReceiptDbRow(receipt, p, MATSTOCK_SEED_PREFIX + encodeURIComponent(p.key));
-    });
-    await pd('POST', T_LOT, rows, { 'Prefer': 'return=representation' });
-    try { localStorage.setItem(LS_MAT_SEED5, '1'); } catch (e) {}
-    console.log('✅ 소재 5종 초기입고 DB 등록 완료');
+    existing = await loadRemoteMaterialReceiptRows();
   } catch (e) {
-    console.log('소재 5종 DB 초기등록 실패', e);
+    console.log('금일 소재입고 기존 DB 조회 실패', e);
   }
+
+  const todayRemote = existing.filter(function(r) {
+    const d = r.work_date || String(r.attached_at || '').slice(0, 10);
+    return d === day;
+  });
+  const todayKeys = {};
+  todayRemote.forEach(function(r) {
+    const sp = materialSpecOf(r);
+    if (sp) todayKeys[sp.key] = true;
+  });
+
+  // DB 저장 실패 시에도 화면 기록이 사라지지 않도록 로컬 fallback도 중복 체크합니다.
+  const local = readMaterialReceipts();
+  const localKeys = {};
+  local.forEach(function(r) {
+    if (r.in_date !== day) return;
+    const sp = materialSpecOf(r);
+    if (sp) localKeys[sp.key] = true;
+  });
+
+  let localChanged = false;
+  for (let idx = 0; idx < quick.length; idx++) {
+    const p = quick[idx];
+    if (todayKeys[p.key] || localKeys[p.key]) continue;
+
+    const receipt = {
+      id: 'AUTO-' + dayTag + '-' + String(idx + 1).padStart(2, '0'),
+      in_date: day,
+      lot_no: 'MAT-' + dayTag + '-' + String(idx + 1).padStart(2, '0'),
+      material: p.material || null,
+      thickness: p.thickness,
+      width: p.width,
+      weight_kg: null,
+      qty: 1,
+      vendor: '금일 입고',
+      note: '금형 마스터 기준 자동 입고',
+      mat_spec: p.label,
+      spec_key: p.key,
+      mold_nos: p.molds.map(function(m) { return m.mold_no; }),
+      item_nos: p.items.slice(),
+      worker_name: worker.name,
+      created_at: kstNowISO(),
+      _autoToday: true
+    };
+
+    const marker = 'MATSTOCK:DAILY5:' + dayTag + ':' + encodeURIComponent(p.key);
+    try {
+      await pd('POST', T_LOT, [materialReceiptDbRow(receipt, p, marker)], { 'Prefer': 'return=minimal' });
+      todayKeys[p.key] = true;
+      console.log('✅ 금일 소재입고 DB 등록', receipt.lot_no, p.label);
+    } catch (e) {
+      console.log('금일 소재입고 DB 등록 실패 → 로컬 임시기록', p.label, e);
+      // 동일 자동 LOT가 이미 로컬에 있으면 중복 추가하지 않음
+      if (!local.some(function(x) { return x.id === receipt.id || (x.in_date === day && x.spec_key === p.key); })) {
+        local.unshift(receipt);
+        localChanged = true;
+      }
+      localKeys[p.key] = true;
+    }
+  }
+
+  if (localChanged) writeMaterialReceipts(local);
 }
 function clearMaterialReceiptForm(keepDate) {
   ['matLotNo','matMaterial','matWeight','matThickness','matWidth','matVendor','matNote'].forEach(function(id) {
