@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ESP32 생산일보 Rev.7.12</title>
+<title>ESP32 생산일보 Rev.7.13</title>
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html { color-scheme: light; }
@@ -1532,11 +1532,17 @@ function calcProductionEndSnapshot(endMs) {
     };
   });
   const plannedMs = getPlannedMs();
+  let workableStopMs = 0;
+  STOP_CODES.forEach(function(sc) {
+    if (sc.type !== 'planned') workableStopMs += getCurrentMs(sc.code);
+  });
+  const baseMs = Math.max(plannedMs, actualMs + workableStopMs);
   return {
     ended_at: new Date(endMs).toISOString(),
     actual_ms: actualMs,
     planned_ms: plannedMs,
-    op_rate: plannedMs > 0 ? actualMs / plannedMs * 100 : 0,
+    base_ms: baseMs,
+    op_rate: baseMs > 0 ? actualMs / baseMs * 100 : 0,
     theoretical_qty: Math.floor(theory),
     standard_spms: spms,
     runs: runCalc
@@ -1570,6 +1576,7 @@ function restoreProductionEndSnapshotFromServer(row) {
     actual_ms: actualMs,
     planned_ms: plannedMs,
     op_rate: Number(row.op_rate) || (plannedMs > 0 ? actualMs / plannedMs * 100 : 0),
+    base_ms: Number(row.base_ms) || plannedMs,
     theoretical_qty: Math.floor(theory),
     standard_spms: spms,
     runs: runs
@@ -2587,7 +2594,9 @@ function buildLogPayload(complete) {
   const plannedMs = getPlannedMs();
   // 실제가동시간 = 설비가동 버튼 ON 상태였던 누적시간 (정지/대기 구간은 제외)
   const actual = Math.max(0, Math.floor(getActualRunMs() / 1000));
-  const rate = plannedMs > 0 ? (actual / (plannedMs / 1000) * 100) : 0;
+  // 가동률 분모 = 계획 가동시간. 잔업으로 실조업이 계획을 넘으면 실조업 기준.
+  const baseSec = Math.max(Math.floor(plannedMs / 1000), actual + workableStop);
+  const rate = baseSec > 0 ? (actual / baseSec * 100) : 0;
 
   // 정지 중이 아니고 실제가동 시계가 돌고 있으면 현재 가동구간 시작시각을 서버에 남긴다.
   if (!curCode) {
@@ -3702,11 +3711,17 @@ function renderReportSummary() {
   const plannedMs = getPlannedMs();
   const endSnap = getProductionEndSnapshot();
   const actual = endSnap ? Number(endSnap.actual_ms || 0) : getActualRunMs();
-  const rate = endSnap ? Number(endSnap.op_rate || 0) : (plannedMs > 0 ? (actual / plannedMs * 100) : 0);
+  // 가동률 분모 = 계획 가동시간. 잔업 등으로 실조업(실가동+가동률대상정지)이
+  // 계획을 초과하면 실조업시간을 기준으로 삼아 100% 초과를 방지한다.
+  const operMs = actual + workableStop;
+  const baseMs = Math.max(plannedMs, operMs);
+  const rate = endSnap ? Number(endSnap.op_rate || 0) : (baseMs > 0 ? (actual / baseMs * 100) : 0);
+  const overMs = Math.max(0, operMs - plannedMs);
   document.getElementById('rsPlanned').textContent =
-    fmtHHMM(workTime.startMin) + ' ~ ' + fmtHHMM(workTime.endMin) + ' (' + fmtTime(plannedMs) + ')';
+    fmtHHMM(workTime.startMin) + ' ~ ' + fmtHHMM(workTime.endMin) + ' (' + fmtTime(plannedMs) + ')' +
+    (overMs > 60000 ? ' +잔업 ' + fmtTime(overMs) : '');
   document.getElementById('rsStopSum').textContent = fmtTime(total) + ' / ' + fmtTime(plannedStop);
-  document.getElementById('rsActual').textContent = fmtTime(actual);
+  document.getElementById('rsActual').textContent = fmtTime(actual) + ' / ' + fmtTime(baseMs);
   const rEl = document.getElementById('rsOpRate');
   rEl.textContent = rate.toFixed(1) + ' %';
   rEl.className = 'pv ' + (rate >= 85 ? 'ok' : rate >= 70 ? 'warn' : 'danger');
