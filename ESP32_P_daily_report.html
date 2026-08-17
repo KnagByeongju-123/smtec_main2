@@ -457,6 +457,10 @@
   .mat-actions button { flex: 1; }
   .mat-source-chip { display:inline-block; padding:2px 6px; border-radius:7px; background:#ecfdf5; color:#15803d; font-size:9px; font-weight:800; margin-left:4px; }
 
+
+  #matReceiptTable tbody tr.mat-useable { cursor:pointer; }
+  #matReceiptTable tbody tr.mat-useable:hover { background:#eff6ff; }
+  #matReceiptTable tbody tr.mat-selected { background:#ecfdf5; box-shadow: inset 4px 0 0 #16a34a; }
   /* 모달 */
   .modal-bg { display: none; position: fixed; inset: 0; background: rgba(15,23,42,.55); z-index: 200; justify-content: center; align-items: center; padding: 14px; }
   .modal-bg.show { display: flex; }
@@ -545,7 +549,7 @@
 
 <div class="top-bar">
   <button class="ham-btn" onclick="openDrawer()">☰<span class="tab-dot ham-dot"></span></button>
-  <h1>📡 ESP32 생산일보 <span class="cur-menu" id="curMenuName">설비가동/설비정지</span><span class="rev-tag">Rev.7.0</span></h1>
+  <h1>📡 ESP32 생산일보 <span class="cur-menu" id="curMenuName">설비가동/설비정지</span><span class="rev-tag">Rev.7.1</span></h1>
   <div class="top-meta">
     <span class="worker-chip" id="workerChip">확인중...</span>
     <span class="sync-badge" id="syncBadge">⏸ 대기</span>
@@ -692,6 +696,7 @@
 
   <div class="card">
     <div class="sec-title">📋 소재입고 내역 <span class="right" id="matReceiptCount">0건</span></div>
+    <div class="mat-match" id="matMoldFilterHint" style="margin-bottom:8px">금형을 선택하면 해당 금형에 적합한 입고 소재만 표시됩니다.</div>
     <div class="search-row"><input type="text" id="matReceiptSearch" placeholder="LOT / 재질 / 규격 / 업체 / 금형 검색" oninput="renderMaterialReceipts()"></div>
     <table class="mtable" id="matReceiptTable">
       <thead><tr><th>입고일 / LOT</th><th>금형 기준 규격</th><th>중량</th><th></th></tr></thead>
@@ -1142,6 +1147,7 @@ function applyMold(mold, keepItem) {
   }
   saveSelection();
   if (typeof session !== 'undefined' && session.active) recordRun();
+  refreshMaterialChoicesForMold();
   renderProdInfo();
   markDirty();
 }
@@ -1149,7 +1155,7 @@ function applyMold(mold, keepItem) {
 document.getElementById('moldSelect').addEventListener('change', function() {
   const id = this.value;
   const m = molds.find(function(x) { return String(x.id) === id; });
-  if (!m) { sel.mold = null; saveSelection(); renderProdInfo(); return; }
+  if (!m) { sel.mold = null; sel.lot = ''; saveSelection(); refreshMaterialChoicesForMold(); renderProdInfo(); return; }
   applyMold(m, false);
   showHint('금형 <b>' + m.mold_no + '</b> → 품번 <b>' + sel.item + '</b> 자동 지정');
 });
@@ -1165,10 +1171,10 @@ document.getElementById('itemSelect').addEventListener('change', function() {
   } else if (list.length > 1) {
     openMoldPick(item, list);
   } else {
-    sel.mold = null;
+    sel.mold = null; sel.lot = '';
     document.getElementById('moldSelect').value = '';
     showHint('품번 <b>' + item + '</b> 에 등록된 금형이 없습니다');
-    saveSelection(); renderProdInfo();
+    saveSelection(); refreshMaterialChoicesForMold(); renderProdInfo();
   }
 });
 
@@ -2187,6 +2193,18 @@ async function startWork() {
     if (!session.logId) throw new Error('서버 작업 ID를 받지 못했습니다');
   }
 
+  // 설비가동 전에 선택한 소재사용 기록(work_log_id=null)이 있으면 새 작업 ID에 연결한다.
+  if (session.logId && sel.lot) {
+    const useRow = lots.slice().sort(function(a,b) { return String(b.attached_at || '').localeCompare(String(a.attached_at || '')); })
+      .find(function(l) { return l.lot_no === sel.lot && l.mold_no === sel.mold.mold_no && !l.work_log_id; });
+    if (useRow && !String(useRow.id || '').startsWith('LOCAL-')) {
+      try {
+        await pd('PATCH', T_LOT + '?id=eq.' + encodeURIComponent(useRow.id), { work_log_id: session.logId }, { 'Prefer': 'return=minimal' });
+        useRow.work_log_id = session.logId;
+      } catch (e) { console.log('소재사용 작업ID 연결 실패', e); }
+    }
+  }
+
   session.active = true;
   session.dirty = false;
   saveSession();
@@ -2599,6 +2617,7 @@ async function loadMaterialReceipts() {
     return true;
   });
   renderMaterialReceipts();
+  renderLotSelect();
 }
 async function ensureFiveMaterialReceipts() {
   // 금일 기준, 금형 마스터에서 사용 빈도가 높은 소재규격 5종을 항상 확보합니다.
@@ -2745,46 +2764,135 @@ async function deleteMaterialReceipt(id) {
   writeMaterialReceipts(list);
   await loadMaterialReceipts();
 }
+function materialReceiptMatchesMold(r, mold) {
+  if (!r || !mold) return false;
+  const rs = materialSpecOf(r);
+  const ms = materialSpecOf(mold);
+  return !!(rs && ms && rs.key === ms.key);
+}
+function compatibleMaterialReceipts() {
+  if (!sel.mold) return [];
+  return materialReceipts.filter(function(r) { return materialReceiptMatchesMold(r, sel.mold); });
+}
+function refreshMaterialChoicesForMold() {
+  const compatible = compatibleMaterialReceipts();
+  if (sel.lot && !compatible.some(function(r) { return r.lot_no === sel.lot; })) {
+    sel.lot = '';
+    saveSelection();
+  }
+  renderLotSelect();
+  renderMaterialReceipts();
+}
+async function registerMaterialReceiptUse(r) {
+  if (!r) return false;
+  if (!sel.machine) { alert('호기를 먼저 선택하세요'); return false; }
+  if (!sel.mold || !sel.item) { alert('금형·품번을 먼저 선택하세요'); return false; }
+  if (!materialReceiptMatchesMold(r, sel.mold)) {
+    alert('선택한 소재는 현재 금형 소재규격과 맞지 않습니다.');
+    return false;
+  }
+
+  // 같은 LOT가 이미 현재 선택 상태면 중복 사용기록을 만들지 않는다.
+  if (sel.lot === r.lot_no && lots.some(function(l) {
+    return l.lot_no === r.lot_no && l.mold_no === sel.mold.mold_no && l.item_no === sel.item;
+  })) {
+    renderLotSelect(); renderMaterialReceipts(); renderProdInfo();
+    return true;
+  }
+
+  const row = {
+    work_date: kstTodayStr(),
+    machine_code: sel.machine.machine_code,
+    work_log_id: session.logId || null,
+    lot_no: r.lot_no,
+    heat_no: r.lot_no,
+    material: r.material || null,
+    thickness: r.thickness,
+    width: r.width,
+    weight_kg: r.weight_kg,
+    vendor: r.vendor || null,
+    item_no: sel.item || null,
+    mold_no: sel.mold.mold_no,
+    source: 'receipt',
+    raw_qr: 'RECEIPT_USE:' + String(r._dbId || r.id || ''),
+    worker_name: worker.name,
+    attached_at: kstNowISO()
+  };
+  let savedRemote = false;
+  try {
+    await pd('POST', T_LOT, [row], { 'Prefer': 'return=minimal' });
+    savedRemote = true;
+  } catch (e) {
+    const local = getLocalLotFallback();
+    row.id = 'LOCAL-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2,6);
+    row._local = true;
+    local.unshift(row); setLocalLotFallback(local);
+  }
+
+  sel.lot = r.lot_no;
+  await loadLots();
+  saveSelection();
+  renderLotSelect();
+  renderMaterialReceipts();
+  renderProdInfo();
+  markDirty();
+  showHint('📦 설비사용 소재 <b>' + escHtml(r.lot_no) + '</b> 선택' + (savedRemote ? ' · 서버 저장' : ' · 로컬 임시저장'));
+  if (navigator.vibrate) navigator.vibrate(100);
+  return true;
+}
 function renderMaterialReceipts() {
   const tb = document.querySelector('#matReceiptTable tbody');
   if (!tb) return;
   const q = String((document.getElementById('matReceiptSearch') || {}).value || '').trim().toUpperCase();
-  const list = materialReceipts.filter(function(r) {
+  const base = sel.mold ? compatibleMaterialReceipts() : materialReceipts.slice();
+  const list = base.filter(function(r) {
     if (!q) return true;
     return [r.in_date,r.lot_no,r.material,r.mat_spec,r.vendor,(r.mold_nos || []).join(','),(r.item_nos || []).join(',')]
       .some(function(v) { return String(v || '').toUpperCase().indexOf(q) >= 0; });
   });
+
+  const fh = document.getElementById('matMoldFilterHint');
+  if (fh) {
+    if (sel.mold) {
+      const sp = materialSpecOf(sel.mold);
+      fh.innerHTML = '🧩 현재 금형 <b>' + escHtml(sel.mold.mold_no) + '</b> · <b>' + escHtml(sp ? sp.label : (sel.mold.mat_spec || '-')) + '</b>에 적합한 입고 소재만 표시';
+    } else {
+      fh.textContent = '금형을 선택하면 해당 금형에 적합한 입고 소재만 표시됩니다.';
+    }
+  }
+
   tb.innerHTML = '';
   if (!list.length) {
-    tb.innerHTML = '<tr><td colspan="4"><div class="empty">등록된 소재입고 내역이 없습니다</div></td></tr>';
+    tb.innerHTML = '<tr><td colspan="4"><div class="empty">' + (sel.mold ? '현재 금형에 적합한 입고 소재가 없습니다' : '등록된 소재입고 내역이 없습니다') + '</div></td></tr>';
   } else list.forEach(function(r) {
     const spec = [r.material, r.thickness ? r.thickness + 'T' : '', r.width ? r.width + 'W' : ''].filter(Boolean).join(' · ') || r.mat_spec || '-';
     const tr = document.createElement('tr');
+    tr.className = 'mat-useable' + (sel.lot === r.lot_no ? ' mat-selected' : '');
+    tr.title = sel.mold ? '클릭하면 이 LOT를 설비사용 소재로 선택합니다' : '금형을 먼저 선택하세요';
     const dbBadge = r._remote ? ' <span class="mat-source-chip">DB</span>' : ' <span class="mat-source-chip">로컬</span>';
     tr.innerHTML = '<td><b>' + escHtml(r.in_date || '-') + '</b>' + dbBadge + '<br><span style="font-size:10px;color:#64748b">' + escHtml(r.lot_no || '-') + '</span></td>' +
       '<td>' + escHtml(spec) + '<br><span style="font-size:10px;color:#94a3b8">' + escHtml((r.mold_nos || []).slice(0,3).join(', ') || '-') + '</span></td>' +
       '<td class="num">' + (r.weight_kg ? Number(r.weight_kg).toLocaleString() + 'kg' : '-') + '<br><span style="font-size:10px;color:#94a3b8">' + (r.qty || 1) + '개</span></td>' +
-      '<td style="text-align:right;white-space:nowrap"><button class="mini-btn edit use-mat">생산사용</button> <button class="mini-btn del del-mat">삭제</button></td>';
-    tr.querySelector('.use-mat').onclick = function() { useMaterialReceiptAsLot(r.id); };
-    tr.querySelector('.del-mat').onclick = function() { deleteMaterialReceipt(r.id); };
+      '<td style="text-align:right;white-space:nowrap"><button class="mini-btn edit use-mat">설비사용</button> <button class="mini-btn del del-mat">삭제</button></td>';
+    tr.onclick = function(ev) {
+      if (ev.target && ev.target.closest && ev.target.closest('.del-mat')) return;
+      useMaterialReceiptAsLot(r.id);
+    };
+    tr.querySelector('.use-mat').onclick = function(ev) { ev.stopPropagation(); useMaterialReceiptAsLot(r.id); };
+    tr.querySelector('.del-mat').onclick = function(ev) { ev.stopPropagation(); deleteMaterialReceipt(r.id); };
     tb.appendChild(tr);
   });
   const c = document.getElementById('matReceiptCount');
-  if (c) c.textContent = list.length + ' / ' + materialReceipts.length + '건';
+  if (c) c.textContent = (sel.mold ? '적합 ' + base.length + ' / 전체 ' : '') + materialReceipts.length + '건';
 }
-function useMaterialReceiptAsLot(id) {
+async function useMaterialReceiptAsLot(id) {
   const r = materialReceipts.find(function(x) { return String(x.id) === String(id); });
   if (!r) return;
-  if (!sel.machine) { alert('생산에 사용할 호기를 먼저 선택하세요'); return; }
-  document.getElementById('lotNo').value = r.lot_no || '';
-  document.getElementById('lotMaterial').value = r.material || '';
-  document.getElementById('lotWeight').value = r.weight_kg || '';
-  document.getElementById('lotThickness').value = r.thickness === null ? '' : (r.thickness || '');
-  document.getElementById('lotWidth').value = r.width === null ? '' : (r.width || '');
-  document.getElementById('lotVendor').value = r.vendor || '';
-  _lotRawQr = 'RECEIPT:' + r.id;
-  _lotSource = 'receipt';
-  openLotModal();
+  const ok = await registerMaterialReceiptUse(r);
+  if (ok) {
+    const prodBtn = document.querySelector('.drawer .tab-btn[data-tab="t-prod"]');
+    switchTab('t-prod', prodBtn);
+  }
 }
 function fillLotFromMold() {
   if (!sel.mold) { alert('금형을 먼저 선택하세요'); return; }
@@ -2853,29 +2961,17 @@ function parseLotQr(raw) {
   if (!out.lot) out.lot = txt.split(/[|;\n\t]/)[0].trim() || txt;
   return out;
 }
-function onLotQrDetected(raw) {
+async function onLotQrDetected(raw) {
   stopScanner();
-  const lm = document.getElementById('lotModal');
-  if (!lm.classList.contains('show')) { lm.classList.add('show'); loadLots(); }
+  if (!sel.mold) { alert('금형을 먼저 선택하세요'); return; }
   const p2 = parseLotQr(raw);
-  _lotRawQr = raw;
-  _lotSource = 'qr';
-  document.getElementById('lotNo').value = p2.lot;
-  if (p2.material) document.getElementById('lotMaterial').value = p2.material;
-  if (p2.weight) document.getElementById('lotWeight').value = parseFloat(p2.weight) || '';
-  if (p2.thickness) document.getElementById('lotThickness').value = parseFloat(p2.thickness) || '';
-  if (p2.width) document.getElementById('lotWidth').value = parseFloat(p2.width) || '';
-  if (p2.vendor) document.getElementById('lotVendor').value = p2.vendor;
-  // 금형마스터 소재 정보로 빈칸 보완
-  if (sel.mold) {
-    if (!document.getElementById('lotMaterial').value && sel.mold.material)
-      document.getElementById('lotMaterial').value = sel.mold.material;
-    if (!document.getElementById('lotThickness').value && sel.mold.thickness)
-      document.getElementById('lotThickness').value = sel.mold.thickness;
-    if (!document.getElementById('lotWidth').value && sel.mold.width)
-      document.getElementById('lotWidth').value = sel.mold.width;
+  const lotNo = String(p2.lot || '').trim();
+  const r = compatibleMaterialReceipts().find(function(x) { return String(x.lot_no || '').trim() === lotNo; });
+  if (!r) {
+    alert('현재 금형에 적합한 입고 소재 LOT에서 찾을 수 없습니다:\n' + lotNo);
+    return;
   }
-  if (navigator.vibrate) navigator.vibrate(120);
+  await registerMaterialReceiptUse(r);
 }
 
 // --- 저장 / 조회 / 삭제 ---
@@ -2973,40 +3069,45 @@ function renderLotTable() {
   renderProdInfo();
 }
 
-// 로트 드롭다운 (오늘 등록 로트 + 새 로트 등록)
+// 로트 드롭다운 — 소재입고 DB에서 현재 금형에 적합한 LOT만 표시
 function renderLotSelect() {
   const ls = document.getElementById('lotSelect');
   if (!ls) return;
-  const prev = sel.lot || '';
-  ls.innerHTML = '<option value="">— 로트 선택 —</option>' +
-    lots.map(function(l) {
-      const spec = [l.material, l.thickness ? l.thickness + 'T' : '', l.width ? l.width + 'W' : '']
-        .filter(Boolean).join(' ');
-      return '<option value="' + l.lot_no + '">' + l.lot_no + (spec ? ' · ' + spec : '') +
-             (l.weight_kg ? ' · ' + l.weight_kg + 'kg' : '') + '</option>';
-    }).join('') +
-    '<option value="__new__">＋ 새 로트 등록…</option>';
-  if (prev && lots.some(function(l) { return l.lot_no === prev; })) ls.value = prev;
-  else if (lots.length === 1) { ls.value = lots[0].lot_no; sel.lot = lots[0].lot_no; }
-  else sel.lot = ls.value || '';
-}
-
-// 로트 선택 이벤트
-document.getElementById('lotSelect').addEventListener('change', function() {
-  if (this.value === '__new__') {
-    this.value = sel.lot || '';
-    openLotModal();
+  if (!sel.mold) {
+    ls.disabled = true;
+    ls.innerHTML = '<option value="">— 금형을 먼저 선택 —</option>';
     return;
   }
-  sel.lot = this.value || '';
-  saveSelection();
-  renderProdInfo();
-  markDirty();
-  if (sel.lot) showHint('📦 로트 <b>' + sel.lot + '</b> 선택됨');
+  const list = compatibleMaterialReceipts();
+  ls.disabled = false;
+  ls.innerHTML = '<option value="">— 적합 소재 LOT 선택 —</option>' +
+    list.map(function(r) {
+      const spec = [r.material, r.thickness ? r.thickness + 'T' : '', r.width ? r.width + 'W' : ''].filter(Boolean).join(' · ');
+      return '<option value="' + escHtml(String(r.id)) + '">' + escHtml(r.lot_no) +
+             (spec ? ' · ' + escHtml(spec) : '') +
+             (r.in_date ? ' · ' + escHtml(r.in_date) : '') +
+             (r.weight_kg ? ' · ' + Number(r.weight_kg).toLocaleString() + 'kg' : '') + '</option>';
+    }).join('');
+  const cur = list.find(function(r) { return r.lot_no === sel.lot; });
+  if (cur) ls.value = String(cur.id);
+  else {
+    ls.value = '';
+    if (sel.lot) { sel.lot = ''; saveSelection(); }
+  }
+}
+
+// 로트 선택 이벤트 — 선택 즉시 설비사용 소재로 서버에 기록
+ document.getElementById('lotSelect').addEventListener('change', async function() {
+  const id = this.value;
+  if (!id) { sel.lot = ''; saveSelection(); renderMaterialReceipts(); renderProdInfo(); return; }
+  const r = materialReceipts.find(function(x) { return String(x.id) === String(id); });
+  if (!r) { this.value = ''; return; }
+  await registerMaterialReceiptUse(r);
 });
 
 // 📷 로트 QR 바로 스캔
 function openLotQrDirect() {
+  if (!sel.mold) { alert('금형을 먼저 선택하세요'); return; }
   startScanner('lot');
 }
 
@@ -3444,6 +3545,7 @@ document.getElementById('machineSelect').addEventListener('change', async functi
   renderProdInfo();
   espPoll(true);
   loadLots();
+  renderMaterialReceipts();
   if (sel.machine) await loadWorkFromServer();
   else { session.logId = null; session.active = false; saveSession(); renderBanner(); updateUI(); }
 });
@@ -3496,6 +3598,7 @@ async function init() {
   clearMaterialReceiptForm(false);
   await ensureFiveMaterialReceipts();
   await loadMaterialReceipts();
+  refreshMaterialChoicesForMold();
   renderBanner();
 
   if (sel.machine) { await loadWorkFromServer(); }
