@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>소재 수입검사 v3.4 | (주)태진다이텍</title>
+<title>소재 수입검사 v3.5 | (주)태진다이텍</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Malgun Gothic','맑은 고딕','Segoe UI',sans-serif;background:#f4f6f9;color:#222;font-size:14px;line-height:1.5}
@@ -143,7 +143,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 
 <div class="hdr">
   <div>
-    <h1>📋 소재 수입검사 시스템 v3.4</h1>
+    <h1>📋 소재 수입검사 시스템 v3.5</h1>
     <div class="sub">(주)태진다이텍 · 품질관리팀 · 그룹 자동 통합 (공급자+재질+두께+폭)</div>
   </div>
   <div class="user-info" id="userInfoBar">검사자: <b id="loginUser">로그인 필요</b></div>
@@ -878,9 +878,21 @@ function computeWaitGroups(){
     };
   }
 
+  /* [v3.5] 집계 대상 행 판정 = hasPending 판정과 동일 기준
+     과거 검사발행(doneAt)이 이미 커버한 성적서는 중량/LOT/코일수 집계에서 제외
+     → 재입고 시 과거 입고분 중량이 신규 검사 대기 총중량에 합산되던 문제 수정 */
+  function isAggRow(r, doneAt){
+    const ct = new Date(r.created_at || 0).getTime();
+    if(ct <= doneAt) return false;
+    const fj = (r.final_judge || '').trim();
+    if(!fj || fj === '대기' || fj === '미검사') return true;
+    return ct >= V33_CUTOFF;
+  }
+
   const map = new Map();
   raw.forEach(r => {
     const k = groupKeyOf(r);
+    if(!isAggRow(r, lastDoneAt.get(k) || 0)) return;
     if(!map.has(k)){
       map.set(k, {
         groupKey: k,
@@ -896,47 +908,56 @@ function computeWaitGroups(){
         recvDate: r.receipt_date || '',
         certIds: [],
         firstCert: r,
-        _rowCount: 0,
-        _weightByLot: {},
+        _rows: [],
         _maxCoilCount: 0
       });
     }
     const g = map.get(k);
     /* [v3.4] 그룹 대표 입고일 = 최신 입고일 (검사 레코드 식별자에 사용) */
     if((r.receipt_date || '') > (g.recvDate || '')) g.recvDate = r.receipt_date;
-    const lot = r.lot_no || r.lot || '';
-    if(lot && !g.lotsDetail.includes(lot)) g.lotsDetail.push(lot);
     if(r.heat_no && !g.heats.includes(r.heat_no)) g.heats.push(r.heat_no);
-    g._rowCount++;
     // 만약 row에 coil_count가 들어있다면 최대값만 보존
     const cc = parseInt(r.coil_count) || 0;
     if(cc > g._maxCoilCount) g._maxCoilCount = cc;
-    // LOT별 중량: 같은 LOT 중복 row면 가장 큰 값만 보존
-    const wgt = parseFloat(r.weight) || 0;
-    if(lot){
-      if(!(lot in g._weightByLot) || wgt > g._weightByLot[lot]){
-        g._weightByLot[lot] = wgt;
-      }
-    } else {
-      g._weightByLot['_' + g._rowCount] = wgt;
-    }
     if(r.id) g.certIds.push(r.id);
-    if((r.receipt_date||'') > (g.recvDate||'')) g.recvDate = r.receipt_date;
+    g._rows.push(r);
   });
 
-  // 코일 수 = unique LOT 개수, 중량 = LOT별 중량 합
+  /* [v3.5] 중량 합산 재설계
+     - 최신 created_at 행 우선 처리 (같은 LOT+입고일 중복행은 최신 중량 채택 — 기존 max 방식은
+       수정 재업로드로 중량이 줄어든 경우 옛 큰 값을 유지하는 버그)
+     - 행의 LOT 집합(lots_detail 우선, 없으면 lot_no) × 입고일 커버리지로 이중합산 차단:
+       그룹행(중량=합계, lots_detail=전체 LOT)과 코일별 행이 공존해도 중복 합산되지 않음
+     - 같은 LOT라도 입고일이 다르면(재입고) 별도 합산 */
   for(const g of map.values()){
-    // 기본: 고유 LOT 개수
-    let count = g.lotsDetail.length;
-    // 시나리오: 1 row에 코일 여러 개가 묶여 등록된 경우(coil_count > 1)
-    // → row 수와 LOT 수가 모두 1인데 _maxCoilCount가 크면 그 값 사용
+    g._rows.sort((a,b)=> new Date(b.created_at||0) - new Date(a.created_at||0));
+    const covered = new Set();
+    let weight = 0;
+    const lotsDetail = [];
+    g._rows.forEach(r => {
+      const rd = r.receipt_date || '';
+      let lots = (r.lots_detail || '').split(',').map(s=>s.trim()).filter(Boolean);
+      if(!lots.length){
+        const single = (r.lot_no || r.lot || '').trim();
+        lots = single ? [single] : ['(noLot#' + (r.id ?? '') + ')'];
+      }
+      const keys = lots.map(l => l + '@' + rd);
+      if(keys.some(key => !covered.has(key))){
+        weight += parseFloat(r.weight) || 0;
+        keys.forEach(key => covered.add(key));
+        lots.forEach(l => { if(l.indexOf('(noLot#')!==0 && !lotsDetail.includes(l)) lotsDetail.push(l); });
+      }
+    });
+    g.weight = Math.round(weight * 100) / 100;
+    g.lotsDetail = lotsDetail;
+    if(!g.lotBase && lotsDetail.length) g.lotBase = getLotBase(lotsDetail[0]);
+    // 코일 수 = 고유 LOT 개수, 단 1 row에 코일 여러 개가 묶인 경우 coil_count 사용
+    let count = lotsDetail.length;
     if(count <= 1 && g._maxCoilCount > count){
       count = g._maxCoilCount;
     }
-    g.coilCount = count || g._rowCount || 1;
-    g.weight = Object.values(g._weightByLot).reduce((s,v) => s+v, 0);
-    delete g._rowCount;
-    delete g._weightByLot;
+    g.coilCount = count || g._rows.length || 1;
+    delete g._rows;
     delete g._maxCoilCount;
   }
 
