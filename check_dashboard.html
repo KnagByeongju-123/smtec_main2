@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>일상점검 종합현황 v2.9</title>
+<title>일상점검 종합현황 v3.0</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 body{font-family:'Noto Sans KR','맑은 고딕',sans-serif;background:#f5f5f5;color:#222;font-size:13px;padding-bottom:30px}
@@ -53,6 +53,10 @@ tbody tr.cat-load td{background:#faf4fb;font-size:10px;padding:3px 4px}
 tbody tr.cat-load td.cat{background:#f3e5f5;color:#7b1fa2;border-left:3px solid #7b1fa2;font-size:9px;padding:3px 4px}
 tbody tr.cat-load td.eq{background:#faf4fb;color:#7b1fa2;font-size:10px;padding-left:24px;font-weight:600}
 tbody tr.cat-load td.total{background:#f3e5f5;color:#7b1fa2;font-weight:700}
+tbody tr.cat-mold td{background:#f0fafa;font-size:10px;padding:3px 4px}
+tbody tr.cat-mold td.cat{background:#e0f2f1;color:#00838f;border-left:3px solid #00838f;font-size:9px;padding:3px 4px}
+tbody tr.cat-mold td.eq{background:#f0fafa;color:#00838f;font-size:10px;padding-left:24px;font-weight:600}
+tbody tr.cat-mold td.total{background:#e0f2f1;color:#00838f;font-weight:700}
 
 .cell-ok{color:#2e7d32;font-weight:800}
 .cell-ng{color:#c62828;font-weight:800}
@@ -94,7 +98,7 @@ tbody td.eq{padding-left:6px}
 <body>
 
 <div class="hdr">
-  <h1>📋 일상점검 종합현황</h1>
+  <h1>📋 일상점검 종합현황 v3.0</h1>
   <p>생산설비 · 검사기 · 세척기 · 출하공정 · 로드모니터(300톤+) 통합 점검이력 v2.9</p>
 </div>
 
@@ -163,8 +167,10 @@ const CFG={
 /* 로드모니터는 별도 카테고리가 아닌 생산설비 부속 (300톤 이상에만 설치)
    → 데이터는 별도 조회하여 호기별로 인덱싱 */
 const LOAD_CFG={table:'load_monitor_check', label:'로드', color:'#7b1fa2', icon:'📊', minTon:300};
+/* 금형일상점검은 생산설비(프레스) 부속 행 → p_mold_check (machine 컬럼) */
+const MOLD_CFG={table:'p_mold_check', label:'금형', color:'#00838f', icon:'🔩'};
 
-let CACHE={records:{prod:[],qc:[],wash:[],ship:[],measure:[]}, loadRecords:[], equipments:{prod:[],qc:[],wash:[],ship:[],measure:[]}, days:[], byKey:{}, loadByKey:{}};
+let CACHE={records:{prod:[],qc:[],wash:[],ship:[],measure:[]}, loadRecords:[], moldRecords:[], equipments:{prod:[],qc:[],wash:[],ship:[],measure:[]}, days:[], byKey:{}, loadByKey:{}, moldByKey:{}};
 
 /* ========== 공통 함수 ========== */
 function $(id){return document.getElementById(id)}
@@ -336,8 +342,10 @@ async function loadData(){
 
   CACHE.records={prod:[],qc:[],wash:[],ship:[],measure:[]};
   CACHE.loadRecords=[];
+  CACHE.moldRecords=[];
   CACHE.byKey={};
   CACHE.loadByKey={};
+  CACHE.moldByKey={};
 
   try{
     /* 4개 점검 테이블 + 로드모니터 병렬 조회 */
@@ -359,6 +367,16 @@ async function loadData(){
       }catch(err){
         console.warn(`${LOAD_CFG.table} 조회실패:`,err.message);
         CACHE.loadRecords=[];
+      }
+    })());
+    /* 금형일상점검 별도 조회 */
+    tasks.push((async()=>{
+      try{
+        const rows=await sbGet(`${MOLD_CFG.table}?select=*&check_date=gte.${s}&check_date=lte.${e}&order=check_date.desc&limit=5000`);
+        CACHE.moldRecords=rows||[];
+      }catch(err){
+        console.warn(`${MOLD_CFG.table} 조회실패:`,err.message);
+        CACHE.moldRecords=[];
       }
     })());
     await Promise.all(tasks);
@@ -387,6 +405,14 @@ async function loadData(){
       const eq=normProdName(raw);
       const key=`${eq}|${dt}`;
       (CACHE.loadByKey[key]=CACHE.loadByKey[key]||[]).push(r);
+    });
+    /* 금형점검 인덱싱 (생산설비 정규화 키와 동일하게) */
+    CACHE.moldRecords.forEach(r=>{
+      const raw=String(r.machine||'').trim();
+      const dt=r.check_date;
+      if(!raw||!dt)return;
+      const key=`${normProdName(raw)}|${dt}`;
+      (CACHE.moldByKey[key]=CACHE.moldByKey[key]||[]).push(r);
     });
     /* 일자 배열 생성 */
     CACHE.days=genDays(s,e);
@@ -501,6 +527,30 @@ function renderTable(){
       h+=`<td class="total">${rowTotal||'-'}</td>`;
       h+='</tr>';
 
+      /* 생산설비 → 금형일상점검 부속 행 추가 */
+      if(k==='prod'){
+        let moldTotal=0;
+        let moldRowHtml='';
+        days.forEach(d=>{
+          const dt=new Date(d);const dow=dt.getDay();
+          let cls='';
+          if(dow===0)cls='sunday';
+          else if(dow===6)cls='weekend';
+          if(d===today)cls=(cls?cls+' today':'today');
+          const recs=CACHE.moldByKey[`${eq}|${d}`]||[];
+          const j=judge(recs);
+          if(j.count>0)moldTotal+=j.count;
+          const onClick=recs.length?` onclick="showMoldDetail(${JSON.stringify(eq).replace(/"/g,'&quot;')},'${d}')" style="cursor:pointer"`:'';
+          moldRowHtml+=`<td class="${cls}"${onClick}><span class="${j.cls}">${j.sign}</span></td>`;
+        });
+        h+='<tr class="cat-mold">';
+        h+=`<td class="cat">${MOLD_CFG.icon}<br>${MOLD_CFG.label}</td>`;
+        h+=`<td class="eq">└ 금형일상점검</td>`;
+        h+=moldRowHtml;
+        h+=`<td class="total">${moldTotal||'-'}</td>`;
+        h+='</tr>';
+      }
+
       /* 생산설비이고 300톤 이상이면 로드모니터 부속 행 추가 */
       if(k==='prod'){
         const ton=extractTonnage(eq);
@@ -585,6 +635,42 @@ function showDetail(cat,eq,date){
   $('modal').classList.add('show');
 }
 
+/* ========== 금형일상점검 셀 상세 모달 ========== */
+const MOLD_ITEM_LABELS={chk_bolt:'볼트류',chk_appear:'외관',chk_scrap:'스크랩취출',chk_guidepost:'가이드포스트',chk_pilot:'파일럿핀',chk_lifter:'리프터핀',chk_punch:'펀치',chk_bush:'가이드부쉬',chk_airblow:'에어블러우',chk_m_appear:'[관리]외관',chk_m_spring:'[관리]스프링',chk_m_ejector:'[관리]밀핀',chk_m_shape:'[관리]형상펀치',chk_m_fit:'[관리]형합'};
+function showMoldDetail(eq,date){
+  const recs=CACHE.moldByKey[`${eq}|${date}`]||[];
+  const showName=getDisplayName(eq);
+  $('modalTitle').textContent=`${MOLD_CFG.icon} 금형일상점검 · ${showName} · ${date}`;
+  if(!recs.length){$('modalBody').innerHTML='<div class="empty"><div>금형점검 기록 없음</div></div>';$('modal').classList.add('show');return}
+  let h='';
+  recs.forEach((r,i)=>{
+    h+=`<div style="border:1px solid #e0e0e0;border-radius:8px;padding:10px;margin-bottom:8px;background:#fafbfc">`;
+    h+=`<div style="font-weight:800;color:${MOLD_CFG.color};margin-bottom:6px;font-size:13px">금형점검 기록 ${i+1}/${recs.length}</div>`;
+    const fields=[
+      ['점검시간',(r.check_time||'-').substring(0,5)],
+      ['점검자',r.inspector||'-'],
+      ['금형/품번',r.mold_no||'-'],
+      ['관리자확인',r.manager||'-'],
+      ['결과',r.result==='NG'?'<span style="color:#c62828;font-weight:800">NG</span>':'<span style="color:#2e7d32;font-weight:800">OK</span>'],
+      ['NG수',r.ng_count!=null?r.ng_count:'-'],
+      ['특이사항',r.memo||'-']
+    ];
+    fields.forEach(([k,v])=>{h+=`<div class="detail-row"><span class="dt-label">${k}</span><span class="dt-val">${v}</span></div>`});
+    const items=Object.keys(r).filter(k=>/^chk_/.test(k)&&r[k]).map(k=>[MOLD_ITEM_LABELS[k]||k,r[k]]);
+    if(items.length){
+      h+=`<div style="margin-top:8px;padding-top:8px;border-top:1px dashed #ddd"><div style="font-size:11px;color:#666;font-weight:700;margin-bottom:4px">점검항목</div>`;
+      items.forEach(([ik,iv])=>{
+        const v=String(iv);const c=v==='NG'?'#c62828':(v==='OK'?'#2e7d32':'#666');
+        h+=`<div style="display:inline-block;margin:2px 4px 2px 0;padding:2px 7px;border-radius:10px;background:${v==='NG'?'#ffebee':'#f1f8e9'};color:${c};font-size:10px;font-weight:700">${ik}: ${v}</div>`;
+      });
+      h+='</div>';
+    }
+    h+='</div>';
+  });
+  $('modalBody').innerHTML=h;
+  $('modal').classList.add('show');
+}
+
 /* ========== 로드모니터 셀 상세 모달 (시간대별 측정값) ========== */
 function showLoadDetail(eq,date){
   const recs=CACHE.loadByKey[`${eq}|${date}`]||[];
@@ -656,6 +742,19 @@ function exportXlsx(){
       row.push(total||'');
       data.push(row);
 
+      /* 생산설비 → 금형일상점검 부속 행 */
+      if(k==='prod'){
+        const moldRow=['금형점검',`└ ${showName}`];
+        let moldTotal=0;
+        CACHE.days.forEach(d=>{
+          const j=judge(CACHE.moldByKey[`${eq}|${d}`]||[]);
+          if(j.count>0)moldTotal+=j.count;
+          moldRow.push(j.sign==='-'?'':j.sign);
+        });
+        moldRow.push(moldTotal||'');
+        data.push(moldRow);
+      }
+
       /* 생산설비 + 300톤 이상 → 로드모니터 부속 행 추가 */
       if(k==='prod'){
         const ton=extractTonnage(eq);
@@ -705,6 +804,11 @@ function exportXlsx(){
       ]);
     });
   });
+  if(cats.includes('prod')){
+    CACHE.moldRecords.forEach(r=>{
+      detail.push(['금형점검',r.check_date||'',r.machine||'',r.inspector||'',r.result||'',r.ng_count!=null?r.ng_count:'',r.check_time||'',[r.mold_no,r.memo].filter(v=>v).join(' / ')]);
+    });
+  }
   const ws2=XLSX.utils.aoa_to_sheet(detail);
   ws2['!cols']=[{wch:9},{wch:11},{wch:14},{wch:10},{wch:7},{wch:6},{wch:9},{wch:24}];
   XLSX.utils.book_append_sheet(wb,ws2,'상세이력');
