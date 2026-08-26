@@ -3,8 +3,34 @@
 <html lang="ko"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>출하의뢰서 관리 v1.1</title>
-<script src="./출하의뢰서 관리 v1.1_files/xlsx.full.min.js.다운로드"></script>
+<title>출하의뢰서 관리 v1.2</title>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script>
+/* XLSX 로더 (CDN 실패 시 대체 CDN 자동 재시도) */
+var XLSX_CDNS=[
+  'https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
+  'https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js',
+  'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js'
+];
+var _xlsxPromise=null;
+function _loadScript(src){return new Promise(function(res,rej){var el=document.createElement('script');el.src=src;el.onload=function(){res()};el.onerror=function(){rej(new Error(src))};document.head.appendChild(el)})}
+function ensureXLSX(){
+  if(typeof XLSX!=='undefined'&&XLSX&&XLSX.utils)return Promise.resolve(true);
+  if(_xlsxPromise)return _xlsxPromise;
+  _xlsxPromise=(async function(){
+    for(var i=0;i<XLSX_CDNS.length;i++){
+      try{
+        await _loadScript(XLSX_CDNS[i]);
+        if(typeof XLSX!=='undefined'&&XLSX&&XLSX.utils)return true;
+      }catch(e){}
+    }
+    throw new Error('엑셀 라이브러리(XLSX) 로드 실패 — 인터넷 연결 확인');
+  })();
+  return _xlsxPromise;
+}
+window.addEventListener('load',function(){setTimeout(function(){ensureXLSX().catch(function(){})},300)});
+</script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&display=swap');
   *{box-sizing:border-box;margin:0;padding:0}
@@ -81,7 +107,7 @@
 </head>
 <body>
 
-<div class="hdr"><h1>📦 출하의뢰서 관리 v1.1 <span class="conn-dot ok" id="connDot"></span></h1><span class="hdr-sub">Supabase 기반</span></div>
+<div class="hdr"><h1>📦 출하의뢰서 관리 v1.2 <span class="conn-dot ok" id="connDot"></span></h1><span class="hdr-sub">Supabase 기반</span></div>
 <div class="tabs">
   <div class="tab on" onclick="swTab(0)">📦 출하작업</div>
   <div class="tab" onclick="swTab(1)">📋 이력</div>
@@ -391,9 +417,9 @@ async function addWorkItem(){const pn=document.getElementById('addPart').value.t
 async function deleteWorkItem(id){if(!confirm('삭제?'))return;try{await sbDelete('shipment_work','id=eq.'+id);toast('삭제됨');loadWork()}catch(e){toast('삭제 실패: '+e.message)}}
 async function clearAllWork(){if(!workItems.length)return;if(!confirm(workItems.length+'건 전체 삭제?'))return;try{await sbDelete('shipment_work','status=eq.working');toast('전체 삭제됨');loadWork()}catch(e){toast('삭제 실패: '+e.message)}}
 
-function downloadWorkTemplate(){const ws=XLSX.utils.aoa_to_sheet([['품번','수량','로트번호'],['1972-383',16800,'250513/250514'],['1967-391',10500,'']]);ws['!cols']=[{wch:20},{wch:10},{wch:20}];const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'출하입력');XLSX.writeFile(wb,'출하입력양식.xlsx')}
+async function downloadWorkTemplate(){try{await ensureXLSX()}catch(err){toast('엑셀 실패: '+err.message);return}const ws=XLSX.utils.aoa_to_sheet([['품번','수량','로트번호'],['1972-383',16800,'250513/250514'],['1967-391',10500,'']]);ws['!cols']=[{wch:20},{wch:10},{wch:20}];const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'출하입력');XLSX.writeFile(wb,'출하입력양식.xlsx')}
 function importWorkExcel(){document.getElementById('workFileInput').click()}
-document.getElementById('workFileInput').addEventListener('change',async function(e){const file=e.target.files[0];if(!file)return;e.target.value='';const prog=document.getElementById('workImportProgress');prog.style.display='block';prog.textContent='파일 읽는 중...';try{const data=await file.arrayBuffer();const wb=XLSX.read(data,{type:'array'});const ws=wb.Sheets[wb.SheetNames[0]];const rows=XLSX.utils.sheet_to_json(ws,{header:1});if(rows.length<2){toast('데이터 없음');prog.style.display='none';return}const hdr=rows[0].map(h=>String(h||'').trim());let cP=-1,cQ=-1,cL=-1,cB=-1;hdr.forEach((h,i)=>{const l=h.toLowerCase();if(cP<0&&(h==='품번'||l==='part'||l==='part_no'))cP=i;if(cQ<0&&(h==='수량'||l==='qty'||l==='quantity'))cQ=i;if(cL<0&&(h==='로트번호'||h==='로트'||h==='LOT'||l==='lot'||l==='lot_no'))cL=i;if(cB<0&&(h==='박스수량'||h==='박스수'||l==='box_count'))cB=i});if(cP<0)cP=0;if(cQ<0&&hdr.length>1){for(let i=1;i<hdr.length;i++){if(rows.length>1&&!isNaN(rows[1][i])){cQ=i;break}}}const items=[];for(let i=1;i<rows.length;i++){const pn=String(rows[i][cP]||'').trim();if(!pn)continue;const qty=cQ>=0?(parseInt(rows[i][cQ])||0):0;const lot=cL>=0?String(rows[i][cL]||'').trim():'';const bcR=cB>=0?(parseInt(rows[i][cB])||0):0;const bs=findBoxSize(pn);let bc=bcR;if(!bc&&bs&&qty)bc=Math.ceil(qty/bs);items.push({part_no:pn,box_size:bs,box_count:bc,qty:qty||null,lot_no:lot,sort_order:workItems.length+items.length,status:'working'})}if(!items.length){toast('유효한 품목 없음');prog.style.display='none';return}if(!confirm('📤 '+items.length+'건 불러오기?')){prog.style.display='none';return}let done=0;for(let i=0;i<items.length;i+=50){const ch=items.slice(i,i+50);await sbInsert('shipment_work',ch);done+=ch.length;prog.textContent='등록 중... '+done+'/'+items.length}prog.style.display='none';toast('✅ '+items.length+'건 완료');loadWork()}catch(e){prog.style.display='none';toast('실패: '+e.message)}});
+document.getElementById('workFileInput').addEventListener('change',async function(e){const file=e.target.files[0];if(!file)return;e.target.value='';const prog=document.getElementById('workImportProgress');prog.style.display='block';prog.textContent='파일 읽는 중...';try{await ensureXLSX();const data=await file.arrayBuffer();const wb=XLSX.read(data,{type:'array'});const ws=wb.Sheets[wb.SheetNames[0]];const rows=XLSX.utils.sheet_to_json(ws,{header:1});if(rows.length<2){toast('데이터 없음');prog.style.display='none';return}const hdr=rows[0].map(h=>String(h||'').trim());let cP=-1,cQ=-1,cL=-1,cB=-1;hdr.forEach((h,i)=>{const l=h.toLowerCase();if(cP<0&&(h==='품번'||l==='part'||l==='part_no'))cP=i;if(cQ<0&&(h==='수량'||l==='qty'||l==='quantity'))cQ=i;if(cL<0&&(h==='로트번호'||h==='로트'||h==='LOT'||l==='lot'||l==='lot_no'))cL=i;if(cB<0&&(h==='박스수량'||h==='박스수'||l==='box_count'))cB=i});if(cP<0)cP=0;if(cQ<0&&hdr.length>1){for(let i=1;i<hdr.length;i++){if(rows.length>1&&!isNaN(rows[1][i])){cQ=i;break}}}const items=[];for(let i=1;i<rows.length;i++){const pn=String(rows[i][cP]||'').trim();if(!pn)continue;const qty=cQ>=0?(parseInt(rows[i][cQ])||0):0;const lot=cL>=0?String(rows[i][cL]||'').trim():'';const bcR=cB>=0?(parseInt(rows[i][cB])||0):0;const bs=findBoxSize(pn);let bc=bcR;if(!bc&&bs&&qty)bc=Math.ceil(qty/bs);items.push({part_no:pn,box_size:bs,box_count:bc,qty:qty||null,lot_no:lot,sort_order:workItems.length+items.length,status:'working'})}if(!items.length){toast('유효한 품목 없음');prog.style.display='none';return}if(!confirm('📤 '+items.length+'건 불러오기?')){prog.style.display='none';return}let done=0;for(let i=0;i<items.length;i+=50){const ch=items.slice(i,i+50);await sbInsert('shipment_work',ch);done+=ch.length;prog.textContent='등록 중... '+done+'/'+items.length}prog.style.display='none';toast('✅ '+items.length+'건 완료');loadWork()}catch(e){prog.style.display='none';toast('실패: '+e.message)}});
 
 async function moveAllToHistory(){if(!workItems.length){toast('등록할 품목 없음');return}const nl=workItems.filter(w=>!w.lot_no||!w.lot_no.trim());if(nl.length&&!confirm(nl.length+'건 로트 미등록. 진행?'))return;if(!confirm(workItems.length+'건 이력 등록?'))return;const rd=lsGet('WORK_DATE',new Date().toISOString().split('T')[0])||new Date().toISOString().split('T')[0];const hr=workItems.map(w=>({reg_date:rd,part_no:w.part_no,box_size:w.box_size,box_count:w.box_count,qty:w.qty,lot_no:w.lot_no||''}));try{
   try{await sbInsert('shipment_history',hr.map(x=>Object.assign({},x,{destination:selectedCustomer||''})));}
@@ -424,18 +450,19 @@ function editBu(id){const b=buData.find(x=>x.id===id);if(!b)return;document.getE
 function closeBuModal(){document.getElementById('buModal').classList.remove('on')}
 async function saveBuEdit(){const id=document.getElementById('buEditId').value;const pn=document.getElementById('buEditPart').value.trim();const bs=parseInt(document.getElementById('buEditSize').value)||0;const mm=document.getElementById('buEditMemo').value.trim();if(!pn){toast('품번 입력');return}try{if(id){await sbUpdate('box_unit',id,{part_no:pn,box_size:bs,memo:mm});toast('✅ 수정')}else{await sbInsert('box_unit',{part_no:pn,box_size:bs,memo:mm});toast('✅ 추가')}closeBuModal();loadBoxUnits()}catch(e){toast('저장 실패: '+e.message)}}
 async function toggleBu(id,a){try{await sbUpdate('box_unit',id,{is_active:!a});toast(a?'비활성':'활성');loadBoxUnits()}catch(e){toast('실패: '+e.message)}}
-function downloadBuTemplate(){const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([['품번','박스당수량'],['1234-567',1000],['5678-901',2500]]),'박스단위');XLSX.writeFile(wb,'박스단위_템플릿.xlsx')}
+async function downloadBuTemplate(){try{await ensureXLSX()}catch(err){toast('엑셀 실패: '+err.message);return}const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([['품번','박스당수량'],['1234-567',1000],['5678-901',2500]]),'박스단위');XLSX.writeFile(wb,'박스단위_템플릿.xlsx')}
 function uploadBuExcel(){document.getElementById('buFileInput').click()}
-document.getElementById('buFileInput').addEventListener('change',async function(e){const file=e.target.files[0];if(!file)return;e.target.value='';const prog=document.getElementById('buProgress');prog.style.display='block';prog.textContent='읽는 중...';try{const data=await file.arrayBuffer();const wb=XLSX.read(data,{type:'array'});const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1});if(rows.length<2){toast('데이터 없음');prog.style.display='none';return}const items=[];for(let i=1;i<rows.length;i++){const pn=String(rows[i][0]||'').trim();const bs=parseInt(rows[i][1])||0;if(pn)items.push({part_no:pn,box_size:bs})}if(!items.length){toast('유효 데이터 없음');prog.style.display='none';return}if(!confirm(items.length+'건 업로드?')){prog.style.display='none';return}const ex=await sbSelect('box_unit');const em={};ex.forEach(b=>{em[b.part_no]=b});const ins=[],upd=[];items.forEach(it=>{const e=em[it.part_no];if(e){if(e.box_size!==it.box_size)upd.push({id:e.id,box_size:it.box_size})}else ins.push(it)});let done=0;for(let i=0;i<ins.length;i+=50){await sbInsert('box_unit',ins.slice(i,i+50));done+=Math.min(50,ins.length-i);prog.textContent='추가 '+done+'/'+ins.length}for(let i=0;i<upd.length;i++){await sbUpdate('box_unit',upd[i].id,{box_size:upd[i].box_size,is_active:true})}prog.style.display='none';toast('✅ 추가:'+ins.length+' 수정:'+upd.length);loadBoxUnits()}catch(e){prog.style.display='none';toast('실패: '+e.message)}});
+document.getElementById('buFileInput').addEventListener('change',async function(e){const file=e.target.files[0];if(!file)return;e.target.value='';const prog=document.getElementById('buProgress');prog.style.display='block';prog.textContent='읽는 중...';try{await ensureXLSX();const data=await file.arrayBuffer();const wb=XLSX.read(data,{type:'array'});const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1});if(rows.length<2){toast('데이터 없음');prog.style.display='none';return}const items=[];for(let i=1;i<rows.length;i++){const pn=String(rows[i][0]||'').trim();const bs=parseInt(rows[i][1])||0;if(pn)items.push({part_no:pn,box_size:bs})}if(!items.length){toast('유효 데이터 없음');prog.style.display='none';return}if(!confirm(items.length+'건 업로드?')){prog.style.display='none';return}const ex=await sbSelect('box_unit');const em={};ex.forEach(b=>{em[b.part_no]=b});const ins=[],upd=[];items.forEach(it=>{const e=em[it.part_no];if(e){if(e.box_size!==it.box_size)upd.push({id:e.id,box_size:it.box_size})}else ins.push(it)});let done=0;for(let i=0;i<ins.length;i+=50){await sbInsert('box_unit',ins.slice(i,i+50));done+=Math.min(50,ins.length-i);prog.textContent='추가 '+done+'/'+ins.length}for(let i=0;i<upd.length;i++){await sbUpdate('box_unit',upd[i].id,{box_size:upd[i].box_size,is_active:true})}prog.style.display='none';toast('✅ 추가:'+ins.length+' 수정:'+upd.length);loadBoxUnits()}catch(e){prog.style.display='none';toast('실패: '+e.message)}});
 async function deleteAllBoxUnits(){if(!buData.length)return;if(!confirm('⚠ 전체 '+buData.length+'건 삭제?'))return;if(!confirm('최종 확인'))return;try{await sbDelete('box_unit','id=gt.0');toast('전체 삭제');loadBoxUnits()}catch(e){toast('실패: '+e.message)}}
 
-function exportHistXlsx(){if(!histData.length){toast('이력 없음');return}const ws=XLSX.utils.aoa_to_sheet([['일자','품번','박스당수량','박스수량','수량','로트번호'],...histData.map(h=>[h.reg_date,h.part_no,h.box_size,h.box_count,h.qty,h.lot_no||''])]);ws['!cols']=[{wch:11},{wch:18},{wch:10},{wch:8},{wch:10},{wch:16}];const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'출하이력');XLSX.writeFile(wb,'출하이력_'+new Date().toISOString().split('T')[0].replace(/-/g,'')+'.xlsx')}
-async function exportBuXlsx(){try{const d=await sbSelect('box_unit','order=part_no.asc');if(!d.length){toast('없음');return}const ws=XLSX.utils.aoa_to_sheet([['품번','박스당수량','메모','상태'],...d.map(b=>[b.part_no,b.box_size,b.memo||'',b.is_active?'사용':'비활성'])]);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'박스단위');XLSX.writeFile(wb,'박스단위_'+new Date().toISOString().split('T')[0].replace(/-/g,'')+'.xlsx');toast('📥 '+d.length+'건')}catch(e){toast('실패: '+e.message)}}
-async function exportAllXlsx(){try{const wb=XLSX.utils.book_new();const bu=await sbSelect('box_unit','order=part_no.asc');if(bu.length)XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([['품번','박스당수량','메모','상태'],...bu.map(b=>[b.part_no,b.box_size,b.memo||'',b.is_active?'사용':'비활성'])]),'박스단위');const hi=await sbSelect('shipment_history','order=reg_date.desc,part_no.asc&limit=5000');if(hi.length)XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([['일자','품번','박스당수량','박스수량','수량','로트번호'],...hi.map(h=>[h.reg_date,h.part_no,h.box_size,h.box_count,h.qty,h.lot_no||''])]),'출하이력');XLSX.writeFile(wb,'출하의뢰서_전체_'+new Date().toISOString().split('T')[0].replace(/-/g,'')+'.xlsx');toast('📥 전체 다운로드')}catch(e){toast('실패: '+e.message)}}
+async function exportHistXlsx(){if(!histData.length){toast('이력 없음');return}try{await ensureXLSX()}catch(err){toast('엑셀 실패: '+err.message);return}const ws=XLSX.utils.aoa_to_sheet([['일자','품번','박스당수량','박스수량','수량','로트번호'],...histData.map(h=>[h.reg_date,h.part_no,h.box_size,h.box_count,h.qty,h.lot_no||''])]);ws['!cols']=[{wch:11},{wch:18},{wch:10},{wch:8},{wch:10},{wch:16}];const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'출하이력');XLSX.writeFile(wb,'출하이력_'+new Date().toISOString().split('T')[0].replace(/-/g,'')+'.xlsx')}
+async function exportBuXlsx(){try{await ensureXLSX();const d=await sbSelect('box_unit','order=part_no.asc');if(!d.length){toast('없음');return}const ws=XLSX.utils.aoa_to_sheet([['품번','박스당수량','메모','상태'],...d.map(b=>[b.part_no,b.box_size,b.memo||'',b.is_active?'사용':'비활성'])]);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'박스단위');XLSX.writeFile(wb,'박스단위_'+new Date().toISOString().split('T')[0].replace(/-/g,'')+'.xlsx');toast('📥 '+d.length+'건')}catch(e){toast('실패: '+e.message)}}
+async function exportAllXlsx(){try{await ensureXLSX();const wb=XLSX.utils.book_new();const bu=await sbSelect('box_unit','order=part_no.asc');if(bu.length)XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([['품번','박스당수량','메모','상태'],...bu.map(b=>[b.part_no,b.box_size,b.memo||'',b.is_active?'사용':'비활성'])]),'박스단위');const hi=await sbSelect('shipment_history','order=reg_date.desc,part_no.asc&limit=5000');if(hi.length)XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([['일자','품번','박스당수량','박스수량','수량','로트번호'],...hi.map(h=>[h.reg_date,h.part_no,h.box_size,h.box_count,h.qty,h.lot_no||''])]),'출하이력');XLSX.writeFile(wb,'출하의뢰서_전체_'+new Date().toISOString().split('T')[0].replace(/-/g,'')+'.xlsx');toast('📥 전체 다운로드')}catch(e){toast('실패: '+e.message)}}
 async function resetAllData(){if(!confirm('⚠ 모든 데이터 삭제?'))return;if(!confirm('최종 확인'))return;try{await sbDelete('shipment_work','id=gt.0');await sbDelete('shipment_history','id=gt.0');toast('초기화 완료');loadAll()}catch(e){toast('실패: '+e.message)}}
 
 async function exportDateXlsx(date) {
   try {
+    await ensureXLSX();
     const data = await sbSelect('shipment_history', 'reg_date=eq.' + date + '&order=part_no.asc');
     if (!data.length) { toast('해당 날짜 이력 없음'); return; }
     const totalQty = data.reduce((s, h) => s + (parseInt(h.qty) || 0), 0);
@@ -603,8 +630,9 @@ async function mgrQuery(){
     c.innerHTML=html;
   }catch(e){st.textContent='❌ 조회 실패: '+e.message;st.style.color='#c62828'}
 }
-function mgrExportXlsx(){
+async function mgrExportXlsx(){
   if(!mgrData.length){toast('조회 먼저 실행하세요');return}
+  try{await ensureXLSX()}catch(err){toast('엑셀 실패: '+err.message);return}
   const totalQty=mgrData.reduce((s,h)=>s+(parseInt(h.qty)||0),0);
   const totalBox=mgrData.reduce((s,h)=>s+(parseInt(h.box_count)||0),0);
   const hd=['일자','품번','박스당수량','박스수량','수량','로트번호'];
