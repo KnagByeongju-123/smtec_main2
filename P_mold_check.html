@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>금형 일상점검 체크시트 v1.0</title>
+  <title>금형 일상점검 체크시트 v1.1</title>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;900&display=swap">
   <style>
     :root{--bg:#0f172a;--surface:#1e293b;--surface2:#334155;--border:#475569;--accent:#f59e0b;--accent2:#d97706;--ok:#22c55e;--ok-bg:rgba(34,197,94,.12);--ng:#ef4444;--ng-bg:rgba(239,68,68,.12);--text:#e2e8f0;--text2:#94a3b8;--text3:#64748b;--radius:12px}
@@ -64,12 +64,20 @@
     .hist-table td{padding:5px 4px;border-bottom:1px solid rgba(255,255,255,.04)}
     .legend{display:flex;flex-wrap:wrap;gap:6px;font-size:10px;color:var(--text3);margin-top:8px}
     .legend span{background:rgba(255,255,255,.05);padding:2px 7px;border-radius:4px}
+    .ac-wrap{position:relative}
+    .ac-list{position:absolute;left:0;right:0;top:100%;z-index:50;background:var(--surface);border:1.5px solid var(--accent);border-top:none;border-radius:0 0 8px 8px;max-height:220px;overflow-y:auto;display:none;box-shadow:0 8px 20px rgba(0,0,0,.4)}
+    .ac-list.on{display:block}
+    .ac-item{padding:9px 12px;font-size:13px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.04);display:flex;flex-direction:column;gap:2px}
+    .ac-item:hover,.ac-item.sel{background:rgba(245,158,11,.15)}
+    .ac-item b{color:#fcd34d;font-weight:700}
+    .ac-item .ac-sub{font-size:10px;color:var(--text3)}
+    .ac-cnt{font-size:10px;color:var(--text3);padding:6px 12px;text-align:right}
   </style>
 </head>
 <body>
 
 <div class="hdr">
-  <h1>🔩 금형 일상점검 체크시트 v1.0</h1>
+  <h1>🔩 금형 일상점검 체크시트 v1.1</h1>
   <p>TJP-SM0704-05 · 프레스 호기별 금형 일상점검 기록 <span id="hdrUserBadge" style="display:none;background:rgba(74,222,128,.15);color:#4ade80;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;margin-left:6px"></span></p>
 </div>
 
@@ -102,7 +110,7 @@
       </div>
     </div>
     <div class="fg-row">
-      <div class="fg"><label class="field-label">금형 / 품번 <span style="font-size:10px;color:var(--text3)">(선택)</span></label><input type="text" id="moldNo" placeholder="예: 71.55 피어싱"></div>
+      <div class="fg"><label class="field-label">금형 / 품번 <span style="font-size:10px;color:var(--text3)">(선택 · 첨부마스터 검색)</span></label><div class="ac-wrap"><input type="text" id="moldNo" placeholder="금형재번/기종/고객사 일부 입력" autocomplete="off"><div class="ac-list" id="moldAc"></div></div></div>
       <div class="fg"><label class="field-label">관리자 확인 <span style="font-size:10px;color:var(--text3)">(선택)</span></label><input type="text" id="manager" placeholder="관리자명"></div>
     </div>
   </div>
@@ -232,6 +240,7 @@ const DEFAULT_MACHINES=[
   '46호기 심팩300톤','47호기 심팩300톤','48호기 심팩300톤','49호기 심팩300톤'
 ];
 let _machineCache=[];
+let _moldMaster=[];
 let _userEditedDateTime=false;
 
 function getSettings(){return JSON.parse(localStorage.getItem(LS_KEY)||'{}')}
@@ -423,6 +432,51 @@ function renderMachineListUI(){
   c.innerHTML=list.map((m,i)=>`<div class="stg-list-item"><span style="color:var(--text3);font-size:11px;min-width:20px">${i+1}</span><span class="stg-name">${m.name}</span><span class="stg-id">${m.id?'서버':'기본'}</span></div>`).join('');
 }
 
+// ===== 금형(소재마스터) 자동완성 =====
+async function loadMoldMaster(){
+  if(!isConfigured())return;
+  try{
+    const res=await fetch(`${getSbUrl()}/rest/v1/material_master_tj?select=id,mold_number,mapped_models,model_code,customer,material_name,material_type,thickness,width&order=mold_number.asc&limit=3000`,{headers:sbHeaders()});
+    if(!res.ok)return;
+    const rows=await res.json();
+    _moldMaster=(rows||[]).filter(r=>r.mold_number||r.mapped_models).map(r=>{
+      const mold=(r.mold_number||'').trim(),models=(r.mapped_models||'').trim(),code=(r.model_code||'').trim();
+      const label=[mold,models].filter(v=>v).join(' / ');
+      const sub=[code?'기종코드 '+code:'',r.customer||'',r.material_name||((r.material_type||'')+(r.thickness?' '+r.thickness+'t':'')+(r.width?' x'+r.width:''))].filter(v=>v).join(' · ');
+      return{label,sub,search:(label+' '+sub).toLowerCase()};
+    });
+  }catch(e){console.log('material_master_tj 로드 실패',e)}
+}
+let _acIdx=-1;
+function escHtml(t){return String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+function hl(text,q){if(!q)return escHtml(text);const i=text.toLowerCase().indexOf(q);if(i<0)return escHtml(text);return escHtml(text.slice(0,i))+'<b>'+escHtml(text.slice(i,i+q.length))+'</b>'+escHtml(text.slice(i+q.length))}
+function renderMoldAc(){
+  const inp=document.getElementById('moldNo'),box=document.getElementById('moldAc');
+  const q=inp.value.trim().toLowerCase();
+  if(!q||!_moldMaster.length){box.classList.remove('on');box.innerHTML='';_acIdx=-1;return}
+  const terms=q.split(/\s+/).filter(v=>v);
+  const hits=_moldMaster.filter(m=>terms.every(t=>m.search.includes(t)));
+  if(!hits.length){box.innerHTML='<div class="ac-cnt">일치 항목 없음 (직접 입력 가능)</div>';box.classList.add('on');_acIdx=-1;return}
+  const show=hits.slice(0,30);
+  box.innerHTML=show.map((m,i)=>`<div class="ac-item" data-i="${i}" onmousedown="pickMold(${i})"><span>${hl(m.label,terms[0])}</span>${m.sub?`<span class="ac-sub">${hl(m.sub,terms[0])}</span>`:''}</div>`).join('')+(hits.length>30?`<div class="ac-cnt">외 ${hits.length-30}건 — 더 입력하여 좁히세요</div>`:`<div class="ac-cnt">${hits.length}건</div>`);
+  box.classList.add('on');_acIdx=-1;box._show=show;
+}
+function pickMold(i){
+  const box=document.getElementById('moldAc');const m=(box._show||[])[i];if(!m)return;
+  document.getElementById('moldNo').value=m.label;box.classList.remove('on');box.innerHTML='';tempSave();
+}
+function moldAcKey(e){
+  const box=document.getElementById('moldAc');if(!box.classList.contains('on'))return;
+  const items=box.querySelectorAll('.ac-item');if(!items.length)return;
+  if(e.key==='ArrowDown'){e.preventDefault();_acIdx=Math.min(_acIdx+1,items.length-1)}
+  else if(e.key==='ArrowUp'){e.preventDefault();_acIdx=Math.max(_acIdx-1,0)}
+  else if(e.key==='Enter'){e.preventDefault();if(_acIdx>=0)pickMold(_acIdx);return}
+  else if(e.key==='Escape'){box.classList.remove('on');return}
+  else return;
+  items.forEach((el,i)=>el.classList.toggle('sel',i===_acIdx));
+  if(items[_acIdx])items[_acIdx].scrollIntoView({block:'nearest'});
+}
+
 // ===== 제출 =====
 async function submitForm(){
   const date=document.getElementById('checkDate').value,time=document.getElementById('checkTime').value;
@@ -571,7 +625,12 @@ document.addEventListener('DOMContentLoaded',async()=>{
   tempRestore();setDateTimeNow(true);
   ['moldNo','manager','memo'].forEach(id=>{const el=document.getElementById(id);el.addEventListener('input',tempSave)});
   ['checkDate','checkTime'].forEach(id=>document.getElementById(id).addEventListener('input',()=>{_userEditedDateTime=true}));
-  if(isConfigured())loadMachinesFromServer();
+  const moldInp=document.getElementById('moldNo');
+  moldInp.addEventListener('input',renderMoldAc);
+  moldInp.addEventListener('focus',renderMoldAc);
+  moldInp.addEventListener('keydown',moldAcKey);
+  moldInp.addEventListener('blur',()=>setTimeout(()=>{document.getElementById('moldAc').classList.remove('on')},150));
+  if(isConfigured()){Promise.all([loadMachinesFromServer(),loadMoldMaster()])}
   else document.getElementById('pnl0').insertAdjacentHTML('afterbegin','<div style="margin:12px;padding:10px;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);border-radius:8px;font-size:12px;color:#fca5a5;text-align:center">⚠ Supabase 미설정 — ⚙ 설정 탭에서 URL/Key 입력</div>');
 });
 </script>
