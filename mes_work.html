@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>MES 가동설비 모니터링 v5.0</title>
+<title>MES 가동설비 모니터링 v5.1</title>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -169,6 +169,13 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 .prod-memo{margin-top:6px;display:flex;gap:4px;align-items:center;padding-top:6px;border-top:1px dashed rgba(71,85,105,.3)}
 .prod-memo label{font-size:11px;color:var(--sub);font-weight:700;flex-shrink:0}
 .prod-memo input{flex:1;padding:6px 8px;border:1px solid var(--border);background:#0f1117;color:var(--txt);font-size:12px;border-radius:4px;font-family:inherit}
+.prod-nav{display:flex;gap:4px;align-items:center}
+.prod-nav .dsum-refresh{padding:4px 8px}
+.prod-row.closed{background:rgba(74,222,128,.04)}
+.prod-info .pi-closed{color:#4ade80;font-weight:700}
+.prod-reason{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;padding-top:6px;border-top:1px dashed rgba(71,85,105,.3)}
+.pr-chip{font-size:11px;padding:4px 9px;border-radius:12px;border:1px solid rgba(148,163,184,.35);color:#94a3b8;cursor:pointer;user-select:none}
+.pr-chip.on{background:rgba(251,191,36,.15);border-color:#fbbf24;color:#fbbf24;font-weight:700}
 .prod-memo input:focus{outline:none;border-color:var(--accent);background:#1a1d27}
 /* 실적 저장 버튼 */
 .prod-save-bar{margin-top:8px;display:flex;gap:6px}
@@ -311,7 +318,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 </style>
 </head>
 <body>
-<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v5.0</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">5분 갱신</span></div></div></div>
+<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v5.1</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">5분 갱신</span></div></div></div>
 <div class="tabs"><div class="tab active" data-tab="monitor" onclick="switchTab('monitor')">📊 모니터링</div><div class="tab" data-tab="settings" onclick="switchTab('settings')">📋 이력/설정</div></div>
 <div class="panel active" id="panel-monitor">
   <div class="stats"><div class="st"><div class="st-label">전체</div><div class="st-val" id="sTotal">-</div></div><div class="st run"><div class="st-label">가동</div><div class="st-val" id="sRun">-</div></div><div class="st stop"><div class="st-label">비가동</div><div class="st-val" id="sStop">-</div></div><div class="st warn"><div class="st-label">⏰30분이내</div><div class="st-val" id="sSoon">-</div></div><div class="st ng"><div class="st-label">NG</div><div class="st-val" id="sNg">-</div></div></div>
@@ -349,6 +356,21 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
         </div>
         <!-- 바디 -->
         <div class="dsum-body" id="dsumBody">
+          <div class="dsum-loading">⏳ 조회중...</div>
+        </div>
+      </div>
+
+      <!-- ★ 생산마감 (실적일 기준 · MES vs 실제양품) -->
+      <div class="prod-wrap" id="prodWrap">
+        <div class="prod-hdr">
+          <div class="prod-title">🏭 <span id="prodTitle">생산마감</span></div>
+          <div class="prod-nav">
+            <button class="dsum-refresh" onclick="prodShiftDay(-1)" title="전일">◀</button>
+            <button class="dsum-refresh" onclick="prodShiftDay(1)" title="익일">▶</button>
+            <button class="dsum-refresh" onclick="loadProductionToday()">🔄</button>
+          </div>
+        </div>
+        <div class="prod-body" id="prodBody">
           <div class="dsum-loading">⏳ 조회중...</div>
         </div>
       </div>
@@ -1090,6 +1112,8 @@ function openChkModal(machine){
   document.getElementById('tabTop5').classList.add('active');
   document.getElementById('tabTL').classList.remove('active');
   loadDowntimeSummary();
+  prodState.ymd=null;
+  loadProductionToday();
 }
 function closeChkModal(){document.getElementById('chkModal').classList.remove('show')}
 
@@ -1354,62 +1378,122 @@ function dsumSwitch(tab){
   else renderTimeline(dsumState.data.timeline||[]);
 }
 
-// ★★★ 오늘의 생산실적 (업무일 08시~현재) ★★★
+// ★★★ 생산마감 (실적일 기준 · Supabase daily_production + production_close) ★★★
+var PROD_REASONS=[['','사유없음'],['시타','시타/트라이'],['미등록불량','미등록불량'],['오카운트','샷 오카운트'],['박스잔량','박스잔량'],['기타','기타']];
+function prodYmd(){if(!prodState.ymd)prodState.ymd=fmtYmd(getWorkDate());return prodState.ymd}
+function prodShiftDay(n){
+  var d=new Date(prodYmd()+'T00:00:00');d.setDate(d.getDate()+n);
+  var today=fmtYmd(getWorkDate());
+  var ny=fmtYmd(d);
+  if(ny>today){showToast('오늘 이후는 조회할 수 없습니다');return}
+  prodState.ymd=ny;
+  loadProductionToday();
+}
+function prodTitleTxt(ymd,closed,total){
+  var t='생산마감 ('+ymd.slice(5).replace('-','/')+' 실적)';
+  if(total>0)t+=closed>=total?' ✅':(closed>0?' '+closed+'/'+total:'');
+  return t;
+}
 async function loadProductionToday(){
   var m=chkState.machine;if(!m)return;
   var body=document.getElementById('prodBody');
-  body.innerHTML='<div class="dsum-loading">⏳ MES 조회중...</div>';
+  var ymd=prodYmd();
+  document.getElementById('prodTitle').textContent='생산마감 ('+ymd.slice(5).replace('-','/')+' 실적)';
+  body.innerHTML='<div class="dsum-loading">⏳ 실적 조회중...</div>';
   prodState.loading=true;
   try{
-    var r=await fetch(MES_API_BASE+'/production_today?machine_code='+encodeURIComponent(m.machine_code));
-    if(!r.ok)throw new Error('API 응답오류 '+r.status);
-    var data=await r.json();
-    if(data.error)throw new Error(data.error);
-    prodState.data=data;
-    renderProductionToday(data);
+    var mc=encodeURIComponent(m.machine_code);
+    var res=await Promise.all([
+      sbGet('daily_production','select=*&ymd=eq.'+ymd+'&machine_code=eq.'+mc+'&order=start_time.asc.nullslast,item_code.asc'),
+      sbGet('production_close','select=*&ymd=eq.'+ymd+'&machine_code=eq.'+mc)
+    ]);
+    var rows=res[0]||[],closes=res[1]||[];
+    var closeMap={};closes.forEach(function(c){closeMap[c.item_code]=c});
+    var items=[],total=0,lastUpd='';
+    rows.forEach(function(r){
+      var q=+r.shot_qty||0;total+=q;
+      if(r.updated_at&&r.updated_at>lastUpd)lastUpd=r.updated_at;
+      var c=closeMap[r.item_code];
+      items.push({
+        mold:r.mold_code||'',item_code:r.item_code||'',item_name:r.item_name||'',work_order:r.work_order_no||'',
+        actual_qty:q,normal_shot:+r.normal_shot||0,abnormal_shot:+r.abnormal_shot||0,heat_nos:r.heat_nos||'',
+        start:r.start_time||'',end:r.end_time||'',run_min:null,
+        is_current:(m.current_item_code&&r.item_code===m.current_item_code),
+        adj_qty:c?c.actual_qty:null,closed_at:c?c.closed_at:'',closed_by:c?(c.worker||''):''
+      });
+    });
+    var isToday=(ymd===fmtYmd(getWorkDate()));
+    if(!items.length){
+      if(isToday&&m.current_item_code){renderProductionFallback(m);return}
+      prodState.data={machine_code:m.machine_code,items:[],total_qty:0,total_adj_qty:0,work_date:ymd,adj_memo:'',reason:'',fallback:false};
+      body.innerHTML='<div class="prod-empty">'+ymd.slice(5).replace('-','/')+' 실적 없음</div>';
+      return;
+    }
+    var firstClose=closes[0];
+    prodState.data={
+      machine_code:m.machine_code,items:items,total_qty:total,total_adj_qty:0,total_run_min:null,
+      work_date:ymd,adj_memo:firstClose?(firstClose.memo||''):'',reason:firstClose?(firstClose.reason||''):'',
+      fallback:false,mes_updated:lastUpd
+    };
+    renderProductionToday(prodState.data);
   }catch(e){
     console.log('생산실적 조회실패:',e);
-    // API 실패시 machine_status 데이터로 간이 표시
     renderProductionFallback(m);
   }finally{
     prodState.loading=false;
   }
 }
 
+function prodReasonHtml(sel){
+  var h='<div class="prod-reason">';
+  PROD_REASONS.forEach(function(r){
+    h+='<span class="pr-chip'+((sel||'')===r[0]?' on':'')+'" data-v="'+r[0]+'" onclick="onProdReason(this)">'+r[1]+'</span>';
+  });
+  return h+'</div>';
+}
+function onProdReason(el){
+  document.querySelectorAll('.prod-reason .pr-chip').forEach(function(c){c.classList.remove('on')});
+  el.classList.add('on');
+  if(prodState.data)prodState.data.reason=el.dataset.v||'';
+}
+function prodClosedTxt(it){
+  if(!it.closed_at)return'';
+  var t=new Date(it.closed_at);var hm=isNaN(t)?'':(String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0'));
+  return '✅ 마감 '+hm+(it.closed_by?' '+it.closed_by:'');
+}
+
 function renderProductionToday(data){
   var b=document.getElementById('prodBody');
   var items=data.items||[];
-  var workDate=data.work_date||'';
-  document.getElementById('prodTitle').textContent='오늘의 생산실적 ('+workDate.slice(5)+' 08시~)';
+  var workDate=data.work_date||prodYmd();
+  var closedCnt=0;items.forEach(function(it){if(it.closed_at)closedCnt++});
+  document.getElementById('prodTitle').textContent=prodTitleTxt(workDate,closedCnt,items.length);
   if(!items.length){
     renderProductionFallback(chkState.machine);
     return;
   }
-  // 헤더 (금형/가동 제거 → 품번/MES/실제 3컬럼)
-  var html='<div class="prod-head"><div>품번 <span style="color:#94a3b8;font-weight:500">(금형)</span></div><div class="ph-r">MES</div><div class="ph-c">실제</div></div>';
+  var html='<div class="prod-head"><div>품번 <span style="color:#94a3b8;font-weight:500">(금형)</span></div><div class="ph-r">MES</div><div class="ph-c">실제양품</div></div>';
   items.forEach(function(it,idx){
     var moldTxt=it.mold||'';
     var itemTxt=it.item_code||'-';
     var itemNmTxt=it.item_name||'';
     var woTxt=it.work_order||'';
-    var timeTxt=it.start&&it.end?(it.start+'~'+it.end):'';
-    var runTxt=it.run_min!=null?fmtMinutes(it.run_min):'';
-    // 보조정보: 금형 / 가동시간 / 시간대
+    var timeTxt=it.start&&it.end?(it.start+'~'+it.end):(it.start||'');
     var subParts=[];
     if(moldTxt)subParts.push('🎭'+moldTxt);
-    if(runTxt)subParts.push('⏱'+runTxt);
-    if(timeTxt)subParts.push(timeTxt);
+    if(timeTxt)subParts.push('⏱'+timeTxt);
+    if(it.abnormal_shot>0)subParts.push('<span style="color:#fca5a5">NG '+it.abnormal_shot+'</span>');
     var subTxt=subParts.join(' · ');
-    // MES 실적
+    var closedTxt=prodClosedTxt(it);
     var mesQty=(it.actual_qty!=null)?it.actual_qty:0;
-    var mesTxt=(it.actual_qty!=null)?mesQty.toLocaleString():(it.is_current===false?'<span style="color:var(--sub);font-size:10px">-</span>':'-');
-    // 실제 입력값 (저장된 값만 복원, 기본 빈칸)
+    var mesTxt=mesQty.toLocaleString();
     var adjVal=(it.adj_qty!=null&&it.adj_qty!=='')?it.adj_qty:'';
-    var cls='prod-row'+(it.is_current?' cur':'');
+    var cls='prod-row'+(it.is_current?' cur':'')+(it.closed_at?' closed':'');
     html+='<div class="'+cls+'" title="WO:'+woTxt+' / '+timeTxt+'">'+
       '<div class="prod-info"><div class="pi-item">'+itemTxt+'</div>'+
       (itemNmTxt?'<div class="pi-sub">'+itemNmTxt+'</div>':'')+
-      (subTxt?'<div class="pi-sub">'+subTxt+'</div>':'')+'</div>'+
+      (subTxt?'<div class="pi-sub">'+subTxt+'</div>':'')+
+      (closedTxt?'<div class="pi-sub pi-closed">'+closedTxt+'</div>':'')+'</div>'+
       '<div class="prod-qty">'+mesTxt+'</div>'+
       '<div class="prod-adj">'+
         '<input type="number" inputmode="numeric" value="'+adjVal+'" placeholder="입력" data-idx="'+idx+'" data-mes="'+mesQty+'" onchange="onAdjChange(this)" oninput="onAdjChange(this)">'+
@@ -1417,29 +1501,29 @@ function renderProductionToday(data){
       '</div>'+
       '</div>';
   });
-  // 합계
-  var totMin=data.total_run_min||0;
   var totMes=data.total_qty||0;
+  var upd='';
+  if(data.mes_updated){var u=new Date(data.mes_updated);if(!isNaN(u))upd=' · MES '+String(u.getHours()).padStart(2,'0')+':'+String(u.getMinutes()).padStart(2,'0')+' 기준'}
   html+='<div class="prod-foot">'+
-    '<span class="pf-lb">합계 ('+items.length+'건)'+(totMin>0?' ⏱'+fmtMinutes(totMin):'')+'</span>'+
+    '<span class="pf-lb">합계 ('+items.length+'건)'+upd+'</span>'+
     '<span>MES <span class="pf-val">'+totMes.toLocaleString()+'</span> · 실제 <span class="pf-adj" id="prodTotalAdj">0</span></span>'+
     '</div>';
-  // 보정 사유 메모
+  html+=prodReasonHtml(data.reason||'');
   html+='<div class="prod-memo">'+
-    '<label>📝 사유</label>'+
-    '<input type="text" id="prodAdjMemo" placeholder="선택입력 · 낙하불량 3개 등" oninput="onAdjMemoChange(this)">'+
+    '<label>📝 메모</label>'+
+    '<input type="text" id="prodAdjMemo" value="'+String(data.adj_memo||'').replace(/"/g,'&quot;')+'" placeholder="선택입력 · 낙하불량 3개 등" oninput="onAdjMemoChange(this)">'+
     '</div>';
-  // 저장 버튼
   html+='<div class="prod-save-bar">'+
-    '<button class="prod-save-btn" id="prodSaveBtn" onclick="saveProductionOnly()">💾 생산실적만 저장 (점검없이)</button>'+
+    '<button class="prod-save-btn" id="prodSaveBtn" onclick="saveProductionOnly()">💾 생산마감 저장</button>'+
     '</div>';
   b.innerHTML=html;
-  // 초기 상태 (빈칸이므로 total_adj=0)
+  document.querySelectorAll('.prod-adj input').forEach(function(inp){
+    if(inp.value!=='')onAdjChange(inp);
+  });
   updateProdAdjState();
-  // 숫자패드 연결 - 보정수량
   document.querySelectorAll('.prod-adj input').forEach(function(inp){
     attachNumpadTo(inp,{
-      label:'실제 수량 입력',
+      label:'실제 양품수량 입력',
       allowDecimal:false,
       hintFn:function(e){return +e.dataset.mes||0}
     });
@@ -1454,17 +1538,15 @@ function onAdjChange(inp){
   var hasValue=raw!=='';
   var adj=+raw||0;
   var diff=adj-mes;
-  // 테두리 색상 변경
   inp.classList.remove('diff-pos','diff-neg');
   if(hasValue){
     if(diff>0)inp.classList.add('diff-pos');
     else if(diff<0)inp.classList.add('diff-neg');
   }
-  // 차이 표시
   var d=document.getElementById('diff-'+idx);
   if(d){
     d.classList.remove('p','n');
-    if(!hasValue||diff===0){d.textContent=''}
+    if(!hasValue||diff===0){d.textContent=hasValue?'±0':''}
     else if(diff>0){d.textContent='+'+diff;d.classList.add('p')}
     else{d.textContent=diff;d.classList.add('n')}
   }
@@ -1495,16 +1577,31 @@ function updateProdAdjState(){
   }
 }
 
-// 생산실적만 저장 (점검 없이)
+// 생산마감 저장 (production_close 업서트 + 점검이력 + 알림)
 async function saveProductionOnly(){
   if(!prodState.data||!prodState.data.has_adj_input){
-    showToast('⚠️ 실제 수량을 하나 이상 입력하세요');
+    showToast('⚠️ 실제 양품수량을 하나 이상 입력하세요');
     return;
   }
   var m=chkState.machine;if(!m)return;
   var btn=document.getElementById('prodSaveBtn');
   if(btn){btn.disabled=true;btn.textContent='⏳ 저장중...'}
   var now=new Date();
+  var ymd=prodState.data.work_date||prodYmd();
+  var worker=getCurrentUser()||m.worker||'';
+  var reason=prodState.data.reason||'';
+  var memo=prodState.data.adj_memo||'';
+  var closeRows=[];
+  (prodState.data.items||[]).forEach(function(it){
+    if(it.adj_qty==null||!it.item_code)return;
+    var mes=+it.actual_qty||0,adj=+it.adj_qty||0;
+    closeRows.push({
+      ymd:ymd,machine_code:m.machine_code,item_code:it.item_code,
+      machine_name:m.machine_name||'',item_name:it.item_name||'',mold_code:it.mold||'',
+      mes_qty:mes,actual_qty:adj,diff_qty:adj-mes,
+      reason:reason,memo:memo,worker:worker,closed_at:kstNow()
+    });
+  });
   var record={
     machine_code:m.machine_code,
     machine_name:m.machine_name||'',
@@ -1513,9 +1610,9 @@ async function saveProductionOnly(){
     item_name:m.item_name||'',
     mold:m.current_mold||'',
     lot_no:m.lot_no||'',
-    worker:m.worker||'',
+    worker:worker,
     category:'prod',
-    category_name:'생산실적',
+    category_name:'생산마감',
     rows:[],
     photo_count:0,
     photos:[],
@@ -1524,52 +1621,54 @@ async function saveProductionOnly(){
       total_qty:prodState.data.total_qty||0,
       total_adj_qty:prodState.data.total_adj_qty||0,
       total_run_min:prodState.data.total_run_min,
-      work_date:prodState.data.work_date||'',
-      adj_memo:prodState.data.adj_memo||'',
+      work_date:ymd,
+      adj_memo:memo,
+      reason:reason,
       fallback:!!prodState.data.fallback
     },
     downtime_snapshot:dsumState.data?{runMin:dsumState.data.runMin,stopMin:dsumState.data.stopMin,plannedMin:dsumState.data.plannedMin,stopCount:dsumState.data.stopCount,plannedCount:dsumState.data.plannedCount,rate:dsumState.data.rate,stopEvents:dsumState.data.stopEvents,plannedEvents:dsumState.data.plannedEvents}:null,
     created_at:now.toISOString()
   };
   try{
+    var r=await sbUpsert('production_close','ymd,machine_code,item_code',closeRows);
+    if(!r.ok){var t='';try{t=await r.text()}catch(e){}throw new Error('production_close '+r.status+' '+t.slice(0,80))}
     await sbPost('mes_check_log',{
       machine_code:record.machine_code,machine_name:record.machine_name,
       customer:record.customer,item_code:record.item_code,
       item_name:record.item_name,category:'prod',
       payload:record,created_at:record.created_at
     });
-    // 알림 메시지
-    var msg='🏭 생산실적 등록 '+record.machine_code+' '+record.machine_name+'\n';
-    msg+='고객:'+record.customer+' │ 품번:'+record.item_code+'\n';
-    record.production_snapshot.items.forEach(function(it){
-      if(it.adj_qty==null)return;
-      var mes=it.actual_qty||0,adj=it.adj_qty;
-      var diff=adj-mes,dt=diff===0?'':(' ('+(diff>0?'+':'')+diff+')');
-      msg+='  • '+(it.item_code||'-')+(it.mold?'['+it.mold+']':'')+': MES '+mes.toLocaleString()+' → 실제 '+adj.toLocaleString()+dt+'\n';
+    var msg='🏭 생산마감 '+record.machine_code+' '+record.machine_name+' ('+ymd.slice(5)+' 실적)\n';
+    msg+='고객:'+record.customer+' │ 작업자:'+(worker||'-')+'\n';
+    closeRows.forEach(function(c){
+      var diff=c.diff_qty,dt=diff===0?'':(' ('+(diff>0?'+':'')+diff+')');
+      msg+='  • '+c.item_code+(c.mold_code?'['+c.mold_code+']':'')+': MES '+c.mes_qty.toLocaleString()+' → 실제 '+c.actual_qty.toLocaleString()+dt+'\n';
     });
     var ps=record.production_snapshot;
     var totDiff=(ps.total_adj_qty||0)-(ps.total_qty||0);
     msg+='합계: MES '+(ps.total_qty||0).toLocaleString()+' → 실제 '+(ps.total_adj_qty||0).toLocaleString()+(totDiff!==0?' ('+(totDiff>0?'+':'')+totDiff+')':'')+'\n';
-    if(ps.adj_memo)msg+='📝 '+ps.adj_memo+'\n';
+    if(reason)msg+='사유: '+reason+'\n';
+    if(memo)msg+='📝 '+memo+'\n';
     msg+='⏱ '+now.toLocaleString('ko-KR');
-    // 알림 발송 (chk_all 규칙만 사용)
     await sendChkAlerts('prod',msg,record);
-    if(btn){btn.textContent='✅ 저장됨';btn.classList.add('saved')}
-    showToast('✅ 생산실적 저장 완료');
-    setTimeout(function(){if(btn){btn.disabled=false;btn.textContent='💾 생산실적만 저장 (점검없이)';btn.classList.remove('saved')}},3000);
+    if(btn){btn.textContent='✅ 마감 저장됨';btn.classList.add('saved')}
+    showToast('✅ 생산마감 저장 완료 ('+closeRows.length+'건)');
+    setTimeout(function(){loadProductionToday()},1200);
   }catch(e){
-    console.log('생산실적 저장실패:',e);
-    showToast('❌ 저장실패');
-    if(btn){btn.disabled=false;btn.textContent='💾 생산실적만 저장 (점검없이)'}
+    console.log('생산마감 저장실패:',e);
+    showToast('❌ 저장실패: '+(e.message||''));
+    if(btn){btn.disabled=false;btn.textContent='💾 생산마감 저장'}
   }
 }
 
 function renderProductionFallback(m){
-  // API 미사용시 현재 설비 실적만 간이 표시
+  // daily_production 미집계 시 현재 설비 실적만 간이 표시 (machine_status 기준)
   var b=document.getElementById('prodBody');
-  document.getElementById('prodTitle').textContent='현재 실적 (간이)';
+  var ymd=prodYmd();
+  document.getElementById('prodTitle').textContent='생산마감 ('+ymd.slice(5).replace('-','/')+' · 간이)';
   if(!m||!m.current_item_code){
     b.innerHTML='<div class="prod-empty">생산정보 없음</div>';
+    prodState.data={machine_code:m?m.machine_code:'',items:[],total_qty:0,total_adj_qty:0,work_date:ymd,adj_memo:'',reason:'',fallback:true};
     return;
   }
   var mold=m.current_mold||'';
@@ -1580,7 +1679,7 @@ function renderProductionFallback(m){
   if(mold)subParts.push('🎭'+mold);
   if(m.lot_no)subParts.push('LOT '+m.lot_no);
   var subTxt=subParts.join(' · ');
-  var html='<div class="prod-head"><div>품번 <span style="color:#94a3b8;font-weight:500">(금형)</span></div><div class="ph-r">MES</div><div class="ph-c">실제</div></div>';
+  var html='<div class="prod-head"><div>품번 <span style="color:#94a3b8;font-weight:500">(금형)</span></div><div class="ph-r">MES</div><div class="ph-c">실제양품</div></div>';
   html+='<div class="prod-row cur">'+
     '<div class="prod-info"><div class="pi-item">'+itemTxt+'</div>'+
     (itemNmTxt?'<div class="pi-sub">'+itemNmTxt+'</div>':'')+
@@ -1592,31 +1691,32 @@ function renderProductionFallback(m){
     '</div>'+
     '</div>';
   html+='<div class="prod-foot">'+
-    '<span class="pf-lb" style="font-size:10px;color:#94a3b8">※ MES API 미연결</span>'+
+    '<span class="pf-lb" style="font-size:10px;color:#94a3b8">※ 일별집계 미수신 · 현재 작업지시 누계</span>'+
     '<span>MES <span class="pf-val">'+qty.toLocaleString()+'</span> · 실제 <span class="pf-adj" id="prodTotalAdj">0</span></span>'+
     '</div>';
+  html+=prodReasonHtml('');
   html+='<div class="prod-memo">'+
-    '<label>📝 사유</label>'+
+    '<label>📝 메모</label>'+
     '<input type="text" id="prodAdjMemo" placeholder="선택입력 · 낙하불량 3개 등" oninput="onAdjMemoChange(this)">'+
     '</div>';
   html+='<div class="prod-save-bar">'+
-    '<button class="prod-save-btn" id="prodSaveBtn" onclick="saveProductionOnly()">💾 생산실적만 저장 (점검없이)</button>'+
+    '<button class="prod-save-btn" id="prodSaveBtn" onclick="saveProductionOnly()">💾 생산마감 저장</button>'+
     '</div>';
   b.innerHTML=html;
-  // 저장용 데이터 구성 (adj_qty는 빈값 = null)
   prodState.data={
     machine_code:m.machine_code,
     items:[{mold:mold,item_code:m.current_item_code||'',item_name:m.item_name||'',work_order:m.work_order_no||'',actual_qty:qty,target_qty:tgt,run_min:null,is_current:true,adj_qty:null}],
     total_qty:qty,
     total_adj_qty:0,
     total_run_min:null,
+    work_date:ymd,
     fallback:true,
-    adj_memo:''
+    adj_memo:'',
+    reason:''
   };
-  // 숫자패드 연결
   document.querySelectorAll('.prod-adj input').forEach(function(inp){
     attachNumpadTo(inp,{
-      label:'실제 수량 입력',
+      label:'실제 양품수량 입력',
       allowDecimal:false,
       hintFn:function(e){return +e.dataset.mes||0}
     });
