@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>MES 가동설비 모니터링 v5.2</title>
+<title>MES 가동설비 모니터링 v5.3</title>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -318,7 +318,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 </style>
 </head>
 <body>
-<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v5.2</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">5분 갱신</span></div></div></div>
+<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v5.3</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">5분 갱신</span></div></div></div>
 <div class="tabs"><div class="tab active" data-tab="monitor" onclick="switchTab('monitor')">📊 모니터링</div><div class="tab" data-tab="settings" onclick="switchTab('settings')">📋 이력/설정</div></div>
 <div class="panel active" id="panel-monitor">
   <div class="stats"><div class="st"><div class="st-label">전체</div><div class="st-val" id="sTotal">-</div></div><div class="st run"><div class="st-label">가동</div><div class="st-val" id="sRun">-</div></div><div class="st stop"><div class="st-label">비가동</div><div class="st-val" id="sStop">-</div></div><div class="st warn"><div class="st-label">⏰30분이내</div><div class="st-val" id="sSoon">-</div></div><div class="st ng"><div class="st-label">NG</div><div class="st-val" id="sNg">-</div></div></div>
@@ -635,6 +635,8 @@ var PC_URL='https://ebthltdmxpzlkfwvdloz.supabase.co',PC_KEY='sb_publishable_ZSg
 var pcH={'apikey':PC_KEY,'Authorization':'Bearer '+PC_KEY,'Content-Type':'application/json'};
 async function pcGet(t,q){var r=await fetch(PC_URL+'/rest/v1/'+t+'?'+(q||''),{headers:pcH});return r.ok?r.json():null}
 async function pcUpsert(t,key,d){return fetch(PC_URL+'/rest/v1/'+t+'?on_conflict='+key,{method:'POST',headers:Object.assign({},pcH,{'Prefer':'resolution=merge-duplicates,return=minimal'}),body:JSON.stringify(d)})}
+async function pcDelete(t,q){return fetch(PC_URL+'/rest/v1/'+t+'?'+q,{method:'DELETE',headers:Object.assign({},pcH,{'Prefer':'return=minimal'})})}
+async function pcPost(t,d){return fetch(PC_URL+'/rest/v1/'+t,{method:'POST',headers:Object.assign({},pcH,{'Prefer':'return=minimal'}),body:JSON.stringify(d)})}
 
 var sbH={'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Content-Type':'application/json'};
 async function sbGet(t,q){var r=await fetch(SB_URL+'/rest/v1/'+t+'?'+(q||''),{headers:sbH});return r.ok?r.json():null}
@@ -1413,7 +1415,7 @@ async function loadProductionToday(){
       pcGet('production_close','select=*&ymd=eq.'+ymd+'&machine_code=eq.'+mc)
     ]);
     var rows=res[0]||[],closes=res[1]||[];
-    var closeMap={};closes.forEach(function(c){closeMap[c.item_code]=c});
+    var closeMap={};closes.forEach(function(c){var o=closeMap[c.item_code];if(!o||String(c.closed_at||'')>String(o.closed_at||''))closeMap[c.item_code]=c});
     var items=[],total=0,lastUpd='';
     rows.forEach(function(r){
       var q=+r.shot_qty||0;total+=q;
@@ -1635,8 +1637,19 @@ async function saveProductionOnly(){
     created_at:now.toISOString()
   };
   try{
+    var pcQ='ymd=eq.'+encodeURIComponent(ymd)+'&machine_code=eq.'+encodeURIComponent(m.machine_code);
     var r=await pcUpsert('production_close','ymd,machine_code,item_code',closeRows);
+    if(!r.ok&&(r.status===400||r.status===409)){
+      // 유니크키가 없는 테이블: 같은 날·호기 기존행 삭제 후 삽입 (마지막 저장값만 남김)
+      await pcDelete('production_close',pcQ);
+      r=await pcPost('production_close',closeRows);
+    }
     if(!r.ok){var t='';try{t=await r.text()}catch(e){}throw new Error('production_close '+r.status+' '+t.slice(0,80))}
+    // 이번 저장에 없는 품번의 이전 마감행은 정리 → 항상 최종 입력 상태만 남는다
+    try{
+      var keep=closeRows.map(function(c){return '"'+c.item_code+'"'}).join(',');
+      await pcDelete('production_close',pcQ+'&item_code=not.in.('+encodeURIComponent(keep)+')');
+    }catch(e){}
     await sbPost('mes_check_log',{
       machine_code:record.machine_code,machine_name:record.machine_name,
       customer:record.customer,item_code:record.item_code,
