@@ -2721,6 +2721,7 @@ function renderReport(info, summary){
     drawSummaryCharts(sorted);
     sorted.forEach((s, i) => drawVendorCharts(s, i+1, info.monthCount > 1));
     drawWorstTrendCharts(sorted);
+    loadWeeklyWorstTrends(false);
   }, 100);
   
   window.scrollTo(0, 0);
@@ -3647,7 +3648,16 @@ function renderWorstTrend(info, sorted, kind){
     <div class="sec-tag warn">WORST</div>
   </div>
 
-  <h4 class="sub-h">거래처별 ${label} PPM 추이</h4>
+  <div class="no-print" style="display:flex;justify-content:flex-end;gap:8px;align-items:center;margin-bottom:6px;">
+    <span id="${isApp ? 'wkAppStatus' : 'wkDimStatus'}" style="font-size:11.5px;color:#7A99C4"></span>
+    <button onclick="loadWeeklyWorstTrends(true)" style="padding:5px 12px;font-size:11.5px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer">📈 DB 주간추이 갱신</button>
+  </div>
+  <h4 class="sub-h" style="margin-top:6px">주간별 고객사별 ${label} PPM 추이 <small style="font-weight:400;color:#7A99C4;font-size:12px">— 불량관리 DB 실시간 (주 단위)</small></h4>
+  <div class="chart-wrap" style="height:380px"><canvas id="${isApp ? 'chartWeekApp' : 'chartWeekDim'}"></canvas></div>
+  ${isApp ? '' : `<h4 class="sub-h">주간별 치수미흡 수량 / PPM / Worst 품번 <small style="font-weight:400;color:#7A99C4;font-size:12px">— 불량관리 DB</small></h4>
+  <div class="t-wrap" id="wkDimTable"><div style="padding:16px;color:#999;text-align:center">DB 조회 대기 중...</div></div>`}
+
+  <h4 class="sub-h">월별 거래처별 ${label} PPM 추이 <small style="font-weight:400;color:#7A99C4;font-size:12px">— 누적 저장소</small></h4>
   <div class="chart-wrap"><canvas id="${canvasId}"></canvas></div>
 
   <h4 class="sub-h">거래처별 월별 Worst ${label}</h4>
@@ -3806,6 +3816,140 @@ function regenConclusion(){
   document.getElementById('conclSummary').innerHTML = `<ul>${li(d.summary)}</ul>`;
   document.getElementById('conclActions').innerHTML = `<ol>${li(d.actions)}</ol>`;
   document.getElementById('conclusionStatus').textContent = '자동 초안 (미저장)';
+}
+
+
+// ============================================================
+// 주간별 고객사별 외관/치수 추이 (불량관리 DB 실시간 조회)
+//   - defect.html의 '주간별 고객사별 불량률 추이'와 동일한 추이도
+//   - 보고기간(info.dateMin~dateMax)을 주 단위(월요일 기준)로 나눠 PPM 산출
+// ============================================================
+const WK_PALETTE = ['#c62828','#1565c0','#2e7d32','#e65100','#7b1fa2','#00838f','#6d4c41','#455a64'];
+function _wkPad(n){ return String(n).padStart(2,'0'); }
+function _wkDs(d){ return d.getUTCFullYear()+'-'+_wkPad(d.getUTCMonth()+1)+'-'+_wkPad(d.getUTCDate()); }
+function _wkMondayOf(ds){ const d=new Date(ds+'T00:00:00Z'); const dow=(d.getUTCDay()+6)%7; d.setUTCDate(d.getUTCDate()-dow); return _wkDs(d); }
+function _wkAddDays(ds,n){ const d=new Date(ds+'T00:00:00Z'); d.setUTCDate(d.getUTCDate()+n); return _wkDs(d); }
+function _wkWeekNo(ds){ const d=new Date(ds+'T00:00:00Z'); const t=new Date(d); t.setUTCDate(t.getUTCDate()+3); const y=t.getUTCFullYear(); const jan4=new Date(Date.UTC(y,0,4)); const w=1+Math.round(((t-jan4)/86400000-3+((jan4.getUTCDay()+6)%7))/7); return {year:y,week:w}; }
+
+let _wkTrendCharts = {};
+let _wkTrendCache = null;   // {from,to,weeks,labels,data}
+
+function _wkPeriod(info, sorted){
+  let from, to;
+  if(info.dateMin && info.dateMax){
+    from = info.dateMin.toISOString().slice(0,10); to = info.dateMax.toISOString().slice(0,10);
+  }else{
+    const ms = _worstMonths(sorted);
+    if(!ms.length){ const t=new Date(); to=t.toISOString().slice(0,10); from=_wkAddDays(to,-90); }
+    else{ from = ms[0]+'-01'; const [y,m]=ms[ms.length-1].split('-').map(Number); to = `${y}-${_wkPad(m)}-${_wkPad(new Date(y,m,0).getDate())}`; }
+  }
+  const today = new Date().toISOString().slice(0,10);
+  if(to > today) to = today;
+  return {from: _wkMondayOf(from), to: _wkAddDays(_wkMondayOf(to),6)};
+}
+
+async function loadWeeklyWorstTrends(force){
+  if(!_conclusionCtx) return;
+  const {info, sorted} = _conclusionCtx;
+  const {from, to} = _wkPeriod(info, sorted);
+  const setStatus = t => ['wkAppStatus','wkDimStatus'].forEach(id => { const e=document.getElementById(id); if(e) e.textContent = t; });
+  setStatus('⏳ 불량관리 DB 조회 중... (' + from + ' ~ ' + to + ')');
+  try{
+    let hist, models, genModels, itemMap, defTypes;
+    if(!force && _wkTrendCache && _wkTrendCache.from===from && _wkTrendCache.to===to){
+      ({hist, models, genModels, itemMap, defTypes} = _wkTrendCache);
+    }else{
+      [hist, models, genModels, itemMap, defTypes] = await Promise.all([
+        mcSelectAll('defect_history', 'defect_date=gte.' + from + '&defect_date=lte.' + to + '&order=defect_date.asc'),
+        mcSelectAll('defect_model', 'order=id.asc').catch(() => []),
+        mcSelectAll('general_model_tj', 'order=id.asc').catch(() => []),
+        mcSelectAll('model_item_map', 'order=model_name.asc').catch(() => []),
+        mcSelectAll('defect_type', 'order=id.asc').catch(() => [])
+      ]);
+      _wkTrendCache = {from, to, hist, models, genModels, itemMap, defTypes};
+    }
+    if(!hist.length){ setStatus('⚠ 해당 기간(' + from + ' ~ ' + to + ') DB 데이터 없음'); return; }
+
+    // 기종 → 고객사/품번
+    const custOf = {}, itemOf = {};
+    genModels.forEach(r => { if(r.model_name && r.customer) custOf[r.model_name] = r.customer; });
+    models.forEach(r => { if(r.model_name && r.customer) custOf[r.model_name] = r.customer; });
+    itemMap.forEach(r => { if(!r.model_name) return; if(r.item_code) itemOf[r.model_name] = r.item_code; if(r.customer && !custOf[r.model_name]) custOf[r.model_name] = r.customer; });
+    const typeCat = {}; defTypes.forEach(r => { if(r.type_name) typeCat[r.type_name] = r.category || ''; });
+    const manualMV = (typeof mcGetModelVendor === 'function') ? mcGetModelVendor() : {};
+
+    // 주차 버킷
+    const weeks = []; for(let m = from; m <= to; m = _wkAddDays(m,7)) weeks.push(m);
+    const wIdx = {}; weeks.forEach((m,i) => wIdx[m] = i);
+    const data = {}, totInsp = {};
+    const ensure = c => { if(!data[c]) data[c] = {insp:new Array(weeks.length).fill(0), app:new Array(weeks.length).fill(0), dim:new Array(weeks.length).fill(0), dimTop:weeks.map(()=>({}))}; return data[c]; };
+
+    hist.forEach(r => {
+      const dtRaw = String(r.defect_type || '').trim();
+      if(dtRaw.startsWith('__')) return;
+      const mon = _wkMondayOf(String(r.defect_date)); const i = wIdx[mon]; if(i === undefined) return;
+      const model = String(r.model_name || '').trim();
+      const part = itemOf[model] || model;
+      const cust = manualMV[model] || custOf[model] || '';
+      const vendor = cust ? normalizeVendorName(cust) : (inferVendorFromPart(part) || '미분류');
+      const o = ensure(vendor);
+      const insp = Number(r.inspect_qty) || 0;
+      o.insp[i] += insp; totInsp[vendor] = (totInsp[vendor]||0) + insp;
+      const qty = Number(r.qty) || 0;
+      if(dtRaw && dtRaw !== '양품' && qty > 0){
+        const mp = mcMapDefectType(dtRaw, typeCat[dtRaw]).type;
+        if(APPEARANCE_COLS.includes(mp)) o.app[i] += qty;
+        if(DIM_COLS.includes(mp)){ o.dim[i] += qty; o.dimTop[i][part] = (o.dimTop[i][part]||0) + qty; }
+      }
+    });
+
+    const custs = Object.keys(data).filter(c => c !== '미분류').sort((a,b) => (totInsp[b]||0)-(totInsp[a]||0)).slice(0,8);
+    const years = new Set(weeks.map(m => m.slice(0,4)));
+    const labels = weeks.map(m => { const w=_wkWeekNo(m); return (years.size>1 ? String(w.year).slice(2)+'-' : '') + 'W' + _wkPad(w.week); });
+
+    [['app','chartWeekApp','외관불량'],['dim','chartWeekDim','치수미흡']].forEach(([key, id, name]) => {
+      const c = document.getElementById(id); if(!c) return;
+      if(_wkTrendCharts[id]){ _wkTrendCharts[id].destroy(); delete _wkTrendCharts[id]; }
+      const dss = custs.map((cu,i) => {
+        const o = data[cu];
+        const col = (typeof getVendorColor === 'function' && getVendorColor(cu)) || WK_PALETTE[i%8];
+        return {label:cu, data:weeks.map((m,j) => o.insp[j] > 0 ? Math.round(o[key][j]/o.insp[j]*1e6) : null),
+          borderColor:col, backgroundColor:col, tension:.25, spanGaps:true, pointRadius:3.5, borderWidth:2.5};
+      });
+      const ch = new Chart(c.getContext('2d'), {type:'line', data:{labels, datasets:dss},
+        options:{responsive:true, maintainAspectRatio:false, animation:false, interaction:{mode:'index',intersect:false},
+          plugins:{legend:{position:'bottom', labels:{boxWidth:14, font:{size:12, weight:'600'}, padding:12}},
+            title:{display:true, text:'주간별 고객사별 ' + name + ' PPM 추이', font:{size:16, weight:'800'}, color:'#0C2D5E', padding:{bottom:10}},
+            datalabels:{display:false},
+            tooltip:{callbacks:{label:t => ' ' + t.dataset.label + ': ' + (t.parsed.y==null ? '-' : t.parsed.y.toLocaleString() + ' PPM')}}},
+          scales:{y:{beginAtZero:true, title:{display:true, text:'PPM', font:{size:12}}, ticks:{callback:v=>v.toLocaleString()}},
+                  x:{ticks:{font:{size:11}, maxRotation:60}, grid:{display:false}}}}});
+      _wkTrendCharts[id] = ch; chartInstances.push(ch);
+    });
+
+    // 치수미흡 주간 Worst 품번 표
+    const tb = document.getElementById('wkDimTable');
+    if(tb){
+      let rows = '';
+      custs.forEach(cu => {
+        const o = data[cu]; const tot = o.dim.reduce((a,b)=>a+b,0);
+        if(tot === 0) return;
+        const cells = weeks.map((m,j) => {
+          const q = o.dim[j]; if(q === 0) return '<td class="ctr" style="color:#B9CDE8">0</td>';
+          const top = Object.entries(o.dimTop[j]).sort((a,b)=>b[1]-a[1])[0];
+          const ppm = o.insp[j] > 0 ? Math.round(q/o.insp[j]*1e6) : 0;
+          return `<td class="ctr" style="line-height:1.35"><div style="font-weight:800;color:var(--danger)">${fmt(q)}</div><div style="font-size:12px;color:var(--ink-2)">${fmt(ppm)} PPM</div>${top?`<div style="font-size:11.5px;color:#7A99C4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:110px;margin:0 auto" title="${escapeHtml(top[0])}">${escapeHtml(top[0])}</div>`:''}</td>`;
+        }).join('');
+        const ti = o.insp.reduce((a,b)=>a+b,0);
+        rows += `<tr><td class="ctr" style="font-weight:700;background:var(--neutral)">${escapeHtml(cu)}</td>${cells}<td class="ctr" style="background:#E3EFFD;font-weight:800;line-height:1.35"><div style="color:var(--danger)">${fmt(tot)}</div><div style="font-size:12px;color:var(--ink-2);font-weight:600">${fmt(ti>0?Math.round(tot/ti*1e6):0)} PPM</div></td></tr>`;
+      });
+      tb.innerHTML = `<table><thead><tr><th class="ctr" style="min-width:90px">거래처</th>${labels.map(l=>`<th class="ctr">${l}</th>`).join('')}<th class="ctr" style="min-width:90px">기간 합계</th></tr></thead><tbody>${rows || `<tr><td colspan="${weeks.length+2}" class="ctr" style="padding:18px;color:#999">기간 내 치수미흡 등록 없음 (불량관리 시스템에 '치수' 계열 유형으로 등록된 건이 없습니다)</td></tr>`}</tbody></table>`;
+    }
+    setStatus('✅ ' + custs.length + '개 고객사 · ' + weeks.length + '개 주차 · ' + from + ' ~ ' + to + ' · DB ' + hist.length.toLocaleString() + '건');
+  }catch(e){
+    console.error('weekly trend:', e);
+    setStatus('❌ DB 조회 실패: ' + (e && e.message ? e.message : e));
+  }
 }
 
 function renderFooter(info){
