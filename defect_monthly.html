@@ -927,14 +927,6 @@ table.worst tr.totalr td{font-size:15.5px;}
 .empty-state{border-radius:var(--radius);}
 .add-row-btn{border-radius:8px;}
 
-/* 치수 관리선 KPI */
-.dim-kpi{display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin:6px 0 14px;}
-.dim-kpi > div{border:1px solid var(--rule); border-radius:10px; padding:12px 16px; background:#F8FBFF;}
-.dim-kpi .lbl{display:block; font-size:12px; color:#7A99C4; margin-bottom:4px; font-weight:600;}
-.dim-kpi .val{display:block; font-size:24px; font-weight:800; color:var(--ink); line-height:1.1;}
-.dim-kpi .sub{display:block; font-size:12px; color:var(--ink-2); margin-top:4px;}
-@media(max-width:768px){.dim-kpi{grid-template-columns:repeat(2,1fr);}}
-
 /* 총평 및 진행방향 */
 .concl-grid{display:grid; grid-template-columns:1fr 1fr; gap:20px; align-items:start;}
 .concl-box{border:1px solid var(--rule); border-radius:var(--radius); padding:18px 22px; background:#F8FBFF;}
@@ -2709,7 +2701,6 @@ function renderReport(info, summary){
   html += renderPersonalLossTable(info);
   // ⭐ 고객사별 Worst 외관불량 / 치수미흡 추이
   html += renderWorstTrend(info, sorted, 'app');
-  html += renderDimControlSection(info);
   // 종합 비교
   html += renderSummary(info, sorted, totalInsp, totalDef, totalLoss, overallPpm);
   // ⭐ 총평 및 진행방향 + 푸터
@@ -2730,7 +2721,6 @@ function renderReport(info, summary){
     sorted.forEach((s, i) => drawVendorCharts(s, i+1, info.monthCount > 1));
     drawWorstTrendCharts(sorted);
     loadWeeklyWorstTrends(false);
-    loadDimControl(false);
   }, 100);
   
   window.scrollTo(0, 0);
@@ -2755,9 +2745,8 @@ function renderMast(info, sorted, totalInsp, totalDef, totalLoss, overallPpm){
   tocItems += `<li><a href="#claim">X. 고객클레임(유출) 현황</a></li>`;
   tocItems += `<li><a href="#personal-loss">XI. 개인별 불량발생 비용</a></li>`;
   tocItems += `<li><a href="#worst-app">XII. 고객사별 Worst 외관불량 추이</a></li>`;
-  tocItems += `<li><a href="#worst-dim">XIII. 치수 관리선(80%) 초과 항목 분석</a></li>`;
   tocItems += `<li><a href="#summary">∑ 종합 비교 - 거래처별 PPM·손실금액</a></li>`;
-  tocItems += `<li><a href="#conclusion">XIV. 총평 및 진행방향</a></li>`;
+  tocItems += `<li><a href="#conclusion">XIII. 총평 및 진행방향</a></li>`;
   
   // 미매칭 품번 경고 (있을 경우)
   let unmatchedWarn = '';
@@ -3297,6 +3286,9 @@ function renderClaimTable(info, sorted){
 }
 
 // 공통 월별 매트릭스 표 빌더 (고객불만/클레임)
+// 고객불만/클레임 표 하단 고정 추가 거래처 (매출 소규모)
+const CS_EXTRA_VENDORS = ['부강스프링'];
+
 function renderMonthlyCountTable({data, info, sorted, title, subtitle, secNo, secTag, anchorId, tagClass, dataKey}){
   const year = info.dateMax ? info.dateMax.getFullYear() : new Date().getFullYear();
   
@@ -3304,7 +3296,9 @@ function renderMonthlyCountTable({data, info, sorted, title, subtitle, secNo, se
   const vendorSet = new Set();
   sorted.forEach(s => vendorSet.add(s.name));
   Object.keys(data).forEach(v => vendorSet.add(v));
-  const vendorList = Array.from(vendorSet);
+  // 매출 소규모 고객사(부강스프링 등)는 항상 하단에 포함
+  CS_EXTRA_VENDORS.forEach(v => vendorSet.delete(v));
+  const vendorList = Array.from(vendorSet).concat(CS_EXTRA_VENDORS);
   
   // 보고기간 내 어느 월까지 데이터가 들어갔는지 (실제 입력월)
   const repMonth = info.dateMax ? info.dateMax.getMonth() + 1 : 12;
@@ -3723,7 +3717,7 @@ function drawWorstTrendCharts(sorted){
 }
 
 // ============================================================
-// XIV. 총평 및 진행방향 (편집 가능 · 기간별 저장)
+// XIII. 총평 및 진행방향 (편집 가능 · 기간별 저장)
 // ============================================================
 function _conclusionKey(info){ return 'quality_conclusion_v1_' + (info.periodShort || 'default'); }
 
@@ -3757,14 +3751,12 @@ function buildConclusionDraft(info, sorted){
     `${info.periodLabel} 총 검사 ${fmt(totalInsp)} EA 중 불량 ${fmt(totalDef)} EA 발생, 종합 ${fmt(ppm)} PPM · 손실금액 ${fmt(totalLoss)}원.`,
     byPpm[0] ? `PPM 최고 거래처는 ${byPpm[0].name} (${fmt(byPpm[0].ppm)} PPM), 손실금액 최고 거래처는 ${byLoss[0].name} (${fmt(byLoss[0].loss)}원, 점유 ${totalLoss>0?(byLoss[0].loss/totalLoss*100).toFixed(1):'0'}%).` : '',
     wApp ? `외관불량 중 최다 유형은 ${wApp.type} ${fmt(wApp.qty)} EA (전체 불량의 ${totalDef>0?(wApp.qty/totalDef*100).toFixed(1):'0'}%).` : '',
-    (typeof _dimCache !== 'undefined' && _dimCache) ? (() => { const b=_dimCache.rows.map(r=>_dimJudge(r.item,r.lo,r.hi,r.val)).filter(j=>j.state!=='정상').length; return `치수 관리선(80%) 초과 항목 ${b.toLocaleString()}건 (XIII 참조).`; })() : '',
     mom
   ].filter(Boolean);
 
   const actions = [];
   if(byPpm[0] && wApp) actions.push(`${byPpm[0].name} ${wApp.type} 불량 원인분석(4M) 및 개선대책 수립 → 차월 PPM 목표 설정`);
   if(byLoss[0]) actions.push(`${byLoss[0].name} 손실비용 절감 — Worst 품번 집중관리(공정 조건·금형 점검 주기 강화)`);
-  actions.push(`치수 관리선(80%) 초과 빈발 품번·항목 금형 보정 및 초·중·종물 측정 강화 (XIII 상위 품번 우선)`);
   actions.push(`거래처별 Worst 추이 월간 모니터링 및 개선 진척 사항 차월 보고`);
   return {summary, actions};
 }
@@ -3780,7 +3772,7 @@ function renderConclusion(info, sorted){
 <a id="conclusion"></a>
 <section>
   <div class="sec-head">
-    <div class="sec-no">XIV.</div>
+    <div class="sec-no">XIII.</div>
     <div class="sec-title">총평 및 진행방향
       <small>${escapeHtml(info.periodLabel)} · 자동 초안 생성 후 직접 수정 가능 (기간별 저장)</small>
     </div>
@@ -3961,193 +3953,6 @@ async function loadWeeklyWorstTrends(force){
   }
 }
 
-
-// ============================================================
-// XIII. 치수 관리선(80%) 초과 항목 분석 — 정기 치수측정 데이터(GAS) 기반
-//   - mes_monitor(치수알림)과 동일 판정: 제로근접형(진원도/평면도 등) → 상한 80% 이상 '상한임박', ≥상한 '초과'
-//                                     중심공차형 → 공차폭 80% 이상 '상한임박', 20% 이하 '하한임박', 규격 밖 '초과/미달'
-//   - 보고기간 내 전체 측정건을 대상으로 고객사/품번/항목별 빈발 순위 산출
-// ============================================================
-const DIM_GAS = {
-  'SKF씰':    'https://script.google.com/macros/s/AKfycbyHbGebpEZqSrutAwQX73kTbyCKmcsD-nFXcZLC0BjzXW8BW07MCiVGGZJRTGDQRWWo/exec',
-  'Raceway':  'https://script.google.com/macros/s/AKfycbwXQzDfPNhjlZp_jpR8JFjcMX7kpCuzVvGpUSaZFyVhygoXuqiLl9FyVnXwLo0ZL5Sp/exec',
-  '진양오일씰': 'https://script.google.com/macros/s/AKfycbzHGiXKQIT9AJN3wqTVNpfYqXsvsbLv85DDw4TEBomGEHHWz71K1wGC0sAqOJHAv_LV9A/exec',
-  '부강스프링': 'https://script.google.com/macros/s/AKfycbx3umpi4T0UC0xJ2Cx5R1srTpEpcqMT0AzgzJZeHUolNg8_ziiixp2fukIj80gCCFwv/exec',
-};
-const DIM_ZERO_KEYS = ['진원도','평면도','동심도','원통도','직각도','평행도','흔들림','burr','버'];
-const DIM_TH = 0.8;
-let _dimCache = null;   // {fetchedAt, rows:[{cust, part, g, item, lo, hi, val, date}]}
-
-function _dimIsZero(name){ const t = String(name||'').toLowerCase().replace(/\s/g,''); return DIM_ZERO_KEYS.some(k => t.indexOf(k.toLowerCase()) >= 0); }
-function _dimNum(v){ const f = Number(v); if(!isFinite(f)) return '-'; return f === Math.floor(f) ? String(f) : String(+f.toFixed(4)); }
-function _dimDate(v){
-  const s = String(v || '');
-  const m = s.match(/(\d{4})[-./]?(\d{1,2})[-./]?(\d{1,2})/);
-  if(m) return `${m[1]}-${_wkPad(+m[2])}-${_wkPad(+m[3])}`;
-  const d = new Date(s); return isNaN(d) ? '' : d.toISOString().slice(0,10);
-}
-function _dimJudge(item, lo, hi, val){
-  const isZero = _dimIsZero(item);
-  let state = '정상', pct = null, margin = null;
-  if(isZero){
-    if(hi !== null){ pct = hi > 0 ? val/hi*100 : 100; margin = hi - val;
-      if(val >= hi) state = '초과'; else if(val >= hi*DIM_TH) state = '상한임박'; }
-  }else if(lo !== null && hi !== null){
-    const rng = hi - lo; pct = rng > 0 ? (val-lo)/rng*100 : 50;
-    const uTh = lo + rng*DIM_TH, lTh = lo + rng*(1-DIM_TH);
-    if(val > hi){ state='초과'; margin = hi-val; }
-    else if(val < lo){ state='미달'; margin = val-lo; }
-    else if(val >= uTh){ state='상한임박'; margin = hi-val; }
-    else if(val <= lTh){ state='하한임박'; margin = val-lo; }
-  }
-  return {state, pct, margin, type: isZero ? '제로근접형' : '중심공차형'};
-}
-async function _dimFetchAll(force){
-  if(!force && _dimCache && (Date.now() - _dimCache.fetchedAt) < 10*60*1000) return _dimCache.rows;
-  const rows = [];
-  await Promise.all(Object.entries(DIM_GAS).map(async ([cust, url]) => {
-    try{
-      const r = await fetch(url + '?action=getData', {cache:'no-store'});
-      const d = await r.json();
-      (d && d.success ? d.data : []).forEach(row => {
-        const part = String(row.c1||'').trim(); if(!part) return;
-        const val = Number(row.c35); if(!isFinite(val)) return;
-        const lo = row.c20 === '' || row.c20 == null ? null : Number(row.c20);
-        const hi = row.c21 === '' || row.c21 == null ? null : Number(row.c21);
-        rows.push({cust, part, g:String(row.c6||'').trim(), item:String(row.c7||'').trim(),
-          lo: isFinite(lo) ? lo : null, hi: isFinite(hi) ? hi : null, val, date:_dimDate(row.c0)});
-      });
-    }catch(e){ console.warn('치수 GAS 조회 실패:', cust, e); }
-  }));
-  _dimCache = {fetchedAt: Date.now(), rows};
-  return rows;
-}
-
-function renderDimControlSection(info){
-  return `
-<a id="worst-dim"></a>
-<section>
-  <div class="sec-head">
-    <div class="sec-no">XIII.</div>
-    <div class="sec-title">치수 관리선(80%) 초과 항목 분석
-      <small>${escapeHtml(info.periodLabel)} · 정기 치수측정 데이터 기준 · 공차폭 80% 이상 접근(임박) / 규격 초과·미달 항목의 고객사·품번별 빈발 분석</small>
-    </div>
-    <div class="sec-tag warn">DIM 80%</div>
-  </div>
-
-  <div class="no-print" style="display:flex;justify-content:flex-end;gap:8px;align-items:center;margin-bottom:6px;">
-    <span id="dimStatus" style="font-size:11.5px;color:#7A99C4">⏳ 치수측정 데이터 조회 중...</span>
-    <button onclick="loadDimControl(true)" style="padding:5px 12px;font-size:11.5px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer">📐 치수 데이터 갱신</button>
-  </div>
-
-  <div class="dim-kpi" id="dimKpi"></div>
-
-  <h4 class="sub-h">주간별 고객사별 관리선 초과 건수 추이</h4>
-  <div class="chart-wrap" style="height:360px"><canvas id="chartDimWeek"></canvas></div>
-
-  <h4 class="sub-h">고객사·품번·측정항목별 빈발 순위 <small style="font-weight:400;color:#7A99C4;font-size:12px">— 관리선 초과 발생횟수 순 (상위 20)</small></h4>
-  <div class="t-wrap" id="dimTopTable"><div style="padding:16px;color:#999;text-align:center">조회 대기 중...</div></div>
-
-  <h4 class="sub-h">고객사별 요약</h4>
-  <div class="t-wrap" id="dimCustTable"></div>
-</section>`;
-}
-
-async function loadDimControl(force){
-  if(!_conclusionCtx) return;
-  const {info, sorted} = _conclusionCtx;
-  const st = document.getElementById('dimStatus'); if(!st) return;
-  const {from, to} = _wkPeriod(info, sorted);
-  st.textContent = '⏳ 치수측정 데이터 조회 중... (' + from + ' ~ ' + to + ')';
-  try{
-    const all = await _dimFetchAll(force);
-    if(!all.length){ st.textContent = '⚠ 치수측정 데이터를 가져오지 못했습니다 (GAS 응답 없음)'; return; }
-    // 기간 필터 (날짜 파싱 안 되는 행은 포함)
-    const rows = all.filter(r => !r.date || (r.date >= from && r.date <= to));
-    const judged = rows.map(r => Object.assign({}, r, _dimJudge(r.item, r.lo, r.hi, r.val)));
-    const bad = judged.filter(r => r.state !== '정상');
-
-    // KPI
-    const cnt = s => bad.filter(r => r.state === s).length;
-    document.getElementById('dimKpi').innerHTML = [
-      ['총 측정건', judged.length.toLocaleString(), ''],
-      ['관리선 초과(임박 포함)', bad.length.toLocaleString(), judged.length ? (bad.length/judged.length*100).toFixed(1)+'%' : ''],
-      ['규격 초과·미달', (cnt('초과')+cnt('미달')).toLocaleString(), '초과 '+cnt('초과')+' / 미달 '+cnt('미달')],
-      ['상·하한 임박(80%)', (cnt('상한임박')+cnt('하한임박')).toLocaleString(), '상한 '+cnt('상한임박')+' / 하한 '+cnt('하한임박')],
-    ].map(([l,v,s]) => `<div><span class="lbl">${l}</span><span class="val">${v}</span><span class="sub">${s}</span></div>`).join('');
-
-    // 주간 추이
-    const weeks = []; for(let m = from; m <= to; m = _wkAddDays(m,7)) weeks.push(m);
-    const wIdx = {}; weeks.forEach((m,i) => wIdx[m] = i);
-    const years = new Set(weeks.map(m => m.slice(0,4)));
-    const labels = weeks.map(m => { const w=_wkWeekNo(m); return (years.size>1 ? String(w.year).slice(2)+'-' : '') + 'W' + _wkPad(w.week); });
-    const custs = Object.keys(DIM_GAS);
-    const wk = {}; custs.forEach(c => wk[c] = new Array(weeks.length).fill(0));
-    bad.forEach(r => { if(!r.date) return; const i = wIdx[_wkMondayOf(r.date)]; if(i !== undefined) wk[r.cust][i]++; });
-    const c = document.getElementById('chartDimWeek');
-    if(c){
-      if(_wkTrendCharts.chartDimWeek){ _wkTrendCharts.chartDimWeek.destroy(); }
-      const ch = new Chart(c.getContext('2d'), {type:'line',
-        data:{labels, datasets: custs.filter(cu => wk[cu].some(v=>v>0)).map((cu,i) => {
-          const col = (typeof getVendorColor === 'function' && getVendorColor(cu)) || WK_PALETTE[i%8];
-          return {label:cu, data:wk[cu], borderColor:col, backgroundColor:col, tension:.25, pointRadius:3.5, borderWidth:2.5}; })},
-        options:{responsive:true, maintainAspectRatio:false, animation:false, interaction:{mode:'index',intersect:false},
-          plugins:{legend:{position:'bottom', labels:{boxWidth:14, font:{size:12, weight:'600'}, padding:12}},
-            title:{display:true, text:'주간별 고객사별 치수 관리선(80%) 초과 건수', font:{size:16, weight:'800'}, color:'#0C2D5E', padding:{bottom:10}},
-            datalabels:{display:false}},
-          scales:{y:{beginAtZero:true, title:{display:true, text:'건수'}, ticks:{precision:0}}, x:{ticks:{font:{size:11}, maxRotation:60}, grid:{display:false}}}}});
-      _wkTrendCharts.chartDimWeek = ch; chartInstances.push(ch);
-    }
-
-    // 품번·항목별 빈발 순위
-    const agg = {};
-    bad.forEach(r => {
-      const k = [r.cust, r.part, r.g, r.item].join('|');
-      if(!agg[k]) agg[k] = {cust:r.cust, part:r.part, g:r.g, item:r.item, type:r.type, lo:r.lo, hi:r.hi, n:0, over:0, under:0, upper:0, lower:0, last:null};
-      const a = agg[k]; a.n++;
-      if(r.state==='초과') a.over++; else if(r.state==='미달') a.under++; else if(r.state==='상한임박') a.upper++; else a.lower++;
-      if(!a.last || (r.date && r.date >= (a.last.date||''))) a.last = r;
-    });
-    const list = Object.values(agg).sort((a,b) => b.n - a.n || (b.over+b.under) - (a.over+a.under));
-    const stColor = s => s==='초과'||s==='미달' ? 'var(--danger)' : '#D97706';
-    const specOf = a => a.type === '제로근접형' ? ('≤ ' + _dimNum(a.hi)) : (_dimNum(a.lo) + ' ~ ' + _dimNum(a.hi));
-    const topRows = list.slice(0,20).map((a,i) => `<tr>
-      <td class="ctr">${i+1}</td>
-      <td class="ctr" style="font-weight:700">${escapeHtml(a.cust)}</td>
-      <td style="font-weight:700">${escapeHtml(a.part)}</td>
-      <td>${a.g ? '#'+escapeHtml(a.g)+' ' : ''}${escapeHtml(a.item)} <span style="font-size:11px;color:#7A99C4">(${a.type})</span></td>
-      <td class="ctr" style="font-family:var(--mono);font-size:13px">${specOf(a)}</td>
-      <td class="num" style="font-weight:800;color:var(--danger)">${a.n}</td>
-      <td class="ctr" style="font-size:12.5px">${a.over?`<span style="color:var(--danger)">초과 ${a.over}</span> `:''}${a.under?`<span style="color:var(--danger)">미달 ${a.under}</span> `:''}${a.upper?`<span style="color:#D97706">상한임박 ${a.upper}</span> `:''}${a.lower?`<span style="color:#D97706">하한임박 ${a.lower}</span>`:''}</td>
-      <td class="ctr" style="font-family:var(--mono);font-size:13px;color:${stColor(a.last.state)};font-weight:700">${a.last.val.toFixed(3)}${a.last.pct!=null?' ('+Math.round(a.last.pct)+'%)':''}</td>
-      <td class="ctr" style="font-size:12.5px">${a.last.date || '-'}</td>
-    </tr>`).join('');
-    document.getElementById('dimTopTable').innerHTML = `<table>
-      <thead><tr><th class="ctr">No</th><th class="ctr">고객사</th><th>품번</th><th>측정항목</th><th class="ctr">규격</th><th class="ctr">발생<br>횟수</th><th class="ctr">상태별</th><th class="ctr">최근 측정값<br>(공차 위치)</th><th class="ctr">최근 발생일</th></tr></thead>
-      <tbody>${topRows || '<tr><td colspan="9" class="ctr" style="padding:18px;color:#999">기간 내 관리선 초과 항목 없음</td></tr>'}</tbody></table>`;
-
-    // 고객사별 요약
-    const cs = {};
-    judged.forEach(r => { if(!cs[r.cust]) cs[r.cust] = {n:0, bad:0, parts:new Set(), over:0}; cs[r.cust].n++; });
-    bad.forEach(r => { cs[r.cust].bad++; cs[r.cust].parts.add(r.part); if(r.state==='초과'||r.state==='미달') cs[r.cust].over++; });
-    const topPartOf = cu => { const t = list.filter(a => a.cust === cu)[0]; return t ? `${escapeHtml(t.part)} · ${escapeHtml(t.item)} (${t.n}회)` : '—'; };
-    document.getElementById('dimCustTable').innerHTML = `<table>
-      <thead><tr><th class="ctr">고객사</th><th class="ctr">측정건</th><th class="ctr">관리선 초과</th><th class="ctr">초과율</th><th class="ctr">규격 초과·미달</th><th class="ctr">관리대상 품번수</th><th>최다 발생 품번·항목</th></tr></thead>
-      <tbody>${Object.entries(cs).sort((a,b)=>b[1].bad-a[1].bad).map(([cu,o]) => `<tr>
-        <td class="ctr" style="font-weight:700;background:var(--neutral)">${escapeHtml(cu)}</td>
-        <td class="num">${o.n.toLocaleString()}</td>
-        <td class="num" style="font-weight:800;color:var(--danger)">${o.bad.toLocaleString()}</td>
-        <td class="num">${o.n?(o.bad/o.n*100).toFixed(1):'0.0'}%</td>
-        <td class="num" style="color:var(--danger)">${o.over}</td>
-        <td class="num">${o.parts.size}</td>
-        <td>${topPartOf(cu)}</td></tr>`).join('') || '<tr><td colspan="7" class="ctr" style="padding:18px;color:#999">데이터 없음</td></tr>'}</tbody></table>`;
-
-    st.textContent = '✅ ' + from + ' ~ ' + to + ' · 측정 ' + judged.length.toLocaleString() + '건 · 관리선 초과 ' + bad.length.toLocaleString() + '건';
-  }catch(e){
-    console.error('dim control:', e);
-    st.textContent = '❌ 조회 실패: ' + (e && e.message ? e.message : e);
-  }
-}
 
 function renderFooter(info){
   const isAccum = info.monthCount > 1;
