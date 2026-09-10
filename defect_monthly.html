@@ -3929,6 +3929,17 @@ async function loadWeeklyWorstTrends(force){
     });
 
     const custs = Object.keys(data).filter(c => c !== '미분류').sort((a,b) => (totInsp[b]||0)-(totInsp[a]||0)).slice(0,8);
+
+    // 데이터가 없는 앞/뒤 주차는 잘라내고 실제 검사 실적이 있는 구간만 표시
+    const hasData = weeks.map((_, j) => custs.some(cu => data[cu].insp[j] > 0));
+    let s0 = hasData.indexOf(true), e0 = hasData.lastIndexOf(true);
+    if(s0 < 0){ s0 = 0; e0 = weeks.length - 1; }
+    weeks.splice(e0 + 1); weeks.splice(0, s0);
+    custs.forEach(cu => { const o = data[cu];
+      ['insp','app','dim'].forEach(k => { o[k] = o[k].slice(s0, e0 + 1); });
+      o.dimTop = o.dimTop.slice(s0, e0 + 1);
+    });
+
     const years = new Set(weeks.map(m => m.slice(0,4)));
     const labels = weeks.map(m => { const w=_wkWeekNo(m); return (years.size>1 ? String(w.year).slice(2)+'-' : '') + 'W' + _wkPad(w.week); });
 
@@ -3970,7 +3981,7 @@ async function loadWeeklyWorstTrends(force){
       });
       tb.innerHTML = `<table><thead><tr><th class="ctr" style="min-width:90px">거래처</th>${labels.map(l=>`<th class="ctr">${l}</th>`).join('')}<th class="ctr" style="min-width:90px">기간 합계</th></tr></thead><tbody>${rows || `<tr><td colspan="${weeks.length+2}" class="ctr" style="padding:18px;color:#999">기간 내 치수미흡 등록 없음 (불량관리 시스템에 '치수' 계열 유형으로 등록된 건이 없습니다)</td></tr>`}</tbody></table>`;
     }
-    setStatus('✅ ' + custs.length + '개 고객사 · ' + weeks.length + '개 주차 · ' + from + ' ~ ' + to + ' · DB ' + hist.length.toLocaleString() + '건');
+    setStatus('✅ ' + custs.length + '개 고객사 · ' + weeks.length + '개 주차 (' + (labels[0]||'') + '~' + (labels[labels.length-1]||'') + ') · DB ' + hist.length.toLocaleString() + '건');
   }catch(e){
     console.error('weekly trend:', e);
     setStatus('❌ DB 조회 실패: ' + (e && e.message ? e.message : e));
