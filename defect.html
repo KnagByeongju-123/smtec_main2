@@ -368,6 +368,13 @@
 </div>
 
 <div class="pnl" id="pnl4">
+  <div class="card" style="border-left:3px solid #ef6c00"><div class="card-tit">🧹 이력 값 일괄 치환</div>
+    <div style="font-size:11px;color:#888;margin-bottom:8px;line-height:1.5">설정에서 검사라인·생산호기·검사자 이름을 바꿔도 <b>이미 등록된 이력</b>에는 옛 값이 그대로 남습니다. 아래에서 한 번에 정리하세요.</div>
+    <div class="fg" style="margin-bottom:6px"><label>대상 항목</label><select id="rpField" style="font-size:13px"><option value="inspect_line">검사라인</option><option value="prod_line">생산호기</option><option value="worker">검사자</option><option value="defect_type">불량유형</option><option value="model_name">기종명</option></select></div>
+    <div style="display:flex;gap:6px;margin-bottom:6px"><div style="flex:1"><label style="font-size:11px;color:#888;margin-bottom:2px;display:block">기존 값</label><input type="text" id="rpFrom" placeholder="예: SKF SBC" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:8px;font-size:13px"></div><div style="flex:1"><label style="font-size:11px;color:#888;margin-bottom:2px;display:block">새 값</label><input type="text" id="rpTo" placeholder="예: SBC" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:8px;font-size:13px"></div></div>
+    <div style="display:flex;gap:6px"><button class="btn btn-sm btn-gray" onclick="rpCount()" style="flex:1">🔍 건수 확인</button><button class="btn btn-sm btn-orange" onclick="rpApply()" style="flex:1">🧹 일괄 변경</button></div>
+    <div id="rpStatus" style="font-size:11px;margin-top:6px;color:#555"></div>
+  </div>
   <div class="card" style="border-left:3px solid var(--accent)"><div class="card-tit">📊 이력 관리</div>
     <div style="display:flex;gap:6px;margin-bottom:8px"><div style="flex:1"><label style="font-size:11px;color:#888;margin-bottom:2px;display:block">시작일</label><input type="date" id="cfgHistFrom" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:8px;font-size:12px;font-family:inherit"></div><div style="flex:1"><label style="font-size:11px;color:#888;margin-bottom:2px;display:block">종료일</label><input type="date" id="cfgHistTo" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:8px;font-size:12px;font-family:inherit"></div></div>
     <div class="fg" style="margin-bottom:8px"><label>기종</label><select id="cfgHistModel" style="font-size:13px"><option value="">전체</option></select></div>
@@ -722,6 +729,22 @@ XLSX.writeFile(wb,'불량이력_'+(f||'').replace(/-/g,'')+'_'+(t||'').replace(/
 showToast('📥 '+rows.length+'건 엑셀 다운로드')
 }
 
+/* ===== 이력 값 일괄 치환 ===== */
+function _rpVals(){const f=document.getElementById('rpField').value;const from=document.getElementById('rpFrom').value.trim();const to=document.getElementById('rpTo').value.trim();return{f,from,to}}
+async function rpCount(){const{f,from}=_rpVals();const st=document.getElementById('rpStatus');if(!from){st.textContent='⚠ 기존 값을 입력하세요';return}
+showLoading('조회 중...');try{const rows=await sbSelect('defect_history',{[f]:'eq.'+from},'defect_date.desc',5000);st.innerHTML=rows.length?('🔍 <b>'+rows.length+'건</b> 해당 (최근: '+(rows[0].defect_date||'')+')'):'⚠ 해당 이력 없음';st.style.color=rows.length?'#1565c0':'#e65100'}catch(e){st.textContent='❌ '+e.message;st.style.color='#c62828'}hideLoading()}
+async function rpApply(){const{f,from,to}=_rpVals();const st=document.getElementById('rpStatus');const lbl=document.getElementById('rpField').selectedOptions[0].textContent;
+if(!from){st.textContent='⚠ 기존 값을 입력하세요';return}
+if(from===to){st.textContent='⚠ 기존 값과 새 값이 같습니다';return}
+showLoading('대상 확인...');let n=0;try{const rows=await sbSelect('defect_history',{[f]:'eq.'+from},'',5000);n=rows.length}catch(e){hideLoading();st.textContent='❌ '+e.message;return}
+hideLoading();
+if(!n){st.textContent='⚠ 해당 이력 없음';st.style.color='#e65100';return}
+if(!confirm(lbl+' 값을 변경합니다.\n\n"'+from+'" → "'+(to||'(빈 값)')+'"\n대상: '+n+'건\n\n되돌릴 수 없습니다. 진행할까요?'))return;
+showLoading('변경 중... ('+n+'건)');
+try{await sbUpdate('defect_history',{[f]:'eq.'+from},{[f]:to});st.innerHTML='✅ <b>'+n+'건</b> 변경 완료 ("'+from+'" → "'+(to||'(빈 값)')+'")';st.style.color='#2e7d32';showToast('✅ '+n+'건 변경 완료');
+document.getElementById('rpFrom').value='';document.getElementById('rpTo').value='';
+if(typeof loadHistory==='function'&&document.getElementById('pnl1').classList.contains('on'))loadHistory()}
+catch(e){st.textContent='❌ 변경 실패: '+e.message;st.style.color='#c62828'}hideLoading()}
 async function openEditRecord(id){showLoading('불러오는 중...');try{const rows=await sbSelect('defect_history',{id:'eq.'+id},'',1);if(!rows.length){showToast('없음');hideLoading();return}const r=rows[0];document.getElementById('editRecordId').value=r.id;document.getElementById('editDate').value=r.defect_date||'';document.getElementById('editSide').value=r.side||'TOP';document.getElementById('editZone').value=r.zone_name||'';document.getElementById('editInspectQty').value=r.inspect_qty||0;document.getElementById('editQty').value=r.qty||0;document.getElementById('editNote').value=r.note||'';document.getElementById('editProdDate').value=r.prod_date||'';const allM=new Set();cachedGeneralModels.forEach(m=>allM.add(m.name));cachedModels.forEach(m=>allM.add(m.name));document.getElementById('editModel').innerHTML='<option value="">선택</option>'+[...allM].sort().map(n=>`<option value="${n}"${n===r.model_name?' selected':''}>${n}</option>`).join('');document.getElementById('editDefectType').innerHTML='<option value="">선택</option>'+cachedDefectTypes.map(t=>`<option value="${t.name}"${t.name===r.defect_type?' selected':''}>${t.name}</option>`).join('');document.getElementById('editWorker').innerHTML='<option value="">선택</option>'+cachedCommon.workers.map(w=>`<option value="${w.name}"${w.name===r.worker?' selected':''}>${w.name}</option>`).join('');document.getElementById('editInspLine').innerHTML='<option value="">선택</option>'+cachedCommon.inspLines.map(w=>`<option value="${w.name}"${w.name===r.inspect_line?' selected':''}>${w.name}</option>`).join('');const _pl=(cachedCommon.machines&&cachedCommon.machines.length)?cachedCommon.machines.slice():cachedCommon.prodLines.slice();if(r.prod_line&&!_pl.some(w=>w.name===r.prod_line))_pl.push({name:r.prod_line});document.getElementById('editProdLine').innerHTML='<option value="">선택</option>'+_pl.map(w=>`<option value="${w.name}"${w.name===r.prod_line?' selected':''}>${w.name}</option>`).join('');_editOrigCustomer=getModelCustomer(r.model_name)||'';const custSet=new Set(cachedCustomers);if(_editOrigCustomer)custSet.add(_editOrigCustomer);document.getElementById('editCustomer').innerHTML='<option value="">(미지정)</option>'+[...custSet].map(v=>`<option value="${v}"${v===_editOrigCustomer?' selected':''}>${v}</option>`).join('');document.getElementById('editCustNoteRow').style.display='none';document.getElementById('editPopupOverlay').classList.add('show')}catch(e){showToast('로드 실패: '+e.message)}hideLoading()}
 let _editOrigCustomer='';
 function onEditCustomerChange(){const v=document.getElementById('editCustomer').value;document.getElementById('editCustNoteRow').style.display=(v!==_editOrigCustomer)?'flex':'none'}
