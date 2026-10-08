@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>MES 가동설비 모니터링 v6.3</title>
+<title>MES 가동설비 모니터링 v6.4</title>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -177,6 +177,16 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 .pr-chip{font-size:11px;padding:4px 9px;border-radius:12px;border:1px solid rgba(148,163,184,.35);color:#94a3b8;cursor:pointer;user-select:none}
 .pr-chip.on{background:rgba(251,191,36,.15);border-color:#fbbf24;color:#fbbf24;font-weight:700}
 .prod-memo input:focus{outline:none;border-color:var(--accent);background:#1a1d27}
+/* v6.4 생산마감 백데이터 사진 (20KB 이하) */
+.prod-photos{margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.prod-photos .pp-lb{font-size:11px;color:var(--sub);font-weight:700;flex-shrink:0}
+.prod-photos .pp-th{position:relative;width:52px;height:52px;border-radius:6px;overflow:hidden;border:1px solid var(--border);background:#000}
+.prod-photos .pp-th img{width:100%;height:100%;object-fit:cover;display:block}
+.prod-photos .pp-th b{position:absolute;top:0;right:0;background:rgba(0,0,0,.75);color:#fca5a5;font-size:11px;width:18px;height:18px;line-height:18px;text-align:center;cursor:pointer}
+.prod-photos .pp-th i{position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,.6);color:#cbd5e1;font-size:9px;text-align:center;font-style:normal}
+.prod-photos .pp-add{position:relative;width:52px;height:52px;border-radius:6px;border:1px dashed #475569;background:#0f1117;color:var(--sub);font-size:11px;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer}
+.prod-photos .pp-add input{position:absolute;inset:0;opacity:0;cursor:pointer}
+.prod-photos .pp-add span{font-size:18px;line-height:1}
 /* 실적 저장 버튼 */
 .prod-save-bar{margin-top:8px;display:flex;gap:6px}
 .prod-save-btn{flex:1;padding:10px;border:none;border-radius:7px;background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;font-size:13px;font-weight:800;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:6px}
@@ -367,7 +377,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 </style>
 </head>
 <body>
-<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v6.3</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">5분 갱신</span></div></div></div>
+<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v6.4</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">5분 갱신</span></div></div></div>
 <div class="tabs"><div class="tab active" data-tab="monitor" onclick="switchTab('monitor')">📊 모니터링</div><div class="tab" data-tab="settings" onclick="switchTab('settings')">📋 이력/설정</div></div>
 <div class="panel active" id="panel-monitor">
   <div class="stats"><div class="st"><div class="st-label">전체</div><div class="st-val" id="sTotal">-</div></div><div class="st run"><div class="st-label">가동</div><div class="st-val" id="sRun">-</div></div><div class="st stop"><div class="st-label">비가동</div><div class="st-val" id="sStop">-</div></div><div class="st warn"><div class="st-label">⏰30분이내</div><div class="st-val" id="sSoon">-</div></div><div class="st ng"><div class="st-label">NG</div><div class="st-val" id="sNg">-</div></div></div>
@@ -776,7 +786,8 @@ function saveChkItems(o){localStorage.setItem(CHK_ITEMS_LS,JSON.stringify(o));_s
 var chkState={machine:null,category:'dim',rows:[],photos:[],activeCatIdx:0};
 var ciState={activeCat:'dim'};
 var dsumState={tab:'top5',data:null,loading:false};
-var prodState={data:null,loading:false};
+var prodState={data:null,loading:false,photos:[]};
+var PROD_PHOTO_LIMIT=19*1024,PROD_PHOTO_MAX=3;
 // ★ daily_production 저장소: 재고수불부와 동일 프로젝트
 var PC_URL='https://ebthltdmxpzlkfwvdloz.supabase.co',PC_KEY='sb_publishable_ZSgcZapb7cTgFezGmOV_ow_9MT15SnS';
 var pcH={'apikey':PC_KEY,'Authorization':'Bearer '+PC_KEY,'Content-Type':'application/json'};
@@ -1914,7 +1925,7 @@ async function loadProductionToday(){
   var ymd=prodYmd();
   document.getElementById('prodTitle').textContent='생산마감 ('+ymd.slice(5).replace('-','/')+' 실적)';
   body.innerHTML='<div class="dsum-loading">⏳ 실적 조회중...</div>';
-  prodState.loading=true;
+  prodState.loading=true;prodState.photos=[];
   try{
     var mc=encodeURIComponent(m.machine_code);
     var res=await Promise.all([
@@ -2027,10 +2038,11 @@ function renderProductionToday(data){
     '<label>📝 메모</label>'+
     '<input type="text" id="prodAdjMemo" value="'+String(data.adj_memo||'').replace(/"/g,'&quot;')+'" placeholder="선택입력 · 낙하불량 3개 등" oninput="onAdjMemoChange(this)">'+
     '</div>';
+  html+='<div class="prod-photos" id="prodPhotos"></div>';
   html+='<div class="prod-save-bar">'+
     '<button class="prod-save-btn" id="prodSaveBtn" onclick="saveProductionOnly()">💾 생산마감 저장</button>'+
     '</div>';
-  b.innerHTML=html;
+  b.innerHTML=html;prodRenderPhotos();
   document.querySelectorAll('.prod-adj input').forEach(function(inp){
     if(inp.value!=='')onAdjChange(inp);
   });
@@ -2091,6 +2103,38 @@ function updateProdAdjState(){
   }
 }
 
+// v6.4 생산마감 백데이터 사진 (20KB 이하 · mes_check_log payload.photos 저장)
+function prodRenderPhotos(){
+  var el=document.getElementById('prodPhotos');if(!el)return;
+  var h='<span class="pp-lb">📷 백데이터</span>';
+  prodState.photos.forEach(function(p,i){
+    h+='<div class="pp-th"><img src="'+p.dataUrl+'" onclick="showFullImg(this.src)"><b onclick="prodState.photos.splice('+i+',1);prodRenderPhotos()">✕</b><i>'+p.sizeKB+'KB</i></div>';
+  });
+  if(prodState.photos.length<PROD_PHOTO_MAX)h+='<div class="pp-add"><span>＋</span>사진<input type="file" accept="image/*" multiple onchange="prodPhotoPick(this)"></div>';
+  el.innerHTML=h;
+}
+async function prodPhotoPick(inp){
+  var files=Array.prototype.slice.call(inp.files||[]);if(!files.length)return;
+  for(var i=0;i<files.length;i++){
+    if(prodState.photos.length>=PROD_PHOTO_MAX){showToast('사진은 최대 '+PROD_PHOTO_MAX+'장');break;}
+    var f=files[i];if(!/^image\//.test(f.type))continue;
+    showToast('⏳ 사진 압축 중...');
+    try{
+      var r=await shrinkImageToLimit(f,PROD_PHOTO_LIMIT);
+      r.dataUrl=await blobToDataUrl(r.blob);r.size=r.blob.size;
+      prodState.photos.push(r);
+    }catch(e){showToast('사진 처리 실패: '+e.message)}
+  }
+  prodRenderPhotos();
+  if(prodState.photos.length)showToast('📷 사진 '+prodState.photos.length+'장 (각 20KB 이하)');
+}
+function showFullImg(src){
+  var d=document.createElement('div');
+  d.style.cssText='position:fixed;inset:0;z-index:40000;background:rgba(0,0,0,.92);display:flex;align-items:center;justify-content:center;padding:10px';
+  d.innerHTML='<img src="'+src+'" style="max-width:100%;max-height:100%;border-radius:8px">';
+  d.onclick=function(){d.remove()};document.body.appendChild(d);
+}
+
 // 생산마감 저장 (production_close 업서트 + 점검이력 + 알림)
 async function saveProductionOnly(){
   if(!prodState.data||!prodState.data.has_adj_input){
@@ -2128,8 +2172,8 @@ async function saveProductionOnly(){
     category:'prod',
     category_name:'생산마감',
     rows:[],
-    photo_count:0,
-    photos:[],
+    photo_count:prodState.photos.length,
+    photos:prodState.photos.map(function(p){return{size:p.size,data:p.dataUrl}}),
     production_snapshot:{
       items:prodState.data.items||[],
       total_qty:prodState.data.total_qty||0,
@@ -2174,6 +2218,7 @@ async function saveProductionOnly(){
     msg+='합계: MES '+(ps.total_qty||0).toLocaleString()+' → 실제 '+(ps.total_adj_qty||0).toLocaleString()+(totDiff!==0?' ('+(totDiff>0?'+':'')+totDiff+')':'')+'\n';
     if(reason)msg+='사유: '+reason+'\n';
     if(memo)msg+='📝 '+memo+'\n';
+    if(prodState.photos.length)msg+='📷 사진 '+prodState.photos.length+'장\n';
     msg+='⏱ '+now.toLocaleString('ko-KR');
     await sendChkAlerts('prod',msg,record);
     if(btn){btn.textContent='✅ 마감 저장됨';btn.classList.add('saved')}
@@ -2224,10 +2269,11 @@ function renderProductionFallback(m){
     '<label>📝 메모</label>'+
     '<input type="text" id="prodAdjMemo" placeholder="선택입력 · 낙하불량 3개 등" oninput="onAdjMemoChange(this)">'+
     '</div>';
+  html+='<div class="prod-photos" id="prodPhotos"></div>';
   html+='<div class="prod-save-bar">'+
     '<button class="prod-save-btn" id="prodSaveBtn" onclick="saveProductionOnly()">💾 생산마감 저장</button>'+
     '</div>';
-  b.innerHTML=html;
+  b.innerHTML=html;prodRenderPhotos();
   prodState.data={
     machine_code:m.machine_code,
     items:[{mold:mold,item_code:m.current_item_code||'',item_name:m.item_name||'',work_order:m.work_order_no||'',actual_qty:qty,target_qty:tgt,run_min:null,is_current:true,adj_qty:null}],
