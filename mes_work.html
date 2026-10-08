@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>MES 가동설비 모니터링 v6.4</title>
+<title>MES 가동설비 모니터링 v6.5</title>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -166,6 +166,13 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 .prod-foot .pf-val{color:#4ade80;font-size:14px;font-weight:800}
 .prod-foot .pf-adj{color:#fbbf24;font-size:14px;font-weight:800}
 /* 보정 사유 입력 */
+.dsum-grp{border:1px solid var(--border);border-radius:8px;margin-bottom:6px;overflow:hidden;background:rgba(0,0,0,.15)}
+.dsum-grp-hd{display:flex;align-items:center;gap:6px;padding:8px 10px;cursor:pointer;user-select:none;font-size:12px;font-weight:800}
+.dsum-grp-hd .arr{margin-left:auto;font-size:11px;color:var(--sub);transition:transform .15s}
+.dsum-grp.open .dsum-grp-hd .arr{transform:rotate(90deg)}
+.dsum-grp-bd{display:none;padding:2px 8px 8px}
+.dsum-grp.open .dsum-grp-bd{display:block}
+.dsum-grp.stop .dsum-grp-hd{color:#fca5a5}.dsum-grp.plan .dsum-grp-hd{color:#c4b5fd}
 .prod-memo{margin-top:6px;display:flex;gap:4px;align-items:center;padding-top:6px;border-top:1px dashed rgba(71,85,105,.3)}
 .prod-memo label{font-size:11px;color:var(--sub);font-weight:700;flex-shrink:0}
 .prod-memo input{flex:1;padding:6px 8px;border:1px solid var(--border);background:#0f1117;color:var(--txt);font-size:12px;border-radius:4px;font-family:inherit}
@@ -377,7 +384,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 </style>
 </head>
 <body>
-<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v6.4</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">5분 갱신</span></div></div></div>
+<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v6.5</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">5분 갱신</span></div></div></div>
 <div class="tabs"><div class="tab active" data-tab="monitor" onclick="switchTab('monitor')">📊 모니터링</div><div class="tab" data-tab="settings" onclick="switchTab('settings')">📋 이력/설정</div></div>
 <div class="panel active" id="panel-monitor">
   <div class="stats"><div class="st"><div class="st-label">전체</div><div class="st-val" id="sTotal">-</div></div><div class="st run"><div class="st-label">가동</div><div class="st-val" id="sRun">-</div></div><div class="st stop"><div class="st-label">비가동</div><div class="st-val" id="sStop">-</div></div><div class="st warn"><div class="st-label">⏰30분이내</div><div class="st-val" id="sSoon">-</div></div><div class="st ng"><div class="st-label">NG</div><div class="st-val" id="sNg">-</div></div></div>
@@ -1797,16 +1804,18 @@ function renderEvents(data){
     // 구버전 데이터 (이미 집계된 형식)
     var list=data.top5||[],plannedList=data.plannedList||[];
     if(list.length){
-      html+='<div style="font-size:12px;color:#fca5a5;font-weight:800;margin-bottom:5px">🔴 실비가동</div>';
+      html+=dsumGrpOpen('stop','🔴 실비가동');
       list.forEach(function(it){
         html+='<div class="dsum-ev ev-stop"><span class="ev-nm">'+it.name+'</span><span class="ev-min">'+fmtMinutes(it.min)+'</span></div>';
       });
+      html+='</div></div>';
     }
     if(plannedList.length){
-      html+='<div style="font-size:12px;color:#c4b5fd;font-weight:800;margin:10px 0 5px 0;padding-top:8px;border-top:1px dashed rgba(167,139,250,.3)">🟣 계획정지</div>';
+      html+=dsumGrpOpen('plan','🟣 계획정지');
       plannedList.forEach(function(it){
         html+='<div class="dsum-ev ev-plan"><span class="ev-nm">'+it.name+'</span><span class="ev-min">'+fmtMinutes(it.min)+'</span></div>';
       });
+      html+='</div></div>';
     }
     b.innerHTML=html;
     return;
@@ -1818,24 +1827,31 @@ function renderEvents(data){
   stopEvents.forEach(function(e){stopTot+=(+e.min||0)});
   plannedEvents.forEach(function(e){planTot+=(+e.min||0)});
   if(stopGrouped.length){
-    html+='<div style="font-size:12px;color:#fca5a5;font-weight:800;margin-bottom:5px">🔴 실비가동 ('+stopGrouped.length+'항목·총'+fmtMinutes(stopTot)+')</div>';
+    html+=dsumGrpOpen('stop','🔴 실비가동 ('+stopGrouped.length+'항목·총'+fmtMinutes(stopTot)+')');
     stopGrouped.forEach(function(it){
       var tip=it.times.join(' / ');
       var cnt=it.count>1?' <span style="color:#94a3b8;font-size:11px">×'+it.count+'</span>':'';
       html+='<div class="dsum-ev ev-stop" title="'+tip+'"><span class="ev-nm">'+it.name+cnt+'</span><span class="ev-min">'+fmtMinutes(it.min)+'</span></div>';
     });
+    html+='</div></div>';
   }else{
     html+='<div style="font-size:12px;color:var(--green);padding:6px 0;font-weight:700">✅ 실비가동 없음</div>';
   }
   if(planGrouped.length){
-    html+='<div style="font-size:12px;color:#c4b5fd;font-weight:800;margin:10px 0 5px 0;padding-top:8px;border-top:1px dashed rgba(167,139,250,.3)">🟣 계획정지 ('+planGrouped.length+'항목·총'+fmtMinutes(planTot)+')</div>';
+    html+=dsumGrpOpen('plan','🟣 계획정지 ('+planGrouped.length+'항목·총'+fmtMinutes(planTot)+')');
     planGrouped.forEach(function(it){
       var tip=it.times.join(' / ');
       var cnt=it.count>1?' <span style="color:#94a3b8;font-size:11px">×'+it.count+'</span>':'';
       html+='<div class="dsum-ev ev-plan" title="'+tip+'"><span class="ev-nm">'+it.name+cnt+'</span><span class="ev-min">'+fmtMinutes(it.min)+'</span></div>';
     });
+    html+='</div></div>';
   }
   b.innerHTML=html;
+}
+
+// v6.5 정지이력 그룹 접기/펼치기 (기본 접힘)
+function dsumGrpOpen(cls,title){
+  return '<div class="dsum-grp '+cls+'"><div class="dsum-grp-hd" onclick="this.parentNode.classList.toggle(\'open\')">'+title+'<span class="arr">▶</span></div><div class="dsum-grp-bd">';
 }
 
 function renderTimeline(list){
