@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>MES 가동설비 모니터링 v5.9</title>
+<title>MES 가동설비 모니터링 v6.0</title>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -346,7 +346,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 </style>
 </head>
 <body>
-<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v5.9</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">5분 갱신</span></div></div></div>
+<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v6.0</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">5분 갱신</span></div></div></div>
 <div class="tabs"><div class="tab active" data-tab="monitor" onclick="switchTab('monitor')">📊 모니터링</div><div class="tab" data-tab="settings" onclick="switchTab('settings')">📋 이력/설정</div></div>
 <div class="panel active" id="panel-monitor">
   <div class="stats"><div class="st"><div class="st-label">전체</div><div class="st-val" id="sTotal">-</div></div><div class="st run"><div class="st-label">가동</div><div class="st-val" id="sRun">-</div></div><div class="st stop"><div class="st-label">비가동</div><div class="st-val" id="sStop">-</div></div><div class="st warn"><div class="st-label">⏰30분이내</div><div class="st-val" id="sSoon">-</div></div><div class="st ng"><div class="st-label">NG</div><div class="st-val" id="sNg">-</div></div></div>
@@ -488,7 +488,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
     <div class="hi-filter">
       <div class="fld"><label>시작일</label><input type="date" id="hiStart"></div>
       <div class="fld"><label>종료일</label><input type="date" id="hiEnd"></div>
-      <div class="fld"><label>카테고리</label><select id="hiCat"><option value="">전체</option><option value="mat">🔩 소재불량</option><option value="report">📄 작업일보</option></select></div>
+      <div class="fld"><label>카테고리</label><select id="hiCat"><option value="">전체</option><option value="mat">🔩 소재불량</option><option value="report">📄 작업일보</option><option value="mold">🔧 금형수리</option></select></div>
       <div class="fld"><label>설비코드(선택)</label><input type="text" id="hiMachine" placeholder="예: 001"></div>
     </div>
     <div class="hi-btns">
@@ -1445,7 +1445,7 @@ async function submitMoldRepair(){
       '수리업체':'','수리비용':'','완료일자':mrToday(),'담당자':person,'상태':'완료',
       '비고':'[생산현황'+(src?' '+src:'')+']',
       _id:'r'+Date.now().toString(36)+Math.random().toString(36).slice(2,8),
-      _updatedAt:now,_src:'mes_work'
+      _updatedAt:now,_src:'mes_work',_machine_code:m.machine_code||'',_machine_name:m.machine_name||''
     };
     if(img)row.before_img=img;
     // 최신 수리이력 받아서 추가 (다른 기기 등록분 보존)
@@ -2491,6 +2491,14 @@ async function hiSearch(){
   var s=document.getElementById('hiStart').value,e=document.getElementById('hiEnd').value;
   var cat=document.getElementById('hiCat').value,mc=document.getElementById('hiMachine').value.trim();
   if(!s||!e){showToast('기간 선택');return}
+  if(cat==='mold'){
+    document.getElementById('hiResult').innerHTML='<div class="hi-empty">⏳ 조회중...</div>';
+    hiData=[];
+    var md=await hiMoldFetch(s,e,mc);
+    var c0=document.getElementById('hiResult');c0.innerHTML='';
+    hiMoldRender(c0,md);
+    return;
+  }
   var q='select=id,created_at,machine_code,machine_name,customer,item_code,category,payload&order=created_at.desc&limit=500';
   q+='&created_at=gte.'+s+'T00:00:00&created_at=lte.'+e+'T23:59:59';
   if(cat)q+='&category=eq.'+cat;
@@ -2500,6 +2508,75 @@ async function hiSearch(){
   if(!data){document.getElementById('hiResult').innerHTML='<div class="hi-empty" style="color:var(--red)">조회실패</div>';return}
   hiData=data;
   hiRenderTable(data);
+  if(!cat){ // 전체: 금형수리 이력도 아래에 표시
+    var md=await hiMoldFetch(s,e,mc);
+    if(md&&md.length)hiMoldRender(document.getElementById('hiResult'),md);
+  }
+}
+
+// ========== 금형수리 이력 (kv_store repair_history_v2, 금형수리 프로젝트) ==========
+function mrRepairKeyOf(r){return r._id||((r['금형번호']||'')+'|'+(r['수리일자']||'')+'|'+(r['수리내용']||''))}
+async function hiMoldFetch(s,e,mc){
+  try{
+    var r=await fetch(MR_SB_URL+'/rest/v1/kv_store?key=eq.repair_history_v2&select=value',{headers:mrH()});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    var js=await r.json();
+    var arr=(js[0]&&Array.isArray(js[0].value))?js[0].value:[];
+    var mcPad=mc?String(parseInt(mc,10)||mc):'';
+    return arr.filter(function(x){
+      if(x._deleted)return false;
+      var d=x['수리일자']||'';
+      if(d<s||d>e)return false;
+      if(mc){
+        if(x._machine_code){ if(x._machine_code!==mc&&String(parseInt(x._machine_code,10))!==mcPad)return false; }
+        else return false;
+      }
+      return true;
+    }).sort(function(a,b){return (b['수리일자']||'').localeCompare(a['수리일자']||'')||(b._updatedAt||'').localeCompare(a._updatedAt||'')});
+  }catch(err){showToast('금형수리 이력 조회 실패: '+err.message);return [];}
+}
+function hiMoldRender(c,md){
+  var info=document.createElement('div');info.style.cssText='font-size:11px;color:#fb923c;margin:10px 0 6px';info.textContent='🔧 금형수리 이력 '+md.length+'건';
+  c.appendChild(info);
+  if(!md.length){var em=document.createElement('div');em.className='hi-empty';em.textContent='결과 없음';c.appendChild(em);return;}
+  var list=document.createElement('div');list.className='hi-list';
+  md.forEach(function(r){
+    var id=mrRepairKeyOf(r),ph=r.before_img||r.after_img||'';
+    var hasPh=ph&&/^(https?:|data:)/.test(ph);
+    var card=document.createElement('div');card.className='hi-card';
+    card.innerHTML='<div class="hc-top">'+
+      '<span class="hc-time">'+_esc((r['수리일자']||'').slice(5))+'</span>'+
+      '<span class="hc-eq">'+_esc(r._machine_name||(r['비고']||'').replace(/^\[생산현황\s*/,'').replace(/\].*$/,'')||'-')+'</span>'+
+      '<span class="hc-cat-icon" style="font-size:14px">🔧</span>'+
+      (hasPh?'<span class="hc-photo">📷</span>':'')+
+      '<div class="hc-actions-inline"><button class="hc-del" style="background:rgba(239,68,68,.12);color:var(--red)" title="삭제">🗑</button></div>'+
+      '</div>'+
+      '<div class="hc-body" style="margin-left:0">'+
+        '<div class="hc-item">'+_esc(r['금형번호'])+' · '+_esc(r['수리유형'])+'</div>'+
+        '<div class="hc-qty" style="color:var(--sub)">'+_esc(r['수리내용'])+' · '+_esc(r['담당자']||'-')+'</div>'+
+        (hasPh?'<img src="'+_esc(ph)+'" loading="lazy" style="display:none;max-width:100%;border-radius:8px;margin-top:6px">':'')+
+      '</div>';
+    card.querySelector('.hc-del').onclick=function(e){e.stopPropagation();hiMoldDelete(id)};
+    var body=card.querySelector('.hc-body');body.style.cursor='pointer';
+    body.onclick=function(){var im=card.querySelector('img');if(im)im.style.display=im.style.display==='none'?'block':'none';};
+    list.appendChild(card);
+  });
+  c.appendChild(list);
+}
+async function hiMoldDelete(id){
+  if(!confirm('이 금형수리 이력을 삭제합니다. 진행?'))return;
+  try{
+    var r=await fetch(MR_SB_URL+'/rest/v1/kv_store?key=eq.repair_history_v2&select=value',{headers:mrH()});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    var js=await r.json();var arr=(js[0]&&Array.isArray(js[0].value))?js[0].value:[];
+    var t=arr.find(function(x){return mrRepairKeyOf(x)===id});
+    if(!t)throw new Error('원본을 찾을 수 없습니다');
+    t._deleted=true;t._updatedAt=new Date().toISOString();
+    var h=mrH();h['Content-Type']='application/json';h['Prefer']='resolution=merge-duplicates,return=minimal';
+    var w=await fetch(MR_SB_URL+'/rest/v1/kv_store?on_conflict=key',{method:'POST',headers:h,body:JSON.stringify({key:'repair_history_v2',value:arr})});
+    if(!w.ok)throw new Error('HTTP '+w.status);
+    showToast('✅삭제');hiSearch();
+  }catch(e){showToast('삭제실패: '+e.message)}
 }
 function hiRenderTable(data){
   var c=document.getElementById('hiResult');c.innerHTML='';
