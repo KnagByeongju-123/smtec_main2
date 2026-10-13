@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>MES 가동설비 모니터링 v6.6</title>
+<title>MES 가동설비 모니터링 v6.7</title>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -395,7 +395,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 </style>
 </head>
 <body>
-<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v6.6</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">5분 갱신</span></div></div></div>
+<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v6.7</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">5분 갱신</span></div></div></div>
 <div class="tabs"><div class="tab active" data-tab="monitor" onclick="switchTab('monitor')">📊 모니터링</div><div class="tab" data-tab="settings" onclick="switchTab('settings')">📋 이력/설정</div></div>
 <div class="panel active" id="panel-monitor">
   <div class="stats"><div class="st"><div class="st-label">전체</div><div class="st-val" id="sTotal">-</div></div><div class="st run"><div class="st-label">가동</div><div class="st-val" id="sRun">-</div></div><div class="st stop"><div class="st-label">비가동</div><div class="st-val" id="sStop">-</div></div><div class="st warn"><div class="st-label">⏰30분이내</div><div class="st-val" id="sSoon">-</div></div><div class="st ng"><div class="st-label">NG</div><div class="st-val" id="sNg">-</div></div></div>
@@ -596,6 +596,8 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
       <div class="fld"><label>종료일</label><input type="date" id="hiEnd"></div>
       <div class="fld"><label>카테고리</label><select id="hiCat"><option value="">전체</option><option value="mat">🔩 소재불량</option><option value="prod">🏭 생산실적</option><option value="mold">🔧 금형수리</option><option value="dispose">⛔ 금형폐기</option></select></div>
       <div class="fld"><label>설비코드(선택)</label><input type="text" id="hiMachine" placeholder="예: 001"></div>
+      <div class="fld"><label>품번/품명(선택)</label><input type="text" id="hiItem" list="hiItemList" placeholder="일부만 입력해도 검색" onkeydown="if(event.key==='Enter')hiSearch()"><datalist id="hiItemList"></datalist></div>
+      <div class="fld"><label>고객사(선택)</label><input type="text" id="hiCustomer" list="hiCustomerList" placeholder="일부만 입력해도 검색" onkeydown="if(event.key==='Enter')hiSearch()"><datalist id="hiCustomerList"></datalist></div>
     </div>
     <div class="hi-btns">
       <button class="btn btn-accent btn-sm" onclick="hiSearch()">🔍 조회</button>
@@ -2743,8 +2745,10 @@ function hiInit(){
 async function hiSearch(){
   var s=document.getElementById('hiStart').value,e=document.getElementById('hiEnd').value;
   var cat=document.getElementById('hiCat').value,mc=document.getElementById('hiMachine').value.trim();
+  var itemQ=document.getElementById('hiItem').value.trim().toLowerCase(),custQ=document.getElementById('hiCustomer').value.trim().toLowerCase();
   if(!s||!e){showToast('기간 선택');return}
   if(cat==='mold'){
+    if(itemQ||custQ)showToast('금형수리 이력은 품번/고객사 필터가 적용되지 않습니다');
     document.getElementById('hiResult').innerHTML='<div class="hi-empty">⏳ 조회중...</div>';
     hiData=[];
     var md=await hiMoldFetch(s,e,mc);
@@ -2752,19 +2756,49 @@ async function hiSearch(){
     hiMoldRender(c0,md);
     return;
   }
-  var q='select=id,created_at,machine_code,machine_name,customer,item_code,category,payload&order=created_at.desc&limit=500';
+  // v6.7 품번/고객사 필터는 받아온 뒤 화면에서 거름 (생산실적은 한 기록에 여러 품번이 들어 있을 수 있음)
+  var q='select=id,created_at,machine_code,machine_name,customer,item_code,category,payload&order=created_at.desc&limit='+((itemQ||custQ)?2000:500);
   q+='&created_at=gte.'+s+'T00:00:00&created_at=lte.'+e+'T23:59:59';
   if(cat)q+='&category=eq.'+cat;
   if(mc)q+='&machine_code=eq.'+mc;
   document.getElementById('hiResult').innerHTML='<div class="hi-empty">⏳ 조회중...</div>';
   var data=await sbGet('mes_check_log',q);
   if(!data){document.getElementById('hiResult').innerHTML='<div class="hi-empty" style="color:var(--red)">조회실패</div>';return}
+  hiFillSuggest(data);
+  if(itemQ||custQ)data=data.filter(function(d){return hiMatchFilter(d,itemQ,custQ)});
   hiData=data;
   hiRenderTable(data);
-  if(!cat){ // 전체: 금형수리 이력도 아래에 표시
+  if(!cat&&!itemQ&&!custQ){ // 전체: 금형수리 이력도 아래에 표시 (품번/고객사 필터 시 제외)
     var md=await hiMoldFetch(s,e,mc);
     if(md&&md.length)hiMoldRender(document.getElementById('hiResult'),md);
   }
+}
+
+// v6.7 품번/고객사 필터
+function hiItemsOf(d){
+  var p=d.payload||{},out=[d.item_code,p.item_code,p.item_name,p.current_item_code];
+  var ps=p.production_snapshot;
+  if(ps&&ps.items)ps.items.forEach(function(it){out.push(it.item_code,it.item_name)});
+  return out.filter(Boolean).map(String);
+}
+function hiMatchFilter(d,itemQ,custQ){
+  if(custQ){
+    var cu=String(d.customer||(d.payload&&d.payload.customer)||'').toLowerCase();
+    if(cu.indexOf(custQ)<0)return false;
+  }
+  if(itemQ){
+    if(!hiItemsOf(d).some(function(v){return v.toLowerCase().indexOf(itemQ)>=0}))return false;
+  }
+  return true;
+}
+function hiFillSuggest(data){
+  var items={},custs={};
+  data.forEach(function(d){
+    hiItemsOf(d).forEach(function(v){items[v]=1});
+    var cu=d.customer||(d.payload&&d.payload.customer);if(cu)custs[cu]=1;
+  });
+  var fill=function(id,obj){var el=document.getElementById(id);if(!el)return;el.innerHTML=Object.keys(obj).sort().map(function(v){return '<option value="'+_esc(v)+'">'}).join('')};
+  fill('hiItemList',items);fill('hiCustomerList',custs);
 }
 
 // ========== 금형수리 이력 (kv_store repair_history_v2, 금형수리 프로젝트) ==========
