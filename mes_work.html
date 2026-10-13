@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>MES 가동설비 모니터링 v6.7</title>
+<title>MES 가동설비 모니터링 v6.8</title>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -335,6 +335,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 .hi-card .hc-item{font-size:12px;font-weight:700;color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .hi-card .hc-qty{font-size:11px;color:#86efac;font-weight:600}
 /* v6.6 이력 카드 정지내역 */
+.hc-lot{margin-top:3px;font-size:11px;color:#94a3b8;word-break:break-all}.hc-lot b{color:#fbbf24;font-weight:700}
 .hc-dt{margin-top:4px;font-size:10px;color:#94a3b8;line-height:1.5}
 .hc-dt .dk{display:inline-block;margin-right:6px;font-weight:700}
 .hc-dt .dk.run{color:#86efac}.hc-dt .dk.stop{color:#fca5a5}.hc-dt .dk.plan{color:#c4b5fd}
@@ -2781,6 +2782,21 @@ function hiItemsOf(d){
   if(ps&&ps.items)ps.items.forEach(function(it){out.push(it.item_code,it.item_name)});
   return out.filter(Boolean).map(String);
 }
+// v6.8 사용 소재로트 (작업일보 rawMaterials / 생산실적 heat_nos / 기록 당시 lot_no) 중복 없이
+function hiLotsOf(d){
+  var p=d.payload||{},seen={},out=[];
+  var add=function(v){
+    if(v==null)return;
+    if(Array.isArray(v)){v.forEach(add);return}
+    String(v).split(/\s*(?:\/\/|,|;|\n)\s*/).forEach(function(s){s=s.trim();if(s&&s!=='-'&&!seen[s]){seen[s]=1;out.push(s)}});
+  };
+  var rs=p.report_snapshot;
+  if(rs&&rs.rawMaterials)rs.rawMaterials.forEach(function(r){add(r.lot_no)});
+  var ps=p.production_snapshot;
+  if(ps&&ps.items)ps.items.forEach(function(it){add(it.heat_nos)});
+  add(p.lot_no);
+  return out;
+}
 function hiMatchFilter(d,itemQ,custQ){
   if(custQ){
     var cu=String(d.customer||(d.payload&&d.payload.customer)||'').toLowerCase();
@@ -2927,6 +2943,7 @@ function hiRenderTable(data){
     }
     // 기종명 (품명 우선, 없으면 품번)
     var itemName=p.item_name||d.item_code||p.current_item_code||'-';
+    var lots=(d.category==='dispose')?[]:hiLotsOf(d);
     var pc=p.photo_count||0;
     var card=document.createElement('div');card.className='hi-card';card.dataset.id=d.id;
     card.innerHTML='<div class="hc-top">'+
@@ -2943,6 +2960,7 @@ function hiRenderTable(data){
       '<div class="hc-body">'+
         '<div class="hc-item">'+_esc(itemName)+'</div>'+
         (prodQty?'<div class="hc-qty">'+prodQty+'</div>':'')+
+        (lots.length?'<div class="hc-lot">🪨 소재LOT <b>'+lots.map(_esc).join(' · ')+'</b></div>':'')+
         ((d.category==='prod'||d.category==='report')?hiDowntimeHtml(p.downtime_snapshot):'')+
       '</div>';
     (function(rec){
@@ -3204,7 +3222,7 @@ async function hiExportCsv(){
       matNG=rs.rawMaterials.map(function(r){return (+r.abnormal_shot||0).toLocaleString()}).join(' // ');
     }else{
       matCodes=p.raw_item_code||'';
-      matLots=p.lot_no||'';
+      matLots=hiLotsOf(d).join(' // ');
       matReceipts='';
       matUsed='';
       matShots='';
@@ -3555,7 +3573,8 @@ function hiShowDetail(rec){
   if(p.item_name)body+='<div class="hd-l">품명</div><div class="hd-v">'+_eh(p.item_name)+'</div>';
   if(p.mold)body+='<div class="hd-l">금형</div><div class="hd-v">'+_eh(p.mold)+'</div>';
   if(p.worker)body+='<div class="hd-l">작업자</div><div class="hd-v">'+_eh(p.worker)+'</div>';
-  if(p.lot_no)body+='<div class="hd-l">LOT(HEAT)</div><div class="hd-v">'+_eh(p.lot_no)+'</div>';
+  var _lots=hiLotsOf(rec);
+  if(_lots.length)body+='<div class="hd-l">🪨 소재LOT</div><div class="hd-v"><b style="color:#fbbf24">'+_lots.map(_eh).join('<br>')+'</b></div>';
   if(p.raw_item_code)body+='<div class="hd-l">소재코드</div><div class="hd-v">'+_eh(p.raw_item_code)+'</div>';
   if(p.coil_weight){
     var _totalKg=+p.coil_weight||0;
