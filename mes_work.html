@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>MES 가동설비 모니터링 v7.0</title>
+<title>MES 가동설비 모니터링 v7.1</title>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -397,7 +397,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 </style>
 </head>
 <body>
-<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v6.7</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">5분 갱신</span></div></div></div>
+<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v7.1</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">5분 갱신</span></div></div></div>
 <div class="tabs"><div class="tab active" data-tab="monitor" onclick="switchTab('monitor')">📊 모니터링</div><div class="tab" data-tab="settings" onclick="switchTab('settings')">📋 이력/설정</div></div>
 <div class="panel active" id="panel-monitor">
   <div class="stats"><div class="st"><div class="st-label">전체</div><div class="st-val" id="sTotal">-</div></div><div class="st run"><div class="st-label">가동</div><div class="st-val" id="sRun">-</div></div><div class="st stop"><div class="st-label">비가동</div><div class="st-val" id="sStop">-</div></div><div class="st warn"><div class="st-label">⏰30분이내</div><div class="st-val" id="sSoon">-</div></div><div class="st ng"><div class="st-label">NG</div><div class="st-val" id="sNg">-</div></div></div>
@@ -3024,6 +3024,7 @@ function hiEditRecord(d){
   // 작업일보 수정은 지원하지 않음
   if(cid==='report'){showToast('⚠️ 작업일보 수정은 지원되지 않음');return}
   if(cid==='dispose'){showToast('⚠️ 금형폐기 이력은 수정 불가 (삭제 후 재등록)');return}
+  if(cid==='prod'){hiEditProd(d);return}
   var machine={
     machine_code:d.machine_code,machine_name:d.machine_name||'',
     customer:d.customer||'',current_item_code:d.item_code||'',
@@ -3688,6 +3689,74 @@ function hiShowDetail(rec){
   },50);
   // 보고서 생성용 데이터 저장
   window._hiDetailRec=rec;
+}
+// v7.1 생산실적 수정 (품번별 실제 양품수량 · 사유 · 메모)
+function hiEditProd(d){
+  var p=d.payload||{},ps=p.production_snapshot;
+  if(!ps||!(ps.items||[]).length){showToast('⚠️ 품번별 실적 정보가 없는 기록이라 수정할 수 없습니다');return}
+  var ov=document.getElementById('hiProdEdit');if(ov)ov.remove();
+  ov=document.createElement('div');ov.id='hiProdEdit';
+  ov.style.cssText='display:flex;position:fixed;inset:0;z-index:30000;background:rgba(0,0,0,.85);padding:8px;align-items:flex-start;justify-content:center;overflow-y:auto';
+  var inSt='width:100%;padding:9px 10px;border-radius:8px;border:1px solid var(--border);background:#0f1117;color:var(--txt);font-size:14px;font-family:inherit;box-sizing:border-box';
+  var rows=ps.items.map(function(it,i){
+    var mes=+it.actual_qty||0,cur=(it.adj_qty!=null?it.adj_qty:'');
+    return '<div style="padding:10px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px">'
+      +'<div style="font-size:13px;font-weight:700">'+_esc(it.item_name||it.item_code||'-')+'</div>'
+      +'<div style="font-size:11px;color:var(--sub);margin:2px 0 6px">품번 '+_esc(it.item_code||'-')+(it.mold?' · 금형 '+_esc(it.mold):'')+' · MES '+mes.toLocaleString()+'</div>'
+      +'<input type="number" inputmode="numeric" min="0" class="hpe-qty" data-i="'+i+'" value="'+_esc(cur)+'" placeholder="실제 양품수량" style="'+inSt+'">'
+      +'</div>';
+  }).join('');
+  ov.innerHTML='<div class="hd-box">'
+    +'<div class="hd-hdr"><div><div class="hd-hdr-ttl">✏️ 생산실적 수정</div><div class="hd-hdr-sub">'+_esc(parsePressShort({machine_name:d.machine_name||'',machine_code:d.machine_code}))+' · '+_esc(ps.work_date||String(d.created_at||'').slice(0,10))+' 실적</div></div>'
+    +'<button class="hd-close" onclick="document.getElementById(\'hiProdEdit\').remove()">✕</button></div>'
+    +'<div class="hd-body">'+rows
+      +'<div style="font-size:11px;color:var(--sub);margin:8px 0 3px">사유</div><input id="hpeReason" type="text" value="'+_esc(ps.reason||'')+'" style="'+inSt+'">'
+      +'<div style="font-size:11px;color:var(--sub);margin:8px 0 3px">메모</div><input id="hpeMemo" type="text" value="'+_esc(ps.adj_memo||'')+'" style="'+inSt+'">'
+    +'</div>'
+    +'<div class="hd-foot"><button class="hd-btn" id="hpeSave" style="background:var(--accent);color:#0f1117">💾 수정 저장</button><button class="hd-btn hd-btn-cancel" onclick="document.getElementById(\'hiProdEdit\').remove()">취소</button></div>'
+  +'</div>';
+  document.body.appendChild(ov);
+  document.getElementById('hpeSave').onclick=function(){hiSaveProdEdit(d)};
+}
+async function hiSaveProdEdit(d){
+  var btn=document.getElementById('hpeSave');
+  var p=JSON.parse(JSON.stringify(d.payload||{})),ps=p.production_snapshot;
+  var bad=false;
+  document.querySelectorAll('#hiProdEdit .hpe-qty').forEach(function(inp){
+    var it=ps.items[+inp.dataset.i],v=inp.value.trim();
+    if(v===''){it.adj_qty=null;return}
+    var n=Number(v);if(!isFinite(n)||n<0){bad=true;return}
+    it.adj_qty=Math.round(n);
+  });
+  if(bad){showToast('⚠️ 수량은 0 이상 숫자로 입력하세요');return}
+  if(!ps.items.some(function(it){return it.adj_qty!=null})){showToast('⚠️ 실제 양품수량을 하나 이상 입력하세요');return}
+  ps.reason=document.getElementById('hpeReason').value.trim();
+  ps.adj_memo=document.getElementById('hpeMemo').value.trim();
+  ps.total_adj_qty=ps.items.reduce(function(s,it){return s+(it.adj_qty!=null?+it.adj_qty:0)},0);
+  var editor=getCurrentUser()||'';
+  p.edited_at=new Date().toISOString();p.edited_by=editor;
+  btn.disabled=true;btn.textContent='⏳ 저장중...';
+  try{
+    var r=await fetch(SB_URL+'/rest/v1/mes_check_log?id=eq.'+encodeURIComponent(d.id),{method:'PATCH',headers:Object.assign({},sbH,{'Prefer':'return=minimal'}),body:JSON.stringify({payload:p})});
+    if(!r.ok)throw new Error('이력 저장 '+r.status);
+    // 생산마감 테이블도 같은 값으로 맞춤 (이 기록에 있는 품번만)
+    var ymd=ps.work_date||String(d.created_at||'').slice(0,10);
+    var closeRows=ps.items.filter(function(it){return it.adj_qty!=null&&it.item_code}).map(function(it){
+      var mes=+it.actual_qty||0,adj=+it.adj_qty||0;
+      return {ymd:ymd,machine_code:d.machine_code,item_code:it.item_code,machine_name:d.machine_name||'',item_name:it.item_name||'',mold_code:it.mold||'',
+        mes_qty:mes,actual_qty:adj,diff_qty:adj-mes,reason:ps.reason,memo:ps.adj_memo,worker:p.worker||editor,closed_at:kstNow()};
+    });
+    if(closeRows.length){
+      var r2=await pccUpsert('production_close','ymd,machine_code,item_code',closeRows);
+      if(!r2.ok)showToast('⚠️ 이력은 수정됐지만 생산마감 표 반영 실패 ('+r2.status+')',4000);
+    }
+    showToast('✅ 생산실적 수정 완료');
+    document.getElementById('hiProdEdit').remove();
+    hiSearch();
+  }catch(e){
+    showToast('❌ 수정 실패: '+(e.message||''));
+    btn.disabled=false;btn.textContent='💾 수정 저장';
+  }
 }
 function hiCloseDetail(){var m=document.getElementById('hiDetailModal');if(m)m.remove()}
 function _hiPhotoZoom(src){
