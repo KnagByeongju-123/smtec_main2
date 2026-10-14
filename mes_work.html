@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>MES 가동설비 모니터링 v6.9</title>
+<title>MES 가동설비 모니터링 v7.0</title>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -335,6 +335,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 .hi-card .hc-item{font-size:12px;font-weight:700;color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .hi-card .hc-qty{font-size:11px;color:#86efac;font-weight:600}
 /* v6.6 이력 카드 정지내역 */
+.hc-code{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:6px;background:rgba(56,189,248,.12);color:#7dd3fc;font-size:11px;font-weight:700;vertical-align:middle;word-break:break-all}
 .hc-lot{margin-top:3px;font-size:11px;color:#94a3b8;word-break:break-all}.hc-lot b{color:#fbbf24;font-weight:700}
 .hc-dt{margin-top:4px;font-size:10px;color:#94a3b8;line-height:1.5}
 .hc-dt .dk{display:inline-block;margin-right:6px;font-weight:700}
@@ -2800,6 +2801,15 @@ function hiItemsOf(d){
   if(ps&&ps.items)ps.items.forEach(function(it){out.push(it.item_code,it.item_name)});
   return out.filter(Boolean).map(String);
 }
+// v7.0 품번 목록 (생산실적은 품번별 items, 없으면 기록의 품번)
+function hiCodesOf(d){
+  var p=d.payload||{},seen={},out=[];
+  var add=function(v){v=String(v||'').trim();if(v&&!seen[v]){seen[v]=1;out.push(v)}};
+  var ps=p.production_snapshot;
+  if(ps&&ps.items)ps.items.forEach(function(it){add(it.item_code)});
+  if(!out.length){add(d.item_code);add(p.current_item_code)}
+  return out;
+}
 // v6.8 사용 소재로트 (작업일보 rawMaterials / 생산실적 heat_nos / 기록 당시 lot_no) 중복 없이
 function hiLotsOf(d){
   var p=d.payload||{},seen={},out=[];
@@ -2965,6 +2975,7 @@ function hiRenderTable(data){
     // 기종명 (품명 우선, 없으면 품번)
     var itemName=p.item_name||d.item_code||p.current_item_code||'-';
     var lots=(d.category==='dispose')?[]:hiLotsOf(d);
+    var codes=hiCodesOf(d).filter(function(c){return c!==itemName});
     var pc=p.photo_count||0;
     var card=document.createElement('div');card.className='hi-card';card.dataset.id=d.id;
     card.innerHTML='<div class="hc-top">'+
@@ -2979,7 +2990,7 @@ function hiRenderTable(data){
       '</div>'+
       '</div>'+
       '<div class="hc-body">'+
-        '<div class="hc-item">'+_esc(itemName)+'</div>'+
+        '<div class="hc-item">'+_esc(itemName)+(codes.length?' <span class="hc-code">'+codes.map(_esc).join(' · ')+'</span>':'')+'</div>'+
         (prodQty?'<div class="hc-qty">'+prodQty+'</div>':'')+
         (lots.length?'<div class="hc-lot">🪨 소재LOT <b>'+lots.map(_esc).join(' · ')+'</b></div>':'')+
         ((d.category==='prod'||d.category==='report')?hiDowntimeHtml(p.downtime_snapshot):'')+
