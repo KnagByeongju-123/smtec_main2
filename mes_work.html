@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>MES 가동설비 모니터링 v7.2</title>
+<title>MES 가동설비 모니터링 v7.3</title>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -323,6 +323,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 .hi-list{display:flex;flex-direction:column;gap:5px;margin-top:4px}
 .hi-card{background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;transition:background .12s}
 .hi-card.sel{background:rgba(56,189,248,.1);border-color:var(--accent)}
+.hi-card.hi-card-mold{border-left:3px solid #fb923c}
 .hi-card .hc-top{display:flex;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap}
 .hi-card .hc-chk{flex-shrink:0;margin:0;width:15px;height:15px;cursor:pointer}
 .hi-card .hc-time{font-size:10px;color:var(--sub);font-weight:600;white-space:nowrap}
@@ -397,7 +398,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 </style>
 </head>
 <body>
-<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v7.2</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">5분 갱신</span></div></div></div>
+<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v7.3</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">5분 갱신</span></div></div></div>
 <div class="tabs"><div class="tab active" data-tab="monitor" onclick="switchTab('monitor')">📊 모니터링</div><div class="tab" data-tab="settings" onclick="switchTab('settings')">📋 이력/설정</div></div>
 <div class="panel active" id="panel-monitor">
   <div class="stats"><div class="st"><div class="st-label">전체</div><div class="st-val" id="sTotal">-</div></div><div class="st run"><div class="st-label">가동</div><div class="st-val" id="sRun">-</div></div><div class="st stop"><div class="st-label">비가동</div><div class="st-val" id="sStop">-</div></div><div class="st warn"><div class="st-label">⏰30분이내</div><div class="st-val" id="sSoon">-</div></div><div class="st ng"><div class="st-label">NG</div><div class="st-val" id="sNg">-</div></div></div>
@@ -2737,7 +2738,7 @@ async function checkAlerts(data){var soon=data.filter(function(d){if(!d.remainin
 function _condLabel(c){var s=String(c);if(s==='chk_mat')return'점검:소재불량';if(s==='chk_report')return'작업일보';if(s==='chk_all')return'점검:전체';return s+'분'}
 
 // ========== 이력관리 ==========
-var hiData=[];
+var hiData=[],hiMoldData=[]; // hiMoldData: v7.3 조회된 금형수리 이력
 function hiInit(){
   var end=new Date(),st=new Date();st.setDate(st.getDate()-30);
   var fmtD=function(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')};
@@ -2767,13 +2768,17 @@ async function hiSearch(){
   var itemQ=document.getElementById('hiItem').value.trim().toLowerCase(),custQ=document.getElementById('hiCustomer').value.trim().toLowerCase();
   var lotQ=document.getElementById('hiLot').value.trim().toLowerCase();
   if(!s||!e){showToast('기간 선택');return}
+  // v7.3 금형수리 이력: '전체'·'금형수리' 조회 시 MES 기록과 한 목록에 날짜순으로 함께 표시, 품번/고객사 필터도 적용
+  var withMold=(!cat||cat==='mold');
+  if(withMold&&lotQ)showToast('소재LOT 필터는 금형수리 이력에 없는 항목이라 금형수리는 제외됩니다');
   if(cat==='mold'){
-    if(itemQ||custQ||lotQ)showToast('금형수리 이력은 품번/고객사/로트 필터가 적용되지 않습니다');
     document.getElementById('hiResult').innerHTML='<div class="hi-empty">⏳ 조회중...</div>';
-    hiData=[];
-    var md=await hiMoldFetch(s,e,ho);
-    var c0=document.getElementById('hiResult');c0.innerHTML='';
-    hiMoldRender(c0,md);
+    hiData=[];hiMoldData=[];
+    var md0=lotQ?[]:await hiMoldFetch(s,e,ho);
+    if(custQ){var lite=await sbGet('mes_check_log','select=item_code,customer&customer=neq.&created_at=gte.'+s+'T00:00:00&created_at=lte.'+e+'T23:59:59&limit=2000');hiBuildCustMap(lite||[])}
+    if(itemQ||custQ)md0=md0.filter(function(r){return hiMoldMatchFilter(r,itemQ,custQ)});
+    hiMoldData=md0;
+    hiRenderTable(md0);
     return;
   }
   // 호기·품번·고객사·로트 필터는 받아온 뒤 화면에서 거름 (생산실적은 한 기록에 여러 품번·로트가 들어 있을 수 있음)
@@ -2781,17 +2786,25 @@ async function hiSearch(){
   q+='&created_at=gte.'+s+'T00:00:00&created_at=lte.'+e+'T23:59:59';
   if(cat)q+='&category=eq.'+cat;
   document.getElementById('hiResult').innerHTML='<div class="hi-empty">⏳ 조회중...</div>';
+  var moldP=(withMold&&!lotQ)?hiMoldFetch(s,e,ho):Promise.resolve([]);
   var data=await sbGet('mes_check_log',q);
+  var md=await moldP;
   if(!data){document.getElementById('hiResult').innerHTML='<div class="hi-empty" style="color:var(--red)">조회실패</div>';return}
   hiFillSuggest(data);
   if(ho!=null)data=data.filter(function(d){return hiRecHo(d)===ho});
   if(itemQ||custQ||lotQ)data=data.filter(function(d){return hiMatchFilter(d,itemQ,custQ,lotQ)});
-  hiData=data;
-  hiRenderTable(data);
-  if(!cat&&!itemQ&&!custQ&&!lotQ){ // 전체: 금형수리 이력도 아래에 표시 (품번/고객사/로트 필터 시 제외)
-    var md=await hiMoldFetch(s,e,ho);
-    if(md&&md.length)hiMoldRender(document.getElementById('hiResult'),md);
-  }
+  if(custQ)hiBuildCustMap(data);
+  if(itemQ||custQ)md=md.filter(function(r){return hiMoldMatchFilter(r,itemQ,custQ)});
+  hiData=data;hiMoldData=md;
+  // MES 기록 + 금형수리 이력을 시각 기준 최신순으로 합쳐 한 목록으로
+  var merged=data.concat(md).sort(function(a,b){return hiSortTs(b).localeCompare(hiSortTs(a))});
+  hiRenderTable(merged);
+}
+// 정렬용 시각 (MES: created_at / 금형수리: 수리일자, 같은 날 등록이면 등록시각)
+function hiSortTs(d){
+  if(!d._mold)return d.created_at||'';
+  var day=d['수리일자']||'',u=d._updatedAt||'';
+  return (u&&u.slice(0,10)===day)?u:day+'T12:00:00';
 }
 
 // v6.7 품번/고객사 필터
@@ -2851,8 +2864,40 @@ function hiFillSuggest(data){
 
 // ========== 금형수리 이력 (kv_store repair_history_v2, 금형수리 프로젝트) ==========
 function mrRepairKeyOf(r){return r._id||((r['금형번호']||'')+'|'+(r['수리일자']||'')+'|'+(r['수리내용']||''))}
+// 금형수리 이력 1건의 품번/고객사 (비고의 "품번 xxx", 금형 DB의 금형명·품번·고객사)
+function hiMoldInfo(r){
+  var no=String(r['금형번호']||'').trim();
+  var m=(mrState.molds||[]).find(function(o){return String(o['금형번호']||'').trim().toUpperCase()===no.toUpperCase()})||{};
+  var bi=String(r['비고']||'');
+  var item=(bi.match(/품번\s*([^\]·]+)/)||[])[1]||'';
+  return {
+    item:(item||m['품번']||m['제품번호']||'').trim(),
+    name:String(m['금형명']||m['품명']||'').trim(),
+    customer:String(r['고객사']||m['고객사']||'').trim(),
+    machine:String(r._machine_name||(bi.match(/\[생산현황\s*([^\]·]*)/)||[])[1]||'').trim()
+  };
+}
+// 금형 DB에 고객사가 비어 있는 경우가 많아, 품번→고객사 표를 MES 기록·현재 설비현황에서 만들어 보완
+var hiCustMap={};
+function hiBuildCustMap(rows){
+  hiCustMap={};
+  var put=function(code,cu){code=String(code||'').trim().toUpperCase();cu=String(cu||'').trim();if(code&&cu&&!hiCustMap[code])hiCustMap[code]=cu};
+  (rows||[]).forEach(function(d){put(d.item_code,d.customer);var ps=d.payload&&d.payload.production_snapshot;if(ps&&ps.items)ps.items.forEach(function(it){put(it.item_code,d.customer)})});
+  (cachedData||[]).forEach(function(m){put(m.current_item_code,m.customer)});
+}
+function hiMoldMatchFilter(r,itemQ,custQ){
+  var inf=hiMoldInfo(r);
+  if(!inf.customer&&inf.item)inf.customer=hiCustMap[inf.item.toUpperCase()]||'';
+  if(custQ&&inf.customer.toLowerCase().indexOf(custQ)<0)return false;
+  if(itemQ){
+    var pool=[inf.item,inf.name,r['금형번호']].filter(Boolean).map(function(v){return String(v).toLowerCase()});
+    if(!pool.some(function(v){return v.indexOf(itemQ)>=0}))return false;
+  }
+  return true;
+}
 async function hiMoldFetch(s,e,ho){
   try{
+    if(!(mrState.molds||[]).length&&typeof mrLoadMaster==='function')await mrLoadMaster();
     var r=await fetch(MR_SB_URL+'/rest/v1/kv_store?key=eq.repair_history_v2&select=value',{headers:mrH()});
     if(!r.ok)throw new Error('HTTP '+r.status);
     var js=await r.json();
@@ -2866,36 +2911,36 @@ async function hiMoldFetch(s,e,ho){
         if(hiHoNum(nm)!==ho)return false;
       }
       return true;
-    }).sort(function(a,b){return (b['수리일자']||'').localeCompare(a['수리일자']||'')||(b._updatedAt||'').localeCompare(a._updatedAt||'')});
+    }).map(function(x){x._mold=true;return x})
+      .sort(function(a,b){return (b['수리일자']||'').localeCompare(a['수리일자']||'')||(b._updatedAt||'').localeCompare(a._updatedAt||'')});
   }catch(err){showToast('금형수리 이력 조회 실패: '+err.message);return [];}
 }
-function hiMoldRender(c,md){
-  var info=document.createElement('div');info.style.cssText='font-size:11px;color:#fb923c;margin:10px 0 6px';info.textContent='🔧 금형수리 이력 '+md.length+'건';
-  c.appendChild(info);
-  if(!md.length){var em=document.createElement('div');em.className='hi-empty';em.textContent='결과 없음';c.appendChild(em);return;}
-  var list=document.createElement('div');list.className='hi-list';
-  md.forEach(function(r){
-    var id=mrRepairKeyOf(r),ph=r.before_img||r.after_img||'';
-    var hasPh=ph&&/^(https?:|data:)/.test(ph);
-    var card=document.createElement('div');card.className='hi-card';
-    card.innerHTML='<div class="hc-top">'+
-      '<span class="hc-time">'+_esc((r['수리일자']||'').slice(5))+'</span>'+
-      '<span class="hc-eq">'+_esc(r._machine_name||(r['비고']||'').replace(/^\[생산현황\s*/,'').replace(/\].*$/,'')||'-')+'</span>'+
-      '<span class="hc-cat-icon" style="font-size:14px">🔧</span>'+
-      (hasPh?'<span class="hc-photo">📷</span>':'')+
-      '<div class="hc-actions-inline"><button class="hc-del" style="background:rgba(239,68,68,.12);color:var(--red)" title="삭제">🗑</button></div>'+
-      '</div>'+
-      '<div class="hc-body" style="margin-left:0">'+
-        '<div class="hc-item">'+_esc(r['금형번호'])+' · '+_esc(r['수리유형'])+'</div>'+
-        '<div class="hc-qty" style="color:var(--sub)">'+_esc(r['수리내용'])+' · '+_esc(r['담당자']||'-')+'</div>'+
-        (hasPh?'<img src="'+_esc(ph)+'" loading="lazy" style="display:none;max-width:100%;border-radius:8px;margin-top:6px">':'')+
-      '</div>';
-    card.querySelector('.hc-del').onclick=function(e){e.stopPropagation();hiMoldDelete(id)};
-    var body=card.querySelector('.hc-body');body.style.cursor='pointer';
-    body.onclick=function(){var im=card.querySelector('img');if(im)im.style.display=im.style.display==='none'?'block':'none';};
-    list.appendChild(card);
-  });
-  c.appendChild(list);
+// 금형수리 이력 카드 1장 (v7.3: hiRenderTable에서 MES 카드와 같은 목록에 끼워 넣음)
+function hiMoldCard(r){
+  var id=mrRepairKeyOf(r),ph=r.before_img||r.after_img||'';
+  var hasPh=ph&&/^(https?:|data:)/.test(ph);
+  var inf=hiMoldInfo(r);
+  var st=String(r['상태']||'');
+  var stHtml=st&&st!=='완료'?' <span style="color:#fbbf24;font-weight:700">['+_esc(st)+']</span>':'';
+  var card=document.createElement('div');card.className='hi-card hi-card-mold';
+  card.innerHTML='<div class="hc-top">'+
+    '<span class="hc-time">'+_esc((r['수리일자']||'').slice(5).replace('-','. ')+'.')+'</span>'+
+    '<span class="hc-eq">'+(inf.machine?parsePressShort({machine_name:inf.machine,machine_code:r._machine_code||''}):'-')+'</span>'+
+    '<span class="hc-cat-icon" style="font-size:14px" title="금형수리">🔧</span>'+
+    '<span style="font-size:10px;color:#fb923c;font-weight:700">금형수리</span>'+
+    (hasPh?'<span class="hc-photo">📷</span>':'')+
+    '<div class="hc-actions-inline"><button class="hc-del" style="background:rgba(239,68,68,.12);color:var(--red)" title="삭제">🗑</button></div>'+
+    '</div>'+
+    '<div class="hc-body" style="margin-left:0">'+
+      '<div class="hc-item">'+_esc(r['금형번호'])+' · '+_esc(r['수리유형'])+stHtml+
+        (inf.item||inf.name?' <span class="hc-code">'+_esc([inf.item,inf.name].filter(Boolean).join(' · '))+'</span>':'')+'</div>'+
+      '<div class="hc-qty" style="color:var(--sub);white-space:pre-line">'+_esc(r['수리내용'])+' · '+_esc(r['담당자']||'-')+(inf.customer?' · '+_esc(inf.customer):'')+'</div>'+
+      (hasPh?'<img src="'+_esc(ph)+'" loading="lazy" style="display:none;max-width:100%;border-radius:8px;margin-top:6px">':'')+
+    '</div>';
+  card.querySelector('.hc-del').onclick=function(e){e.stopPropagation();hiMoldDelete(id)};
+  var body=card.querySelector('.hc-body');body.style.cursor='pointer';
+  body.onclick=function(){var im=card.querySelector('img');if(im)im.style.display=im.style.display==='none'?'block':'none';};
+  return card;
 }
 async function hiMoldDelete(id){
   if(!confirm('이 금형수리 이력을 삭제합니다. 진행?'))return;
@@ -2935,7 +2980,9 @@ function hiDowntimeHtml(ds,full){
 function hiRenderTable(data){
   var c=document.getElementById('hiResult');c.innerHTML='';
   if(!data.length){c.innerHTML='<div class="hi-empty">결과 없음</div>';return}
-  var info=document.createElement('div');info.style.cssText='font-size:11px;color:var(--accent);margin:6px 0';info.textContent='총 '+data.length+'건';
+  var nMold=data.filter(function(d){return d._mold}).length,nMes=data.length-nMold;
+  var info=document.createElement('div');info.style.cssText='font-size:11px;color:var(--accent);margin:6px 0';
+  info.innerHTML='총 '+data.length+'건'+(nMold?' <span style="color:var(--sub)">(점검·실적 '+nMes+' · <span style="color:#fb923c">🔧 금형수리 '+nMold+'</span>)</span>':'');
   c.appendChild(info);
   // 전체선택 체크박스
   var selAll=document.createElement('div');selAll.style.cssText='font-size:11px;color:var(--sub);padding:4px 10px;margin-bottom:4px;display:flex;align-items:center;gap:6px';
@@ -2943,6 +2990,7 @@ function hiRenderTable(data){
   c.appendChild(selAll);
   var list=document.createElement('div');list.className='hi-list';
   data.forEach(function(d){
+    if(d._mold){list.appendChild(hiMoldCard(d));return} // 금형수리 이력 카드
     var dt=new Date(d.created_at);
     var tstr=dt.toLocaleString('ko-KR',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
     // 카테고리 아이콘만
@@ -3091,7 +3139,7 @@ function hiEditRecord(d){
 function hiToggleAll(el){document.querySelectorAll('.hi-chk').forEach(function(c){c.checked=el.checked;var card=c.closest('.hi-card');if(card)card.classList.toggle('sel',el.checked)})}
 
 async function hiExportCsv(){
-  if(!hiData.length){showToast('먼저 조회');return}
+  if(!hiData.length&&!(hiMoldData||[]).length){showToast('먼저 조회');return}
   if(typeof ExcelJS==='undefined'||typeof saveAs==='undefined'){showToast('엑셀 라이브러리 로딩중 · 잠시후 재시도');return}
   showToast('⏳엑셀 생성중...');
   var wb=new ExcelJS.Workbook();
@@ -3186,8 +3234,26 @@ async function hiExportCsv(){
     c.fill={type:'pattern',pattern:'solid',fgColor:{argb:fg}};
   });
 
-  // 데이터 행 추가
-  hiData.forEach(function(d){
+  // v7.3 금형수리 이력 1건 → 엑셀 행 (일시·카테고리·설비·고객사·품번·품명·금형·작업자·점검내용)
+  function addMoldRow(r){
+    var inf=hiMoldInfo(r);
+    var rowData=new Array(headers.length).fill('');
+    rowData[0]=r['수리일자']||'';rowData[1]='🔧 금형수리';rowData[2]=r._machine_code||'';rowData[3]=inf.machine||'';
+    rowData[4]=inf.customer||'';rowData[5]=inf.item||'';rowData[6]=inf.name||'';rowData[7]=r['금형번호']||'';rowData[8]=r['담당자']||'';
+    rowData[headers.length-2]=[r['수리유형'],r['수리내용'],(r['상태']&&r['상태']!=='완료')?'('+r['상태']+')':''].filter(Boolean).join(' : ');
+    rowData[headers.length-1]=(r.before_img||r.after_img)?1:'';
+    var row=ws.addRow(rowData);
+    row.eachCell({includeEmpty:true},function(c){
+      c.border={top:{style:'hair',color:{argb:'FFCCCCCC'}},bottom:{style:'hair',color:{argb:'FFCCCCCC'}},left:{style:'hair',color:{argb:'FFCCCCCC'}},right:{style:'hair',color:{argb:'FFCCCCCC'}}};
+      c.alignment={vertical:'middle',horizontal:'center',wrapText:true};c.font={size:9};
+    });
+    row.getCell(2).fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFFFE4CC'}};row.getCell(2).font={bold:true,size:9};
+    row.getCell(headers.length-1).alignment={vertical:'middle',horizontal:'left',wrapText:true};
+  }
+
+  // 데이터 행 추가 (MES 기록 + 금형수리 이력, 최신순)
+  hiData.concat(hiMoldData||[]).sort(function(a,b){return hiSortTs(b).localeCompare(hiSortTs(a))}).forEach(function(d){
+    if(d._mold){addMoldRow(d);return}
     var p=d.payload||{};
     var rs=p.report_snapshot||{};
     var ps=p.production_snapshot||{};
@@ -3317,7 +3383,7 @@ async function hiExportCsv(){
     var buf=await wb.xlsx.writeBuffer();
     var fname='점검이력_'+document.getElementById('hiStart').value+'_'+document.getElementById('hiEnd').value+'.xlsx';
     saveAs(new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),fname);
-    showToast('✅엑셀 다운로드 ('+hiData.length+'건)');
+    showToast('✅엑셀 다운로드 ('+(hiData.length+(hiMoldData||[]).length)+'건)');
   }catch(e){console.log(e);showToast('엑셀 생성실패')}
 }
 
