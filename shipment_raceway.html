@@ -521,9 +521,6 @@ function renderProdDates(){
   document.getElementById('lotPreview').textContent=buildLot(prodDates);
 }
 
-/* 출하 LOT 선입선출 기준일 — 이 날짜 이후 검사등록분만 LOT 계산에 쓴다. 바꾸려면 localStorage 'rw_lot_base' (YYYY-MM-DD) */
-const LOT_BASE_DEFAULT='2026-09-01';
-function lotBase(){try{const v=localStorage.getItem('rw_lot_base');if(/^\d{4}-\d{2}-\d{2}$/.test(v||''))return v}catch(e){}return LOT_BASE_DEFAULT}
 /* LOT 문자열의 첫 생산일(YYYYMMDD) — 정렬용. 없으면 검사등록일 */
 function prodKey(lot,moveDate){const m=String(lot||'').match(/(20\d{6})/);return m?m[1]:String(moveDate||'').replace(/-/g,'')}
 
@@ -1090,60 +1087,36 @@ async function confirmShipReq(){
   let allLotDetails=[];
 
   for(const r of reqs){
-    // ── 출하 LOT = 출하대기장 재고 안에서 생산일자 선입선출 (2026-10-22 수정) ──
+    // ── 출하 LOT = Supabase 검사완료 이력 역산 (2026-10-22 수정) ──
     // 종전: 검사등록 이력을 오래된 순으로 골랐지만 이미 출하된 수량을 빼지 않아
     //       매번 같은 옛 LOT(예: 20260404)가 다시 찍혔다.
-    // 지금: ① 출하대기장 재고 = 검사완료(출하가능) 수량(r.completed, 구글시트/화면 입력).
-    //         재고는 가장 최근 검사등록분이므로, 생산일자가 늦은 LOT부터 거꾸로 그 수량만큼 모은다.
-    //       ② 모은 재고 LOT 중 생산일자가 빠른 것부터 이번 출하수량을 가져간다.
-    //       검사완료 수량이 0(모름)이면 LOT 기준일(lotBase) 이후 검사분에서 기출하 수량을 빼는 방식으로 대신 계산한다.
+    // 지금: 출하일까지의 검사완료(검사실→출하대기장) 이력을 가장 최근 것부터 거꾸로 출하수량만큼 모은다.
+    //       모은 LOT는 생산일자(LOT 앞 8자리) 순으로 기록한다.
     let lotBreakdown=[];
     try{
       const all=await sbSelect('move_history_tj',
         'format=eq.레이스웨이출하&base_part=eq.'+encodeURIComponent(r.partA)
-        +'&order=move_date.asc,created_at.asc&limit=5000');
+        +'&move_date=lte.'+date+'&order=move_date.desc,created_at.desc&limit=1000');
       const isShip=h=>(h.note||'').includes('출하확정')||h.destination==='SBC';
       const insp=(all||[]).filter(h=>!isShip(h)&&Number(h.qty)>0);
 
-      // LOT별로 그룹핑 (같은 LOT는 수량 합산) → 생산일자 순 정렬
-      const lotGroups=[];
-      insp.forEach(h=>{
-        const lot=h.lot||'미지정';
-        const g=lotGroups.find(x=>x.lot===lot);
-        if(g){g.qty+=Number(h.qty);if(String(h.move_date)>g.date)g.date=h.move_date}
-        else lotGroups.push({lot,qty:Number(h.qty),date:h.move_date,prod:prodKey(lot,h.move_date)});
-      });
-      lotGroups.sort((x,y)=>x.prod.localeCompare(y.prod)||String(x.date).localeCompare(String(y.date)));
-
-      let how='';
-      if(Number(r.completed)>0){
-        // ① 최근 LOT부터 거꾸로 재고 수량만큼만 남긴다
-        let need=Number(r.completed);
-        for(let k=lotGroups.length-1;k>=0;k--){const g=lotGroups[k];const keep=Math.min(need,g.qty);g.qty=keep;need-=keep}
-        how='재고 '+r.completed+'개 기준';
-      }else{
-        // 대체: 기준일 이후 검사분에서 기출하 수량을 앞에서부터 뺀다
-        const base=lotBase();
-        lotGroups.forEach(g=>{if(String(g.date)<base)g.qty=0});
-        let skip=(all||[]).filter(h=>isShip(h)&&String(h.move_date)>=base).reduce((s,h)=>s+(Number(h.qty)||0),0);
-        for(const g of lotGroups){if(skip<=0)break;const t=Math.min(skip,g.qty);g.qty-=t;skip-=t}
-        how='기준일 '+base+' 이후 계산';
-      }
-      console.log('[LOT선입선출] '+r.partA+' ('+how+'): '+lotGroups.filter(g=>g.qty>0).map(g=>g.lot+':'+g.qty).join(', '));
-
-      // ② 남은(재고) LOT 중 생산일자가 빠른 것부터 이번 출하수량만큼
+      // 최근 검사완료부터 거꾸로 출하수량만큼 (같은 LOT는 합산)
       let remaining=r.reqQty;
-      for(const lg of lotGroups){
+      const got=[];
+      for(const h of insp){
         if(remaining<=0)break;
-        if(lg.qty<=0)continue;
-        const take=Math.min(remaining,lg.qty);
-        lotBreakdown.push({lot:lg.lot,qty:take,date:lg.date});
+        const lot=h.lot||'미지정',take=Math.min(remaining,Number(h.qty));
+        const g=got.find(x=>x.lot===lot);
+        if(g)g.qty+=take;else got.push({lot,qty:take,date:h.move_date,prod:prodKey(lot,h.move_date)});
         remaining-=take;
       }
+      got.sort((x,y)=>x.prod.localeCompare(y.prod)||String(x.date).localeCompare(String(y.date)));
+      got.forEach(g=>lotBreakdown.push({lot:g.lot,qty:g.qty,date:g.date}));
+      console.log('[LOT역산] '+r.partA+': '+got.map(g=>g.lot+':'+g.qty).join(', '));
 
       // LOT 매칭 안 된 잔여분
       if(remaining>0){
-        console.log('[LOT선입선출] '+r.partA+': 미매칭 '+remaining+'개');
+        console.log('[LOT역산] '+r.partA+': 미매칭 '+remaining+'개');
         lotBreakdown.push({lot:'미매칭_'+date.replace(/-/g,''),qty:remaining,date:date});
       }
     }catch(e){
