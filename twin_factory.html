@@ -100,7 +100,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 <body>
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🏭 트윈팩토리 3D<span class="v">v13.49</span></h1>
+    <h1>🏭 트윈팩토리 3D<span class="v">v13.50</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="upd">연결 중…</span> · <span id="cd">30</span>s</div>
   </div>
   <div class="sum">
@@ -1003,6 +1003,30 @@ var DAILY_MSG=[
   ['정리','통로와 비상구, 소화기 앞에는 물건을 두지 않습니다.'],
   ['정리','교대 시 설비 상태와 특이사항을 다음 근무자에게 꼭 인계합니다.']];
 var DM_TAG={'안전':['','⛑️ 오늘의 안전'],'품질':['sf-q','✅ 오늘의 품질'],'환경':['sf-e','🌱 오늘의 환경'],'정리':['sf-o','🧹 오늘의 정리정돈']};
+/* v13.50: 재고현황 문구 연동 — stock_ledger index.html의 DAILY_MSG를 읽어 위 목록을 교체 (실패 시 마지막 성공본 → 위 기본 목록) */
+var DAILY_SRC='https://raw.githubusercontent.com/kimsanggi85-del/stock_ledger/main/index.html';
+function dailyApply(list){
+  if(!Array.isArray(list)||!list.length)return false;
+  var ok=list.every(function(o){return Array.isArray(o)&&DM_TAG[o[0]]&&String(o[1]||'').trim()});
+  var has=['안전','품질','환경','정리'].every(function(c){return list.some(function(o){return o[0]===c})});
+  if(!ok||!has)return false;
+  DAILY_MSG=list; return true;
+}
+function dailyParse(html){
+  var m=/DAILY_MSG\s*=\s*\[([\s\S]*?)\]\s*\]\s*;/.exec(html||''); if(!m)return null;
+  var re=/\[\s*'((?:[^'\\]|\\.)*)'\s*,\s*'((?:[^'\\]|\\.)*)'\s*\]?/g, r, out=[];
+  var un=function(t){return t.replace(/\\(.)/g,'$1')};
+  while((r=re.exec(m[1]+']'))) out.push([un(r[1]),un(r[2])]);
+  return out;
+}
+async function loadDailyMsgs(){
+  try{ var loc=JSON.parse(localStorage.getItem('twin_daily_msg')||'null'); if(loc)dailyApply(loc); }catch(e){}
+  try{
+    var r=await fetch(DAILY_SRC+'?t='+Date.now(),{cache:'no-store'}); if(!r.ok)return;
+    var list=dailyParse(await r.text());
+    if(dailyApply(list)){ try{ localStorage.setItem('twin_daily_msg',JSON.stringify(list)); }catch(e){} }
+  }catch(e){ console.warn('재고현황 문구 연동 실패:',e); }
+}
 function dailyList(){
   var d=new Date(), k=Math.floor((Date.UTC(d.getFullYear(),d.getMonth(),d.getDate())-Date.UTC(2026,0,1))/864e5);
   return ['안전','품질','환경','정리'].map(function(c){
@@ -2059,6 +2083,7 @@ loadCamViews().then(function(){
   return loadMachineViews();
 }).then(function(){
   loadSafetyCfg();           // v13.42: 안전문구 설정 (Supabase 1회)
+  loadDailyMsgs(); setInterval(loadDailyMsgs,6*3600*1000);   // v13.50: 재고현황 오늘의 문구 연동 (6시간마다 갱신)
   return loadEngCount();     // [공유] 동별 관리인원 (Supabase 1회)
 }).then(function(){
   return loadMaster();
