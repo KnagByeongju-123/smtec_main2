@@ -40,6 +40,14 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 #safetyOv .sf-bar{margin-top:5vh;width:min(60vw,720px);height:8px;border-radius:4px;background:#2a3550;overflow:hidden}
 #safetyOv .sf-bar i{display:block;height:100%;width:100%;background:var(--amber);transform-origin:left;transition:none}
 @keyframes sfBlink{0%,100%{opacity:1}50%{opacity:.55}}
+/* v13.49: 오늘의 문구(재고현황과 동일) 분류별 색 — 안전=기본(주황) */
+#safetyOv.sf-long .sf-msg{font-size:clamp(34px,5.6vw,104px)}   /* 긴 문구(오늘의 문구) 3줄 넘침 방지 */
+#safetyOv.sf-q .sf-tag,#safetyOv.sf-q .sf-bar i{background:#22c55e}
+#safetyOv.sf-q .sf-msg{color:#86efac;text-shadow:0 0 30px rgba(34,197,94,.5),0 4px 18px rgba(0,0,0,.8)}
+#safetyOv.sf-e .sf-tag,#safetyOv.sf-e .sf-bar i{background:#2dd4bf}
+#safetyOv.sf-e .sf-msg{color:#99f6e4;text-shadow:0 0 30px rgba(45,212,191,.5),0 4px 18px rgba(0,0,0,.8)}
+#safetyOv.sf-o .sf-tag,#safetyOv.sf-o .sf-bar i{background:#60a5fa}
+#safetyOv.sf-o .sf-msg{color:#bfdbfe;text-shadow:0 0 30px rgba(96,165,250,.5),0 4px 18px rgba(0,0,0,.8)}
 #patrolPanel textarea{width:100%;height:120px;background:#1a2030;color:#cfd8e3;border:1px solid #2a3550;border-radius:6px;padding:6px;font-size:11px;line-height:1.4;resize:vertical}
 /* v13.44: 우하단 대형 시계 — 현장 원거리 가독용 (흰색·고딕) */
 #bigClock{position:absolute;right:3vw;bottom:9vh;z-index:46;text-align:right;pointer-events:none;line-height:1;
@@ -98,7 +106,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
 <body>
 <div class="hdr">
   <div class="hdr-top">
-    <h1>🏭 트윈팩토리 3D<span class="v">v13.48</span></h1>
+    <h1>🏭 트윈팩토리 3D<span class="v">v13.49</span></h1>
     <div class="live"><span class="dot" id="dot"></span><span id="upd">연결 중…</span> · <span id="cd">30</span>s</div>
   </div>
   <div class="sum">
@@ -128,6 +136,8 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:
     <div style="color:#9fb0d0;font-size:11px;margin-bottom:4px">⚠ 안전문구 (라인 순회: B동→C동→안전문구 반복)</div>
     <div style="color:#7e8aa0;font-size:10px;line-height:1.4;margin-bottom:4px">한 줄에 한 문구. 매 순환마다 랜덤으로 1개를 크게 표시합니다.</div>
     <textarea id="safetyMsgs" placeholder="한 줄에 한 문구"></textarea>
+    <label style="display:flex;align-items:center;gap:6px;margin:4px 0 0;font-size:11px;color:#cfd8e3;cursor:pointer"><input type="checkbox" id="safetyDaily" style="margin:0"> 📅 오늘의 문구(재고현황) 같이 표시</label>
+    <div style="color:#7e8aa0;font-size:10px;line-height:1.4">안전·품질·환경·정리정돈 4개가 날짜마다 바뀌며, 위 문구와 번갈아 표시됩니다.</div>
     <div style="display:flex;gap:6px;align-items:center;margin-top:4px">
       <label style="margin:0;white-space:nowrap">표시(초)</label>
       <input type="number" id="safetySec" min="3" max="60" step="1" style="width:56px;background:#1a2030;color:#cfd8e3;border:1px solid #2a3550;border-radius:6px;padding:5px;font-size:12px">
@@ -935,7 +945,7 @@ function updatePatrol(dt){
   var t=(Date.now()-patrolStartMs)/1000/PATROL_ZONE_SEC;
   if(t>=1){
     var i=ids.indexOf(curZone);
-    if(i>=ids.length-1 && safetyList().length){
+    if(i>=ids.length-1 && safetyHasAny()){
       safetyShow();
       patrolStartMs=Date.now();
       return;
@@ -965,20 +975,79 @@ var SAFETY_DEFAULT=[
   '설비 주변 정리정돈으로 넘어짐·끼임 사고를 예방합시다',
   '서두르지 마세요. 안전이 생산보다 먼저입니다'
 ];
-var SAFETY={msgs:SAFETY_DEFAULT.slice(),sec:8}, safetyOn=false, safetyLastIdx=-1;
+/* v13.49: 오늘의 생산·안전 문구 — 재고현황(stock_ledger)과 같은 목록·같은 날짜 계산 → 같은 날은 두 화면이 같은 문구 */
+var DAILY_MSG=[
+  ['안전','금형 교체·이물 제거 전 전원 차단, LOTO 잠금 표지 확인 후 작업합니다.'],
+  ['안전','프레스 안전장치(광전자식·양수조작)를 끄거나 우회하지 않습니다.'],
+  ['안전','슬라이드 아래로 손을 넣지 않습니다. 반드시 수공구를 사용합니다.'],
+  ['안전','작업 전 보호구(안전화·장갑·보안경·귀마개) 착용을 서로 확인합니다.'],
+  ['안전','코일 운반·장착 시 크레인 와이어와 훅 해지장치를 먼저 점검합니다.'],
+  ['안전','바닥의 기름·스크랩은 즉시 치웁니다. 넘어짐 사고가 가장 흔합니다.'],
+  ['안전','이상음·이상진동이 나면 즉시 멈추고 관리자에게 알립니다.'],
+  ['안전','지게차 이동 통로에서는 멈추고, 보고, 지나갑니다.'],
+  ['안전','스크랩 배출구 근처에 손을 두지 않습니다. 날카로운 모서리 주의.'],
+  ['안전','아차사고도 보고합니다. 작은 보고가 큰 사고를 막습니다.'],
+  ['안전','작업 시작 전 프레스 일상점검표를 확인하고 서명합니다.'],
+  ['안전','혼자 무리하게 들지 않습니다. 중량물은 2인 1조 또는 보조기구로.'],
+  ['품질','초물·중물·종물 검사를 빠짐없이 기록합니다. 초품 합격 전 양산 금지.'],
+  ['품질','금형 교체 후 첫 제품은 반드시 치수 확인 후 진행합니다.'],
+  ['품질','다른 재질·기종이 섞이지 않게 LOT 표와 현품표를 확인합니다.'],
+  ['품질','부적합품은 빨간 상자에 즉시 격리하고 식별표를 붙입니다.'],
+  ['품질','버(Burr)·찍힘·크랙은 눈으로 한 번 더, 손으로 한 번 더.'],
+  ['품질','4M(사람·설비·재료·방법) 변경 시 반드시 보고하고 초품 검사합니다.'],
+  ['품질','고객 불만 0건은 내 공정에서 불량을 넘기지 않는 것에서 시작합니다.'],
+  ['품질','게이지·측정기는 교정 유효기간을 확인하고 사용합니다.'],
+  ['품질','작업표준서대로 작업합니다. 내 방식보다 표준이 먼저입니다.'],
+  ['품질','생산 수량과 불량 수량은 그날 MES에 정확히 입력합니다.'],
+  ['품질','포장 전 수량·라벨·LOT 번호 일치를 확인합니다.'],
+  ['품질','이상이 보이면 멈추고, 부르고, 기다립니다.'],
+  ['환경','폐유·폐윤활유는 지정 용기에 분리 보관합니다.'],
+  ['환경','스크랩은 재질별로 분리 배출합니다.'],
+  ['환경','쉬는 시간 공회전 설비와 조명은 끄고 갑니다.'],
+  ['환경','누유를 발견하면 흡착포로 즉시 막고 보고합니다.'],
+  ['정리','쓰고 난 공구는 제자리에. 정리정돈이 안전과 품질의 시작입니다.'],
+  ['정리','통로와 비상구, 소화기 앞에는 물건을 두지 않습니다.'],
+  ['정리','교대 시 설비 상태와 특이사항을 다음 근무자에게 꼭 인계합니다.']];
+var DM_TAG={'안전':['','⛑️ 오늘의 안전'],'품질':['sf-q','✅ 오늘의 품질'],'환경':['sf-e','🌱 오늘의 환경'],'정리':['sf-o','🧹 오늘의 정리정돈']};
+function dailyList(){
+  var d=new Date(), k=Math.floor((Date.UTC(d.getFullYear(),d.getMonth(),d.getDate())-Date.UTC(2026,0,1))/864e5);
+  return ['안전','품질','환경','정리'].map(function(c){
+    var a=DAILY_MSG.filter(function(o){return o[0]===c});
+    return a[((k%a.length)+a.length)%a.length];
+  });
+}
+var SAFETY={msgs:SAFETY_DEFAULT.slice(),sec:8,daily:true}, safetyOn=false, safetyLastIdx=-1, safetyTurn=0, dailyIdx=0;
 function safetyList(){ return (SAFETY.msgs||[]).map(function(m){return String(m).trim()}).filter(Boolean); }
 function safetySec(){ var n=parseFloat(SAFETY.sec); return (n>=3&&n<=60)?n:8; }
-function safetyPick(){
+function safetyDailyOn(){ return SAFETY.daily!==false; }
+function safetyHasAny(){ return safetyList().length>0 || safetyDailyOn(); }
+function safetyPickCustom(){
   var L=safetyList(); if(!L.length)return '';
   if(L.length===1)return L[0];
   var i; do{ i=Math.floor(Math.random()*L.length); }while(i===safetyLastIdx);   // 직전 문구 연속 방지
   safetyLastIdx=i; return L[i];
 }
-function safetyShow(){
-  var ov=document.getElementById('safetyOv'), el=document.getElementById('sfMsg'); if(!ov||!el)return;
-  el.textContent=safetyPick();
+// 순환마다 [등록 안전문구(랜덤)] ↔ [오늘의 문구(안전→품질→환경→정리 순)] 번갈아 → {cls,tag,msg}
+function safetyPick(){
+  var useDaily=safetyDailyOn() && (!safetyList().length || (safetyTurn++%2===1));
+  if(useDaily){
+    var o=dailyList()[dailyIdx++%4], t=DM_TAG[o[0]];
+    return {cls:t[0],tag:t[1],msg:o[1]};
+  }
+  return {cls:'',tag:'⚠ 안전 제일',msg:safetyPickCustom()};
+}
+function safetyRender(p){
+  var ov=document.getElementById('safetyOv'), el=document.getElementById('sfMsg'); if(!ov||!el)return null;
+  ov.classList.remove('sf-q','sf-e','sf-o','sf-long'); if(p.cls)ov.classList.add(p.cls);
+  if(String(p.msg||'').length>30)ov.classList.add('sf-long');
+  var tg=ov.querySelector('.sf-tag'); if(tg)tg.textContent=p.tag;
+  el.textContent=p.msg||'(문구 없음)';
   var bar=document.getElementById('sfBar'); if(bar)bar.style.transform='scaleX(1)';
-  ov.classList.add('show'); safetyOn=true;
+  ov.classList.add('show');
+  return ov;
+}
+function safetyShow(){
+  if(safetyRender(safetyPick()))safetyOn=true;
 }
 function safetyHide(){
   var ov=document.getElementById('safetyOv'); if(ov)ov.classList.remove('show');
@@ -986,21 +1055,20 @@ function safetyHide(){
 }
 function safetyPreview(){
   safetyReadForm();
-  var ov=document.getElementById('safetyOv'), el=document.getElementById('sfMsg'); if(!ov||!el)return;
-  el.textContent=safetyPick()||'(문구 없음)';
-  var bar=document.getElementById('sfBar'); if(bar)bar.style.transform='scaleX(1)';
-  ov.classList.add('show');
+  var ov=safetyRender(safetyPick()); if(!ov)return;
   setTimeout(function(){ if(!safetyOn)ov.classList.remove('show'); },3000);
 }
 function safetyReadForm(){
   var ta=document.getElementById('safetyMsgs'), se=document.getElementById('safetySec');
   if(ta)SAFETY.msgs=ta.value.split('\n').map(function(m){return m.trim()}).filter(Boolean);
   if(se)SAFETY.sec=parseFloat(se.value)||8;
+  var dc=document.getElementById('safetyDaily'); if(dc)SAFETY.daily=dc.checked;
 }
 function safetyFillForm(){
   var ta=document.getElementById('safetyMsgs'), se=document.getElementById('safetySec');
   if(ta)ta.value=safetyList().join('\n');
   if(se)se.value=safetySec();
+  var dc=document.getElementById('safetyDaily'); if(dc)dc.checked=safetyDailyOn();
 }
 async function loadSafetyCfg(){
   var got=false;
@@ -1011,7 +1079,7 @@ async function loadSafetyCfg(){
   if(!got){
     try{ var loc=JSON.parse(localStorage.getItem('twin_safety')||'null'); if(loc&&Array.isArray(loc.msgs))SAFETY=loc; }catch(e){}
   }
-  if(!safetyList().length)SAFETY={msgs:SAFETY_DEFAULT.slice(),sec:8};
+  if(!safetyList().length)SAFETY={msgs:SAFETY_DEFAULT.slice(),sec:8,daily:safetyDailyOn()};
   safetyFillForm();
 }
 async function saveSafetyCfg(){
@@ -1024,11 +1092,11 @@ async function saveSafetyCfg(){
   }catch(e){ alert('저장 오류: '+e); return; }
   try{ localStorage.setItem('twin_safety',JSON.stringify(SAFETY)); }catch(e){}
   safetyFillForm();
-  alert('⚠ 안전문구 '+safetyList().length+'개 저장됨 (표시 '+safetySec()+'초)');
+  alert('⚠ 안전문구 '+safetyList().length+'개 저장됨 (표시 '+safetySec()+'초'+(safetyDailyOn()?' · 오늘의 문구 포함':'')+')');
 }
 function resetSafetyCfg(){
   if(!confirm('안전문구를 기본 10개로 되돌릴까요? (저장 버튼을 눌러야 서버에 반영됩니다)'))return;
-  SAFETY={msgs:SAFETY_DEFAULT.slice(),sec:8}; safetyFillForm();
+  SAFETY={msgs:SAFETY_DEFAULT.slice(),sec:8,daily:true}; safetyFillForm();
 }
 function patrolNextZone(){}
 
