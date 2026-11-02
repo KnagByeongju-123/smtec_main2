@@ -61,6 +61,16 @@ body{padding:32px 16px 80px}
 .mast .meta dt{font-family:var(--mono); font-size:9.5px; letter-spacing:0.18em;
      text-transform:uppercase; color:rgba(14,26,43,.6); margin-bottom:3px;}
 .mast .meta dd{font-size:13.5px; font-weight:500;}
+/* 인쇄 바닥글 (용지 크기 / 문서번호) */
+.page-foot{display:none}
+@media print{
+  .page-foot{display:flex; justify-content:space-between; margin-top:4mm; padding-top:1.2mm; border-top:1px solid #bbb;
+    font-family:var(--mono); font-size:8.5px; letter-spacing:.06em; color:#555; break-inside:avoid; page-break-inside:avoid;}
+}
+/* 문서번호 (표지 제목 아래) */
+.mast .doc-no{margin-top:12px; font-family:var(--mono); font-size:12px; letter-spacing:.06em; color:rgba(14,26,43,.75);}
+.mast .doc-no b{color:var(--ink); font-size:13px; letter-spacing:.08em;}
+.mast .doc-no span{margin-left:16px;}
 
 .approval-box{
   display:grid;
@@ -1892,6 +1902,9 @@ function generateReportFromCumulative(){
   }
   // 표지 제목용 - 최신 월 기준
   info.titleMonth = `${maxY}년 ${String(maxM).padStart(2,'0')}월`;
+  // 문서번호: TJ-QR-연-월 (보고 대상 최신 월 기준), 작성일 = 보고서 생성일
+  info.docNo = reportDocNo(maxY, maxM);
+  info.docDate = localYmd(new Date());
   
   applyManualDataToSummary(summary, info);
   
@@ -2790,6 +2803,7 @@ function renderReport(info, summary){
   html += renderFooter(info);
   
   document.getElementById('reportContent').innerHTML = html;
+  addPrintFooters(info);
   document.getElementById('reportInfo').textContent = 
     `${info.company} · ${info.periodLabel} · ${sorted.length}개 거래처`;
   
@@ -2806,6 +2820,27 @@ function renderReport(info, summary){
   
   window.scrollTo(0, 0);
 }
+
+// 인쇄(Ctrl+P) 바닥글: 페이지 단위 블록(표지·목차·각 섹션) 끝에 왼쪽 용지 크기 / 오른쪽 문서번호
+//  거래처 페이지는 A3 가로(@page vendor), 그 외 A4 가로. 화면에는 숨기고 인쇄에서만 표시
+//  (PDF 다운로드는 jsPDF 로 각 페이지 하단에 따로 넣는다)
+function addPrintFooters(info){
+  const root = document.getElementById('reportContent');
+  if(!root) return;
+  const blocks = [root.querySelector('.mast'), root.querySelector('.toc'), ...root.querySelectorAll('section')].filter(Boolean);
+  blocks.forEach(el => {
+    if(el.querySelector(':scope > .page-foot')) return;
+    const a3 = el.classList.contains('vendor-page');
+    const f = document.createElement('div');
+    f.className = 'page-foot';
+    f.innerHTML = `<span>${a3 ? 'A3 (420 x 297 mm)' : 'A4 (297 x 210 mm)'}</span><span>${escapeHtml(info.docNo || '')}</span>`;
+    el.appendChild(f);
+  });
+}
+
+// 월간 품질현황 보고서 문서번호 (예: TJ-QR-2026-10)
+function reportDocNo(y, m){ return `TJ-QR-${y}-${String(m).padStart(2,'0')}`; }
+function localYmd(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
 
 function renderMast(info, sorted, totalInsp, totalDef, totalLoss, overallPpm){
   const isAccum = info.monthCount > 1;
@@ -2860,6 +2895,7 @@ function renderMast(info, sorted, totalInsp, totalDef, totalLoss, overallPpm){
         Quality Report
         <span class="ko">${escapeHtml(info.titleMonth || info.periodLabel)} 품질현황</span>
       </h1>
+      <div class="doc-no">문서번호 <b>${escapeHtml(info.docNo || '')}</b><span>작성일 ${escapeHtml(info.docDate || '')}</span></div>
     </div>
     <div class="approval-box">
       <div class="a-label">결재</div>
@@ -4849,9 +4885,11 @@ async function downloadPdfReport(){
   
   const months = Object.keys(CUMULATIVE_DATA).sort();
   let titleMonth = '품질현황';
+  let docNo = '';
   if(months.length > 0){
     const [maxY, maxM] = months[months.length-1].split('-').map(Number);
     titleMonth = `${maxY}년${String(maxM).padStart(2,'0')}월`;
+    docNo = reportDocNo(maxY, maxM);
   }
   
   showStatus('📄 PDF 생성 중... (페이지 캡처 중, 잠시만 기다려주세요)', 'info');
@@ -4953,8 +4991,9 @@ async function downloadPdfReport(){
         const pageW = 297;
         const pageH = 210;
         const margin = 4;
+        const footH = 11;                   // 바닥글(용지·문서번호) + 출력자 표시 자리
         const contentW = pageW - margin*2;  // 289mm
-        const contentH = pageH - margin*2;  // 202mm
+        const contentH = pageH - margin - footH;  // 195mm
         
         // 비율 유지하면서 페이지에 최대한 크게 표시
         // 가로 또는 세로 둘 중 짧은 쪽 기준 (변형 없음)
@@ -4974,7 +5013,7 @@ async function downloadPdfReport(){
         
         // 페이지 가운데 정렬 (남는 공간 위아래로 자연스럽게 분배)
         const x = (pageW - drawW) / 2;
-        const y = (pageH - drawH) / 2;
+        const y = margin + (contentH - drawH) / 2;
         
         if(!pdf){
           pdf = new jsPDF({
@@ -4987,6 +5026,11 @@ async function downloadPdfReport(){
         }
         
         pdf.addImage(imgData, 'JPEG', x, y, drawW, drawH);
+        // 바닥글: 왼쪽 용지 크기 / 오른쪽 문서번호
+        pdf.setFontSize(8);
+        pdf.setTextColor(90, 90, 90);
+        pdf.text('A4 (297 x 210 mm)', margin + 2, pageH - 6.5);
+        if(docNo) pdf.text(docNo, pageW - margin - 2, pageH - 6.5, { align: 'right' });
         pageCount++;
       } finally {
         document.body.removeChild(wrapper);
@@ -5016,7 +5060,7 @@ async function downloadPdfReport(){
     }
     
     // 다운로드
-    const fname = `품질현황_${titleMonth}_${new Date().toISOString().slice(0,10)}.pdf`;
+    const fname = `${docNo ? docNo + '_' : ''}품질현황_${titleMonth}_${localYmd(new Date())}.pdf`;
     pdf.save(fname);
     
     showStatus(`✓ PDF 다운로드 완료: ${fname} (${pageCount}페이지)`, 'success');
