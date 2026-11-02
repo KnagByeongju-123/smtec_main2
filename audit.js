@@ -278,11 +278,11 @@
 <div style="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:2147483646;display:flex;align-items:center;justify-content:center;font-family:'Malgun Gothic',sans-serif">
  <div style="background:#fff;color:#111;border-radius:10px;padding:22px 24px;width:min(360px,92vw);box-shadow:0 8px 30px rgba(0,0,0,.4)">
   <div style="font-size:18px;font-weight:800;margin-bottom:4px">사용자 확인</div>
-  <div style="font-size:12px;color:#555;margin-bottom:14px">${msg || '접속·수정·인쇄 기록을 위해 PIN 을 입력해 주세요 (7일 유지)'}</div>
+  <div style="font-size:12px;color:#555;margin-bottom:14px">${msg || '사원번호(PIN)를 입력해야 화면을 사용할 수 있습니다 (7일 유지)'}</div>
   <input id="tj-pin" type="password" inputmode="numeric" maxlength="8" placeholder="PIN" style="width:100%;font-size:22px;padding:8px;letter-spacing:6px;text-align:center;border:1px solid #bbb;border-radius:6px">
   <div id="tj-err" style="color:#c00;font-size:12px;height:16px;margin-top:6px"></div>
   <div style="display:flex;gap:8px;margin-top:6px">
-   <button id="tj-later" style="flex:1;padding:9px;border:0;border-radius:6px;background:#ddd;cursor:pointer">나중에</button>
+   <button id="tj-later" style="display:none;flex:1;padding:9px;border:0;border-radius:6px;background:#ddd;cursor:pointer">임시 사용</button>
    <button id="tj-ok" style="flex:2;padding:9px;border:0;border-radius:6px;background:#0a2a8c;color:#fff;font-weight:700;cursor:pointer">확인</button>
   </div>
  </div>
@@ -290,7 +290,8 @@
     document.body.appendChild(box);
     const $ = (id) => document.getElementById(id);
     const close = () => { box.remove(); loginShown = false; };
-    $('tj-later').onclick = () => close();
+    // 로그인 필수: 닫기 없음. 서버 장애로 확인이 안 될 때만 '임시 사용'(미로그인 기록)을 연다
+    $('tj-later').onclick = () => { send('login', { detail: { via: 'temp-use', reason: 'server-unreachable' } }); close(); };
     const ok = async () => {
       const pin = $('tj-pin').value.trim();
       if (!/^\d{3,8}$/.test(pin)) { $('tj-err').textContent = 'PIN 을 확인해 주세요'; return; }
@@ -305,7 +306,7 @@
         send('login', { detail: { via: 'audit.js' } });
         close();
         document.body.classList.remove('tj-noauth');
-      } catch (e) { $('tj-err').textContent = '서버 연결 실패 — 잠시 후 다시 시도'; }
+      } catch (e) { $('tj-err').textContent = '서버 연결 실패 — 다시 시도하거나 임시 사용'; $('tj-later').style.display = ''; }
     };
     $('tj-ok').onclick = ok;
     $('tj-pin').addEventListener('keydown', (e) => { if (e.key === 'Enter') ok(); });
