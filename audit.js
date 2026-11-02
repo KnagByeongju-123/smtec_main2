@@ -230,6 +230,9 @@
   }
 
   // ---------- PC 이름 확인 (로그인돼 있지만 이 PC 이름이 없을 때 1회) ----------
+  const IS_MOBILE = /Mobi|iPhone|iPad|Android|Tablet/i.test(navigator.userAgent || '');
+  const DEV_WORD = IS_MOBILE ? '기기' : 'PC';
+  const DEV_EG = IS_MOBILE ? '예: 품질팀-01 휴대폰' : '예: 품질팀-01';
   const SK_DEVICE_LATER = 'tj_audit_device_later';
   function askDevice() {
     if (loginShown || device() || !document.body || DISPLAY_PAGES.indexOf(PAGE) >= 0) return;
@@ -240,9 +243,9 @@
     box.innerHTML = `
 <div style="position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:2147483646;display:flex;align-items:center;justify-content:center;font-family:'Malgun Gothic',sans-serif">
  <div style="background:#fff;color:#111;border-radius:10px;padding:20px 22px;width:min(340px,92vw);box-shadow:0 8px 30px rgba(0,0,0,.4)">
-  <div style="font-size:17px;font-weight:800;margin-bottom:4px">이 PC 이름 등록</div>
-  <div style="font-size:12px;color:#555;margin-bottom:12px">접속·인쇄 기록에 함께 남습니다. 이 PC에서 한 번만 입력합니다.</div>
-  <input id="tj-dev2" type="text" maxlength="40" placeholder="예: 품질팀-01" style="width:100%;font-size:15px;padding:8px;border:1px solid #bbb;border-radius:6px">
+  <div style="font-size:17px;font-weight:800;margin-bottom:4px">이 ${DEV_WORD} 이름 등록</div>
+  <div style="font-size:12px;color:#555;margin-bottom:12px">접속·인쇄 기록에 함께 남습니다. 이 ${DEV_WORD}에서 한 번만 입력합니다.</div>
+  <input id="tj-dev2" type="text" maxlength="40" placeholder="${DEV_EG}" style="width:100%;font-size:15px;padding:8px;border:1px solid #bbb;border-radius:6px">
   <div id="tj-err2" style="color:#c00;font-size:12px;height:16px;margin-top:6px"></div>
   <div style="display:flex;gap:8px;margin-top:4px">
    <button id="tj-later2" style="flex:1;padding:9px;border:0;border-radius:6px;background:#ddd;cursor:pointer">나중에</button>
@@ -256,7 +259,7 @@
     $('tj-later2').onclick = () => { try { sessionStorage.setItem(SK_DEVICE_LATER, '1'); } catch (_) {} close(); };
     const ok = () => {
       const v = $('tj-dev2').value.trim();
-      if (v.length < 2) { $('tj-err2').textContent = 'PC 이름을 입력해 주세요'; return; }
+      if (v.length < 2) { $('tj-err2').textContent = DEV_WORD + ' 이름을 입력해 주세요'; return; }
       ls.set(LK_DEVICE, v);
       send('login', { detail: { via: 'device-register', device: v } });
       close();
