@@ -27,6 +27,8 @@
   const DISPLAY_PAGES = ['mes_kiosk.html', 'QC_mes.html', 'counter_dashboard.html', 'env_dashboard.html', 'twin_factory.html', 'twin_factory_3d_QC.html', 'mes_work_virtual.html', 'camera.html', 'mon.html'];
   // 자체 잠금 화면이 있는 포털: 포털 로그인이 끝나면 그 사용자로 기록
   const OWN_LOGIN_PAGES = ['index.html', ''];
+  // 포털 탭(내장 창)으로 열린 화면: 입력 창은 바깥 포털에서만 띄운다
+  const IN_FRAME = (() => { try { return window.top !== window && !!window.top.__TJ_AUDIT__; } catch (_) { return false; } })();
 
   const ls = {
     get(k) { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch (_) { return null; } },
@@ -147,6 +149,83 @@
   }
   window.addEventListener('beforeprint', () => onPrint(document, document.title, 'page'));
 
+  // ---------- ③-2 PDF 직접 생성 (jsPDF·html2pdf): 브라우저 인쇄를 거치지 않으므로 따로 잡는다 ----------
+  //  모든 페이지 하단에 출력자 표시를 그림으로 넣고 인쇄 기록(via: pdf-save / pdf-output)을 남긴다
+  //  로그인하지 않았으면 PDF 저장을 막는다
+  function markImage(text) {
+    const c = document.createElement('canvas');
+    c.width = 2400; c.height = 40;
+    const g = c.getContext('2d');
+    g.fillStyle = '#ffffff'; g.fillRect(0, 0, c.width, c.height);
+    g.fillStyle = '#444444'; g.font = "22px 'Malgun Gothic','맑은 고딕',sans-serif";
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText(text, c.width / 2, c.height / 2 + 1);
+    g.fillStyle = '#999999'; g.fillRect(0, 0, c.width, 1);
+    return { url: c.toDataURL('image/png'), ratio: c.height / c.width };
+  }
+  function markPdf(pdf, via, name) {
+    if (!pdf || pdf.__tjMarked) return true;
+    if (!user()) { showLogin('PDF로 저장하려면 로그인이 필요합니다'); return false; }
+    const title = (typeof name === 'string' && name) || document.title;
+    const text = markText(title);
+    let pages = 0;
+    try {
+      const img = markImage(text);
+      pages = pdf.getNumberOfPages();
+      const cur = pdf.getCurrentPageInfo ? pdf.getCurrentPageInfo().pageNumber : pages;
+      for (let i = 1; i <= pages; i++) {
+        pdf.setPage(i);
+        const W = pdf.internal.pageSize.getWidth(), H = pdf.internal.pageSize.getHeight();
+        const w = W * 0.92, h = w * img.ratio;
+        pdf.addImage(img.url, 'PNG', (W - w) / 2, H - h - H * 0.004, w, h);
+      }
+      pdf.setPage(cur);
+    } catch (_) {}
+    pdf.__tjMarked = true;
+    send('print', { title: document.title, detail: { via, file: typeof name === 'string' ? name : '', pages, loggedIn: true, mark: text } });
+    return true;
+  }
+  // jsPDF 2.x 는 save/output 을 문서(인스턴스)마다 만들므로, 생성자를 감싸 새 문서마다 연결한다
+  function hookPdfDoc(doc) {
+    if (!doc || doc.__tjHooked) return doc;
+    const os = doc.save, oo = doc.output;
+    if (typeof os === 'function') doc.save = function (name) { if (!markPdf(this, 'pdf-save', name)) return this; return os.apply(this, arguments); };
+    if (typeof oo === 'function') doc.output = function (type) {
+      // 미리보기·파일로 내보내는 출력만 표시 (로그인 안 됐으면 표시 없이 원래대로 — 저장은 save 에서 막음)
+      if (type && /blob|uri|url|window/i.test(type) && user()) markPdf(this, 'pdf-output', document.title);
+      return oo.apply(this, arguments);
+    };
+    doc.__tjHooked = true;
+    return doc;
+  }
+  function wrapCtor(holder, key) {
+    const Orig = holder && holder[key];
+    if (typeof Orig !== 'function' || Orig.__tjWrapped) return;
+    const TJ = function () { return hookPdfDoc(new (Function.prototype.bind.apply(Orig, [null].concat([].slice.call(arguments))))()); };
+    TJ.prototype = Orig.prototype;
+    Object.setPrototypeOf(TJ, Orig);   // API·version 등 정적 속성 그대로
+    TJ.__tjWrapped = true;
+    try { holder[key] = TJ; } catch (_) {}
+  }
+  function patchPdfLibs() {
+    if (window.jspdf) wrapCtor(window.jspdf, 'jsPDF');
+    if (window.jsPDF) wrapCtor(window, 'jsPDF');
+    const H2 = window.html2pdf;
+    if (H2 && H2.Worker && !H2.Worker.prototype.__tjPatched) {
+      const W = H2.Worker.prototype, os = W.save;
+      W.save = function (filename) {
+        return this.toPdf().then(function () {
+          if (!markPdf(this.prop.pdf, 'pdf-save', filename || (this.opt && this.opt.filename))) throw new Error('로그인 후 PDF 저장 가능');
+        }).then(function () { return os.call(this, filename); });
+      };
+      W.__tjPatched = true;
+    }
+  }
+  // PDF 라이브러리는 audit.js 뒤에 로드되므로 로드 후·잠시 동안 확인
+  document.addEventListener('DOMContentLoaded', patchPdfLibs);
+  window.addEventListener('load', patchPdfLibs);
+  (function () { let n = 0; const t = setInterval(() => { patchPdfLibs(); if (++n > 30) clearInterval(t); }, 1000); })();
+
   // 새 창 인쇄: window.open 으로 연 같은 출처 창의 print() 와 Ctrl+P 를 잡는다
   const origOpen = window.open;
   window.open = function () {
@@ -235,7 +314,7 @@
   const DEV_EG = IS_MOBILE ? '예: 품질팀-01 휴대폰' : '예: 품질팀-01';
   const SK_DEVICE_LATER = 'tj_audit_device_later';
   function askDevice() {
-    if (loginShown || device() || !document.body || DISPLAY_PAGES.indexOf(PAGE) >= 0) return;
+    if (IN_FRAME || loginShown || device() || !document.body || DISPLAY_PAGES.indexOf(PAGE) >= 0) return;
     try { if (sessionStorage.getItem(SK_DEVICE_LATER)) return; } catch (_) {}
     loginShown = true;
     const box = document.createElement('div');
@@ -286,7 +365,7 @@
       return;
     }
     send('open');
-    if (!u && DISPLAY_PAGES.indexOf(PAGE) < 0) showLogin();
+    if (!u && !IN_FRAME && DISPLAY_PAGES.indexOf(PAGE) < 0) showLogin();
     else if (u) askDevice();
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
