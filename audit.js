@@ -59,7 +59,7 @@
   function send(kind, extra) {
     const u = user();
     const body = JSON.stringify(Object.assign({
-      kind, page: PAGE, title: document.title || '', doc: location.search || '',
+      kind, page: PAGE, title: document.title || '', doc: location.search.replace(/([?&])_v=[^&]*&?/, '$1').replace(/[?&]$/, ''),
       user_id: u ? u.id : '', user_name: u ? u.name : '(미로그인)', dept: u ? u.dept : '', device: device(),
     }, extra || {}));
     try {
