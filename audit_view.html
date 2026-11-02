@@ -37,8 +37,10 @@ td.d{font-family:Consolas,monospace;font-size:11px;color:#444;max-width:420px;wo
   <label>건수<select id="limit"><option>300</option><option>1000</option><option>2000</option></select></label>
   <button id="go">조회</button>
   <button id="csv" class="sub">CSV 저장</button>
+  <button id="bk" class="sub">일일 백업 파일</button>
 </div>
 <div id="msg">관리자 PIN 을 입력하고 조회하세요. (기록은 수정·삭제할 수 없습니다)</div>
+<div id="bkWrap" class="wrap" style="display:none;margin-bottom:12px"><table><thead><tr><th>백업 파일 (매일 00:10 전날분 자동 저장)</th><th>크기</th><th>저장 시각</th><th>내려받기 (1시간 유효)</th></tr></thead><tbody id="bkTb"></tbody></table></div>
 <div class="wrap"><table><thead><tr><th>일시</th><th>구분</th><th>사용자</th><th>부서</th><th>PC</th><th>기기</th><th>IP</th><th>화면</th><th>내용</th></tr></thead><tbody id="tb"></tbody></table></div>
 <script>
 const URL_ = 'https://ebthltdmxpzlkfwvdloz.supabase.co/functions/v1/audit-log';
@@ -68,6 +70,15 @@ async function load() {
 }
 $('go').onclick = load;
 $('pin').addEventListener('keydown', (e) => { if (e.key === 'Enter') load(); });
+$('bk').onclick = async () => {
+  $('msg').textContent = '백업 파일 조회 중…';
+  const r = await fetch(URL_, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'backups', pin: $('pin').value.trim(), months: 6 }) });
+  const j = await r.json().catch(() => ({}));
+  if (!j.ok) { $('msg').textContent = j.error || '백업 조회 실패'; return; }
+  $('msg').textContent = `백업 파일 ${j.files.length}개 (최근 6개월)`;
+  $('bkWrap').style.display = '';
+  $('bkTb').innerHTML = j.files.length ? j.files.map((f) => `<tr><td>${esc(f.path)}</td><td>${f.size ? (f.size / 1024).toFixed(1) + ' KB' : '-'}</td><td>${f.updated ? new Date(f.updated).toLocaleString('ko-KR') : '-'}</td><td>${f.url ? `<a href="${esc(f.url)}" target="_blank" rel="noopener">${f.path.endsWith('.csv') ? '엑셀(CSV)' : 'JSON'} 받기</a>` : '-'}</td></tr>`).join('') : '<tr><td colspan="4">백업 파일이 없습니다</td></tr>';
+};
 $('csv').onclick = () => {
   if (!rows.length) return;
   const head = ['일시', '구분', '사용자', 'ID', '부서', 'PC', '기기', 'IP', '화면', '파일', '내용'];
