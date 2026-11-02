@@ -1552,6 +1552,22 @@ function inferVendorFromPart(partNo){
   return null;  // 추정 불가
 }
 
+// 기종 → 품번 변환 (model_item_map)
+//   ⭐ 매핑의 고객사가 기종 고객사와 다르면 잘못 자동학습된 매핑(예: SBC 기종 → SKF씰 1888-0005)으로 보고 무시 → 기종명 사용
+//   품번 패턴으로 추정한 거래처가 기종 고객사와 충돌하는 경우도 무시
+function resolveModelPart(model, cust, itemOf, itemCustOf){
+  const item = itemOf[model];
+  if(!item) return model;
+  if(cust){
+    const v = normalizeVendorName(cust);
+    const ic = itemCustOf && itemCustOf[model];
+    if(ic && normalizeVendorName(ic) !== v) return model;
+    const iv = inferVendorFromPart(item);
+    if(iv && iv !== v) return model;
+  }
+  return item;
+}
+
 // ============================================================
 // 누적 데이터 (월별 분리 저장 - localStorage)
 // 구조: { 'YYYY-MM': { 거래처명: {insp, defect, defectTypes, parts, partsSet, dailyRows} } }
@@ -3927,7 +3943,8 @@ async function loadWeeklyWorstTrends(force){
     const custOf = {}, itemOf = {};
     genModels.forEach(r => { if(r.model_name && r.customer) custOf[r.model_name] = r.customer; });
     models.forEach(r => { if(r.model_name && r.customer) custOf[r.model_name] = r.customer; });
-    itemMap.forEach(r => { if(!r.model_name) return; if(r.item_code) itemOf[r.model_name] = r.item_code; if(r.customer && !custOf[r.model_name]) custOf[r.model_name] = r.customer; });
+    const itemCustOf = {};
+    itemMap.forEach(r => { if(!r.model_name) return; if(r.item_code){ itemOf[r.model_name] = r.item_code; itemCustOf[r.model_name] = r.customer || ''; } if(r.customer && !custOf[r.model_name]) custOf[r.model_name] = r.customer; });
     const typeCat = {}; defTypes.forEach(r => { if(r.type_name) typeCat[r.type_name] = r.category || ''; });
     const manualMV = (typeof mcGetModelVendor === 'function') ? mcGetModelVendor() : {};
 
@@ -3942,8 +3959,8 @@ async function loadWeeklyWorstTrends(force){
       if(dtRaw.startsWith('__')) return;
       const mon = _wkMondayOf(String(r.defect_date)); const i = wIdx[mon]; if(i === undefined) return;
       const model = String(r.model_name || '').trim();
-      const part = itemOf[model] || model;
       const cust = manualMV[model] || custOf[model] || '';
+      const part = resolveModelPart(model, cust, itemOf, itemCustOf);
       const vendor = cust ? normalizeVendorName(cust) : (inferVendorFromPart(part) || '미분류');
       const o = ensure(vendor);
       const insp = Number(r.inspect_qty) || 0;
@@ -5951,12 +5968,12 @@ async function mcFetchMonth(){
     }
 
     // --- 기종 → 고객사 / 품번 매핑 테이블 구성 ---
-    const custOf = {}, itemOf = {};
+    const custOf = {}, itemOf = {}, itemCustOf = {};
     genModels.forEach(r => { if(r.model_name && r.customer) custOf[r.model_name] = r.customer; });
     models.forEach(r => { if(r.model_name && r.customer) custOf[r.model_name] = r.customer; });
     itemMap.forEach(r => {
       if(!r.model_name) return;
-      if(r.item_code) itemOf[r.model_name] = r.item_code;
+      if(r.item_code){ itemOf[r.model_name] = r.item_code; itemCustOf[r.model_name] = r.customer || ''; }
       if(r.customer && !custOf[r.model_name]) custOf[r.model_name] = r.customer;
     });
     const typeCat = {};
@@ -5975,8 +5992,8 @@ async function mcFetchMonth(){
       const dtRaw = String(r.defect_type || '').trim();
       if(dtRaw.startsWith('__')){ skipSys++; return; }          // 시스템 예약행 제외
       const model = String(r.model_name || '').trim();
-      const part = itemOf[model] || model;
       const cust = manualMV[model] || custOf[model] || '';   // ⭐ 수동 배정 최우선
+      const part = resolveModelPart(model, cust, itemOf, itemCustOf);
 
       const vendorName = cust ? normalizeVendorName(cust)
                               : (inferVendorFromPart(part) || '미분류');

@@ -673,6 +673,8 @@ async function searchProdHo(){
     else{if(prev)sel.value=prev;showToast('⚠ '+pd+' 품번 매칭 없음 (수동선택 시 자동학습)')}
   }catch(e){console.log('생산호기 검색 실패:',e)}
 }
+/* 고객사명 비교키 (공백/대소문자 무시, SBC·Raceway 동일 취급) */
+function _custKey(c){const k=String(c||'').replace(/\s+/g,'').toUpperCase();if(!k)return '';if(/SBC|RACEWAY|레이스웨이/.test(k))return 'RACEWAY';if(/SKF씰/.test(k))return 'SKF씰';if(k.indexOf('일진')>=0)return '일진';if(k.indexOf('세동')>=0)return '세동';if(k.indexOf('진양')>=0)return '진양';return k}
 /* 수동 선택한 호기의 품번을 기종명에 매핑으로 자동학습 */
 async function learnItemMap(model,prodLine,prodDate){
   if(!model||!prodLine||!prodDate)return;
@@ -680,6 +682,9 @@ async function learnItemMap(model,prodLine,prodDate){
     const rows=await sbSelect('machine_item_daily',{work_date:'eq.'+prodDate,machine_name:'eq.'+prodLine},'updated_at.desc',5);
     if(!rows.length||!rows[0].item_code)return;
     const code=rows[0].item_code;const cur=cachedItemMap[model];
+    /* ⭐ 기종 고객사 ≠ 호기 품번 고객사 → 잘못 선택한 호기로 보고 학습 안 함 (예: SBC 기종 ↔ SKF씰 1888-0005) */
+    const mc=_custKey(getModelCustomer(model)),rc=_custKey(rows[0].customer);
+    if(mc&&rc&&mc!==rc){console.log('품번 자동학습 건너뜀(고객사 불일치):',model,getModelCustomer(model),'≠',rows[0].customer,code);return}
     if(cur&&cur.item_code===code){await sbUpdate('model_item_map',{model_name:'eq.'+model},{hit_count:(cur.hit||1)+1,updated_at:new Date().toISOString()});cachedItemMap[model].hit=(cur.hit||1)+1;return}
     const cfg=getCfg();const base=(cfg.url||SB_DEFAULT_URL).replace(/\/$/,'');
     await fetch(base+'/rest/v1/model_item_map?on_conflict=model_name',{method:'POST',headers:Object.assign({},sbHeaders(),{'Prefer':'resolution=merge-duplicates,return=representation'}),body:JSON.stringify([{model_name:model,item_code:code,customer:rows[0].customer||'',auto_learned:true,hit_count:1,updated_at:new Date().toISOString()}])});
