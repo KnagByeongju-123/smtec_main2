@@ -19,7 +19,6 @@
   const MAIN_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tbmd0eWV3ZGFxcHBobnplYXRlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4ODk4ODksImV4cCI6MjA5MDQ2NTg4OX0.Zxur3t02JHtOcXforCMSwO3i2mMaf5sViE0tXXUC0-s';
   const LK_AUTH = 'esg_pin_auth';      // 포털과 같은 로그인 키 (7일)
   const LK_USER = 'tj_audit_user';     // {id, name, dept}
-  const LK_DEVICE = 'tj_audit_device'; // PC 이름
   const AUTH_DAYS = 7;
   const EDIT_FLUSH_MS = 30000;
   const PAGE = (location.pathname.split('/').pop() || 'index.html');
@@ -37,7 +36,14 @@
   const origFetch = window.fetch.bind(window);
 
   // ---------- 사용자·단말 ----------
-  function device() { return ls.get(LK_DEVICE) || ''; }
+  // 기기 이름은 사원 정보로 자동 생성: 부서-이름-기기종류 (예: 품질관리팀-김상기-PC, 생산팀-하경자-모바일)
+  const UA = navigator.userAgent || '';
+  const KIND = /iPad|Tablet/i.test(UA) || (/Android/i.test(UA) && !/Mobi/i.test(UA)) ? '태블릿' : /Mobi|iPhone|Android/i.test(UA) ? '모바일' : 'PC';
+  function device() {
+    const u = user();
+    if (!u) return '';
+    return [u.dept, u.name, KIND].filter(Boolean).join('-');
+  }
   function user() {
     const a = ls.get(LK_AUTH);
     if (!a || !a.name || (a.exp && a.exp < Date.now())) return null;
@@ -112,7 +118,7 @@
   }
   function markText(title) {
     const u = user();
-    return u ? `출력자: ${u.name}${u.id ? '(' + u.id + ')' : ''}${u.dept ? ' · ' + u.dept : ''} · ${stamp()} · PC: ${device() || '미등록'} · ${title || document.title || PAGE} · 출력본(비관리본)`
+    return u ? `출력자: ${u.name}${u.id ? '(' + u.id + ')' : ''}${u.dept ? ' · ' + u.dept : ''} · ${stamp()} · ${KIND} · ${title || document.title || PAGE} · 출력본(비관리본)`
       : '로그인하지 않은 출력 — 무효';
   }
   const PRINT_CSS = `
@@ -274,7 +280,6 @@
   <div style="font-size:18px;font-weight:800;margin-bottom:4px">사용자 확인</div>
   <div style="font-size:12px;color:#555;margin-bottom:14px">${msg || '접속·수정·인쇄 기록을 위해 PIN 을 입력해 주세요 (7일 유지)'}</div>
   <input id="tj-pin" type="password" inputmode="numeric" maxlength="8" placeholder="PIN" style="width:100%;font-size:22px;padding:8px;letter-spacing:6px;text-align:center;border:1px solid #bbb;border-radius:6px">
-  <input id="tj-dev" type="text" maxlength="40" placeholder="이 PC 이름 (예: 품질팀-01)" value="${(device() || '').replace(/"/g, '')}" style="width:100%;font-size:14px;padding:7px;margin-top:8px;border:1px solid #bbb;border-radius:6px">
   <div id="tj-err" style="color:#c00;font-size:12px;height:16px;margin-top:6px"></div>
   <div style="display:flex;gap:8px;margin-top:6px">
    <button id="tj-later" style="flex:1;padding:9px;border:0;border-radius:6px;background:#ddd;cursor:pointer">나중에</button>
@@ -285,7 +290,7 @@
     document.body.appendChild(box);
     const $ = (id) => document.getElementById(id);
     const close = () => { box.remove(); loginShown = false; };
-    $('tj-later').onclick = () => { if ($('tj-dev').value.trim()) ls.set(LK_DEVICE, $('tj-dev').value.trim()); close(); };
+    $('tj-later').onclick = () => close();
     const ok = async () => {
       const pin = $('tj-pin').value.trim();
       if (!/^\d{3,8}$/.test(pin)) { $('tj-err').textContent = 'PIN 을 확인해 주세요'; return; }
@@ -295,7 +300,6 @@
         const r = await origFetch(`${MAIN_URL}/rest/v1/user_pin?select=id,name,dept,emp_id&pin_hash=eq.${h}`, { headers: { apikey: MAIN_KEY, Authorization: `Bearer ${MAIN_KEY}` } });
         const u = r.ok ? (await r.json())[0] : null;
         if (!u) { $('tj-err').textContent = '등록되지 않은 PIN 입니다'; return; }
-        if ($('tj-dev').value.trim()) ls.set(LK_DEVICE, $('tj-dev').value.trim());
         ls.set(LK_AUTH, { name: u.name, pin: '', exp: Date.now() + AUTH_DAYS * 86400e3 });
         ls.set(LK_USER, { id: String(u.emp_id || u.id), name: u.name, dept: u.dept || '' });
         send('login', { detail: { via: 'audit.js' } });
@@ -308,65 +312,26 @@
     setTimeout(() => $('tj-pin').focus(), 50);
   }
 
-  // ---------- PC 이름 확인 (로그인돼 있지만 이 PC 이름이 없을 때 1회) ----------
-  const IS_MOBILE = /Mobi|iPhone|iPad|Android|Tablet/i.test(navigator.userAgent || '');
-  const DEV_WORD = IS_MOBILE ? '기기' : 'PC';
-  const DEV_EG = IS_MOBILE ? '예: 품질팀-01 휴대폰' : '예: 품질팀-01';
-  const SK_DEVICE_LATER = 'tj_audit_device_later';
-  function askDevice() {
-    if (IN_FRAME || loginShown || device() || !document.body || DISPLAY_PAGES.indexOf(PAGE) >= 0) return;
-    try { if (sessionStorage.getItem(SK_DEVICE_LATER)) return; } catch (_) {}
-    loginShown = true;
-    const box = document.createElement('div');
-    box.id = 'tj-device';
-    box.innerHTML = `
-<div style="position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:2147483646;display:flex;align-items:center;justify-content:center;font-family:'Malgun Gothic',sans-serif">
- <div style="background:#fff;color:#111;border-radius:10px;padding:20px 22px;width:min(340px,92vw);box-shadow:0 8px 30px rgba(0,0,0,.4)">
-  <div style="font-size:17px;font-weight:800;margin-bottom:4px">이 ${DEV_WORD} 이름 등록</div>
-  <div style="font-size:12px;color:#555;margin-bottom:12px">접속·인쇄 기록에 함께 남습니다. 이 ${DEV_WORD}에서 한 번만 입력합니다.</div>
-  <input id="tj-dev2" type="text" maxlength="40" placeholder="${DEV_EG}" style="width:100%;font-size:15px;padding:8px;border:1px solid #bbb;border-radius:6px">
-  <div id="tj-err2" style="color:#c00;font-size:12px;height:16px;margin-top:6px"></div>
-  <div style="display:flex;gap:8px;margin-top:4px">
-   <button id="tj-later2" style="flex:1;padding:9px;border:0;border-radius:6px;background:#ddd;cursor:pointer">나중에</button>
-   <button id="tj-ok2" style="flex:2;padding:9px;border:0;border-radius:6px;background:#0a2a8c;color:#fff;font-weight:700;cursor:pointer">저장</button>
-  </div>
- </div>
-</div>`;
-    document.body.appendChild(box);
-    const $ = (id) => document.getElementById(id);
-    const close = () => { box.remove(); loginShown = false; };
-    $('tj-later2').onclick = () => { try { sessionStorage.setItem(SK_DEVICE_LATER, '1'); } catch (_) {} close(); };
-    const ok = () => {
-      const v = $('tj-dev2').value.trim();
-      if (v.length < 2) { $('tj-err2').textContent = DEV_WORD + ' 이름을 입력해 주세요'; return; }
-      ls.set(LK_DEVICE, v);
-      send('login', { detail: { via: 'device-register', device: v } });
-      close();
-      decorate(document);
-    };
-    $('tj-ok2').onclick = ok;
-    $('tj-dev2').addEventListener('keydown', (e) => { if (e.key === 'Enter') ok(); });
-    setTimeout(() => $('tj-dev2').focus(), 50);
-  }
-
   // ---------- ① 접속 기록 ----------
+  async function ensureUser(u) {
+    // 포털 로그인은 이름만 있으므로 user_pin 에서 ID·부서를 채운 뒤 기록 (기기 이름에 부서 포함)
+    if (u && (!u.id || !u.dept)) await resolveUser(u.name);
+  }
   function start() {
     decorate(document);
     const u = user();
-    if (u && !u.id) resolveUser(u.name);
     if (OWN_LOGIN_PAGES.includes(PAGE)) {
       // 포털: 잠금 화면에서 로그인할 때까지 기다렸다가 그 사용자로 접속 기록
       let n = 0;
-      const t = setInterval(() => {
+      const t = setInterval(async () => {
         n++;
         const v = user();
-        if (v || n > 120) { clearInterval(t); if (v && !v.id) resolveUser(v.name); send('open'); if (v) askDevice(); }
+        if (v || n > 120) { clearInterval(t); await ensureUser(v); send('open'); }
       }, 1000);
       return;
     }
-    send('open');
+    ensureUser(u).then(() => send('open'));
     if (!u && !IN_FRAME && DISPLAY_PAGES.indexOf(PAGE) < 0) showLogin();
-    else if (u) askDevice();
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
   else start();
