@@ -9,7 +9,7 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-  <script src="coil_label.js?v=1"></script>
+  <script src="coil_label.js?v=2"></script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&display=swap');
     *{box-sizing:border-box;margin:0;padding:0}
@@ -194,12 +194,14 @@
         코일마다 1장씩 출력해 <b>코일 태그의 Heat NO.와 라벨 HEAT가 같은 코일</b>에 붙여 주세요.<br>
         현장에서 휴대폰으로 QR을 찍으면 소재 장착이 됩니다 (수입검사 합격 후 장착 가능).
       </div>
-      <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
+      <div id="qrAgencyNote" style="display:none;font-size:13px;font-weight:700;color:#1e3a8a;background:#e3f2fd;border-radius:8px;padding:8px 10px;margin-bottom:8px;line-height:1.5"></div>
+      <div id="qrLabelBtns" style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
         <select id="qrLabelSize" style="padding:10px;border-radius:8px;border:1px solid #cbd5e1;font-size:14px">
           <option value="a4">A4 용지 (2×4, 99×67mm)</option>
           <option value="roll">라벨 프린터 (100×70mm)</option>
         </select>
         <button class="btn btn-blue" style="flex:1;font-size:15px" onclick="printQrLabels()">🖨 QR 라벨 출력</button>
+        <button class="btn btn-green" style="flex:1;font-size:15px" onclick="downloadQrLabels(this)">💾 PDF 다운로드</button>
       </div>
       <div id="qrLabelPrev" style="max-height:440px;overflow:auto;background:#f8fafc;border-radius:8px;padding:6px"></div>
     </div>
@@ -1012,6 +1014,7 @@ async function doRegister(){
         _qrLabels=CoilLabel.fromCerts(_qrCerts,dbRows);
         document.getElementById('qrLabelCnt').textContent='('+_qrLabels.length+'매)';
         document.getElementById('qrLabelCard').style.display='block';
+        arrangeQrButtons(_batchCompany||cfg.from);
         await CoilLabel.preview(document.getElementById('qrLabelPrev'),_qrLabels);
       }catch(e){
         document.getElementById('qrLabelPrev').innerHTML='<div style="color:#c62828;font-size:12px;padding:8px">QR 미리보기 실패: '+e.message+' — [QR 라벨 출력]은 다시 시도할 수 있습니다.</div>';
@@ -1032,9 +1035,35 @@ async function doRegister(){
 
 /* 소재 QR 라벨 (coil_label.js) — [최종등록] 직후 등록 코일별 QR 라벨 */
 let _qrCerts=[],_qrLabels=[];
+/* 중간 대리점을 거치는 업체: 바로 출력하기 어려움 → PDF 다운로드를 먼저 (대리점에 보내 출력·부착) */
+const QR_AGENCY_VENDORS=['동국산업','나스테크','한국금속'];
+function isAgencyVendor(name){name=String(name||'');return QR_AGENCY_VENDORS.some(v=>name.indexOf(v)>=0)}
+function arrangeQrButtons(vendor){
+  const note=document.getElementById('qrAgencyNote'),box=document.getElementById('qrLabelBtns');
+  if(!note||!box)return;
+  const dl=box.querySelector('button[onclick^="downloadQrLabels"]');
+  if(isAgencyVendor(vendor)){
+    note.style.display='block';
+    note.innerHTML='📨 중간 대리점 업체 (<b>'+vendor+'</b>)<br>[💾 PDF 다운로드]로 라벨 파일을 받아 대리점에 보내 주세요 (대리점에서 출력 후 코일에 부착).';
+    if(dl&&box.children[1]!==dl)box.insertBefore(dl,box.children[1]);
+  }else{
+    note.style.display='none';
+  }
+}
 function printQrLabels(){
   if(!_qrLabels.length){showToast('출력할 QR 라벨이 없습니다');return}
   CoilLabel.print(_qrLabels,(document.getElementById('qrLabelSize')||{}).value||'a4');
+}
+/* PDF 파일로 저장 — 업체에 보내거나 라벨 프린터 PC 에서 나중에 출력 */
+async function downloadQrLabels(btn){
+  if(!_qrLabels.length){showToast('다운로드할 QR 라벨이 없습니다');return}
+  const size=(document.getElementById('qrLabelSize')||{}).value||'a4';
+  const name='소재QR라벨_'+(_batchCompany||'').replace(/[\\/:*?"<>|\s]/g,'')+'_'+(_batchDate||kstDateStr()).replace(/-/g,'')+'_'+_qrLabels.length+'매'+(size==='roll'?'_100x70':'_A4')+'.pdf';
+  const t=btn?btn.textContent:'';
+  if(btn){btn.disabled=true;btn.textContent='⏳ PDF 만드는 중...';}
+  try{await CoilLabel.downloadPdf(_qrLabels,size,name);showToast('💾 '+name)}
+  catch(e){alert('PDF 다운로드 실패: '+e.message)}
+  finally{if(btn){btn.disabled=false;btn.textContent=t;}}
 }
 
 let _autoReturnTimer=null;
