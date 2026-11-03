@@ -24,6 +24,9 @@ html,body{height:100%;background:var(--bg);color:var(--wht);font-family:'Malgun 
 .kv{display:flex;align-items:baseline;gap:.8vw;white-space:nowrap;overflow:hidden}
 .kv .k{color:var(--yel);font-weight:800}
 .kv .v{font-weight:800;overflow:hidden;text-overflow:ellipsis}
+.kv .v.qr{color:var(--grn)}
+.kv .v.mis{color:var(--red)}
+.kv .v .tag{font-size:.55em;margin-left:.4vw;padding:0 .4vw;border:1px solid currentColor;border-radius:4px;vertical-align:middle}
 .L .kv{font-size:4.4vh;line-height:1.35}
 .L .big .k{color:#fff;font-size:5vh}
 .L .big .v{font-size:7.2vh;margin-left:auto;font-variant-numeric:tabular-nums}
@@ -135,6 +138,7 @@ html,body{height:100%;background:var(--bg);color:var(--wht);font-family:'Malgun 
 // 공정생산실행 키오스크 v0.1 — PIMMES 16번 화면 대체 시제품
 //  표시: machine_status (설비별 현재 작업) 5초마다 갱신
 //  동작: 관리자 호출(ntfy taejincall), 불량입력·소재장착·작업표준은 기존 앱으로 연결
+//  소재로트: material_attach.html 에서 QR로 장착한 소재가 있으면 우선 표시 (PIMMES 로트와 다르면 빨간색)
 //  실적·작업완료·비가동 등 기록을 바꾸는 기능은 2단계에서 구현
 //  ?mc=024 로 설비 고정 (선택값은 이 단말에 기억)
 const REFRESH = 5;
@@ -144,6 +148,7 @@ const fmt = (x, d = 0) => (x == null || x === '' || isNaN(+x)) ? '-' : (+x).toLo
 const $ = (id) => document.getElementById(id);
 
 let rows = [], cur = null, lastOk = null;
+let att = null;   // 이 호기에 QR/터치로 장착된 소재 (material_attachment, status=attached)
 let mc = new URLSearchParams(location.search).get('mc') || (() => { try { return localStorage.getItem(LS_KEY); } catch (_) { return null; } })();
 
 function tick() {
@@ -171,7 +176,7 @@ function render() {
   const lab = { O: '완료', W: '대기', N: '미실시' };
   $('insp').innerHTML = [['초', r.inspect_top], ['중', r.inspect_mid], ['종', r.inspect_bottom]]
     .map(([k, v]) => `<span class="${v || ''}" title="${lab[v] || '해당없음'}">${k}</span>`).join('');
-  $('lot').textContent = r.lot_no || r.heat_no || '-';
+  renderLot(r);
   $('coil').textContent = r.coil_weight ? fmt(r.coil_weight, 1) + ' kg' : '-';
   $('remw').textContent = r.remain_weight != null ? fmt(r.remain_weight, 1) + ' kg' : '-';
   $('unit').textContent = fmt(r.unit_per_qty, 2);
@@ -191,6 +196,37 @@ function render() {
   $('remMin').textContent = r.remaining_minutes != null ? fmt(r.remaining_minutes) + ' 분' : '-';
 }
 
+// 소재로트: 장착 화면(QR) 기록을 우선 표시하고, PIMMES 로트와 HEAT가 다르면 경고
+function renderLot(r) {
+  const el = $('lot');
+  const pim = String(r.lot_no || r.heat_no || '').trim();
+  if (!att) { el.className = 'v'; el.textContent = pim || '-'; el.title = 'PIMMES 로트'; return; }
+  const heat = String(att.heat_no || '').trim();
+  const match = !pim || pim === '*' || pim.toUpperCase().startsWith(heat.toUpperCase());
+  el.className = 'v ' + (match ? 'qr' : 'mis');
+  el.innerHTML = '';
+  el.append(document.createTextNode(heat || '-'));
+  const tag = document.createElement('span');
+  tag.className = 'tag'; tag.textContent = match ? '장착' : 'MES 불일치';
+  el.appendChild(tag);
+  el.title = `장착 ${att.material_type || ''} ${att.thickness || ''}t×${att.width || ''}W · LOT ${att.lot_no || '-'}` + (pim ? `\nPIMMES 로트 ${pim}` : '');
+}
+
+// 키오스크 설비명(예: 36_300) → 장착 화면 호기명(예: 36호기 심팩300톤)의 '36호기 ' 접두어
+function hoPrefix(r) {
+  const ho = parseInt(String(r.machine_name || '').split('_')[0], 10);
+  return isNaN(ho) ? null : ho + '호기 ';
+}
+
+async function loadAttached() {
+  const pre = cur && hoPrefix(cur);
+  if (!pre) { att = null; return; }
+  try {
+    const a = await sbSelect('material_attachment', { status: 'eq.attached', machine_code: 'like.' + pre + '*' }, 'attach_time.desc', 1);
+    att = a[0] || null;
+  } catch (_) { /* 장착 정보 조회 실패 시 PIMMES 로트만 표시 */ }
+}
+
 async function load() {
   try {
     rows = await sbSelect('machine_status', {}, 'machine_code.asc', 200);
@@ -202,6 +238,7 @@ async function load() {
     if (!mc || !rows.some((r) => r.machine_code === mc)) mc = rows[0] && rows[0].machine_code;
     sel.value = mc;
     cur = rows.find((r) => r.machine_code === mc) || null;
+    await loadAttached();
     lastOk = new Date();
     render();
     const upd = cur && cur.updated_at ? new Date(cur.updated_at) : null;
@@ -249,11 +286,17 @@ const ACTS = {
   worker: () => modal('작업자', `현재 투입인원: ${cur ? (cur.worker || '-').trim() : '-'}\n작업자 변경은 ` + NEXT),
   doc: () => location.href = 'gdrive_standard.html' + (cur && cur.current_item_code ? '?q=' + encodeURIComponent(cur.current_item_code) : ''),
   time: () => modal('초·중·종물 확인', cur ? `초물 ${cur.inspect_top || '-'} / 중물 ${cur.inspect_mid || '-'} / 종물 ${cur.inspect_bottom || '-'}\n(O 완료 · W 대기 · N 미실시)\n검사 입력은 ` + NEXT : '-'),
-  material: () => location.href = 'material_attach.html',
+  material: () => {
+    // 이 키오스크의 설비코드와 투입작업자를 넘겨 장착 화면을 해당 호기로 고정
+    const q = new URLSearchParams({ mc: mc || '' });
+    const w = cur && (cur.worker || '').trim();
+    if (w) q.set('user_name', w);
+    location.href = 'material_attach.html?' + q.toString();
+  },
   full: () => { const d = document.documentElement; (document.fullscreenElement ? document.exitFullscreen() : d.requestFullscreen && d.requestFullscreen()); },
 };
 document.querySelectorAll('.btn').forEach((b) => b.addEventListener('click', () => (ACTS[b.dataset.act] || (() => {}))()));
-$('mcSel').addEventListener('change', (e) => { mc = e.target.value; try { localStorage.setItem(LS_KEY, mc); } catch (_) {} cur = rows.find((r) => r.machine_code === mc) || null; render(); });
+$('mcSel').addEventListener('change', async (e) => { mc = e.target.value; try { localStorage.setItem(LS_KEY, mc); } catch (_) {} cur = rows.find((r) => r.machine_code === mc) || null; att = null; render(); await loadAttached(); render(); });
 $('refSec').textContent = REFRESH;
 
 tick(); setInterval(tick, 1000);

@@ -1369,6 +1369,7 @@ function renderDone(){
       <td><span class="badge ${judClass}">${d.finalJudge||'-'}</span></td>
       <td>
         <button class="btn btn-pri btn-sm" onclick="viewCert(${idx})">📄 성적서</button>
+        ${d.finalJudge==='OK' ? `<button class="btn btn-sm" style="background:#16a34a;color:#fff" onclick="printCoilLabels(${idx})" title="코일별 IQC 합격 라벨(QR) 출력 — 현장에서 QR 스캔으로 장착">🏷 라벨</button>` : ''}
         <button class="btn btn-warn btn-sm" onclick="reEditInsp(${idx})">수정</button>
         <button class="btn btn-dng btn-sm" onclick="deleteInsp(${idx})">삭제</button>
       </td>
@@ -2356,6 +2357,114 @@ async function deleteInsp(idx){
 }
 
 /* ================ 성적서 미리보기 ================ */
+/* ================ IQC 합격 라벨 (QR) ================
+   - 판정 OK 검사건의 코일마다 라벨 1장 (inspection_certs.coil_count 만큼)
+   - QR 내용: material_attach.html?cert=<inspection_certs.id>&c=<코일순번>
+     → 현장 키오스크/태블릿 소재장착 화면에서 스캔하면 IQC판정·블랙리스트·중복 확인 후 장착
+   - A4 1장에 8매 (2×4, 99×67mm) */
+const QR_GEN_LIB = ['https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js',
+                    'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js'];
+function loadQrGen(){
+  if(window.qrcode) return Promise.resolve();
+  return QR_GEN_LIB.reduce((chain,url)=>chain.catch(()=>new Promise((ok,ng)=>{
+    const el=document.createElement('script');
+    el.src=url; el.onload=()=>window.qrcode?ok():ng(); el.onerror=ng;
+    document.head.appendChild(el);
+  })), Promise.reject()).catch(() => { throw new Error('QR 라이브러리를 불러오지 못했습니다 (인터넷/방화벽 확인: cdnjs.cloudflare.com, cdn.jsdelivr.net)'); });
+}
+function escH(v){ return String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+async function printCoilLabels(idx){
+  const d = inspections[idx];
+  if(!d) return;
+  if(d.finalJudge !== 'OK'){ alert('판정 OK 검사건만 합격 라벨을 출력할 수 있습니다.'); return; }
+  const ids = (d.certIds||[]).filter(Boolean);
+  if(!ids.length){ alert('이 검사건에 연결된 입고 코일(inspection_certs)이 없습니다.'); return; }
+
+  // 팝업 차단 방지: 클릭 직후 창을 먼저 연다
+  const w = window.open('', '_blank');
+  if(!w){ alert('팝업이 차단되었습니다. 브라우저에서 팝업을 허용해 주세요.'); return; }
+  w.document.write('<p style="font-family:sans-serif;padding:20px">라벨 생성 중...</p>');
+
+  try{
+    const res = await fetch(SB_URL + '/rest/v1/inspection_certs?select=id,supplier,material_type,thickness,width_mm,lot_no,lots_detail,heat_no,coil_count,weight,receipt_date,recv_date,final_judge&id=in.(' + ids.join(',') + ')&order=id.asc', {
+      headers: { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY }
+    });
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    const rows = await res.json();
+    const ok = rows.filter(r => String(r.final_judge||'').trim().toUpperCase() === 'OK');
+    if(!ok.length) throw new Error('서버의 final_judge가 OK인 코일이 없습니다. 검사완료 저장 상태를 확인하세요.');
+    await loadQrGen();
+
+    const base = new URL('material_attach.html', location.href).href.split('?')[0];
+    const labels = [];
+    ok.forEach(r => {
+      const n = Math.max(1, parseInt(r.coil_count,10) || 1);
+      const kgEach = r.weight ? Math.round((+r.weight) / n) : null;
+      for(let i = 1; i <= n; i++){
+        const qr = window.qrcode(0, 'M');
+        qr.addData(`${base}?cert=${r.id}&c=${i}`);
+        qr.make();
+        labels.push({ r, i, n, kgEach, img: qr.createDataURL(6, 0) });
+      }
+    });
+
+    const who = d.inspector || '';
+    const html = labels.map(L => `
+      <div class="lb">
+        <div class="hd"><span>IQC 합격</span><small>SMTEC 수입검사</small></div>
+        <div class="bd">
+          <img class="qr" src="${L.img}" alt="QR">
+          <table>
+            <tr><th>HEAT</th><td class="heat">${escH(L.r.heat_no||'-')}</td></tr>
+            <tr><th>재질</th><td>${escH(L.r.material_type||'-')}</td></tr>
+            <tr><th>규격</th><td>${escH(L.r.thickness??'-')}t × ${escH(L.r.width_mm??'-')}W</td></tr>
+            <tr><th>LOT</th><td>${escH(L.r.lot_no||L.r.lots_detail||'-')}</td></tr>
+            <tr><th>공급사</th><td>${escH(L.r.supplier||'-')}</td></tr>
+            <tr><th>입고</th><td>${escH(L.r.receipt_date||L.r.recv_date||'-')}</td></tr>
+          </table>
+        </div>
+        <div class="ft">
+          <b>코일 ${L.i}/${L.n}</b>${L.kgEach ? ` · 약 ${L.kgEach.toLocaleString()}kg` : ''}
+          <span>검사 ${escH(d.inspDate||'-')} ${escH(who)} · #${L.r.id}</span>
+        </div>
+      </div>`).join('');
+
+    w.document.open();
+    w.document.write(`<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><title>IQC 합격 라벨 ${escH(d.lotBase||'')}</title>
+<style>
+@page{size:A4;margin:8mm 6mm}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Malgun Gothic','맑은 고딕',sans-serif;color:#000}
+.bar{padding:10px;background:#f1f5f9;border-bottom:1px solid #cbd5e0;font-size:13px;display:flex;gap:10px;align-items:center}
+.bar button{padding:6px 16px;font-size:13px;font-weight:700;cursor:pointer}
+.grid{display:grid;grid-template-columns:99mm 99mm;grid-auto-rows:67mm;gap:0 0;justify-content:center}
+.lb{border:1.5px solid #000;padding:2mm 3mm;display:flex;flex-direction:column;overflow:hidden;page-break-inside:avoid;break-inside:avoid}
+.hd{display:flex;justify-content:space-between;align-items:center;background:#15803d;color:#fff;padding:1mm 2mm;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.hd span{font-size:16pt;font-weight:900;letter-spacing:2px}
+.hd small{font-size:8pt}
+.bd{flex:1;display:flex;gap:2mm;align-items:center;padding-top:1.5mm}
+.qr{width:34mm;height:34mm;image-rendering:pixelated;flex-shrink:0}
+table{border-collapse:collapse;font-size:8.5pt;width:100%;table-layout:fixed}
+th{width:12mm;text-align:left;color:#444;font-weight:600;padding:.4mm 0;vertical-align:top}
+td{font-weight:700;padding:.4mm 0;word-break:break-all}
+td.heat{font-size:11pt;font-weight:900}
+.ft{border-top:1px solid #000;padding-top:1mm;font-size:8pt;display:flex;justify-content:space-between;gap:2mm}
+.ft b{font-size:10pt}
+@media print{.bar{display:none}}
+</style></head><body>
+<div class="bar"><b>🏷 IQC 합격 라벨 ${labels.length}매</b> (A4 2×4 · 99×67mm) <button onclick="print()">🖨 인쇄</button><span style="color:#64748b">코일마다 1장씩 부착 → 현장 소재장착 화면에서 QR 스캔</span></div>
+<div class="grid">${html}</div>
+<script>window.onload=function(){setTimeout(function(){print()},300)}<\/script>
+</body></html>`);
+    w.document.close();
+  }catch(e){
+    console.error('[라벨 출력]', e);
+    try{ w.close(); }catch(_){}
+    alert('라벨 출력 실패: ' + e.message);
+  }
+}
+
 function viewCert(idx){
   const d = inspections[idx];
   if(!d) return;
