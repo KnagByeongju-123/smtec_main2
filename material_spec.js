@@ -10,22 +10,32 @@
 //  재질 표기 정규화: 'SUS' 접두, '-S'/'-P' 접미, 공백·하이픈·괄호 무시
 //    예) 304-(J1) = 304J1 2B,  430-2B = 430 2B,  S55CM-S = S55CM,  SUS430 = 430
 //    표면(2B/BA/BB)은 양쪽 모두 적혀 있을 때만 비교
-//    같은 소재 지정: C67S 계열(S70CM-S·S70CM·S70C·C67SCM-S) → C67S,  S55C → S55CM-S (SAME_MAT)
+//    같은 소재(SAME_MAT): C67S = S70CM-S (같은 소재를 모델별로 다른 이름으로 납품)
+//                         C67SCM-S·S70CM·S70C 는 잘못된/옛 표기,  S55C → S55CM-S
+//  품번별 납품 표기(ITEM_MAT): 판정에는 영향 없음 — 확인창에 '이 품번은 ○○ 표기로 납품'을 보여주는 용도
 //  허용차: 두께 ±0.02mm, 폭 ±0.5mm
 // ============================================================
 (function (g) {
   const TOL_T = 0.02;
   const TOL_W = 0.5;
-  // 표기는 다르지만 같은 재질로 볼 이름 (정규화 후 값 기준) — 필요 시 추가
-  // 정규화 전 '정확한 이름'으로 지정하는 소재 (2026-11 현장 확인) — 값은 비교용 기준명
-  //   C67S 로 통일 : C67S = S70CM-S (같은 소재), C67SCM-S·S70CM·S70C 는 옛/잘못된 표기
-  //                  (sql/material_name_unify_C67S.sql 로 데이터도 C67S 로 변경)
-  //   S55C         : 잘못된 소재명 → 정식명 S55CM-S (sql/material_name_fix_S55C.sql)
-  //                  (S55CM-S 와 S55CM 은 일반 정규화로 같은 소재)
+  // 같은 소재로 판정할 이름 (정규화 전 '정확한 이름' 기준, 값은 비교용 기준명) — 2026-11 현장 확인
+  //   C67S = S70CM-S : 같은 소재, 모델별로 납품 명칭만 다름
+  //   C67SCM-S·C67SCM : 옛 소재마스터 표기,  S70CM·S70C : 잘못 입력된 표기
+  //   S55C : 잘못된 소재명 → 정식명 S55CM-S  (S55CM-S 와 S55CM 은 일반 정규화로 같음)
   const SAME_MAT = {
-    'C67S': '=C67S', 'S70CM-S': '=C67S', 'S70CM': '=C67S', 'S70C': '=C67S', 'C67SCM-S': '=C67S', 'C67SCM': '=C67S',
+    'C67S': '=C67S', 'S70CM-S': '=C67S',
+    'C67SCM-S': '=C67S', 'C67SCM': '=C67S', 'S70CM': '=C67S', 'S70C': '=C67S',
     'S55C': 'S55CM',
   };
+
+  // 품번별 납품 표기 (SKF SBC MSBU RING) — 같은 소재, 명칭만 다르게 납품 (2026-11 현장 확인)
+  //   1113AA, 1113E               : S70CM-S
+  //   1113D, 1179(1179C 포함), 1156 : C67S
+  //   품번 예: IW/OW-BDA-1113D, IW/OW-BDA-1179-1
+  const ITEM_MAT = [
+    { re: /BDA-?1113(AA|E)(?![A-Z0-9])/, material: 'S70CM-S', label: '1113AA/1113E' },
+    { re: /BDA-?(1113D(?![A-Z0-9])|1179|1156)/, material: 'C67S', label: '1113D/1179/1156' },
+  ];
 
   function parseMat(s) {
     let t = String(s || '').toUpperCase().trim();
@@ -51,20 +61,35 @@
     return Math.abs(x - y) <= tol + 1e-9;
   }
 
+  function itemRule(item) {
+    const it = String(item || '').toUpperCase();
+    return it ? ITEM_MAT.find(r => r.re.test(it)) || null : null;
+  }
+
   /* 설비 현재 작업(machine_status 1행) → 소재 마스터 규격 목록 */
   function findJobSpecs(ms, masterRows) {
     if (!ms || !Array.isArray(masterRows)) return null;
     const mold = String(ms.current_mold || '').trim().toUpperCase();
     const item = String(ms.current_item_code || '').trim().toUpperCase();
-    let rows = mold ? masterRows.filter(r => String(r.mold_number || '').trim().toUpperCase() === mold) : [];
+    const moldOf = r => String(r.mold_number || '').trim().toUpperCase();
+    let rows = mold ? masterRows.filter(r => moldOf(r) === mold) : [];
+    // 마스터 금형번호에 꼬리표가 붙은 경우 (예: 19SKA202A_1179, 22RDA602A(Transfer))
+    if (!rows.length && mold) rows = masterRows.filter(r => moldOf(r).startsWith(mold) && /^[^A-Z0-9]/.test(moldOf(r).slice(mold.length)));
     let by = rows.length ? `금형 ${ms.current_mold}` : '';
     if (!rows.length && item) {
       rows = masterRows.filter(r => String(r.mapped_models || '').toUpperCase().split(/[\s(),/;=]+/).includes(item));
       if (rows.length) by = `품번 ${ms.current_item_code}`;
     }
     rows = rows.filter(r => r.material_type || r.thickness || r.width);
-    if (!rows.length) return { specs: [], by: '', item: ms.current_item_code || '', mold: ms.current_mold || '' };
-    return { specs: rows.map(r => ({ material_type: r.material_type, thickness: r.thickness, width: r.width, name: r.material_name })), by, item: ms.current_item_code || '', mold: ms.current_mold || '' };
+    let specs = rows.map(r => ({ material_type: r.material_type, thickness: r.thickness, width: r.width, name: r.material_name }));
+    // 품번별 납품 표기 (같은 소재라 판정은 동일, 표시만 품번 표기로)
+    const rule = itemRule(item);
+    if (rule) {
+      specs = specs.length ? specs.map(s => ({ ...s, material_type: rule.material })) : [{ material_type: rule.material, thickness: null, width: null }];
+      by = (by ? by + ' · ' : '') + `납품표기 ${rule.material}`;
+    }
+    const base = { by, item: ms.current_item_code || '', mold: ms.current_mold || '' };
+    return { ...base, specs: specs };
   }
 
   /* 코일(mat: material_type, thickness, width) vs 작업 규격 → { status: 'ok'|'mismatch'|'unknown', diffs[], spec } */
@@ -84,7 +109,9 @@
   }
 
   function specText(s) {
-    return s ? `${s.material_type || '-'} ${s.thickness ?? '-'}t × ${s.width ?? '-'}W` : '-';
+    if (!s) return '-';
+    if (s.thickness == null && s.width == null) return `${s.material_type || '-'} (두께·폭 미등록)`;
+    return `${s.material_type || '-'} ${s.thickness ?? '-'}t × ${s.width ?? '-'}W`;
   }
 
   /* 호기명('36호기 심팩300톤' / '36_300') → 호기번호 36 */
@@ -93,5 +120,5 @@
     return isNaN(n) ? null : n;
   }
 
-  g.MatSpec = { parseMat, sameMat, findJobSpecs, checkSpec, specText, hoOf, TOL_T, TOL_W };
+  g.MatSpec = { parseMat, sameMat, findJobSpecs, checkSpec, specText, hoOf, itemRule, TOL_T, TOL_W };
 })(window);
