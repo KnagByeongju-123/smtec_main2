@@ -237,7 +237,10 @@
     if (ex && ex.length) return { block: { title: '장착 불가 — 사용금지 HEAT', msg: `HEAT ${ex[0].heat_no || heat}\n사유: ${ex[0].reason || '-'}\n\n블랙리스트에 등록된 소재입니다. 품질팀에 연락하세요.` } };
 
     const coilTxt = coil ? ` (코일 ${coil}/${coilCount})` : '';
-    if ((onThis || []).some(a => a.cert_id === c.id)) return { block: { title: '이미 장착됨', msg: `HEAT ${heat}${coilTxt}\n이미 ${machineName}에 장착되어 있습니다.` } };
+    // 중복 장착: 같은 '코일'(코일 HEAT)이 이 호기에 이미 장착된 경우만 차단
+    //   같은 입고 묶음(cert)의 다른 코일 (예: SB65954-1 장착중 → SB65954-2) 은 교체로 진행
+    const sameCoil = a => a.cert_id === c.id && (coilCount <= 1 || (coilHeat && a.heat_no === coilHeat));
+    if ((onThis || []).some(sameCoil)) return { block: { title: '이미 장착됨', msg: `HEAT ${heat}${coilTxt}\n이미 ${machineName}에 장착되어 있습니다.` } };
     const otherMc = [...new Set((hist || []).filter(h => h.status === 'attached' && h.machine_code !== machineName).map(h => h.machine_code))];
     const usedUp = (hist || []).filter(h => h.status === 'consumed').length;
     const warns = [];
