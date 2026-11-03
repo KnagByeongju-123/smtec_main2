@@ -3,7 +3,7 @@
 <head>
 <script src="audit.js?v=7"></script>
 <script src="material_spec.js?v=9"></script>
-<script src="material_qr.js?v=5"></script>
+<script src="material_qr.js?v=6"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>소재 장착 관리 v2.3</title>
@@ -829,10 +829,8 @@ window.addEventListener('DOMContentLoaded', async () => {
   await loadAttachmentsFromServer();
 
   // 휴대폰 기본 카메라로 라벨 QR을 찍어 이 화면이 열린 경우(?cert=) 바로 장착 확인
-  if (URL_PARAMS.get('cert')) {
-    if (!kioskLocked) showAlert('호기 QR을 먼저 찍으세요', '프레스에 붙은 [호기 QR]을 먼저 찍은 뒤\n코일의 IQC 합격 라벨 QR을 찍어 주세요.\n\n(호기 QR을 찍은 뒤 10분 동안 그 호기로 장착됩니다)');
-    else onScanText(location.href);
-  }
+  //   호기 QR 고정이 없으면 코일 QR 로 호기를 찾는다 (PIMMES 소재로트 → 작업 규격 → 직접 선택)
+  if (URL_PARAMS.get('cert')) onScanText(location.href);
 });
 
 function updateClock() {
@@ -1327,18 +1325,58 @@ function setupScan() {
   document.getElementById('camBtn').addEventListener('click', () => MatQR.openCamera(onScanText));
 }
 
+/* 코일 QR 만 찍었을 때 장착 호기 정하기 (키오스크·호기 QR 고정이 없을 때)
+   ① PIMMES 소재로트가 이 코일이고 규격도 맞는 호기 1대 → 자동
+   ② 작업 규격이 맞는 호기 1대 → 자동
+   ③ 그 외 → 후보(규격 일치) 버튼 + 전체 목록에서 선택 */
+let machinePickReason = '';
+async function pickMachineForCoil(q) {
+  const s = await MatQR.suggestMachines(sbReq, q.certId, q.coil);
+  if (s.block) { MatQR.feedback(false); showAlert(s.block.title, s.block.msg); return false; }
+  const use = (x, reason) => {
+    state.machineCode = x.name;
+    const sel = document.getElementById('machineSelect');
+    if (sel) sel.value = x.name;
+    machinePickReason = reason;
+    return true;
+  };
+  if (s.exact.length === 1) return use(s.exact[0], `PIMMES 소재로트 ${s.exact[0].lot} 일치 → 자동 선택`);
+  if (!s.exact.length && s.spec.length === 1) return use(s.spec[0], `작업 규격이 맞는 호기 1대 → 자동 선택`);
+  const cands = s.exact.concat(s.spec);
+  return new Promise((resolve) => {
+    const opts = s.all.map(x => `<option value="${esc(x.name)}">${esc(x.name)} · ${esc(x.item)}</option>`).join('');
+    openCf('🔎 장착할 호기 선택', `
+      <div class="cf-heat">HEAT ${esc(s.heat)}</div>
+      <div class="cf-spec">${esc(s.mat.material_type)} ${esc(s.mat.thickness)}t × ${esc(s.mat.width)}W</div>
+      <div class="cf-warn">${cands.length ? '규격이 맞는 호기가 여러 대입니다. 이 코일을 건 호기를 고르세요.' : '규격이 맞는 호기가 없습니다. 호기를 직접 고르세요 (확인창에서 규격 불일치로 표시됩니다).'}</div>
+      <div style="margin-top:8px;font-size:13px;color:#8b8fa3">다른 호기</div>
+      <select id="pickOther" style="width:100%;padding:12px;font-size:15px;border-radius:8px;background:#0f1117;color:#e8eaf0;border:1px solid #2a2e3d;font-family:inherit">${opts}</select>`,
+      cands.map(x => ({ t: `${x.ho}호기` + (s.exact.includes(x) ? ' (PIMMES)' : ''), pri: true,
+                        fn: () => resolve(use(x, s.exact.includes(x) ? `PIMMES 소재로트 ${x.lot} 일치 → 선택` : '작업 규격 일치 호기 중 선택')) }))
+        .concat([
+          { t: '다른 호기로', fn: () => { const v = (document.getElementById('pickOther') || {}).value; const x = s.all.find(y => y.name === v); resolve(x ? use(x, '직접 선택') : false); } },
+          { t: '취소', fn: () => resolve(false) }
+        ]));
+    if (cands.length) { const sel = document.getElementById('pickOther'); if (sel) sel.value = (s.all.find(y => !cands.includes(y)) || s.all[0] || {}).name || ''; }
+  });
+}
+
 async function onScanText(text) {
   const q = MatQR.parseCoilQr(text);
   if (!q) { MatQR.feedback(false); showAlert('인식 불가', 'IQC 합격 라벨의 QR이 아닙니다.\n품질팀에서 출력한 [IQC 합격] 라벨을 찍어 주세요.'); return; }
-  if (!state.machineCode) { MatQR.feedback(false); showAlert('호기 미선택', '호기를 먼저 선택하세요.'); return; }
   if (phoneLocked && !readBind()) {
-    MatQR.feedback(false);
-    showAlert('호기 고정 시간 초과', `호기 QR을 찍은 지 ${BIND_MIN}분이 지났습니다.\n프레스의 호기 QR을 다시 찍어 주세요.`);
-    return;
+    // 호기 QR 고정 시간이 지났으면 고정을 풀고 코일 QR 로 호기를 찾는다
+    phoneLocked = false; kioskLocked = false;
+    const sel = document.getElementById('machineSelect'); if (sel) sel.disabled = false;
+    document.getElementById('kioskLock').className = 'kiosk-lock';
   }
   if (scanBusy) return;
   scanBusy = true;
+  machinePickReason = '';
   try {
+    // 키오스크·호기 QR 고정이 없으면 코일 QR 로 장착 호기 결정
+    if (!kioskLocked && !(await pickMachineForCoil(q))) return;
+    if (!state.machineCode) { MatQR.feedback(false); showAlert('호기 미선택', '호기를 먼저 선택하세요.'); return; }
     const res = await MatQR.inspect(sbReq, q.certId, q.coil, state.machineCode);
     loadAttachmentsFromServer();
     if (res.block) { MatQR.feedback(false); showAlert(res.block.title, res.block.msg); return; }
@@ -1377,6 +1415,7 @@ async function confirmAttach(mat, warns, via, res) {
   const mis = chk.status === 'mismatch';
   openCf(via === 'QR 스캔' ? '📷 QR 장착 확인' : '📦 장착 확인', `
     <div class="cf-machine">▶ ${esc(state.machineCode)}</div>
+    ${machinePickReason ? `<div class="cf-spec" style="margin:-6px 0 8px;color:#4f8cff">🔎 ${esc(machinePickReason)}</div>` : ''}
     <div class="cf-heat">HEAT ${esc(mat.heat_no)}</div>
     <div class="cf-spec">${esc(mat.material_type)} ${esc(mat.thickness)}t × ${esc(mat.width)}W${coilTxt}<br>
       LOT ${esc(mat.lot_no || '-')} · ${esc(mat.supplier)} · 입고 ${esc(mat.receipt_date || '-')}<br>
