@@ -2,6 +2,7 @@
 <html lang="ko">
 <head>
 <script src="audit.js?v=7"></script>
+<script src="material_spec.js?v=1"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>소재 장착 관리 v2.3</title>
@@ -344,6 +345,12 @@ body {
 .cf-acts { display: flex; gap: 8px; margin-top: 14px; }
 .cf-acts button { flex: 1; padding: 16px; font-size: 16px; font-weight: 800; font-family: inherit; border-radius: 10px; cursor: pointer; border: 1px solid #2a2e3d; background: #222633; color: #e8eaf0; }
 .cf-acts button.pri { background: #22c55e; border-color: #22c55e; color: #0f1117; }
+.cf-acts button.danger { background: #ef4444; border-color: #ef4444; color: #fff; font-size: 14px; }
+.cf-job { font-size: 13px; color: #8b8fa3; background: #0f1117; border: 1px solid #2a2e3d; border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; line-height: 1.6; }
+.cf-job b { color: #e8eaf0; }
+.cf-job.ok b.sp { color: #22c55e; }
+.cf-mis { font-size: 15px; font-weight: 800; color: #fff; background: #b91c1c; border-radius: 8px; padding: 12px; margin-bottom: 8px; line-height: 1.6; animation: misBlink 1s ease-in-out 3; }
+@keyframes misBlink { 50% { background: #7f1d1d; } }
 
 @media (max-width: 480px) {
   .hdr-title { font-size: 16px; }
@@ -1349,7 +1356,7 @@ async function onScanText(text) {
     if (!mat) { feedback(false); showAlert('장착 불가', 'HEAT 번호가 없는 입고 데이터입니다. 품질팀에 확인하세요.'); return; }
     mat.coil_seq = q.coil; mat.coil_count = coilCount;
     feedback(true);
-    confirmAttach(mat, warns, 'QR 스캔');
+    await confirmAttach(mat, warns, 'QR 스캔');
   } catch (e) {
     console.error('[QR 장착]', e);
     feedback(false);
@@ -1359,18 +1366,51 @@ async function onScanText(text) {
   }
 }
 
-function confirmAttach(mat, warns, via) {
+/* 현재 호기의 작업 규격 (machine_status 현재 금형·품번 → 소재 마스터) */
+async function loadJobSpec(machineName) {
+  const ho = MatSpec.hoOf(machineName);
+  if (ho == null) return null;
+  const [msRows, master] = await Promise.all([
+    sbReq('GET', 'machine_status?select=machine_code,machine_name,current_mold,current_item_code,item_name,is_virtual'),
+    sbReq('GET', 'material_master_tj?select=material_name,material_type,thickness,width,mapped_models,mold_number&limit=5000')
+  ]);
+  const ms = (msRows || []).find(r => !r.is_virtual && MatSpec.hoOf(String(r.machine_name || '').split('_')[0]) === ho);
+  if (!ms) return null;
+  const job = MatSpec.findJobSpecs(ms, master || []);
+  job.item_name = ms.item_name || '';
+  return job;
+}
+
+async function confirmAttach(mat, warns, via) {
   const coilTxt = mat.coil_seq ? ` · 코일 ${mat.coil_seq}/${mat.coil_count}` : '';
+  // 오투입 방지: 현재 작업 규격과 코일 규격 비교
+  let job = null, chk = { status: 'unknown', diffs: [] };
+  try { job = await loadJobSpec(state.machineCode); chk = MatSpec.checkSpec(mat, job); }
+  catch (e) { console.warn('작업 규격 조회 실패:', e); }
+  const jobName = job ? esc([job.item, job.item_name].filter(Boolean).join(' ')) : '';
+  let jobHtml;
+  if (chk.status === 'mismatch') {
+    feedback(false);
+    jobHtml = `<div class="cf-mis">🚫 규격 불일치 — 오투입 주의<br>${chk.diffs.map(esc).join('<br>')}</div>
+      <div class="cf-job">현재 작업 ${jobName || '-'}<br>필요 규격 <b>${esc(MatSpec.specText(chk.spec))}</b> (${esc(job.by)} · 소재마스터)</div>`;
+  } else if (chk.status === 'ok') {
+    jobHtml = `<div class="cf-job ok">✅ 작업 규격 일치 · ${jobName || '-'}<br>필요 규격 <b class="sp">${esc(MatSpec.specText(chk.spec))}</b> (${esc(job.by)})</div>`;
+  } else {
+    jobHtml = `<div class="cf-warn">작업 규격을 확인할 수 없습니다${job ? ` (품번 ${esc(job.item || '-')} · 금형 ${esc(job.mold || '-')} — 소재마스터 미등록)` : ''}.<br>작업지시서의 소재 규격을 직접 확인하세요.</div>`;
+  }
+  const mis = chk.status === 'mismatch';
   openCf(via === 'QR 스캔' ? '📷 QR 장착 확인' : '📦 장착 확인', `
     <div class="cf-machine">▶ ${esc(state.machineCode)}</div>
     <div class="cf-heat">HEAT ${esc(mat.heat_no)}</div>
     <div class="cf-spec">${esc(mat.material_type)} ${esc(mat.thickness)}t × ${esc(mat.width)}W${coilTxt}<br>
       LOT ${esc(mat.lot_no || '-')} · ${esc(mat.supplier)} · 입고 ${esc(mat.receipt_date || '-')}<br>
       IQC 판정 <b style="color:#22c55e">OK</b> · #${esc(mat.cert_id)}</div>
+    ${jobHtml}
     ${(warns || []).map(w => `<div class="cf-warn">⚠️ ${w}</div>`).join('')}
   `, [
-    { t: '취소' },
-    { t: '장착', pri: true, fn: async () => {
+    { t: mis ? '취소 (권장)' : '취소', pri: mis },
+    { t: mis ? '불일치 확인 후 장착' : '장착', pri: !mis, cls: mis ? 'danger' : '', fn: async () => {
+      if (mis && !confirm(`규격이 다릅니다.\n${chk.diffs.join('\n')}\n\n작업지시 변경 등으로 이 코일이 맞는 것이 확실합니까?`)) return;
       const ok = await doAttach(mat, via);
       if (ok && KIOSK_MC) afterKioskAttach(mat);
     } }
@@ -1405,7 +1445,7 @@ function openCf(title, html, actions) {
   actions.forEach(a => {
     const b = document.createElement('button');
     b.type = 'button'; b.textContent = a.t;
-    if (a.pri) b.className = 'pri';
+    b.className = a.cls || (a.pri ? 'pri' : '');
     b.onclick = async () => {
       document.getElementById('cfModalBg').classList.remove('show');
       if (a.fn) await a.fn();
