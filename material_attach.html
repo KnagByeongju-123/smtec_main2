@@ -3,7 +3,7 @@
 <head>
 <script src="audit.js?v=7"></script>
 <script src="material_spec.js?v=9"></script>
-<script src="material_qr.js?v=4"></script>
+<script src="material_qr.js?v=5"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>소재 장착 관리 v2.3</title>
@@ -1059,7 +1059,7 @@ function render() {
 
 /* PIMMES 원소재 투입 반영 상태 (mes_material_input) */
 let mesStatus = {};   // attachment_id → {status, error_msg}
-const MES_BADGE = { pending: ['⏳ PIMMES 대기', '#f59e0b'], processing: ['🔄 PIMMES 처리중', '#4f8cff'], synced: ['✅ PIMMES 반영', '#22c55e'], error: ['❌ PIMMES 오류', '#ef4444'], manual: ['✋ PIMMES 직접투입', '#ef4444'] };
+const MES_BADGE = { cancelled: ['⊘ PIMMES 취소', '#8b8fa3'], pending: ['⏳ PIMMES 대기', '#f59e0b'], processing: ['🔄 PIMMES 처리중', '#4f8cff'], synced: ['✅ PIMMES 반영', '#22c55e'], error: ['❌ PIMMES 오류', '#ef4444'], manual: ['✋ PIMMES 직접투입', '#ef4444'] };
 function mesBadge(id) {
   const m = id && mesStatus[id];
   if (!m) return '';
@@ -1533,16 +1533,17 @@ async function processDetach(type) {
   showToast(typeLabels[type] || '처리 완료', 'success');
 
   await syncToServer(detachRecord, 'UPDATE');
+  // 잘못된 장착 / 장착 직후 탈착이면 PIMMES 투입 대기 취소
+  if (att.server_id) await MatQR.cancelMesInput(sbReq, { id: att.server_id, attach_time: att.attach_time }, type);
 }
 
 /* ============================================================
    시간/저장
    ============================================================ */
+// 현재 시각 (DB timestamptz 저장용) — UTC ISO 그대로. 화면 표시는 기기 시간대(한국)로 변환됨
+// ※ 2026-11-03 이전 코드는 한국 기기에서 +9시간 이중 보정 → 기존 기록은 DB 에서 보정 완료
 function nowKST() {
-  const now = new Date();
-  const offset = 9 * 60;
-  const local = new Date(now.getTime() + (offset - now.getTimezoneOffset()) * 60000);
-  return local.toISOString().replace('Z', '+09:00');
+  return new Date().toISOString();
 }
 
 function saveToLocal() {

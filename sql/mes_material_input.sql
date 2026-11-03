@@ -32,12 +32,14 @@ create table if not exists public.mes_material_input (
 
   -- 처리 상태
   status          text not null default 'pending'
-                  check (status in ('pending','processing','synced','error','manual')),
+                  check (status in ('pending','processing','synced','error','manual','cancelled')),
                   -- pending    : 동기화 프로그램 처리 대기
                   -- processing : 처리 중 (동기화 프로그램이 잡음)
                   -- synced     : PIMMES 투입 완료
                   -- error      : PIMMES 등록 실패 (error_msg 참고, 재시도 가능)
                   -- manual     : 입고번호를 찾지 못해 자동 반영 불가 → PIMMES 에서 직접 투입
+                  -- cancelled  : 잘못된 장착 / 장착 후 5분 안에 탈착 → 투입 취소 (동기화 대상 아님)
+                  --   (2026-11-03 추가: alter table ... drop/add constraint mes_material_input_status_check)
   mes_result      text,                   -- PIMMES 쪽 결과(투입번호 등)
   error_msg       text,
   synced_at       timestamptz,
