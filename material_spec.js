@@ -19,6 +19,7 @@
   const MAT_ALIAS = {
     // 현장 표기 기준: C67S, S70CM-S  (S70CM-S 는 정규화 시 '-S'가 빠져 S70CM 과 자동으로 같게 처리됨)
     C67SCM: 'C67S',   // 옛 소재마스터 표기 'C67SCM-S' = 'C67S' (sql/material_name_unify_C67S.sql 로 통일)
+    S70C: 'S70CM',    // 'S70C' 는 잘못 입력된 이름 → S70CM-S (sql/material_name_fix_S70C.sql 로 수정)
   };
 
   function parseMat(s) {
