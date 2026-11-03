@@ -7,7 +7,7 @@
 <title>공정생산실행 키오스크 v0.1</title>
 <script src="supabase_config.js"></script>
 <script src="material_spec.js?v=9"></script>
-<script src="material_qr.js?v=7"></script>
+<script src="material_qr.js?v=9"></script>
 <style>
 :root{--bg:#000;--panel:#0b0b0b;--line:#2a2a2a;--yel:#ffe600;--grn:#2bff2b;--red:#ff2b2b;--wht:#fff;--sky:#9cc3ff;--btn:#e9ecf1;--btnTx:#1b1f2a}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -90,6 +90,8 @@ html,body{height:100%;background:var(--bg);color:var(--wht);font-family:'Malgun 
 .kq .kacts button{flex:1;min-width:22%;font-size:3vh;font-weight:900;padding:2.2vh 1vw;border-radius:8px;border:2px solid #555;background:#222;color:#fff;cursor:pointer;font-family:inherit}
 .kq .kacts button.pri{background:#16a34a;border-color:#16a34a}
 .kq .kacts button.danger{background:#dc2626;border-color:#dc2626;font-size:2.6vh}
+.kq .kacts button.full{flex-basis:100%}
+.kq .kacts button.warnb{background:#b45309;border-color:#b45309}
 </style>
 </head>
 <body>
@@ -335,7 +337,7 @@ const ACTS = {
    QR 장착 — 키오스크 화면에서 바로
    · 바코드 스캐너: 버튼 없이 아무 때나 코일 라벨 QR을 찍으면 확인창이 뜬다
    · 카메라: [원소재] 버튼
-   · 이미 장착된 소재가 있으면 [기존 소진 + 장착] / [기존 탈착 + 장착] 으로 교체 처리
+   · 이미 장착된 소재가 있으면 [기존 코일 다 씀 / 남음(내림) / 불량 → 새 코일 장착] 으로 교체 처리
    ============================================================ */
 function goAttachPage() {
   const q = new URLSearchParams({ mc: mc || '' });
@@ -416,17 +418,22 @@ function showKioskConfirm(res, mname) {
     <div class="kspec">${E(mat.material_type)} ${E(mat.thickness)}t × ${E(mat.width)}W${coilTxt}<br>
       LOT ${E(mat.lot_no || '-')} · ${E(mat.supplier)} · 입고 ${E(mat.receipt_date || '-')} · IQC <b style="color:var(--grn)">OK</b></div>
     ${MatQR.jobHtml(res)}
-    ${onThis.length ? `<div class="kwarn">현재 장착중: <b>${E(oldTxt)}</b><br>교체하면 기존 소재를 소진(다 씀) 또는 탈착(남은 코일 내림) 처리합니다.</div>` : ''}
+    ${onThis.length ? `<div class="kwarn">현재 장착중: <b>${E(oldTxt)}</b><br>기존 코일을 어떻게 처리할지 아래에서 고르세요 (다 씀 / 남음 / 불량).</div>` : ''}
     ${(warns || []).map((w) => `<div class="kwarn">⚠️ ${E(w)}</div>`).join('')}`;
   const go = (detachType) => async () => {
     if (mis && !confirm(`규격이 다릅니다.\n${chk.diffs.join('\n')}\n\n이 코일이 맞는 것이 확실합니까?`)) return;
+    if (detachType === 'defect' && !confirm(`기존 코일 ${oldTxt} 을(를) 불량 처리합니다.\n이 HEAT는 사용금지(블랙리스트)로 등록되어 이후 장착이 차단됩니다.\n\n계속하시겠습니까?`)) return;
     await doKioskAttach(mat, mname, onThis, detachType);
   };
-  const acts = [{ t: mis ? '취소 (권장)' : '취소', cls: mis ? 'pri' : '' }];
+  const acts = [];
   if (onThis.length) {
-    acts.push({ t: '기존 탈착 + 장착', cls: mis ? 'danger' : '', fn: go('normal') });
-    acts.push({ t: '기존 소진 + 장착', cls: mis ? 'danger' : 'pri', fn: go('consumed') });
+    acts.push({ t: '기존 코일 다 씀 → 새 코일 장착', cls: (mis ? 'danger' : 'pri') + ' full', fn: go('consumed') });
+    acts.push({ t: '기존 코일 남음(내림) → 새 코일 장착', cls: (mis ? 'danger' : '') + ' full', fn: go('normal') });
+    acts.push({ t: '기존 코일 불량 → 새 코일 장착', cls: (mis ? 'danger' : 'warnb') + ' full', fn: go('defect') });
+    acts.push({ t: mis ? '취소 (권장)' : '취소', cls: (mis ? 'pri' : '') + ' full' });
+    if (mis) acts.unshift(acts.pop());
   } else {
+    acts.push({ t: mis ? '취소 (권장)' : '취소', cls: mis ? 'pri' : '' });
     acts.push({ t: mis ? '불일치 확인 후 장착' : '장착', cls: mis ? 'danger' : 'pri', fn: go(null) });
   }
   kq(mis ? '🚫 규격 불일치' : '📷 QR 장착 확인', html, acts);

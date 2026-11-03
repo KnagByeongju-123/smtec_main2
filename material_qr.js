@@ -338,7 +338,39 @@
       detach_type: type, detach_remain_kg: remainKg == null ? null : remainKg,
       status: type === 'consumed' ? 'consumed' : 'detached'
     });
+    // 불량 소재 / 잘못된 입고 → 그 HEAT 사용금지(블랙리스트) 등록 (장착 화면 탈착 모달과 같은 처리)
+    if ((type === 'defect' || type === 'wrong_receipt') && row.heat_no) {
+      try {
+        await req('POST', T_EXCLUDED, {
+          heat_no: row.heat_no, reason: type, excluded_at: nowKST(),
+          excluded_by_id: u.id || null, excluded_by_name: u.name || null, excluded_by_dept: u.dept || null, is_active: true
+        });
+      } catch (e) { console.warn('[블랙리스트 등록 실패]', e); }
+    }
+    if (type === 'defect') await logMaterialDefect(req, row, u);
     await cancelMesInput(req, row, type);
+  }
+
+  /* 현장 QR 교체의 [기존 코일 불량] → MES 모니터링 [소재불량 등록]과 같은 점검기록(mes_check_log, category 'mat')
+     — 이력 관리·소재불량 보고서·ntfy 와 같은 곳에서 보이도록. 사진·상세는 [소재불량 등록]에서 보완 */
+  async function logMaterialDefect(req, row, u) {
+    try {
+      const ho = MatSpec.hoOf(row.machine_code);
+      const ms = ((await req('GET', 'machine_status?select=machine_code,machine_name,customer,current_item_code,item_name,current_mold,worker,is_virtual')) || [])
+        .find(r => !r.is_virtual && MatSpec.hoOf(String(r.machine_name || '').split('_')[0]) === ho);
+      if (!ms) return;
+      const now = nowKST();
+      const payload = {
+        machine_code: ms.machine_code, machine_name: ms.machine_name || '', customer: ms.customer || '',
+        item_code: ms.current_item_code || '', item_name: ms.item_name || '', mold: ms.current_mold || '',
+        lot_no: row.heat_no || '', worker: (u && u.name) || ms.worker || '',
+        category: 'mat', category_name: '소재불량 등록',
+        rows: [{ itemName: '기타', itemType: 'text', value: `현장 QR 코일 교체 시 불량 처리 (HEAT ${row.heat_no}) — 사용금지 등록됨. 사진·불량 내용은 [소재불량 등록]에서 보완`, remark: '' }],
+        photo_count: 0, photos: [], source: 'qr_replace', attachment_id: row.id, created_at: now
+      };
+      await req('POST', 'mes_check_log', { machine_code: ms.machine_code, machine_name: ms.machine_name || '', customer: ms.customer || '',
+        item_code: ms.current_item_code || '', item_name: ms.item_name || '', category: 'mat', payload, created_at: now });
+    } catch (e) { console.warn('[소재불량 점검기록 생성 실패]', e); }
   }
 
   /* 탈착 시 PIMMES 투입 대기 취소
