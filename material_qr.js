@@ -196,16 +196,31 @@
     return m ? composeMachineName(m.ho_code, m.maker, m.tonnage) : null;
   }
 
+  /* 코일 → PIMMES 입고 기록 (raw_material_receipt)
+     태경스틸 등은 같은 로트 번호를 입고 때마다 다시 씀 (예: SP38425-3 0.6×90 이 10/06·10/22·11/02 세 번)
+     → 로트·두께·폭 + **입고일**이 같은 입고 1건. 입고일로 못 찾으면 같은 로트 입고가 1건뿐일 때만 사용 */
+  async function findReceipt(req, lot, thickness, width, receiptDate) {
+    if (!lot) return null;
+    const rows = await req('GET', `raw_material_receipt?select=item_code,mes_item_code,mes_receipt_no,net_weight,receipt_date&status=eq.synced&heat_no=eq.${encodeURIComponent(lot)}&thickness=eq.${thickness}&width_mm=eq.${width}&order=id.desc&limit=50`).catch(() => []);
+    const ok = (rows || []).filter(r => r.mes_receipt_no);
+    const d = String(receiptDate || '').slice(0, 10);
+    const sameDay = d ? ok.filter(r => String(r.receipt_date || '').slice(0, 10) === d) : [];
+    if (sameDay.length) return sameDay[0];
+    return ok.length === 1 ? ok[0] : null;
+  }
+
   /* 코일 QR 만으로 장착 호기 찾기 (호기 QR 없이)
      ① exact : PIMMES 소재로트(machine_status.lot_no) = 코일 HEAT 이고 작업 규격도 맞는 호기
                (키오스크에 먼저 투입한 경우 — 정확히 1대)
                ※ HEAT 번호가 폭별로 겹칠 수 있음 (예: SB65954-2 102W / 92W) → 규격 불일치 호기는 제외
+               ※ 같은 로트 번호가 다른 날 다시 입고됨 (예: SP38425-3 474kg / 490kg)
+                 → PIMMES 장착 중량(coil_weight)과 이 코일 입고 중량이 다르면 제외
      ② spec  : 현재 작업 규격(재질·두께·폭)이 코일과 맞는 호기
      ③ all   : 전체 호기 (직접 선택용) */
   async function suggestMachines(req, certId, coil) {
     const [certs, msRows, master, mm] = await Promise.all([
-      req('GET', `${T_CERTS}?select=id,material_type,thickness,width_mm,heat_no,lots_detail,coil_count,final_judge&id=eq.${certId}`),
-      req('GET', 'machine_status?select=machine_code,machine_name,current_mold,current_item_code,item_name,lot_no,is_virtual'),
+      req('GET', `${T_CERTS}?select=id,material_type,thickness,width_mm,heat_no,lots_detail,coil_count,final_judge,receipt_date,recv_date&id=eq.${certId}`),
+      req('GET', 'machine_status?select=machine_code,machine_name,current_mold,current_item_code,item_name,lot_no,coil_weight,is_virtual'),
       req('GET', 'material_master_tj?select=material_name,material_type,thickness,width,mapped_models,mold_number&limit=5000'),
       machineMaster ? Promise.resolve(machineMaster) : req('GET', 'machine_master_tj?select=ho_code,maker,tonnage,active')
     ]);
@@ -222,9 +237,14 @@
       const m = (mm || []).find(x => x.active !== false && MatSpec.hoOf(x.ho_code) === ho);
       const job = MatSpec.findJobSpecs(r, master || []);
       return { mc: r.machine_code, ho, name: m ? composeMachineName(m.ho_code, m.maker, m.tonnage) : null,
-               item: r.current_item_code || '', lot: String(r.lot_no || '').trim(), chk: MatSpec.checkSpec(mat, job).status };
+               item: r.current_item_code || '', lot: String(r.lot_no || '').trim(), kg: parseFloat(r.coil_weight) || null,
+               chk: MatSpec.checkSpec(mat, job).status };
     }).filter(x => x.name).sort((a, b) => a.ho - b.ho);
-    const exact = items.filter(x => x.lot && heats.has(x.lot.toUpperCase()) && x.chk !== 'mismatch');
+    // 이 코일의 입고 중량 (입고일까지 맞춘 입고 기록) — PIMMES 장착 중량과 비교해 같은 로트명의 다른 입고 코일을 걸러냄
+    const rcp = coilHeat ? await findReceipt(req, coilHeat, mat.thickness, mat.width, c.receipt_date || c.recv_date) : null;
+    const coilKg = rcp ? parseFloat(rcp.net_weight) || null : null;
+    const sameWeight = x => !coilKg || !x.kg || Math.abs(x.kg - coilKg) <= 1;
+    const exact = items.filter(x => x.lot && heats.has(x.lot.toUpperCase()) && x.chk !== 'mismatch' && sameWeight(x));
     const spec = items.filter(x => x.chk === 'ok' && !exact.includes(x));
     return { heat: coilHeat || c.heat_no, mat, exact, spec, all: items };
   }
@@ -358,12 +378,9 @@
       if (!ms) return { status: 'skip', msg: 'PIMMES 설비를 찾지 못함' };
       const lot = coilLotOf(mat);
       let rcp = null;
-      if (lot) {
-        const enc = encodeURIComponent;
-        const rows = await req('GET', `raw_material_receipt?select=item_code,mes_item_code,mes_receipt_no,net_weight&status=eq.synced&heat_no=eq.${enc(lot)}&thickness=eq.${mat.thickness}&width_mm=eq.${mat.width}&order=id.desc&limit=1`).catch(() => []);
-        rcp = rows && rows[0] && rows[0].mes_receipt_no ? rows[0] : null;
-      }
-      const reason = !lot ? '코일 순번을 알 수 없음 (라벨 QR 이 아닌 목록 선택)' : !rcp ? `PIMMES 입고번호를 찾지 못함 (로트 ${lot})` : null;
+      if (lot) rcp = await findReceipt(req, lot, mat.thickness, mat.width, mat.receipt_date);
+      const reason = !lot ? '코일 순번을 알 수 없음 (라벨 QR 이 아닌 목록 선택)'
+        : !rcp ? `PIMMES 입고번호를 특정하지 못함 (로트 ${lot}, 입고 ${String(mat.receipt_date || '-').slice(0, 10)})` : null;
       const row = {
         attachment_id: attachRow && attachRow.id || null, cert_id: mat.cert_id, coil_seq: mat.coil_seq || null, source: source || null,
         machine_code: ms.machine_code, machine_name: ms.machine_name, attach_machine: machineName,
@@ -410,5 +427,5 @@
 
   g.MatQR = { esc, nowKST, parseCoilQr, codeToChar, listenScanner, openCamera, closeCamera,
     composeMachineName, machineNameOf, loadJob, inspect, attach, detach, jobHtml, feedback,
-    coilLotOf, queueMesInput, cancelMesInput, mesText, MES_LABEL, suggestMachines };
+    coilLotOf, queueMesInput, cancelMesInput, mesText, MES_LABEL, suggestMachines, findReceipt };
 })(window);
