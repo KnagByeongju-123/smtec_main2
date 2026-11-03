@@ -10,28 +10,27 @@
 //  재질 표기 정규화: 'SUS' 접두, '-S'/'-P' 접미, 공백·하이픈·괄호 무시
 //    예) 304-(J1) = 304J1 2B,  430-2B = 430 2B,  S55CM-S = S55CM,  SUS430 = 430
 //    표면(2B/BA/BB)은 양쪽 모두 적혀 있을 때만 비교
+//    같은 소재 지정: C67S = S70CM-S (SAME_MAT)
 //  허용차: 두께 ±0.02mm, 폭 ±0.5mm
 // ============================================================
 (function (g) {
   const TOL_T = 0.02;
   const TOL_W = 0.5;
   // 표기는 다르지만 같은 재질로 볼 이름 (정규화 후 값 기준) — 필요 시 추가
-  const MAT_ALIAS = {
-    // 현장 표기: C67S, S70CM-S — 두 이름은 같은 소재 (2026-11 현장 확인)
-    //   정규화하면 S70CM-S → S70CM 이 되므로 아래 이름을 모두 같은 소재(C67S)로 묶는다
-    C67SCM: 'C67S',   // 옛 소재마스터 표기 'C67SCM-S' (sql/material_name_unify_C67S.sql 로 통일)
-    S70CM: 'C67S',    // S70CM-S, S70CM
-    S70C: 'C67S',     // 'S70C' 는 잘못 입력된 이름 (sql/material_name_fix_S70C.sql 로 S70CM-S 수정)
-  };
+  // 같은 소재로 볼 표기 — 정규화 전 '정확한 이름'으로만 묶는다 (2026-11 현장 확인)
+  //   C67S = S70CM-S  두 개만. (S70CM, S70C, C67SCM-S 등 다른 표기는 묶지 않음)
+  const SAME_MAT = { 'C67S': 'C67S', 'S70CM-S': 'C67S' };
 
   function parseMat(s) {
     let t = String(s || '').toUpperCase().trim();
+    const exact = SAME_MAT[t.replace(/\s+/g, '')];
+    if (exact) return { base: '=' + exact, fin: '' };
     t = t.replace(/^SUS\s*/, '').replace(/-(S|P)$/, '');
     t = t.replace(/[\s\-()_.]/g, '');
     let fin = '';
     const m = t.match(/^(.+?)(2B|BA|BB)$/);
     if (m && m[1].length >= 3) { t = m[1]; fin = m[2]; }
-    return { base: MAT_ALIAS[t] || t, fin };
+    return { base: t, fin };
   }
 
   function sameMat(a, b) {
