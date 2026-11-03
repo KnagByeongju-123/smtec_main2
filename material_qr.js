@@ -196,6 +196,39 @@
     return m ? composeMachineName(m.ho_code, m.maker, m.tonnage) : null;
   }
 
+  /* 코일 QR 만으로 장착 호기 찾기 (호기 QR 없이)
+     ① exact : PIMMES 소재로트(machine_status.lot_no) = 코일 HEAT 이고 작업 규격도 맞는 호기
+               (키오스크에 먼저 투입한 경우 — 정확히 1대)
+               ※ HEAT 번호가 폭별로 겹칠 수 있음 (예: SB65954-2 102W / 92W) → 규격 불일치 호기는 제외
+     ② spec  : 현재 작업 규격(재질·두께·폭)이 코일과 맞는 호기
+     ③ all   : 전체 호기 (직접 선택용) */
+  async function suggestMachines(req, certId, coil) {
+    const [certs, msRows, master, mm] = await Promise.all([
+      req('GET', `${T_CERTS}?select=id,material_type,thickness,width_mm,heat_no,lots_detail,coil_count,final_judge&id=eq.${certId}`),
+      req('GET', 'machine_status?select=machine_code,machine_name,current_mold,current_item_code,item_name,lot_no,is_virtual'),
+      req('GET', 'material_master_tj?select=material_name,material_type,thickness,width,mapped_models,mold_number&limit=5000'),
+      machineMaster ? Promise.resolve(machineMaster) : req('GET', 'machine_master_tj?select=ho_code,maker,tonnage,active')
+    ]);
+    machineMaster = mm;
+    const c = certs && certs[0];
+    if (!c) return { block: { title: '장착 불가', msg: `등록되지 않은 코일입니다 (#${certId}).\n품질팀에 확인하세요.` } };
+    const coilCount = parseInt(c.coil_count, 10) || 1;
+    const lots = String(c.lots_detail || '').split(',').map(x => x.trim()).filter(Boolean);
+    const coilHeat = coil && lots.length >= coil ? lots[coil - 1] : (coilCount <= 1 ? (lots[0] || c.heat_no) : null);
+    const heats = new Set((coilHeat ? [coilHeat] : lots.concat(c.heat_no ? [c.heat_no] : [])).map(h => String(h).trim().toUpperCase()));
+    const mat = { material_type: c.material_type, thickness: parseFloat(c.thickness) || 0, width: parseFloat(c.width_mm) || 0 };
+    const items = (msRows || []).filter(r => !r.is_virtual).map(r => {
+      const ho = MatSpec.hoOf(String(r.machine_name || '').split('_')[0]);
+      const m = (mm || []).find(x => x.active !== false && MatSpec.hoOf(x.ho_code) === ho);
+      const job = MatSpec.findJobSpecs(r, master || []);
+      return { mc: r.machine_code, ho, name: m ? composeMachineName(m.ho_code, m.maker, m.tonnage) : null,
+               item: r.current_item_code || '', lot: String(r.lot_no || '').trim(), chk: MatSpec.checkSpec(mat, job).status };
+    }).filter(x => x.name).sort((a, b) => a.ho - b.ho);
+    const exact = items.filter(x => x.lot && heats.has(x.lot.toUpperCase()) && x.chk !== 'mismatch');
+    const spec = items.filter(x => x.chk === 'ok' && !exact.includes(x));
+    return { heat: coilHeat || c.heat_no, mat, exact, spec, all: items };
+  }
+
   /* 호기의 현재 작업 규격 (machine_status 현재 금형·품번 → 소재 마스터) */
   async function loadJob(req, machineName) {
     const ho = MatSpec.hoOf(machineName);
@@ -377,5 +410,5 @@
 
   g.MatQR = { esc, nowKST, parseCoilQr, codeToChar, listenScanner, openCamera, closeCamera,
     composeMachineName, machineNameOf, loadJob, inspect, attach, detach, jobHtml, feedback,
-    coilLotOf, queueMesInput, cancelMesInput, mesText, MES_LABEL };
+    coilLotOf, queueMesInput, cancelMesInput, mesText, MES_LABEL, suggestMachines };
 })(window);
