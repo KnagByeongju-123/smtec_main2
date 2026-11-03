@@ -7,6 +7,7 @@
 <title>공정생산실행 키오스크 v0.1</title>
 <script src="supabase_config.js"></script>
 <script src="material_spec.js?v=8"></script>
+<script src="material_qr.js?v=2"></script>
 <style>
 :root{--bg:#000;--panel:#0b0b0b;--line:#2a2a2a;--yel:#ffe600;--grn:#2bff2b;--red:#ff2b2b;--wht:#fff;--sky:#9cc3ff;--btn:#e9ecf1;--btnTx:#1b1f2a}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -69,6 +70,26 @@ html,body{height:100%;background:var(--bg);color:var(--wht);font-family:'Malgun 
 .modal .act{display:flex;gap:1vw;justify-content:flex-end;margin-top:2.4vh}
 .modal button{font-size:2.4vh;padding:1vh 2vw;border:0;border-radius:4px;cursor:pointer;background:#ddd}
 .modal button.pri{background:#0a2a8c;color:#fff}
+/* QR 장착 확인창 (키오스크에서 바로 스캔) */
+.kq{position:fixed;inset:0;background:rgba(0,0,0,.82);display:none;align-items:center;justify-content:center;z-index:20}
+.kq.show{display:flex}
+.kq .kbox{background:#111;border:2px solid #444;color:#fff;width:min(900px,94vw);max-height:94vh;overflow:auto;padding:2.6vh 2.4vw;border-radius:10px}
+.kq h3{font-size:3.4vh;margin-bottom:1.2vh;color:var(--yel)}
+.kq .kmc{font-size:4.2vh;font-weight:900;color:var(--grn)}
+.kq .kheat{font-size:5.4vh;font-weight:900;margin:.6vh 0;word-break:break-all}
+.kq .kspec{font-size:2.6vh;color:#bbb;line-height:1.55;margin-bottom:1.4vh}
+.kq .kload{font-size:3vh;color:var(--sky);padding:3vh 0;text-align:center}
+.kq .kerr{font-size:3vh;font-weight:800;color:#fff;background:#b91c1c;border-radius:8px;padding:2vh 1.6vw;line-height:1.55;white-space:pre-line}
+.kq .kok{font-size:4vh;font-weight:900;color:var(--grn);text-align:center;padding:2.4vh 0;line-height:1.5}
+.kq .mq-mis{font-size:3vh;font-weight:900;color:#fff;background:#b91c1c;border-radius:8px;padding:1.6vh 1.4vw;margin-bottom:1vh;line-height:1.5}
+.kq .mq-job{font-size:2.5vh;color:#ccc;background:#000;border:1px solid #333;border-radius:8px;padding:1.2vh 1.2vw;margin-bottom:1vh;line-height:1.55}
+.kq .mq-job b{color:#fff}
+.kq .mq-job.ok b{color:var(--grn)}
+.kq .mq-warn,.kq .kwarn{font-size:2.5vh;color:#fbbf24;background:rgba(245,158,11,.12);border-left:5px solid #f59e0b;border-radius:6px;padding:1.2vh 1.2vw;margin-bottom:1vh;line-height:1.5}
+.kq .kacts{display:flex;gap:1vw;margin-top:2vh;flex-wrap:wrap}
+.kq .kacts button{flex:1;min-width:22%;font-size:3vh;font-weight:900;padding:2.2vh 1vw;border-radius:8px;border:2px solid #555;background:#222;color:#fff;cursor:pointer;font-family:inherit}
+.kq .kacts button.pri{background:#16a34a;border-color:#16a34a}
+.kq .kacts button.danger{background:#dc2626;border-color:#dc2626;font-size:2.6vh}
 </style>
 </head>
 <body>
@@ -125,7 +146,7 @@ html,body{height:100%;background:var(--bg);color:var(--wht);font-family:'Malgun 
       <div class="btn" data-act="worker"><b>Worker</b><small>작업자</small></div>
       <div class="btn gy" data-act="doc"><b>Work.Doc</b><small>작업표준</small></div>
       <div class="btn b" data-act="time"><b>Time</b><small>초/중/종물</small></div>
-      <div class="btn" data-act="material"><b>원소재</b><small>소재 투입·장착</small></div>
+      <div class="btn" data-act="material"><b>원소재</b><small>QR 스캔 장착</small></div>
       <div class="btn gy" data-act="full"><b>Full</b><small>전체화면</small></div>
     </div>
   </div>
@@ -134,6 +155,7 @@ html,body{height:100%;background:var(--bg);color:var(--wht);font-family:'Malgun 
 <div class="bottom" id="bottom">연결 중…</div>
 
 <div class="modal" id="modal"><div class="box"><h3 id="mT"></h3><p id="mB"></p><div class="act" id="mA"></div></div></div>
+<div class="kq" id="kq"><div class="kbox"><h3 id="kqT"></h3><div id="kqB"></div><div class="kacts" id="kqA"></div></div></div>
 
 <script>
 // 공정생산실행 키오스크 v0.1 — PIMMES 16번 화면 대체 시제품
@@ -150,8 +172,8 @@ const $ = (id) => document.getElementById(id);
 
 let rows = [], cur = null, lastOk = null;
 let att = null;   // 이 호기에 QR/터치로 장착된 소재 (material_attachment, status=attached)
-let master = null, masterAt = 0;
-let specWarn = '';   // 소재 마스터 (작업 규격 비교용, 5분마다 갱신)
+let master = null, masterAt = 0;   // 소재 마스터 (작업 규격 비교용, 5분마다 갱신)
+let specWarn = '';                 // 규격 불일치 하단 경고 문구
 let mc = new URLSearchParams(location.search).get('mc') || (() => { try { return localStorage.getItem(LS_KEY); } catch (_) { return null; } })();
 
 function tick() {
@@ -305,15 +327,139 @@ const ACTS = {
   worker: () => modal('작업자', `현재 투입인원: ${cur ? (cur.worker || '-').trim() : '-'}\n작업자 변경은 ` + NEXT),
   doc: () => location.href = 'gdrive_standard.html' + (cur && cur.current_item_code ? '?q=' + encodeURIComponent(cur.current_item_code) : ''),
   time: () => modal('초·중·종물 확인', cur ? `초물 ${cur.inspect_top || '-'} / 중물 ${cur.inspect_mid || '-'} / 종물 ${cur.inspect_bottom || '-'}\n(O 완료 · W 대기 · N 미실시)\n검사 입력은 ` + NEXT : '-'),
-  material: () => {
-    // 이 키오스크의 설비코드와 투입작업자를 넘겨 장착 화면을 해당 호기로 고정
-    const q = new URLSearchParams({ mc: mc || '' });
-    const w = cur && (cur.worker || '').trim();
-    if (w) q.set('user_name', w);
-    location.href = 'material_attach.html?' + q.toString();
-  },
+  // 원소재: 키오스크에서 바로 카메라 스캔 (스캐너가 연결돼 있으면 버튼 없이 QR만 찍으면 됨)
+  material: () => MatQR.openCamera(onKioskScan, [{ t: '📋 목록·탈착 화면', fn: goAttachPage }]),
   full: () => { const d = document.documentElement; (document.fullscreenElement ? document.exitFullscreen() : d.requestFullscreen && d.requestFullscreen()); },
 };
+/* ============================================================
+   QR 장착 — 키오스크 화면에서 바로
+   · 바코드 스캐너: 버튼 없이 아무 때나 코일 라벨 QR을 찍으면 확인창이 뜬다
+   · 카메라: [원소재] 버튼
+   · 이미 장착된 소재가 있으면 [기존 소진 + 장착] / [기존 탈착 + 장착] 으로 교체 처리
+   ============================================================ */
+function goAttachPage() {
+  const q = new URLSearchParams({ mc: mc || '' });
+  const w = cur && (cur.worker || '').trim();
+  if (w) q.set('user_name', w);
+  location.href = 'material_attach.html?' + q.toString();
+}
+
+async function kioskReq(method, path, body) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+    method, headers: sbHeaders(method === 'GET' ? '' : 'return=representation'),
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  const ct = res.headers.get('content-type') || '';
+  return res.status === 204 || !ct.includes('json') ? null : res.json();
+}
+
+// 장착자: 포털 PIN 로그인 → 없으면 현재 투입 작업자 → 없으면 '키오스크'
+function kioskUser() {
+  try {
+    const a = JSON.parse(localStorage.getItem('esg_pin_auth') || 'null');
+    if (a && a.name && (!a.exp || Date.now() < a.exp)) return { id: a.emp_id || a.id || null, name: a.name, dept: a.dept || null };
+  } catch (_) {}
+  const w = cur && (cur.worker || '').trim();
+  return { id: null, name: w || '키오스크', dept: null };
+}
+
+let kqBusy = false, kqTimer = null;
+function kq(title, html, actions) {
+  clearInterval(kqTimer);
+  $('kqT').textContent = title;
+  $('kqB').innerHTML = html;
+  const box = $('kqA'); box.innerHTML = '';
+  (actions || []).forEach((a) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = a.t; b.className = a.cls || '';
+    b.onclick = async () => { if (a.keep !== true) $('kq').classList.remove('show'); if (a.fn) await a.fn(); };
+    box.appendChild(b);
+  });
+  $('kq').classList.add('show');
+}
+function kqErr(title, msg) {
+  MatQR.feedback(false);
+  kq('⛔ ' + title, `<div class="kerr">${MatQR.esc(msg)}</div>`, [{ t: '확인', cls: 'pri' }]);
+}
+
+async function onKioskScan(text) {
+  const q = MatQR.parseCoilQr(text);
+  if (!q) { kqErr('인식 불가', 'IQC 합격 라벨의 QR이 아닙니다.\n품질팀에서 출력한 [IQC 합격] 라벨을 찍어 주세요.'); return; }
+  if (kqBusy || !cur) return;
+  kqBusy = true;
+  kq('📷 코일 확인 중', '<div class="kload">IQC 판정 · 규격 · 장착 이력 확인 중…</div>', []);
+  try {
+    const mname = await MatQR.machineNameOf(kioskReq, cur);
+    if (!mname) { kqErr('호기 확인 불가', `${cur.machine_name} 에 맞는 호기 마스터가 없습니다.\n마스터관리 > 설비에서 등록하세요.`); return; }
+    const res = await MatQR.inspect(kioskReq, q.certId, q.coil, mname);
+    if (res.block) { kqErr(res.block.title, res.block.msg); return; }
+    showKioskConfirm(res, mname);
+  } catch (e) {
+    console.error('[키오스크 QR 장착]', e);
+    kqErr('조회 실패', '서버 조회에 실패했습니다.\n' + e.message);
+  } finally {
+    kqBusy = false;
+  }
+}
+
+function showKioskConfirm(res, mname) {
+  const { mat, warns, onThis, chk } = res;
+  const E = MatQR.esc;
+  const mis = chk.status === 'mismatch';
+  MatQR.feedback(!mis);
+  const coilTxt = mat.coil_seq ? ` · 코일 ${mat.coil_seq}/${mat.coil_count}` : '';
+  const oldTxt = onThis.map((a) => a.heat_no).join(', ');
+  const html = `
+    <div class="kmc">▶ ${E(mname)}</div>
+    <div class="kheat">HEAT ${E(mat.heat_no)}</div>
+    <div class="kspec">${E(mat.material_type)} ${E(mat.thickness)}t × ${E(mat.width)}W${coilTxt}<br>
+      LOT ${E(mat.lot_no || '-')} · ${E(mat.supplier)} · 입고 ${E(mat.receipt_date || '-')} · IQC <b style="color:var(--grn)">OK</b></div>
+    ${MatQR.jobHtml(res)}
+    ${onThis.length ? `<div class="kwarn">현재 장착중: <b>${E(oldTxt)}</b><br>교체하면 기존 소재를 소진(다 씀) 또는 탈착(남은 코일 내림) 처리합니다.</div>` : ''}
+    ${(warns || []).map((w) => `<div class="kwarn">⚠️ ${E(w)}</div>`).join('')}`;
+  const go = (detachType) => async () => {
+    if (mis && !confirm(`규격이 다릅니다.\n${chk.diffs.join('\n')}\n\n이 코일이 맞는 것이 확실합니까?`)) return;
+    await doKioskAttach(mat, mname, onThis, detachType);
+  };
+  const acts = [{ t: mis ? '취소 (권장)' : '취소', cls: mis ? 'pri' : '' }];
+  if (onThis.length) {
+    acts.push({ t: '기존 탈착 + 장착', cls: mis ? 'danger' : '', fn: go('normal') });
+    acts.push({ t: '기존 소진 + 장착', cls: mis ? 'danger' : 'pri', fn: go('consumed') });
+  } else {
+    acts.push({ t: mis ? '불일치 확인 후 장착' : '장착', cls: mis ? 'danger' : 'pri', fn: go(null) });
+  }
+  kq(mis ? '🚫 규격 불일치' : '📷 QR 장착 확인', html, acts);
+}
+
+async function doKioskAttach(mat, mname, onThis, detachType) {
+  const user = kioskUser();
+  kq('장착 처리 중', '<div class="kload">저장 중…</div>', []);
+  let row = null;
+  try {
+    if (detachType) for (const a of onThis) await MatQR.detach(kioskReq, a, detachType, user, null);
+    row = await MatQR.attach(kioskReq, mat, mname, user);
+  } catch (e) {
+    kqErr('저장 실패', '장착 기록을 저장하지 못했습니다.\n' + e.message + '\n\n다시 스캔하거나 관리자에게 연락하세요.');
+    return;
+  }
+  // PIMMES 원소재 투입 대기 저장 (사내 동기화 프로그램이 PIMMES 에 반영)
+  const q = await MatQR.queueMesInput(kioskReq, { mat, machineName: mname, attachRow: row, user, source: 'qr_kiosk' });
+  MatQR.feedback(true);
+  await loadAttached(); render();
+  let n = q.status === 'pending' ? 3 : 8;   // PIMMES 직접 투입이 필요하면 더 오래 보여줌
+  const mesLine = `<div style="font-size:2.4vh;margin-top:1vh;color:${q.status === 'pending' ? '#9cc3ff' : '#fbbf24'}">${MatQR.esc(MatQR.mesText(q))}</div>`;
+  const body = () => `<div class="kok">✅ 장착 완료<br>${MatQR.esc(q.row && q.row.heat_no || mat.heat_no)} → ${MatQR.esc(mname)}${mesLine}<span style="font-size:2.4vh;color:#aaa">${n}초 후 닫힘</span></div>`;
+  kq('장착 완료', body(), [{ t: '닫기', cls: 'pri' }]);
+  kqTimer = setInterval(() => {
+    n -= 1;
+    if (n <= 0) { clearInterval(kqTimer); $('kq').classList.remove('show'); return; }
+    $('kqB').innerHTML = body();
+  }, 1000);
+}
+
+MatQR.listenScanner(onKioskScan);
+
 document.querySelectorAll('.btn').forEach((b) => b.addEventListener('click', () => (ACTS[b.dataset.act] || (() => {}))()));
 $('mcSel').addEventListener('change', async (e) => { mc = e.target.value; try { localStorage.setItem(LS_KEY, mc); } catch (_) {} cur = rows.find((r) => r.machine_code === mc) || null; att = null; render(); await loadAttached(); render(); });
 $('refSec').textContent = REFRESH;
