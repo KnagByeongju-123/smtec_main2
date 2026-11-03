@@ -123,5 +123,82 @@ ${roll ? '.lb{border:0;padding:3mm;break-after:page;page-break-after:always}' : 
     }
   }
 
-  g.CoilLabel = { fromCerts, preview, print, baseUrl };
+  /* ── PDF 다운로드 ─────────────────────────────────────────
+     한글 글꼴을 PDF 에 넣지 않도록 라벨을 캔버스 그림으로 그린 뒤 jsPDF 에 이미지로 넣는다
+     size: 'a4' = A4 2×4 (99×67mm) / 'roll' = 100×70mm 1장씩 */
+  const JSPDF_LIB = ['https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',
+                     'https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js'];
+  function loadJsPdf() {
+    if (g.jspdf && g.jspdf.jsPDF) return Promise.resolve();
+    return JSPDF_LIB.reduce((chain, url) => chain.catch(() => new Promise((ok, ng) => {
+      const el = document.createElement('script');
+      el.src = url; el.onload = () => (g.jspdf && g.jspdf.jsPDF) ? ok() : ng(); el.onerror = ng;
+      document.head.appendChild(el);
+    })), Promise.reject()).catch(() => { throw new Error('PDF 라이브러리를 불러오지 못했습니다 (인터넷 확인)'); });
+  }
+  function loadImg(src) {
+    return new Promise((ok, ng) => { const im = new Image(); im.onload = () => ok(im); im.onerror = ng; im.src = src; });
+  }
+  const FONT = "'Malgun Gothic','맑은 고딕','Apple SD Gothic Neo','Noto Sans KR',sans-serif";
+  /* 라벨 1장을 캔버스에 그림 (W×H mm, 1mm = PX 픽셀) */
+  async function drawLabel(L, qrSrc, Wmm, Hmm, border) {
+    const PX = 12;
+    const cv = document.createElement('canvas');
+    cv.width = Wmm * PX; cv.height = Hmm * PX;
+    const c = cv.getContext('2d');
+    const mm = (v) => v * PX;
+    c.fillStyle = '#fff'; c.fillRect(0, 0, cv.width, cv.height);
+    if (border) { c.strokeStyle = '#000'; c.lineWidth = mm(0.4); c.strokeRect(mm(0.2), mm(0.2), cv.width - mm(0.4), cv.height - mm(0.4)); }
+    const P = 3;                                   // 안쪽 여백(mm)
+    // 머리글
+    c.fillStyle = '#1e3a8a'; c.fillRect(mm(P), mm(P), mm(Wmm - 2 * P), mm(7));
+    c.fillStyle = '#fff'; c.textBaseline = 'middle';
+    c.font = `900 ${mm(5)}px ${FONT}`; c.fillText('입고 소재', mm(P + 2), mm(P + 3.6));
+    c.font = `${mm(2.8)}px ${FONT}`; c.textAlign = 'right'; c.fillText('(주)태진다이텍', mm(Wmm - P - 2), mm(P + 3.6)); c.textAlign = 'left';
+    // QR
+    const qr = await loadImg(qrSrc);
+    c.imageSmoothingEnabled = false;
+    const qy = P + 9.5, qs = 34;
+    c.drawImage(qr, mm(P), mm(qy), mm(qs), mm(qs));
+    // 정보
+    const rows = [['HEAT', L.heat, true], ['재질', L.material], ['규격', `${L.t}t × ${L.w}W`],
+                  ['중량', L.kg ? Number(L.kg).toLocaleString() + ' kg' : '-'], ['공급사', L.supplier || ''], ['입고', L.date || '']];
+    let y = qy + 3; const x0 = P + qs + 3;
+    rows.forEach(([k, v, big]) => {
+      c.fillStyle = '#444'; c.font = `600 ${mm(2.9)}px ${FONT}`; c.fillText(k, mm(x0), mm(y));
+      c.fillStyle = '#000'; c.font = `${big ? 900 : 700} ${mm(big ? 4.2 : 3)}px ${FONT}`;
+      c.fillText(String(v), mm(x0 + 12), mm(y), mm(Wmm - x0 - 12 - P));
+      y += big ? 6 : 4.6;
+    });
+    // 하단
+    const fy = Hmm - P - 4;
+    c.strokeStyle = '#000'; c.lineWidth = mm(0.3); c.beginPath(); c.moveTo(mm(P), mm(fy)); c.lineTo(mm(Wmm - P), mm(fy)); c.stroke();
+    c.fillStyle = '#000'; c.font = `900 ${mm(3.6)}px ${FONT}`; c.fillText(`코일 ${L.seq}/${L.n}`, mm(P), mm(fy + 2.4));
+    c.font = `${mm(2.6)}px ${FONT}`; c.textAlign = 'right'; c.fillText(`#${L.certId} · 수입검사 합격 후 장착`, mm(Wmm - P), mm(fy + 2.4)); c.textAlign = 'left';
+    return cv.toDataURL('image/png');
+  }
+  async function downloadPdf(labels, size, fileName) {
+    await loadQrGen();
+    await loadJsPdf();
+    const base = baseUrl();
+    const roll = size === 'roll';
+    const { jsPDF } = g.jspdf;
+    const doc = roll ? new jsPDF({ orientation: 'landscape', unit: 'mm', format: [100, 70] }) : new jsPDF({ unit: 'mm', format: 'a4' });
+    const W = roll ? 100 : 99, H = roll ? 70 : 67;
+    for (let i = 0; i < labels.length; i++) {
+      const L = labels[i];
+      const png = await drawLabel(L, qrImg(`${base}?cert=${L.certId}&c=${L.seq}`), W, H, !roll);
+      if (roll) {
+        if (i) doc.addPage([100, 70], 'landscape');
+        doc.addImage(png, 'PNG', 0, 0, W, H);
+      } else {
+        const k = i % 8;
+        if (i && k === 0) doc.addPage();
+        doc.addImage(png, 'PNG', 6 + (k % 2) * 99, 8 + Math.floor(k / 2) * 67, W, H);
+      }
+    }
+    doc.save(fileName || `소재QR라벨_${labels.length}매.pdf`);
+  }
+
+  g.CoilLabel = { fromCerts, preview, print, downloadPdf, drawLabel, baseUrl };
 })(window);
