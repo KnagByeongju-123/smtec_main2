@@ -24,10 +24,10 @@
     return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
 
+  // 현재 시각 (DB timestamptz 저장용). UTC ISO 문자열 그대로 보내면 DB 가 정확히 저장하고
+  // 화면은 기기 시간대(한국)로 표시한다. ※ 2026-11-03 이전 코드는 시간대를 이중 보정해 ±9시간 오차가 있었음
   function nowKST() {
-    const now = new Date();
-    const local = new Date(now.getTime() + (9 * 60 + now.getTimezoneOffset()) * 60000);
-    return local.toISOString().replace('Z', '+09:00');
+    return new Date().toISOString();
   }
 
   /* QR 문자열 → { certId, coil }  (우리 라벨이 아니면 null) */
@@ -285,6 +285,24 @@
       detach_type: type, detach_remain_kg: remainKg == null ? null : remainKg,
       status: type === 'consumed' ? 'consumed' : 'detached'
     });
+    await cancelMesInput(req, row, type);
+  }
+
+  /* 탈착 시 PIMMES 투입 대기 취소
+     · '잘못된 장착'으로 탈착  · 또는 장착 후 5분 안에 탈착 (실수 장착 → 다시 장착 등)
+     → 아직 처리 안 된(pending/manual) 투입 대기를 'cancelled' 로. 정상 사용 후 탈착·소진은 그대로 둠 */
+  const CANCEL_WITHIN_MS = 5 * 60e3;
+  async function cancelMesInput(req, row, type) {
+    if (!row || !row.id) return;
+    const t = row.attach_time ? new Date(row.attach_time).getTime() : NaN;
+    const quick = !isNaN(t) && Date.now() - t < CANCEL_WITHIN_MS;
+    if (type !== 'wrong_attach' && !quick) return;
+    try {
+      await req('PATCH', `mes_material_input?attachment_id=eq.${row.id}&status=in.(pending,manual)`, {
+        status: 'cancelled',
+        error_msg: type === 'wrong_attach' ? '취소: 잘못된 장착으로 탈착' : '취소: 장착 후 5분 안에 탈착 (실수 장착)'
+      });
+    } catch (e) { console.warn('[투입 대기 취소 실패]', e); }
   }
 
   /* ── PIMMES 원소재 투입 대기 ─────────────────────────────
@@ -329,7 +347,7 @@
       return { status: 'fail', msg: e.message };
     }
   }
-  const MES_LABEL = { pending: 'PIMMES 반영 대기', processing: 'PIMMES 반영 중', synced: 'PIMMES 반영 완료', error: 'PIMMES 반영 오류', manual: 'PIMMES 직접 투입 필요', skip: 'PIMMES 연동 안 됨', fail: 'PIMMES 대기 저장 실패' };
+  const MES_LABEL = { cancelled: 'PIMMES 투입 취소', pending: 'PIMMES 반영 대기', processing: 'PIMMES 반영 중', synced: 'PIMMES 반영 완료', error: 'PIMMES 반영 오류', manual: 'PIMMES 직접 투입 필요', skip: 'PIMMES 연동 안 됨', fail: 'PIMMES 대기 저장 실패' };
   function mesText(r) { return r ? (MES_LABEL[r.status] || r.status) + (r.msg ? ` — ${r.msg}` : '') : ''; }
 
   /* 확인창에 넣을 작업 규격 안내 HTML (cls: 화면별 CSS 클래스 접두) */
@@ -359,5 +377,5 @@
 
   g.MatQR = { esc, nowKST, parseCoilQr, codeToChar, listenScanner, openCamera, closeCamera,
     composeMachineName, machineNameOf, loadJob, inspect, attach, detach, jobHtml, feedback,
-    coilLotOf, queueMesInput, mesText, MES_LABEL };
+    coilLotOf, queueMesInput, cancelMesInput, mesText, MES_LABEL };
 })(window);
