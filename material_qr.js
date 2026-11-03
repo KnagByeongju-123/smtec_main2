@@ -221,35 +221,41 @@
     const judge = String(c.final_judge || '').trim().toUpperCase();
     if (judge !== 'OK') return { block: { title: '장착 불가 — IQC 미합격', msg: `HEAT ${c.heat_no}\nIQC 판정: ${c.final_judge || '미검사'}\n\n수입검사 합격(OK) 코일만 장착할 수 있습니다.` } };
 
+    // 코일 HEAT = 코일 태그의 Heat NO. (lots_detail 의 코일순번 번째, 예: SB65954-6)
+    const coilCount = parseInt(c.coil_count, 10) || 1;
+    const lots = String(c.lots_detail || '').split(',').map(x => x.trim()).filter(Boolean);
+    const coilHeat = coil && lots.length >= coil ? lots[coil - 1] : (coilCount <= 1 ? (lots[0] || null) : null);
+    const heat = coilHeat || c.heat_no;
+
     const enc = encodeURIComponent;
+    const heats = [...new Set([c.heat_no, coilHeat].filter(Boolean))].map(h => '"' + h.replace(/"/g, '') + '"').join(',');
     const [ex, hist, onThis] = await Promise.all([
-      req('GET', `${T_EXCLUDED}?select=heat_no,reason&is_active=eq.true&heat_no=eq.${enc(c.heat_no)}`).catch(() => []),
+      req('GET', `${T_EXCLUDED}?select=heat_no,reason&is_active=eq.true&heat_no=in.(${enc(heats)})`).catch(() => []),
       req('GET', `${T_ATTACH}?select=id,machine_code,status&cert_id=eq.${c.id}`).catch(() => []),
       req('GET', `${T_ATTACH}?select=*&status=eq.attached&machine_code=eq.${enc(machineName)}&order=attach_time.desc`).catch(() => [])
     ]);
-    if (ex && ex.length) return { block: { title: '장착 불가 — 사용금지 HEAT', msg: `HEAT ${c.heat_no}\n사유: ${ex[0].reason || '-'}\n\n블랙리스트에 등록된 소재입니다. 품질팀에 연락하세요.` } };
+    if (ex && ex.length) return { block: { title: '장착 불가 — 사용금지 HEAT', msg: `HEAT ${ex[0].heat_no || heat}\n사유: ${ex[0].reason || '-'}\n\n블랙리스트에 등록된 소재입니다. 품질팀에 연락하세요.` } };
 
-    const coilCount = parseInt(c.coil_count, 10) || 1;
     const coilTxt = coil ? ` (코일 ${coil}/${coilCount})` : '';
-    if ((onThis || []).some(a => a.cert_id === c.id)) return { block: { title: '이미 장착됨', msg: `HEAT ${c.heat_no}${coilTxt}\n이미 ${machineName}에 장착되어 있습니다.` } };
+    if ((onThis || []).some(a => a.cert_id === c.id)) return { block: { title: '이미 장착됨', msg: `HEAT ${heat}${coilTxt}\n이미 ${machineName}에 장착되어 있습니다.` } };
     const otherMc = [...new Set((hist || []).filter(h => h.status === 'attached' && h.machine_code !== machineName).map(h => h.machine_code))];
     const usedUp = (hist || []).filter(h => h.status === 'consumed').length;
     const warns = [];
     if (coilCount <= 1) {
-      if (otherMc.length) return { block: { title: '장착 불가 — 다른 호기에 장착중', msg: `HEAT ${c.heat_no}\n현재 ${otherMc.join(', ')}에 장착되어 있습니다.\n\n먼저 그 호기에서 탈착 처리하세요.` } };
-      if (usedUp) return { block: { title: '장착 불가 — 소진 처리된 코일', msg: `HEAT ${c.heat_no}\n이미 소진 처리된 코일입니다.\n잘못 처리된 경우 품질팀에 연락하세요.` } };
+      if (otherMc.length) return { block: { title: '장착 불가 — 다른 호기에 장착중', msg: `HEAT ${heat}\n현재 ${otherMc.join(', ')}에 장착되어 있습니다.\n\n먼저 그 호기에서 탈착 처리하세요.` } };
+      if (usedUp) return { block: { title: '장착 불가 — 소진 처리된 코일', msg: `HEAT ${heat}\n이미 소진 처리된 코일입니다.\n잘못 처리된 경우 품질팀에 연락하세요.` } };
     } else {
       if (otherMc.length) warns.push(`같은 입고LOT 코일이 ${otherMc.join(', ')}에 장착중입니다. 라벨의 코일 번호가 다른지 확인하세요.`);
       if (usedUp >= coilCount) warns.push(`이 입고LOT은 코일 ${coilCount}개 중 ${usedUp}건이 이미 소진 처리되었습니다.`);
     }
 
     const mat = {
-      cert_id: c.id, heat_no: c.heat_no, lot_no: c.lot_no || c.lots_detail || '', supplier: c.supplier || '',
+      cert_id: c.id, heat_no: heat, cert_heat: c.heat_no, coil_lot: coilHeat, lot_no: c.lot_no || c.lots_detail || '', supplier: c.supplier || '',
       material_type: c.material_type || '', thickness: parseFloat(c.thickness) || 0, width: parseFloat(c.width_mm) || 0,
       receipt_kg: parseFloat(c.weight) || 0, receipt_date: c.receipt_date || c.recv_date || '',
       cert_no: c.lot_no ? String(c.lot_no).substring(0, 16) : ('CERT-' + c.id),
       coil_seq: coil, coil_count: coilCount,
-      lots: String(c.lots_detail || '').split(',').map(x => x.trim()).filter(Boolean)   // 코일별 로트 (라벨 코일 순번 순서)
+      lots   // 코일별 로트 (라벨 코일 순번 순서)
     };
     let job = null, chk = { status: 'unknown', diffs: [], spec: null };
     try { job = await loadJob(req, machineName); chk = MatSpec.checkSpec(mat, job); } catch (e) { console.warn('작업 규격 조회 실패:', e); }
@@ -283,9 +289,10 @@
      PIMMES 입고번호 = 소재 입고(raw_material_receipt) 에서 같은 로트·두께·폭으로 찾은 mes_receipt_no
      → mes_material_input 에 저장 (입고번호를 못 찾으면 status='manual': PIMMES 에서 직접 투입) */
   function coilLotOf(mat) {
+    if (mat.coil_lot) return mat.coil_lot;
     const lots = mat.lots || [];
     if (mat.coil_seq && lots.length >= mat.coil_seq) return lots[mat.coil_seq - 1];
-    if ((mat.coil_count || 1) <= 1) return lots[0] || mat.heat_no || null;
+    if ((mat.coil_count || 1) <= 1) return lots[0] || mat.cert_heat || mat.heat_no || null;
     return null;   // 여러 코일 LOT 인데 코일 순번을 모름 (목록에서 터치 선택 등)
   }
   async function queueMesInput(req, opt) {
