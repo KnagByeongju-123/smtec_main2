@@ -16,7 +16,9 @@
   const TOL_T = 0.02;
   const TOL_W = 0.5;
   // 표기는 다르지만 같은 재질로 볼 이름 (정규화 후 값 기준) — 필요 시 추가
-  const MAT_ALIAS = {};
+  const MAT_ALIAS = {
+    C67SCM: 'C67S',   // 소재마스터 'C67SCM-S' = 수입검사 'C67S' (같은 재질, 2026-11 확인)
+  };
 
   function parseMat(s) {
     let t = String(s || '').toUpperCase().trim();
