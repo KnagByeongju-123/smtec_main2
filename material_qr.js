@@ -338,6 +338,15 @@
       detach_type: type, detach_remain_kg: remainKg == null ? null : remainKg,
       status: type === 'consumed' ? 'consumed' : 'detached'
     });
+    // 불량 소재 / 잘못된 입고 → 그 HEAT 사용금지(블랙리스트) 등록 (장착 화면 탈착 모달과 같은 처리)
+    if ((type === 'defect' || type === 'wrong_receipt') && row.heat_no) {
+      try {
+        await req('POST', T_EXCLUDED, {
+          heat_no: row.heat_no, reason: type, excluded_at: nowKST(),
+          excluded_by_id: u.id || null, excluded_by_name: u.name || null, excluded_by_dept: u.dept || null, is_active: true
+        });
+      } catch (e) { console.warn('[블랙리스트 등록 실패]', e); }
+    }
     await cancelMesInput(req, row, type);
   }
 

@@ -3,7 +3,7 @@
 <head>
 <script src="audit.js?v=7"></script>
 <script src="material_spec.js?v=9"></script>
-<script src="material_qr.js?v=7"></script>
+<script src="material_qr.js?v=8"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>소재 장착 관리 v2.3</title>
@@ -341,6 +341,8 @@ body {
 .cf-acts button { flex: 1; min-width: 30%; padding: 16px; font-size: 16px; font-weight: 800; font-family: inherit; border-radius: 10px; cursor: pointer; border: 1px solid #2a2e3d; background: #222633; color: #e8eaf0; }
 .cf-acts button.pri { background: #22c55e; border-color: #22c55e; color: #0f1117; }
 .cf-acts button.danger { background: #ef4444; border-color: #ef4444; color: #fff; font-size: 14px; }
+.cf-acts button.full { flex-basis: 100%; }
+.cf-acts button.warnb { background: #b45309; border-color: #b45309; color: #fff; }
 .cf-job { font-size: 13px; color: #8b8fa3; background: #0f1117; border: 1px solid #2a2e3d; border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; line-height: 1.6; }
 .cf-job b { color: #e8eaf0; }
 .cf-job.ok b.sp { color: #22c55e; }
@@ -1421,11 +1423,12 @@ async function confirmAttach(mat, warns, via, res) {
       LOT ${esc(mat.lot_no || '-')} · ${esc(mat.supplier)} · 입고 ${esc(mat.receipt_date || '-')}<br>
       IQC 판정 <b style="color:#22c55e">OK</b> · #${esc(mat.cert_id)}</div>
     ${jobHtml}
-    ${onThis.length ? `<div class="cf-warn">현재 장착중: <b>${esc(onThis.map(a => a.heat_no).join(', '))}</b><br>교체하면 기존 소재를 소진(다 씀) 또는 탈착(남은 코일 내림) 처리합니다.</div>` : ''}
+    ${onThis.length ? `<div class="cf-warn">현재 장착중: <b>${esc(onThis.map(a => a.heat_no).join(', '))}</b><br>기존 코일을 어떻게 처리할지 아래에서 고르세요 (다 씀 / 남음 / 불량).</div>` : ''}
     ${(warns || []).map(w => `<div class="cf-warn">⚠️ ${w}</div>`).join('')}
   `, (() => {
     const go = (detachType) => async () => {
       if (mis && !confirm(`규격이 다릅니다.\n${chk.diffs.join('\n')}\n\n작업지시 변경 등으로 이 코일이 맞는 것이 확실합니까?`)) return;
+      if (detachType === 'defect' && !confirm(`기존 코일 ${onThis.map(a => a.heat_no).join(', ')} 을(를) 불량 처리합니다.\n이 HEAT는 사용금지(블랙리스트)로 등록되어 이후 장착이 차단됩니다.\n\n계속하시겠습니까?`)) return;
       if (detachType) {
         try {
           const u = { id: currentUser.user_id, name: currentUser.user_name, dept: currentUser.user_dept };
@@ -1444,11 +1447,18 @@ async function confirmAttach(mat, warns, via, res) {
       if (ok && phoneLocked) { saveBind(KIOSK_MC || (readBind() || {}).mc, state.machineCode); showToast('✅ 장착 완료 — 다음 코일은 라벨 QR만 찍으세요', 'success'); }
       if (ok && KIOSK_MODE) afterKioskAttach(mat);
     };
-    const acts = [{ t: mis ? '취소 (권장)' : '취소', pri: mis }];
+    const acts = [];
     if (onThis.length) {
-      acts.push({ t: '기존 탈착 + 장착', cls: mis ? 'danger' : '', fn: go('normal') });
-      acts.push({ t: '기존 소진 + 장착', pri: !mis, cls: mis ? 'danger' : '', fn: go('consumed') });
-    } else {
+      // 기존 코일 처리 방법별 버튼 (다 씀 = 소진 / 남음 = 탈착·재사용 / 불량 = 탈착 + 블랙리스트)
+      acts.push({ t: '기존 코일 다 씀 → 새 코일 장착', cls: (mis ? 'danger' : 'pri') + ' full', fn: go('consumed') });
+      acts.push({ t: '기존 코일 남음(내림) → 새 코일 장착', cls: (mis ? 'danger' : '') + ' full', fn: go('normal') });
+      acts.push({ t: '기존 코일 불량 → 새 코일 장착', cls: (mis ? 'danger' : 'warnb') + ' full', fn: go('defect') });
+      acts.push({ t: mis ? '취소 (권장)' : '취소', cls: (mis ? 'pri' : '') + ' full' });
+      if (mis) acts.unshift(acts.pop());
+      return acts;
+    }
+    acts.push({ t: mis ? '취소 (권장)' : '취소', pri: mis });
+    {
       acts.push({ t: mis ? '불일치 확인 후 장착' : '장착', pri: !mis, cls: mis ? 'danger' : '', fn: go(null) });
     }
     return acts;
