@@ -17,9 +17,11 @@
   const TOL_W = 0.5;
   // 표기는 다르지만 같은 재질로 볼 이름 (정규화 후 값 기준) — 필요 시 추가
   const MAT_ALIAS = {
-    // 현장 표기 기준: C67S, S70CM-S  (S70CM-S 는 정규화 시 '-S'가 빠져 S70CM 과 자동으로 같게 처리됨)
-    C67SCM: 'C67S',   // 옛 소재마스터 표기 'C67SCM-S' = 'C67S' (sql/material_name_unify_C67S.sql 로 통일)
-    S70C: 'S70CM',    // 'S70C' 는 잘못 입력된 이름 → S70CM-S (sql/material_name_fix_S70C.sql 로 수정)
+    // 현장 표기: C67S, S70CM-S — 두 이름은 같은 소재 (2026-11 현장 확인)
+    //   정규화하면 S70CM-S → S70CM 이 되므로 아래 이름을 모두 같은 소재(C67S)로 묶는다
+    C67SCM: 'C67S',   // 옛 소재마스터 표기 'C67SCM-S' (sql/material_name_unify_C67S.sql 로 통일)
+    S70CM: 'C67S',    // S70CM-S, S70CM
+    S70C: 'C67S',     // 'S70C' 는 잘못 입력된 이름 (sql/material_name_fix_S70C.sql 로 S70CM-S 수정)
   };
 
   function parseMat(s) {
