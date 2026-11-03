@@ -3,6 +3,7 @@
 <head>
 <script src="audit.js?v=7"></script>
 <script src="material_spec.js?v=8"></script>
+<script src="material_qr.js?v=1"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>소재 장착 관리 v2.3</title>
@@ -329,12 +330,6 @@ body {
 .kiosk-lock.err { background: rgba(239,68,68,.12); color: #ef4444; border-color: rgba(239,68,68,.4); }
 #machineSelect:disabled { opacity: 1; color: #22c55e; font-weight: 800; }
 
-.cam-ov { position: fixed; inset: 0; background: rgba(0,0,0,.92); z-index: 9999; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 16px; }
-.cam-ov.on { display: flex; }
-.cam-ov #qrbox { width: min(92vw, 460px); border-radius: 12px; overflow: hidden; background: #000; }
-.cam-hint { color: #e8eaf0; font-size: 14px; text-align: center; }
-.cam-close { padding: 12px 28px; font-size: 15px; font-weight: 700; font-family: inherit; border-radius: 10px; border: 1px solid #2a2e3d; background: #222633; color: #e8eaf0; cursor: pointer; }
-
 .cf-modal { max-width: 460px; }
 .cf-machine { font-size: 22px; font-weight: 900; color: #22c55e; margin: 6px 0 10px; }
 .cf-heat { font-size: 24px; font-weight: 900; color: #e8eaf0; word-break: break-all; }
@@ -394,7 +389,7 @@ body {
   <div class="card scan-card">
     <h2 class="card-title">📷 코일 QR 스캔 → 장착</h2>
     <div class="scan-row">
-      <input class="scan-input" id="scanInput" inputmode="none" autocomplete="off" placeholder="스캐너로 IQC 합격 라벨 QR을 찍으세요">
+      <input class="scan-input" id="scanInput" readonly tabindex="-1" placeholder="스캐너로 IQC 합격 라벨 QR을 찍으세요 (화면 어디서나 인식)">
       <button class="scan-cam-btn" id="camBtn" type="button">📷 카메라</button>
     </div>
     <div class="help-text">💡 IQC 합격 라벨의 QR을 찍으면 판정·블랙리스트·중복을 확인한 뒤 장착합니다. 라벨이 없는 코일은 아래 목록에서 선택하세요.</div>
@@ -505,12 +500,6 @@ body {
     <div id="cfBody"></div>
     <div class="cf-acts" id="cfActs"></div>
   </div>
-</div>
-
-<div class="cam-ov" id="camOv">
-  <div id="qrbox"></div>
-  <div class="cam-hint" id="camHint">IQC 합격 라벨의 QR을 사각형 안에 맞춰 주세요</div>
-  <button class="cam-close" id="camClose" type="button">✕ 닫기</button>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -1279,118 +1268,48 @@ async function lockKioskMachine(mc) {
   }
 }
 
-/* QR 문자열 → { certId, coil }  (우리 라벨이 아니면 null) */
-function parseCoilQr(text) {
-  const s = String(text || '').trim();
-  let m = s.match(/[?&]cert=(\d+)/i);
-  if (m) {
-    const c = s.match(/[?&]c=(\d+)/i);
-    return { certId: parseInt(m[1], 10), coil: c ? parseInt(c[1], 10) : null };
-  }
-  m = s.match(/^SMTEC-COIL[:|](\d+)(?:[:|](\d+))?$/i);
-  if (m) return { certId: parseInt(m[1], 10), coil: m[2] ? parseInt(m[2], 10) : null };
-  return null;
-}
-
+/* QR 해석·스캐너·카메라·검증은 공통 모듈 material_qr.js (MatQR) 사용 — 키오스크와 같은 로직 */
 function setupScan() {
-  const inp = document.getElementById('scanInput');
-  inp.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter') return;
-    e.preventDefault();
-    const v = inp.value; inp.value = '';
-    if (v.trim()) onScanText(v);
-  });
-  document.getElementById('camBtn').addEventListener('click', startCam);
-  document.getElementById('camClose').addEventListener('click', stopCam);
-  // 키오스크: 바코드 스캐너 입력이 항상 들어오도록 입력칸에 포커스 유지
-  if (KIOSK_MC) {
-    inp.focus();
-    document.addEventListener('click', () => {
-      const a = document.activeElement;
-      if (!document.querySelector('.modal-bg.show') && (!a || a === document.body)) inp.focus();
-    });
-  }
+  // 바코드 스캐너: 화면 어디서나 입력을 받는다 (한글 입력 상태여도 정상 인식)
+  MatQR.listenScanner(onScanText);
+  document.getElementById('camBtn').addEventListener('click', () => MatQR.openCamera(onScanText));
 }
 
 async function onScanText(text) {
-  const q = parseCoilQr(text);
-  if (!q) { feedback(false); showAlert('인식 불가', 'IQC 합격 라벨의 QR이 아닙니다.\n품질팀에서 출력한 [IQC 합격] 라벨을 찍어 주세요.'); return; }
+  const q = MatQR.parseCoilQr(text);
+  if (!q) { MatQR.feedback(false); showAlert('인식 불가', 'IQC 합격 라벨의 QR이 아닙니다.\n품질팀에서 출력한 [IQC 합격] 라벨을 찍어 주세요.'); return; }
+  if (!state.machineCode) { MatQR.feedback(false); showAlert('호기 미선택', '호기를 먼저 선택하세요.'); return; }
   if (scanBusy) return;
   scanBusy = true;
   try {
-    const certs = await sbReq('GET', `${TBL_INSP_CERTS}?select=id,supplier,material_type,thickness,width_mm,lot_no,lots_detail,heat_no,coil_count,weight,receipt_date,recv_date,final_judge&id=eq.${q.certId}`);
-    const c = certs && certs[0];
-    if (!c) { feedback(false); showAlert('장착 불가', `등록되지 않은 코일입니다 (#${q.certId}).\n품질팀에 확인하세요.`); return; }
-
-    const judge = String(c.final_judge || '').trim().toUpperCase();
-    if (judge !== 'OK') { feedback(false); showAlert('장착 불가 — IQC 미합격', `HEAT ${c.heat_no || '-'}\nIQC 판정: ${c.final_judge || '미검사'}\n\n수입검사 합격(OK) 코일만 장착할 수 있습니다.`); return; }
-
-    const ex = await sbReq('GET', `${TBL_EXCLUDED}?select=heat_no,reason&is_active=eq.true&heat_no=eq.${encodeURIComponent(c.heat_no || '')}`).catch(() => []);
-    if (ex && ex.length) { feedback(false); showAlert('장착 불가 — 사용금지 HEAT', `HEAT ${c.heat_no}\n사유: ${ex[0].reason || '-'}\n\n블랙리스트에 등록된 소재입니다. 품질팀에 연락하세요.`); return; }
-
-    // 최신 장착 현황 (다른 단말에서 장착한 것 포함)
-    const hist = await sbReq('GET', `${TBL_ATTACH}?select=machine_code,status&cert_id=eq.${c.id}`).catch(() => []);
-    await loadAttachmentsFromServer();
-
-    const coilCount = parseInt(c.coil_count, 10) || 1;
-    const coilTxt = q.coil ? ` (코일 ${q.coil}/${coilCount})` : '';
-    if (state.attachments.some(a => a.machine_code === state.machineCode && a.cert_id === c.id)) {
-      feedback(false); showAlert('이미 장착됨', `HEAT ${c.heat_no}${coilTxt}\n이미 ${state.machineCode}에 장착되어 있습니다.`); return;
-    }
-    const otherMc = [...new Set((hist || []).filter(h => h.status === 'attached' && h.machine_code !== state.machineCode).map(h => h.machine_code))];
-    const usedUp = (hist || []).filter(h => h.status === 'consumed').length;
-
-    const warns = [];
-    if (coilCount <= 1) {
-      if (otherMc.length) { feedback(false); showAlert('장착 불가 — 다른 호기에 장착중', `HEAT ${c.heat_no}\n현재 ${otherMc.join(', ')}에 장착되어 있습니다.\n\n먼저 그 호기에서 탈착 처리하세요.`); return; }
-      if (usedUp) { feedback(false); showAlert('장착 불가 — 소진 처리된 코일', `HEAT ${c.heat_no}\n이미 소진 처리된 코일입니다.\n잘못 처리된 경우 품질팀에 연락하세요.`); return; }
-    } else {
-      if (otherMc.length) warns.push(`같은 입고LOT 코일이 ${esc(otherMc.join(', '))}에 장착중입니다. 다른 코일이 맞는지 라벨의 코일 번호를 확인하세요.`);
-      if (usedUp >= coilCount) warns.push(`이 입고LOT은 코일 ${coilCount}개 중 ${usedUp}건이 이미 소진 처리되었습니다.`);
-    }
-    const onThis = state.attachments.filter(a => a.machine_code === state.machineCode);
-    if (onThis.length) warns.push(`이 호기에 이미 장착된 소재가 있습니다 (${esc(onThis.map(a => a.heat_no).join(', '))}).<br>교체라면 기존 소재를 탈착/소진 처리하세요.`);
-    if (!state.machineCode) { feedback(false); showAlert('호기 미선택', '호기를 먼저 선택하세요.'); return; }
-
-    const mat = buildAvailableMaterials([c], [])[0];
-    if (!mat) { feedback(false); showAlert('장착 불가', 'HEAT 번호가 없는 입고 데이터입니다. 품질팀에 확인하세요.'); return; }
-    mat.coil_seq = q.coil; mat.coil_count = coilCount;
-    feedback(true);
-    await confirmAttach(mat, warns, 'QR 스캔');
+    const res = await MatQR.inspect(sbReq, q.certId, q.coil, state.machineCode);
+    loadAttachmentsFromServer();
+    if (res.block) { MatQR.feedback(false); showAlert(res.block.title, res.block.msg); return; }
+    const warns = res.warns.map(esc);
+    if (res.onThis.length) warns.push(`이 호기에 이미 장착된 소재가 있습니다 (${esc(res.onThis.map(a => a.heat_no).join(', '))}).<br>교체라면 기존 소재를 탈착/소진 처리하세요.`);
+    MatQR.feedback(res.chk.status !== 'mismatch');
+    await confirmAttach(res.mat, warns, 'QR 스캔', res);
   } catch (e) {
     console.error('[QR 장착]', e);
-    feedback(false);
+    MatQR.feedback(false);
     showAlert('조회 실패', '서버 조회에 실패했습니다.\n' + e.message);
   } finally {
     scanBusy = false;
   }
 }
 
-/* 현재 호기의 작업 규격 (machine_status 현재 금형·품번 → 소재 마스터) */
-async function loadJobSpec(machineName) {
-  const ho = MatSpec.hoOf(machineName);
-  if (ho == null) return null;
-  const [msRows, master] = await Promise.all([
-    sbReq('GET', 'machine_status?select=machine_code,machine_name,current_mold,current_item_code,item_name,is_virtual'),
-    sbReq('GET', 'material_master_tj?select=material_name,material_type,thickness,width,mapped_models,mold_number&limit=5000')
-  ]);
-  const ms = (msRows || []).find(r => !r.is_virtual && MatSpec.hoOf(String(r.machine_name || '').split('_')[0]) === ho);
-  if (!ms) return null;
-  const job = MatSpec.findJobSpecs(ms, master || []);
-  job.item_name = ms.item_name || '';
-  return job;
-}
-
-async function confirmAttach(mat, warns, via) {
+async function confirmAttach(mat, warns, via, res) {
   const coilTxt = mat.coil_seq ? ` · 코일 ${mat.coil_seq}/${mat.coil_count}` : '';
-  // 오투입 방지: 현재 작업 규격과 코일 규격 비교
-  let job = null, chk = { status: 'unknown', diffs: [] };
-  try { job = await loadJobSpec(state.machineCode); chk = MatSpec.checkSpec(mat, job); }
-  catch (e) { console.warn('작업 규격 조회 실패:', e); }
+  // 오투입 방지: 현재 작업 규격과 코일 규격 비교 (QR 스캔은 inspect 결과 사용)
+  let job = res ? res.job : null, chk = res ? res.chk : { status: 'unknown', diffs: [] };
+  if (!res) {
+    try { job = await MatQR.loadJob(sbReq, state.machineCode); chk = MatSpec.checkSpec(mat, job); }
+    catch (e) { console.warn('작업 규격 조회 실패:', e); }
+    if (chk.status === 'mismatch') MatQR.feedback(false);
+  }
   const jobName = job ? esc([job.item, job.item_name].filter(Boolean).join(' ')) : '';
   let jobHtml;
   if (chk.status === 'mismatch') {
-    feedback(false);
     jobHtml = `<div class="cf-mis">🚫 규격 불일치 — 오투입 주의<br>${chk.diffs.map(esc).join('<br>')}</div>
       <div class="cf-job">현재 작업 ${jobName || '-'}<br>필요 규격 <b>${esc(MatSpec.specText(chk.spec))}</b> (${esc(job.by)} · 소재마스터)</div>`;
   } else if (chk.status === 'ok') {
@@ -1449,76 +1368,10 @@ function openCf(title, html, actions) {
     b.onclick = async () => {
       document.getElementById('cfModalBg').classList.remove('show');
       if (a.fn) await a.fn();
-      const inp = document.getElementById('scanInput');
-      if (KIOSK_MC && inp && !document.querySelector('.modal-bg.show')) inp.focus();
     };
     box.appendChild(b);
   });
   document.getElementById('cfModalBg').classList.add('show');
-}
-
-function feedback(ok) {
-  try { if (navigator.vibrate) navigator.vibrate(ok ? 60 : [120, 60, 120]); } catch (e) {}
-  try {
-    const ac = new (window.AudioContext || window.webkitAudioContext)();
-    const o = ac.createOscillator(), g = ac.createGain();
-    o.frequency.value = ok ? 1200 : 300; g.gain.value = 0.15;
-    o.connect(g); g.connect(ac.destination); o.start();
-    setTimeout(() => { o.stop(); ac.close(); }, ok ? 120 : 400);
-  } catch (e) {}
-}
-
-/* ── 카메라 스캔 (html5-qrcode, lot_vendor.html 과 동일 라이브러리) ── */
-const QR_LIB = ['https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js',
-                'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js'];
-let qrCam = null;
-
-function loadQrLib() {
-  if (window.Html5Qrcode) return Promise.resolve();
-  return QR_LIB.reduce((chain, url) => chain.catch(() => new Promise((ok, ng) => {
-    const el = document.createElement('script');
-    el.src = url; el.onload = () => window.Html5Qrcode ? ok() : ng(); el.onerror = ng;
-    document.head.appendChild(el);
-  })), Promise.reject());
-}
-
-async function startCam() {
-  if (qrCam) return;
-  const hint = document.getElementById('camHint');
-  document.getElementById('camOv').classList.add('on');
-  hint.textContent = '스캐너 준비 중...';
-  try { await loadQrLib(); }
-  catch (e) { stopCam(); showToast('❌ 스캐너를 불러오지 못했습니다 (인터넷 확인)', 'error'); return; }
-  hint.textContent = '카메라를 켜는 중...';
-  const cam = new window.Html5Qrcode('qrbox', { verbose: false });
-  qrCam = cam;
-  const cfg = { fps: 10, qrbox: { width: 240, height: 240 } };
-  const onHit = (text) => {
-    if (!parseCoilQr(text)) { hint.textContent = '⚠️ IQC 합격 라벨 QR이 아닙니다'; return; }
-    stopCam();
-    onScanText(text);
-  };
-  try {
-    await cam.start({ facingMode: 'environment' }, cfg, onHit, () => {});
-  } catch (e1) {
-    // 후면 카메라가 없는 키오스크(전면/USB 카메라) 대응
-    try {
-      const list = await window.Html5Qrcode.getCameras();
-      if (!list || !list.length) throw e1;
-      await cam.start(list[0].id, cfg, onHit, () => {});
-    } catch (e2) {
-      stopCam();
-      showToast('❌ 카메라를 사용할 수 없습니다', 'error');
-      return;
-    }
-  }
-  hint.textContent = 'IQC 합격 라벨의 QR을 사각형 안에 맞춰 주세요';
-}
-
-function stopCam() {
-  document.getElementById('camOv').classList.remove('on');
-  const c = qrCam; qrCam = null;
-  if (c) Promise.resolve().then(() => c.stop()).then(() => c.clear()).catch(() => { try { c.clear(); } catch (e) {} });
 }
 
 /* ============================================================
