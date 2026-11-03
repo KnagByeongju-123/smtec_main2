@@ -9,6 +9,7 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="coil_label.js?v=1"></script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&display=swap');
     *{box-sizing:border-box;margin:0;padding:0}
@@ -185,6 +186,22 @@
       <div style="font-size:18px;font-weight:700;color:#2e7d32;margin-bottom:6px" id="doneTitle">완료</div>
       <div style="font-size:13px;color:#555" id="doneSummary"></div>
       <div id="autoReturnMsg" style="margin-top:20px;padding:10px;background:#e3f2fd;border-radius:8px;font-size:12px;color:#1565c0;font-weight:600"><span id="autoReturnSec">10</span>초 후 등록 화면으로 돌아갑니다</div>
+    </div>
+    <!-- 소재 QR 라벨: 등록한 코일마다 1장 → 코일에 부착, 현장에서 휴대폰으로 찍어 장착 -->
+    <div class="card" id="qrLabelCard" style="display:none;border:2px solid #1e3a8a;margin-top:8px">
+      <div style="font-size:15px;font-weight:800;color:#1e3a8a;margin-bottom:6px">🏷 소재 QR 라벨 <span id="qrLabelCnt"></span></div>
+      <div style="font-size:12px;color:#555;line-height:1.5;margin-bottom:8px">
+        코일마다 1장씩 출력해 <b>코일 태그의 Heat NO.와 라벨 HEAT가 같은 코일</b>에 붙여 주세요.<br>
+        현장에서 휴대폰으로 QR을 찍으면 소재 장착이 됩니다 (수입검사 합격 후 장착 가능).
+      </div>
+      <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
+        <select id="qrLabelSize" style="padding:10px;border-radius:8px;border:1px solid #cbd5e1;font-size:14px">
+          <option value="a4">A4 용지 (2×4, 99×67mm)</option>
+          <option value="roll">라벨 프린터 (100×70mm)</option>
+        </select>
+        <button class="btn btn-blue" style="flex:1;font-size:15px" onclick="printQrLabels()">🖨 QR 라벨 출력</button>
+      </div>
+      <div id="qrLabelPrev" style="max-height:440px;overflow:auto;background:#f8fafc;border-radius:8px;padding:6px"></div>
     </div>
     <!-- 성적서 등록 안내 -->
     <div class="card" style="background:#fff3e0;border:2px solid #fb8c00;margin-top:8px">
@@ -778,6 +795,8 @@ async function doRegister(){
   st.style.display='block';st.style.background='#e3f2fd';st.style.color='#1565c0';
   st.textContent='Supabase 저장 중...';
   document.getElementById('btnRegister').disabled=true;
+  _qrLabels=[];
+  {const qc=document.getElementById('qrLabelCard');if(qc)qc.style.display='none';const ar=document.getElementById('autoReturnMsg');if(ar){ar.style.display='';ar.innerHTML='<span id="autoReturnSec">10</span>초 후 등록 화면으로 돌아갑니다';}}
 
   const cfg={from:vi.name,fromCode:vi.code,to:document.getElementById('cfgTo').value.trim(),worker:document.getElementById('cfgWorker').value.trim()};
   const now=new Date();const todayStr=kstDateStr(now);const timeStr=kstTimeStr(now);
@@ -908,12 +927,13 @@ async function doRegister(){
               'Content-Type':'application/json',
               'apikey':SB_KEY,
               'Authorization':'Bearer '+SB_KEY,
-              'Prefer':'return=minimal'
+              'Prefer':'return=representation'   /* 생성된 성적서 id → 코일 QR 라벨 */
             },
             body:JSON.stringify(payloads)
           });
           const txt=res.ok?'':await res.text().catch(()=>'');
-          return {ok:res.ok,status:res.status,text:txt};
+          const saved=res.ok?await res.json().catch(()=>[]):[];
+          return {ok:res.ok,status:res.status,text:txt,rows:Array.isArray(saved)?saved:[]};
         };
         try{
           /* 1차: 풀 페이로드 */
@@ -926,6 +946,7 @@ async function doRegister(){
           }
           if(r.ok){
             certAutoOk=emptyPayloads.length;
+            _qrCerts=r.rows;
             if(_certBatch&&_certBatch.length)_certBatch.forEach(c=>{if(!c.done)c.autoCreated=true});
           }else{
             certAutoFail=emptyPayloads.length;
@@ -985,12 +1006,35 @@ async function doRegister(){
 
     /* [Rev5.5] 저장 전부 완료 후에만 자동복귀 시작.
        성적서 생성 실패 시 자동복귀 생략 → 화면에 남은 오류를 작업자가 확인 */
+    /* 등록한 코일의 QR 라벨 표시 (성적서 id 가 있어야 QR 생성 가능) */
+    if(_qrCerts.length&&window.CoilLabel){
+      try{
+        _qrLabels=CoilLabel.fromCerts(_qrCerts,dbRows);
+        document.getElementById('qrLabelCnt').textContent='('+_qrLabels.length+'매)';
+        document.getElementById('qrLabelCard').style.display='block';
+        await CoilLabel.preview(document.getElementById('qrLabelPrev'),_qrLabels);
+      }catch(e){
+        document.getElementById('qrLabelPrev').innerHTML='<div style="color:#c62828;font-size:12px;padding:8px">QR 미리보기 실패: '+e.message+' — [QR 라벨 출력]은 다시 시도할 수 있습니다.</div>';
+      }
+    }
+
     if(certAutoFail>0||sbFail>0){
       showToast('⚠ 저장 오류 발생 - 화면의 상태를 확인하세요');
+    }else if(_qrLabels.length){
+      /* 라벨 출력 전에 화면이 넘어가지 않도록 자동 복귀 생략 */
+      const ar=document.getElementById('autoReturnMsg');
+      if(ar){ar.style.display='block';ar.textContent='🏷 QR 라벨을 출력한 뒤 [🔄 지금 새 등록하기]를 눌러 주세요';}
     }else{
       startAutoReturn(10);
     }
   })();
+}
+
+/* 소재 QR 라벨 (coil_label.js) — [최종등록] 직후 등록 코일별 QR 라벨 */
+let _qrCerts=[],_qrLabels=[];
+function printQrLabels(){
+  if(!_qrLabels.length){showToast('출력할 QR 라벨이 없습니다');return}
+  CoilLabel.print(_qrLabels,(document.getElementById('qrLabelSize')||{}).value||'a4');
 }
 
 let _autoReturnTimer=null;
