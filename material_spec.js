@@ -61,6 +61,29 @@
     return Math.abs(x - y) <= tol + 1e-9;
   }
 
+  /* 마스터 금형번호 표기 해석 — 현재 금형(mold)이 마스터 금형번호(m)에 해당하는지
+       19DHA205A            : 그대로 일치
+       19SKA202A_1179       : 뒤에 꼬리표 (예: _1179, (Transfer))
+       19RDA604~612A        : 번호 범위 604~612 (끝 글자 A/B 등 개정 무관)
+       21SDA301A~K          : 끝 글자 범위 301A ~ 301K */
+  function moldMatch(m, mold) {
+    if (!m || !mold) return false;
+    if (m === mold) return true;
+    if (m.startsWith(mold) && /^[^A-Z0-9]/.test(m.slice(mold.length))) return true;
+    const cur = mold.match(/^(.*?)(\d+)([A-Z]*)$/);
+    let r = m.match(/^(.*?)(\d+)\s*~\s*(\d+)([A-Z]*)$/);
+    if (r && cur && cur[1] === r[1]) {
+      const n = parseInt(cur[2], 10);
+      return n >= parseInt(r[2], 10) && n <= parseInt(r[3], 10);
+    }
+    r = m.match(/^(.*\d)([A-Z])\s*~\s*([A-Z])$/);
+    const cl = mold.match(/^(.*\d)([A-Z])$/);
+    if (r && cl && cl[1] === r[1]) return cl[2] >= r[2] && cl[2] <= r[3];
+    return false;
+  }
+  // 품번 비교용: 뒤의 -(BK), (TR) 같은 꼬리 제거  예) 54610-C1001-(BK) → 54610-C1001
+  function itemBase(s) { return String(s || '').toUpperCase().replace(/-?\([^)]*\)/g, '').trim(); }
+
   function itemRule(item) {
     const it = String(item || '').toUpperCase();
     return it ? ITEM_MAT.find(r => r.re.test(it)) || null : null;
@@ -73,12 +96,26 @@
     const item = String(ms.current_item_code || '').trim().toUpperCase();
     const moldOf = r => String(r.mold_number || '').trim().toUpperCase();
     let rows = mold ? masterRows.filter(r => moldOf(r) === mold) : [];
+    if (!rows.length && mold) rows = masterRows.filter(r => moldMatch(moldOf(r), mold));
     // 마스터 금형번호에 꼬리표가 붙은 경우 (예: 19SKA202A_1179, 22RDA602A(Transfer))
     if (!rows.length && mold) rows = masterRows.filter(r => moldOf(r).startsWith(mold) && /^[^A-Z0-9]/.test(moldOf(r).slice(mold.length)));
     let by = rows.length ? `금형 ${ms.current_mold}` : '';
     if (!rows.length && item) {
-      rows = masterRows.filter(r => String(r.mapped_models || '').toUpperCase().split(/[\s(),/;=]+/).includes(item));
+      const ib = itemBase(item);
+      rows = masterRows.filter(r => {
+        const toks = String(r.mapped_models || '').toUpperCase().split(/[\s(),/;=]+/);
+        return toks.includes(item) || (ib && toks.includes(ib));
+      });
       if (rows.length) by = `품번 ${ms.current_item_code}`;
+    }
+    // 마지막 단계: 금형 끝 개정 문자만 다른 경우 (예: 현재 23BKA002C ↔ 마스터 23BKA002A) — '개정 다름' 표시
+    if (!rows.length && mold) {
+      const base = x => x.replace(/[A-Z]+$/, '');
+      const mb = base(mold);
+      if (mb !== mold && /\d$/.test(mb)) {
+        rows = masterRows.filter(r => { const m = moldOf(r); return m !== mold && /^[0-9A-Z]+$/.test(m) && base(m) === mb; });
+        if (rows.length) by = `금형 ${moldOf(rows[0])} (개정 다름 · 현재 ${ms.current_mold})`;
+      }
     }
     rows = rows.filter(r => r.material_type || r.thickness || r.width);
     let specs = rows.map(r => ({ material_type: r.material_type, thickness: r.thickness, width: r.width, name: r.material_name }));
@@ -120,5 +157,5 @@
     return isNaN(n) ? null : n;
   }
 
-  g.MatSpec = { parseMat, sameMat, findJobSpecs, checkSpec, specText, hoOf, itemRule, TOL_T, TOL_W };
+  g.MatSpec = { parseMat, sameMat, findJobSpecs, checkSpec, specText, hoOf, itemRule, moldMatch, itemBase, TOL_T, TOL_W };
 })(window);
