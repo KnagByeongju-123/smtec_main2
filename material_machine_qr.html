@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<script src="audit.js?v=7"></script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>호기 QR 출력 — 소재 장착</title>
+<script src="supabase_config.js"></script>
+<style>
+:root{--bg:#f1f5f9;--card:#fff;--line:#cbd5e1;--txt:#0f172a;--sub:#64748b;--acc:#16a34a}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Malgun Gothic','맑은 고딕',sans-serif;background:var(--bg);color:var(--txt);padding:16px}
+h1{font-size:20px;margin-bottom:4px}
+.sub{font-size:13px;color:var(--sub);margin-bottom:12px;line-height:1.6}
+.bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+.bar button{padding:9px 16px;font-size:14px;font-weight:700;border-radius:8px;border:1px solid var(--line);background:#fff;cursor:pointer;font-family:inherit}
+.bar button.pri{background:var(--acc);border-color:var(--acc);color:#fff}
+.list{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px}
+.it{display:flex;gap:8px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px;cursor:pointer;font-size:14px}
+.it input{width:18px;height:18px}
+.it b{font-size:16px}
+.it small{color:var(--sub)}
+.msg{padding:20px;text-align:center;color:var(--sub)}
+</style>
+</head>
+<body>
+<h1>🏷 호기 QR 출력 (소재 장착용)</h1>
+<div class="sub">
+  프레스마다 호기 QR을 붙여 두면, 작업자가 <b>휴대폰 카메라</b>로 ① 호기 QR → ② 코일의 IQC 합격 라벨 QR 을 찍어 소재를 장착합니다.<br>
+  호기 QR을 찍으면 10분 동안 그 호기로 고정됩니다. 앱 설치 없이 휴대폰 기본 카메라로 됩니다.
+</div>
+<div class="bar">
+  <button type="button" id="all">전체 선택</button>
+  <button type="button" id="none">선택 해제</button>
+  <button type="button" class="pri" id="print">🖨 선택한 호기 QR 출력</button>
+  <span id="cnt" class="sub" style="margin:0"></span>
+</div>
+<div class="list" id="list"><div class="msg">설비 목록을 불러오는 중…</div></div>
+
+<script>
+// 호기 QR 내용: material_attach.html?mc=<machine_status.machine_code>&bind=1
+//   → 휴대폰에서 열리면 그 호기로 10분 고정 (material_attach.html 참고)
+const PUBLIC_BASE = 'https://knagbyeongju-123.github.io/smtec_main2/';   // 회사 웹 주소 (휴대폰 접속용)
+const QR_GEN_LIB = ['https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js',
+                    'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js'];
+const $ = (id) => document.getElementById(id);
+const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+let machines = [];
+
+function baseUrl() {
+  const local = !/^https?:$/.test(location.protocol) || /^(localhost|127\.)/.test(location.hostname);
+  return local ? PUBLIC_BASE : new URL('.', location.href).href;
+}
+function loadQrGen() {
+  if (window.qrcode) return Promise.resolve();
+  return QR_GEN_LIB.reduce((chain, url) => chain.catch(() => new Promise((ok, ng) => {
+    const el = document.createElement('script');
+    el.src = url; el.onload = () => window.qrcode ? ok() : ng(); el.onerror = ng;
+    document.head.appendChild(el);
+  })), Promise.reject()).catch(() => { throw new Error('QR 라이브러리를 불러오지 못했습니다 (인터넷/방화벽 확인)'); });
+}
+
+async function load() {
+  try {
+    const [ms, mm] = await Promise.all([
+      sbSelect('machine_status', {}, 'machine_code.asc', 500),
+      sbSelect('machine_master_tj', {}, 'sort_order.asc', 500),
+    ]);
+    machines = ms.filter((r) => !r.is_virtual).map((r) => {
+      const ho = parseInt(String(r.machine_name || '').split('_')[0], 10);
+      const m = mm.find((x) => x.active !== false && parseInt(x.ho_code, 10) === ho);
+      return { code: r.machine_code, ho, maker: m ? (m.maker || '') : '', ton: m ? (m.tonnage || '') : (String(r.machine_name || '').split('_')[1] || '') };
+    }).filter((m) => !isNaN(m.ho)).sort((a, b) => a.ho - b.ho);
+    $('list').innerHTML = machines.map((m, i) => `
+      <label class="it"><input type="checkbox" data-i="${i}" checked>
+        <span><b>${m.ho}호기</b> <small>${esc(m.maker)} ${esc(m.ton)}${m.ton ? '톤' : ''} · 설비 ${esc(m.code)}</small></span></label>`).join('') || '<div class="msg">설비가 없습니다</div>';
+    count();
+  } catch (e) {
+    $('list').innerHTML = `<div class="msg">설비 목록 조회 실패: ${esc(e.message)}</div>`;
+  }
+}
+function picked() { return [...document.querySelectorAll('#list input:checked')].map((x) => machines[+x.dataset.i]); }
+function count() { $('cnt').textContent = `${picked().length}대 선택`; }
+
+async function printQr() {
+  const sel = picked();
+  if (!sel.length) { alert('출력할 호기를 선택하세요.'); return; }
+  const w = window.open('', '_blank');
+  if (!w) { alert('팝업이 차단되었습니다. 브라우저에서 팝업을 허용해 주세요.'); return; }
+  w.document.write('<p style="font-family:sans-serif;padding:20px">QR 생성 중...</p>');
+  try {
+    await loadQrGen();
+    const base = baseUrl();
+    const cards = sel.map((m) => {
+      const qr = window.qrcode(0, 'M');
+      qr.addData(`${base}material_attach.html?mc=${encodeURIComponent(m.code)}&bind=1`);
+      qr.make();
+      return `<div class="lb">
+        <div class="hd">소재 장착 · 호기 QR</div>
+        <div class="ho">${m.ho}<span>호기</span></div>
+        <div class="sp">${esc(m.maker)} ${esc(m.ton)}${m.ton ? '톤' : ''}</div>
+        <img class="qr" src="${qr.createDataURL(8, 0)}" alt="QR">
+        <div class="ft">① 이 QR 찍기 → ② 코일 IQC 합격 라벨 QR 찍기<br><small>설비 ${esc(m.code)} · 10분 동안 이 호기로 장착</small></div>
+      </div>`;
+    }).join('');
+    w.document.open();
+    w.document.write(`<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><title>호기 QR ${sel.length}매</title>
+<style>
+@page{size:A4;margin:8mm 6mm}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Malgun Gothic','맑은 고딕',sans-serif;color:#000}
+.bar{padding:10px;background:#f1f5f9;border-bottom:1px solid #cbd5e0;font-size:13px;display:flex;gap:10px;align-items:center}
+.bar button{padding:6px 16px;font-size:13px;font-weight:700;cursor:pointer}
+.grid{display:grid;grid-template-columns:99mm 99mm;grid-auto-rows:138mm;justify-content:center}
+.lb{border:1.5px solid #000;padding:4mm;display:flex;flex-direction:column;align-items:center;text-align:center;page-break-inside:avoid;break-inside:avoid}
+.hd{width:100%;background:#1e3a8a;color:#fff;font-size:12pt;font-weight:800;padding:1.5mm;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.ho{font-size:44pt;font-weight:900;line-height:1.1;margin-top:2mm}
+.ho span{font-size:22pt;margin-left:1mm}
+.sp{font-size:12pt;color:#333;margin-bottom:2mm}
+.qr{width:62mm;height:62mm;image-rendering:pixelated}
+.ft{margin-top:3mm;font-size:10pt;font-weight:700;line-height:1.5}
+.ft small{font-weight:400;color:#444;font-size:8.5pt}
+@media print{.bar{display:none}}
+</style></head><body>
+<div class="bar"><b>🏷 호기 QR ${sel.length}매</b> (A4 2매/장 · 99×138mm) <button onclick="print()">🖨 인쇄</button><span style="color:#64748b">프레스 앞 잘 보이는 곳에 부착 (코팅 권장)</span></div>
+<div class="grid">${cards}</div>
+<script>window.onload=function(){setTimeout(function(){print()},300)}<\/script>
+</body></html>`);
+    w.document.close();
+  } catch (e) {
+    try { w.close(); } catch (_) {}
+    alert('출력 실패: ' + e.message);
+  }
+}
+
+$('all').onclick = () => { document.querySelectorAll('#list input').forEach((x) => { x.checked = true; }); count(); };
+$('none').onclick = () => { document.querySelectorAll('#list input').forEach((x) => { x.checked = false; }); count(); };
+$('list').addEventListener('change', count);
+$('print').onclick = printQr;
+load();
+</script>
+</body>
+</html>
