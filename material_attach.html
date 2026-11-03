@@ -3,7 +3,7 @@
 <head>
 <script src="audit.js?v=7"></script>
 <script src="material_spec.js?v=8"></script>
-<script src="material_qr.js?v=1"></script>
+<script src="material_qr.js?v=2"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>소재 장착 관리 v2.3</title>
@@ -676,6 +676,7 @@ function buildAvailableMaterials(certsList, excludedHeats) {
       width: parseFloat(c.width_mm) || 0,
       receipt_kg: parseFloat(c.weight) || 0,
       coil_count: parseInt(c.coil_count) || 1,
+      lots: String(c.lots_detail || '').split(',').map(x => x.trim()).filter(Boolean),
       used_kg: 0,
       receipt_date: c.receipt_date || c.recv_date || '',
       has_millsheet: c.has_millsheet || false,
@@ -1040,6 +1041,7 @@ async function loadAttachmentsFromServer() {
       }));
       saveToLocal();
       render();
+      loadMesStatus();
     }
   } catch (e) {
     console.warn('장착 정보 동기화 실패:', e);
@@ -1053,6 +1055,26 @@ function render() {
   renderAttached();
   renderDynamicFilters();
   renderAvailable();
+}
+
+/* PIMMES 원소재 투입 반영 상태 (mes_material_input) */
+let mesStatus = {};   // attachment_id → {status, error_msg}
+const MES_BADGE = { pending: ['⏳ PIMMES 대기', '#f59e0b'], processing: ['🔄 PIMMES 처리중', '#4f8cff'], synced: ['✅ PIMMES 반영', '#22c55e'], error: ['❌ PIMMES 오류', '#ef4444'], manual: ['✋ PIMMES 직접투입', '#ef4444'] };
+function mesBadge(id) {
+  const m = id && mesStatus[id];
+  if (!m) return '';
+  const [t, c] = MES_BADGE[m.status] || [m.status, '#8b8fa3'];
+  return `<div style="font-size:10px;font-weight:700;color:${c};margin-top:3px" title="${esc(m.error_msg || '')}">${t}</div>`;
+}
+async function loadMesStatus() {
+  const ids = state.attachments.map(a => a.server_id).filter(Boolean);
+  if (!ids.length) return;
+  try {
+    const rows = await sbReq('GET', `mes_material_input?select=attachment_id,status,error_msg&attachment_id=in.(${ids.join(',')})`);
+    mesStatus = {};
+    (rows || []).forEach(r => { mesStatus[r.attachment_id] = r; });
+    renderAttached();
+  } catch (e) { /* 테이블 미생성 등 — 표시만 생략 */ }
 }
 
 function renderAttached() {
@@ -1078,6 +1100,7 @@ function renderAttached() {
       <div class="right">
         <div class="heat-qty">${a.attach_qty_kg}kg</div>
         <div class="heat-status">장착중</div>
+        ${mesBadge(a.server_id)}
       </div>
     </div>
   `).join('');
@@ -1232,7 +1255,7 @@ async function doAttach(mat, via) {
     attachment.server_id = serverId;
     saveToLocal();
   }
-  return !!serverId;
+  return serverId ? attachment : null;   // 저장된 장착 기록 (PIMMES 투입 대기 연결용)
 }
 
 /* ============================================================
@@ -1371,6 +1394,13 @@ async function confirmAttach(mat, warns, via, res) {
         } catch (e) { showAlert('기존 소재 처리 실패', e.message); return; }
       }
       const ok = await doAttach(mat, via);
+      if (ok) {
+        // PIMMES 원소재 투입 대기 저장 (사내 동기화 프로그램이 PIMMES 에 반영)
+        const src = phoneLocked ? 'qr_phone' : KIOSK_MODE ? 'qr_kiosk' : (via === 'QR 스캔' ? 'qr_page' : 'touch');
+        const q = await MatQR.queueMesInput(sbReq, { mat, machineName: state.machineCode, attachRow: { id: ok.server_id, attach_time: ok.attach_time }, user: { name: currentUser.user_name }, source: src });
+        if (q.status !== 'pending') showToast('⚠️ ' + MatQR.mesText(q), 'error');
+        loadMesStatus();
+      }
       if (detachType) await loadAttachmentsFromServer();
       if (ok && phoneLocked) { saveBind(KIOSK_MC || (readBind() || {}).mc, state.machineCode); showToast('✅ 장착 완료 — 다음 코일은 라벨 QR만 찍으세요', 'success'); }
       if (ok && KIOSK_MODE) afterKioskAttach(mat);

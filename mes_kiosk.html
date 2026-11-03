@@ -7,7 +7,7 @@
 <title>공정생산실행 키오스크 v0.1</title>
 <script src="supabase_config.js"></script>
 <script src="material_spec.js?v=8"></script>
-<script src="material_qr.js?v=1"></script>
+<script src="material_qr.js?v=2"></script>
 <style>
 :root{--bg:#000;--panel:#0b0b0b;--line:#2a2a2a;--yel:#ffe600;--grn:#2bff2b;--red:#ff2b2b;--wht:#fff;--sky:#9cc3ff;--btn:#e9ecf1;--btnTx:#1b1f2a}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -435,17 +435,21 @@ function showKioskConfirm(res, mname) {
 async function doKioskAttach(mat, mname, onThis, detachType) {
   const user = kioskUser();
   kq('장착 처리 중', '<div class="kload">저장 중…</div>', []);
+  let row = null;
   try {
     if (detachType) for (const a of onThis) await MatQR.detach(kioskReq, a, detachType, user, null);
-    await MatQR.attach(kioskReq, mat, mname, user);
+    row = await MatQR.attach(kioskReq, mat, mname, user);
   } catch (e) {
     kqErr('저장 실패', '장착 기록을 저장하지 못했습니다.\n' + e.message + '\n\n다시 스캔하거나 관리자에게 연락하세요.');
     return;
   }
+  // PIMMES 원소재 투입 대기 저장 (사내 동기화 프로그램이 PIMMES 에 반영)
+  const q = await MatQR.queueMesInput(kioskReq, { mat, machineName: mname, attachRow: row, user, source: 'qr_kiosk' });
   MatQR.feedback(true);
   await loadAttached(); render();
-  let n = 3;
-  const body = () => `<div class="kok">✅ 장착 완료<br>${MatQR.esc(mat.heat_no)} → ${MatQR.esc(mname)}<br><span style="font-size:2.4vh;color:#aaa">${n}초 후 닫힘</span></div>`;
+  let n = q.status === 'pending' ? 3 : 8;   // PIMMES 직접 투입이 필요하면 더 오래 보여줌
+  const mesLine = `<div style="font-size:2.4vh;margin-top:1vh;color:${q.status === 'pending' ? '#9cc3ff' : '#fbbf24'}">${MatQR.esc(MatQR.mesText(q))}</div>`;
+  const body = () => `<div class="kok">✅ 장착 완료<br>${MatQR.esc(q.row && q.row.heat_no || mat.heat_no)} → ${MatQR.esc(mname)}${mesLine}<span style="font-size:2.4vh;color:#aaa">${n}초 후 닫힘</span></div>`;
   kq('장착 완료', body(), [{ t: '닫기', cls: 'pri' }]);
   kqTimer = setInterval(() => {
     n -= 1;

@@ -11,6 +11,7 @@
 //  · openCamera    : 태블릿/웹캠으로 스캔 (html5-qrcode)
 //  · inspect       : IQC 판정·블랙리스트·중복·다른 호기·소진·작업 규격 확인
 //  · attach/detach : material_attachment 기록
+//  · queueMesInput : PIMMES 원소재 투입 대기(mes_material_input) 저장 → 사내 동기화 프로그램이 PIMMES 반영
 //
 //  req(method, path, body) : 각 화면의 Supabase REST 호출 함수 (실패 시 throw, JSON 반환)
 // ============================================================
@@ -247,7 +248,8 @@
       material_type: c.material_type || '', thickness: parseFloat(c.thickness) || 0, width: parseFloat(c.width_mm) || 0,
       receipt_kg: parseFloat(c.weight) || 0, receipt_date: c.receipt_date || c.recv_date || '',
       cert_no: c.lot_no ? String(c.lot_no).substring(0, 16) : ('CERT-' + c.id),
-      coil_seq: coil, coil_count: coilCount
+      coil_seq: coil, coil_count: coilCount,
+      lots: String(c.lots_detail || '').split(',').map(x => x.trim()).filter(Boolean)   // 코일별 로트 (라벨 코일 순번 순서)
     };
     let job = null, chk = { status: 'unknown', diffs: [], spec: null };
     try { job = await loadJob(req, machineName); chk = MatSpec.checkSpec(mat, job); } catch (e) { console.warn('작업 규격 조회 실패:', e); }
@@ -276,6 +278,50 @@
     });
   }
 
+  /* ── PIMMES 원소재 투입 대기 ─────────────────────────────
+     코일 로트 = inspection_certs.lots_detail 의 (코일순번)번째 (예: SB65954-1)
+     PIMMES 입고번호 = 소재 입고(raw_material_receipt) 에서 같은 로트·두께·폭으로 찾은 mes_receipt_no
+     → mes_material_input 에 저장 (입고번호를 못 찾으면 status='manual': PIMMES 에서 직접 투입) */
+  function coilLotOf(mat) {
+    const lots = mat.lots || [];
+    if (mat.coil_seq && lots.length >= mat.coil_seq) return lots[mat.coil_seq - 1];
+    if ((mat.coil_count || 1) <= 1) return lots[0] || mat.heat_no || null;
+    return null;   // 여러 코일 LOT 인데 코일 순번을 모름 (목록에서 터치 선택 등)
+  }
+  async function queueMesInput(req, opt) {
+    const { mat, machineName, attachRow, user, source } = opt;
+    try {
+      const ho = MatSpec.hoOf(machineName);
+      const msRows = await req('GET', 'machine_status?select=machine_code,machine_name,current_wo,current_item_code,is_virtual');
+      const ms = (msRows || []).find(r => !r.is_virtual && MatSpec.hoOf(String(r.machine_name || '').split('_')[0]) === ho);
+      if (!ms) return { status: 'skip', msg: 'PIMMES 설비를 찾지 못함' };
+      const lot = coilLotOf(mat);
+      let rcp = null;
+      if (lot) {
+        const enc = encodeURIComponent;
+        const rows = await req('GET', `raw_material_receipt?select=item_code,mes_item_code,mes_receipt_no,net_weight&status=eq.synced&heat_no=eq.${enc(lot)}&thickness=eq.${mat.thickness}&width_mm=eq.${mat.width}&order=id.desc&limit=1`).catch(() => []);
+        rcp = rows && rows[0] && rows[0].mes_receipt_no ? rows[0] : null;
+      }
+      const reason = !lot ? '코일 순번을 알 수 없음 (라벨 QR 이 아닌 목록 선택)' : !rcp ? `PIMMES 입고번호를 찾지 못함 (로트 ${lot})` : null;
+      const row = {
+        attachment_id: attachRow && attachRow.id || null, cert_id: mat.cert_id, coil_seq: mat.coil_seq || null, source: source || null,
+        machine_code: ms.machine_code, machine_name: ms.machine_name, attach_machine: machineName,
+        work_order_no: ms.current_wo || null, item_code: ms.current_item_code || null,
+        raw_item_code: rcp ? (rcp.mes_item_code || rcp.item_code) : null, heat_no: lot || mat.heat_no,
+        receipt_no: rcp ? rcp.mes_receipt_no : null, net_weight: rcp ? rcp.net_weight : null,
+        input_time: (attachRow && attachRow.attach_time) || nowKST(), worker: (user && user.name) || null,
+        status: reason ? 'manual' : 'pending', error_msg: reason
+      };
+      const saved = await req('POST', 'mes_material_input', row);
+      return { status: row.status, msg: reason, row: Array.isArray(saved) ? saved[0] : saved };
+    } catch (e) {
+      console.warn('[PIMMES 투입 대기 저장 실패]', e);
+      return { status: 'fail', msg: e.message };
+    }
+  }
+  const MES_LABEL = { pending: 'PIMMES 반영 대기', processing: 'PIMMES 반영 중', synced: 'PIMMES 반영 완료', error: 'PIMMES 반영 오류', manual: 'PIMMES 직접 투입 필요', skip: 'PIMMES 연동 안 됨', fail: 'PIMMES 대기 저장 실패' };
+  function mesText(r) { return r ? (MES_LABEL[r.status] || r.status) + (r.msg ? ` — ${r.msg}` : '') : ''; }
+
   /* 확인창에 넣을 작업 규격 안내 HTML (cls: 화면별 CSS 클래스 접두) */
   function jobHtml(res) {
     const { job, chk } = res;
@@ -302,5 +348,6 @@
   }
 
   g.MatQR = { esc, nowKST, parseCoilQr, codeToChar, listenScanner, openCamera, closeCamera,
-    composeMachineName, machineNameOf, loadJob, inspect, attach, detach, jobHtml, feedback };
+    composeMachineName, machineNameOf, loadJob, inspect, attach, detach, jobHtml, feedback,
+    coilLotOf, queueMesInput, mesText, MES_LABEL };
 })(window);
