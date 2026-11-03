@@ -616,7 +616,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
   <div class="set-section" onclick="toggleSet(event,this)"><div class="set-hdr"><span class="ico">🚫</span><span class="ttl">불량 소재 (사용금지 HEAT) <span id="blActiveCnt" style="font-size:12px;color:#fca5a5"></span></span><span class="arrow">›</span></div><div class="set-body"><div class="set-inner">
     <p style="font-size:11px;color:var(--sub);margin-bottom:8px;background:rgba(239,68,68,.08);padding:8px;border-radius:8px;line-height:1.6">
       💡 사용금지 HEAT는 <b style="color:#fca5a5">소재 장착(QR)에서 장착이 차단</b>됩니다.<br>
-      등록: 호기 선택 → <b>[🔩 소재불량 등록]</b>에서 <b>'사용금지' 체크</b> / 현장 QR 코일 교체의 <b>[기존 코일 불량]</b><br>
+      등록: 현장 QR 코일 교체의 <b>[기존 코일 불량 → 새 코일 장착]</b> (같은 내용이 [🔩 소재불량 등록] 기록으로도 자동 생성)<br>
       해제: 아래 목록의 [해제] — 해제 사유가 기록됩니다.<br>
       ※ 같은 HEAT(로트) 번호가 다른 날 다시 입고되면 그 코일도 함께 차단됩니다.
     </p>
@@ -952,7 +952,7 @@ async function clearDisplayAlert(){
 
 /* ============================================================
    불량 소재 (사용금지 HEAT) — excluded_heats
-   · 등록: 호기 → [소재불량 등록]의 '사용금지' 체크 (submitCheck) / 현장 QR 교체 [기존 코일 불량] (material_qr.js)
+   · 등록: 현장 QR 교체 [기존 코일 불량] (material_qr.js — 소재불량 점검기록도 자동 생성). [소재불량 등록]은 기존 그대로(사용금지 안 함)
    · 이 칸: 목록 확인 + 해제 (해제 사유·해제자·일시 기록 — IATF 부적합 처리 이력)
    ============================================================ */
 var BL_REASON={defect:'불량 소재',wrong_receipt:'잘못된 입고',wrong_attach:'잘못된 장착',other:'기타'};
@@ -1424,7 +1424,7 @@ function openChkModal(machine){
   chkState.category=null;
   chkState.rows=[];
   chkState.photos=[];
-  chkState.editId=null;chkState.blacklist=false;
+  chkState.editId=null;
   document.getElementById('chkTitle').textContent='📋 점검등록 '+parsePressLabel(machine);
   var subParts=[];
   subParts.push(machine.customer||'-');
@@ -2418,7 +2418,7 @@ function chkBackToCards(){
   document.getElementById('chkStep1').style.display='';
   document.getElementById('chkStep2').style.display='none';
   document.getElementById('chkFoot').style.display='none';
-  chkState.category=null;chkState.rows=[];chkState.photos=[];chkState.blacklist=false;
+  chkState.category=null;chkState.rows=[];chkState.photos=[];
 }
 function resetChkRowsForCategory(){
   var items=getChkItems()[chkState.category]||[];
@@ -2471,18 +2471,6 @@ function renderChkContent(){
       reBtn.onclick=function(){resetChkRowsForCategory();renderChkContent()};
       info.appendChild(reBtn);
       c.appendChild(info);
-      // 사용금지(장착 차단) — 체크하고 등록하면 excluded_heats 에도 등록 → 소재 장착(QR)에서 이 HEAT 차단
-      var lotNo=String(m.lot_no||'').trim();
-      if(lotNo&&lotNo!=='*'&&!chkState.editId){
-        var bl=document.createElement('label');
-        bl.style.cssText='display:flex;gap:8px;align-items:center;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.35);border-radius:8px;padding:9px 10px;margin-bottom:8px;font-size:13px;color:#fca5a5;cursor:pointer;line-height:1.4';
-        var cb=document.createElement('input');cb.type='checkbox';cb.checked=!!chkState.blacklist;cb.style.cssText='width:20px;height:20px;flex:0 0 auto';
-        cb.onchange=function(){chkState.blacklist=cb.checked};
-        var sp=document.createElement('span');
-        sp.innerHTML='🚫 이 코일(HEAT <b>'+blEsc(lotNo)+'</b>) <b>사용금지</b> — 소재 장착(QR)에서 장착 차단<br><span style="font-size:11px;color:var(--sub)">일부 구간만 불량이고 나머지를 계속 쓸 경우에는 체크하지 마세요</span>';
-        bl.appendChild(cb);bl.appendChild(sp);
-        c.appendChild(bl);
-      }
     }
     var wrap=document.createElement('div');wrap.className='chk-items';
     chkState.rows.forEach(function(r,idx){
@@ -2664,20 +2652,7 @@ async function submitCheck(){
       });
     }
   }catch(e){console.log('supabase 저장실패:',e)}
-  // 소재불량 + 사용금지 체크 → excluded_heats 등록 (소재 장착(QR)에서 이 HEAT 장착 차단)
-  var blMsg='';
-  if(!isEdit&&cat==='mat'&&chkState.blacklist&&record.lot_no&&record.lot_no!=='*'){
-    try{
-      var dupBl=await sbGet('excluded_heats','select=id&is_active=eq.true&heat_no=eq.'+encodeURIComponent(record.lot_no));
-      if(dupBl&&dupBl.length){blMsg='🚫 사용금지: 이미 등록된 HEAT ('+record.lot_no+')\n'}
-      else{
-        var memo='소재불량 등록 · '+record.machine_name+' · '+filled.map(function(r){return r.itemName+(r.value?':'+r.value:'')}).join(', ');
-        var br=await sbPost('excluded_heats',{heat_no:record.lot_no,reason:'defect',reason_memo:memo.slice(0,500),excluded_at:now.toISOString(),excluded_by_name:getCurrentUser()||record.worker||null,is_active:true});
-        blMsg=br.ok?'🚫 사용금지 등록: HEAT '+record.lot_no+' (소재 장착 차단)\n':'⚠️ 사용금지 등록 실패 (HTTP '+br.status+')\n';
-      }
-    }catch(e){blMsg='⚠️ 사용금지 등록 실패\n'}
-  }
-  var msg='📋 ['+catInfo.icon+' '+catInfo.name+'] '+record.machine_code+' '+record.machine_name+'\n'+blMsg;
+  var msg='📋 ['+catInfo.icon+' '+catInfo.name+'] '+record.machine_code+' '+record.machine_name+'\n';
   msg+='고객:'+record.customer+' │ 품번:'+record.item_code+'\n';
   filled.forEach(function(r){
     var v=r.value||'-';
