@@ -24,6 +24,9 @@
   const PAGE = (location.pathname.split('/').pop() || 'index.html');
   // 무인 표시 화면: 로그인 창을 띄우지 않는다 (인쇄는 로그인 필요)
   const DISPLAY_PAGES = ['mes_kiosk.html', 'QC_mes.html', 'counter_dashboard.html', 'env_dashboard.html', 'twin_factory.html', 'twin_factory_3d_QC.html', 'mes_work_virtual.html', 'camera.html', 'mon.html'];
+  // 협력사(소재업체)가 쓰는 화면: 사내 PIN 이 없으므로 로그인 필수에서 제외
+  //   사내 로그인이 있으면 그 사용자로, 없으면 화면이 넣은 업체(localStorage 'vendor_upload_auth' = {code,name})로 기록
+  const VENDOR_PAGES = ['material_upload.html'];
   // 자체 잠금 화면이 있는 포털: 포털 로그인이 끝나면 그 사용자로 기록
   const OWN_LOGIN_PAGES = ['index.html', ''];
   // 포털 탭(내장 창)으로 열린 화면: 입력 창은 바깥 포털에서만 띄운다
@@ -46,7 +49,11 @@
   }
   function user() {
     const a = ls.get(LK_AUTH);
-    if (!a || !a.name || (a.exp && a.exp < Date.now())) return null;
+    if (!a || !a.name || (a.exp && a.exp < Date.now())) {
+      if (VENDOR_PAGES.indexOf(PAGE) < 0) return null;
+      const v = ls.get('vendor_upload_auth');
+      return { id: 'VENDOR' + (v && v.code ? '-' + v.code : ''), name: (v && v.name) || '협력사(업체 미선택)', dept: '협력사' };
+    }
     const u = ls.get(LK_USER);
     return u && u.name === a.name ? u : { id: '', name: a.name, dept: '' };
   }
