@@ -9,7 +9,9 @@
 // ============================================================
 (function (g) {
   const PUBLIC_BASE = 'https://knagbyeongju-123.github.io/smtec_main2/';   // 회사 웹 주소 (휴대폰 접속용)
-  const QR_GEN_LIB = ['https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js',
+  // 라이브러리는 사이트에 같이 올린 파일(lib/)을 먼저 쓰고, 없으면 CDN — 업체 PC 의 CDN 차단·지연에도 출력되도록
+  const HERE = (document.currentScript && document.currentScript.src) ? new URL('.', document.currentScript.src).href : '';
+  const QR_GEN_LIB = [HERE + 'lib/qrcode-generator-1.4.4.js', 'https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js',
                       'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js'];
   const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -126,7 +128,7 @@ ${roll ? '.lb{border:0;padding:3mm;break-after:page;page-break-after:always}' : 
   /* ── PDF 다운로드 ─────────────────────────────────────────
      한글 글꼴을 PDF 에 넣지 않도록 라벨을 캔버스 그림으로 그린 뒤 jsPDF 에 이미지로 넣는다
      size: 'a4' = A4 2×4 (99×67mm) / 'roll' = 100×70mm 1장씩 */
-  const JSPDF_LIB = ['https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',
+  const JSPDF_LIB = [HERE + 'lib/jspdf-2.5.1.umd.min.js', 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',
                      'https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js'];
   function loadJsPdf() {
     if (g.jspdf && g.jspdf.jsPDF) return Promise.resolve();
@@ -134,7 +136,9 @@ ${roll ? '.lb{border:0;padding:3mm;break-after:page;page-break-after:always}' : 
       const el = document.createElement('script');
       el.src = url; el.onload = () => (g.jspdf && g.jspdf.jsPDF) ? ok() : ng(); el.onerror = ng;
       document.head.appendChild(el);
-    })), Promise.reject()).catch(() => { throw new Error('PDF 라이브러리를 불러오지 못했습니다 (인터넷 확인)'); });
+    })), Promise.reject()).catch(() => { throw new Error('PDF 라이브러리를 불러오지 못했습니다 (인터넷 확인)'); })
+      // 화면을 연 지 오래 지나 불러온 jsPDF 도 출력자 표시·인쇄 기록이 되도록 audit.js 에 연결
+      .then(() => { try { g.tjAudit && g.tjAudit.patchPdf && g.tjAudit.patchPdf(); } catch (_) {} });
   }
   function loadImg(src) {
     return new Promise((ok, ng) => { const im = new Image(); im.onload = () => ok(im); im.onerror = ng; im.src = src; });
@@ -190,11 +194,11 @@ ${roll ? '.lb{border:0;padding:3mm;break-after:page;page-break-after:always}' : 
       const png = await drawLabel(L, qrImg(`${base}?cert=${L.certId}&c=${L.seq}`), W, H, !roll);
       if (roll) {
         if (i) doc.addPage([100, 70], 'landscape');
-        doc.addImage(png, 'PNG', 0, 0, W, H);
+        doc.addImage(png, 'PNG', 0, 0, W, H, undefined, 'FAST');   // FAST = 압축 (없으면 장당 약 3MB)
       } else {
         const k = i % 8;
         if (i && k === 0) doc.addPage();
-        doc.addImage(png, 'PNG', 6 + (k % 2) * 99, 8 + Math.floor(k / 2) * 67, W, H);
+        doc.addImage(png, 'PNG', 6 + (k % 2) * 99, 8 + Math.floor(k / 2) * 67, W, H, undefined, 'FAST');
       }
     }
     doc.save(fileName || `소재QR라벨_${labels.length}매.pdf`);

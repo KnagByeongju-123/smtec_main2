@@ -238,6 +238,8 @@
   document.addEventListener('DOMContentLoaded', patchPdfLibs);
   window.addEventListener('load', patchPdfLibs);
   (function () { let n = 0; const t = setInterval(() => { patchPdfLibs(); if (++n > 30) clearInterval(t); }, 1000); })();
+  // 버튼을 누를 때 PDF 라이브러리를 늦게 불러오는 화면(coil_label.js 등)은 불러온 직후 이것을 호출
+  window.tjAudit.patchPdf = patchPdfLibs;
 
   // 새 창 인쇄: window.open 으로 연 같은 출처 창의 print() 와 Ctrl+P 를 잡는다
   const origOpen = window.open;
