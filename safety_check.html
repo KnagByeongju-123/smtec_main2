@@ -209,9 +209,9 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
   <div class="card">
     <div class="card-title">⚠️ 점검항목 관리</div>
     <select id="itemForm" onchange="renderFireItemListUI()" style="width:100%;margin-bottom:8px;padding:8px;font-size:13px;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit">
-      <option value="press">프레스동 (A·B·C동) 기본 항목</option><option value="coil">코일·고중량물 보관 (프레스동에 추가)</option>
-      <option value="f2">2층 검사실</option><option value="roof">옥상</option><option value="out">외곽</option></select>
-    <div style="font-size:10px;color:var(--text3);margin-bottom:8px;padding:6px 8px;background:rgba(249,115,22,.08);border-radius:6px">💡 점검항목은 Supabase <code>common_code</code> 테이블에 저장됩니다 (code_group: <span id="itemGroupName">safety_item</span>) · 점검 장소가 2층·옥상·외곽이면 해당 양식, 그 밖은 프레스동 양식</div>
+      <option value="press">프레스동 (B·C동) 기본 항목</option><option value="coil">코일·고중량물 보관 (프레스동에 추가)</option>
+      <option value="office">A동 사무실</option><option value="f2">2층 검사실</option><option value="roof">옥상</option><option value="out">외곽</option></select>
+    <div style="font-size:10px;color:var(--text3);margin-bottom:8px;padding:6px 8px;background:rgba(249,115,22,.08);border-radius:6px">💡 점검항목은 Supabase <code>common_code</code> 테이블에 저장됩니다 (code_group: <span id="itemGroupName">safety_item</span>) · 점검 장소가 A동(사무실)·2층(검사실)·옥상·외곽이면 해당 양식, 그 밖(B·C동)은 프레스동 양식</div>
     <div id="fireItemList"></div>
     <div style="display:flex;gap:6px;margin-top:8px">
       <input type="text" id="newFireItem" placeholder="항목명 입력" style="flex:1;padding:9px 12px;font-size:13px;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit">
@@ -550,10 +550,13 @@ const DEFAULT_COIL_ITEMS=['구름 방지 스토퍼(쐐기) 설치·고정 상태
 let _coilCache=[];
 function getCoilItems(){return (_coilCache.length?_coilCache:DEFAULT_COIL_ITEMS.map((n,i)=>({id:null,name:n,sort:i+1}))).map(x=>Object.assign({},x,{name:'[코일] '+x.name,coil:true}))}
 /* ===== 점검 장소별 양식 =====
-   프레스동(A·B·C동 등) = 기본 항목 + 코일·고중량물 보관 7항목 (TJ-MP-Q200-2)
-   2층(검사실) · 옥상 · 외곽 = 장소에 맞는 별도 항목 — 프레스 설비 항목(비상정지·양수조작 등)은 빠짐
-   항목 마스터 common_code : safety_item / safety_item_coil / safety_item_2f / safety_item_roof / safety_item_out */
+   프레스동(B·C동 등) = 기본 항목 + 코일·고중량물 보관 7항목 (TJ-MP-Q200-2)
+   A동(사무실) · 2층(검사실) · 옥상 · 외곽 = 장소에 맞는 별도 항목 — 프레스 설비 항목(비상정지·양수조작 등)은 빠짐
+   항목 마스터 common_code : safety_item / safety_item_coil / safety_item_office / safety_item_2f / safety_item_roof / safety_item_out */
 const FORM_DEF={
+  office:{name:'A동 사무실',group:'safety_item_office',defaults:['비상구·피난통로 확보, 유도등·비상조명 점등','소화기 비치·압력 게이지 정상, 화재감지기 이상 없음',
+    '전기 콘센트·멀티탭 문어발·과열 없음, 개인 전열기 사용 관리','사무기기·PC 전선 정리 (바닥 케이블 걸림 없음)','통로·출입구 적치물 없음, 캐비닛·서가 고정',
+    '계단·바닥 미끄럼·파손 없음','구급함 비치·의약품 유효기간','냉난방기·환기 상태','퇴근 시 전원 차단·문단속']},
   f2:{name:'2층 검사실',group:'safety_item_2f',defaults:['비상구·피난통로 확보, 유도등 점등','소화기 비치·압력 게이지 정상','계단 난간·미끄럼 방지 상태',
     '전기 콘센트·멀티탭 과부하·과열 없음','측정기·검사기 전원선 정리 (바닥 케이블 걸림 없음)','검사 대기품·박스 통로 적치 없음 (적재 높이 준수)',
     '세척제·방청유 등 화학물질 MSDS 게시·밀폐 보관','검사 작업면 조도 적정','개인보호구(장갑 등) 비치·착용','냉난방기·환기 상태']},
@@ -563,8 +566,8 @@ const FORM_DEF={
     '상하차 구역 정리·캐노피 상태','야적 코일·팔레트 고정 상태 (구름·넘어짐 방지)','폐기물·스크랩 보관장 분리·정리','배수로·우수관 막힘 없음',
     '담장·출입문 시건 상태','외부 조명 점등']},
 };
-const FORM_CACHE={f2:[],roof:[],out:[]};
-function formOf(zone){ const z=String(zone||''); if(/2층|검사실/.test(z))return 'f2'; if(/옥상/.test(z))return 'roof'; if(/외곽/.test(z))return 'out'; return 'press'; }
+const FORM_CACHE={office:[],f2:[],roof:[],out:[]};
+function formOf(zone){ const z=String(zone||''); if(/A동|사무실/.test(z))return 'office'; if(/2층|검사실/.test(z))return 'f2'; if(/옥상/.test(z))return 'roof'; if(/외곽/.test(z))return 'out'; return 'press'; }
 function formName(f){ return f==='press'?'프레스동 (기본 + 코일·고중량물 보관)':FORM_DEF[f].name; }
 function getFormItems(f){ const c=FORM_CACHE[f]; return c&&c.length?c:FORM_DEF[f].defaults.map((n,i)=>({id:null,name:n,sort:i+1})); }
 function curForm(){ const z=(document.getElementById('zoneInput')||{}).value||(document.getElementById('zoneSelect')||{}).value||''; return formOf(z); }
