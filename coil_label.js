@@ -39,10 +39,12 @@
   }
   const band = (L, mono) => g.MatGrade ? g.MatGrade.bandHtml(L.material, esc, L.t, L.w, mono) : '';
   const css = () => LABEL_CSS + (g.MatGrade ? g.MatGrade.BAND_CSS : '');
+  function qrMake(text) { const qr = g.qrcode(0, 'M'); qr.addData(text); qr.make(); return qr; }
+  /* QR 은 벡터(SVG)로 — 비트맵(GIF)을 키우면 프린터 해상도에서 모듈 경계가 뭉개짐 */
   function qrImg(text) {
-    const qr = g.qrcode(0, 'M');
-    qr.addData(text); qr.make();
-    return qr.createDataURL(6, 0);
+    const svg = qrMake(text).createSvgTag({ cellSize: 1, margin: 0, scalable: true })
+      .replace('<svg ', '<svg shape-rendering="crispEdges" ');
+    return 'data:image/svg+xml;base64,' + btoa(svg);
   }
 
   /* 저장된 inspection_certs 행 + 입고 행(코일 중량) → 코일 라벨 목록
@@ -123,7 +125,7 @@ body{font-family:'Malgun Gothic','맑은 고딕','Apple SD Gothic Neo',sans-seri
 .bar button{padding:6px 16px;font-size:13px;font-weight:700;cursor:pointer}
 .grid{display:grid;${roll ? 'grid-template-columns:100mm;grid-auto-rows:70mm' : 'grid-template-columns:99mm 99mm;grid-auto-rows:67mm;justify-content:center'}}
 ${css()}
-${roll ? '.lb{border:0;padding:3mm;break-after:page;page-break-after:always}' : ''}
+${roll ? '.lb{border:0;padding:3mm;break-after:page;page-break-after:always}.lb .hd{background:#000}.lb th{color:#000}.lb .ft{border-top-width:.4mm}' : ''}
 @media print{.bar{display:none}}
 </style></head><body>
 <div class="bar"><b>🏷 소재 QR 라벨 ${labels.length}매</b> ${roll ? '라벨 프린터 100×70mm' : 'A4 2×4 · 99×67mm'} <button onclick="print()">🖨 인쇄</button>
@@ -158,8 +160,11 @@ ${roll ? '.lb{border:0;padding:3mm;break-after:page;page-break-after:always}' : 
   }
   const FONT = "'Malgun Gothic','맑은 고딕','Apple SD Gothic Neo','Noto Sans KR',sans-serif";
   /* 라벨 1장을 캔버스에 그림 (W×H mm, 1mm = PX 픽셀) */
+  /* qrSrc : QR 내용(텍스트) → 모듈을 픽셀 경계에 맞춰 직접 그림 (권장) / data: 주소 → 이미지 (예전 호출 호환)
+     border=false (라벨 프린터 100×70) : 흑백 전용 — 16px/mm(약 406dpi)로 그리고 회색 없이 흑/백 2값으로 변환 */
   async function drawLabel(L, qrSrc, Wmm, Hmm, border) {
-    const PX = 12;
+    const mono = !border;
+    const PX = mono ? 16 : 12;
     const cv = document.createElement('canvas');
     cv.width = Wmm * PX; cv.height = Hmm * PX;
     const c = cv.getContext('2d');
@@ -168,32 +173,45 @@ ${roll ? '.lb{border:0;padding:3mm;break-after:page;page-break-after:always}' : 
     if (border) { c.strokeStyle = '#000'; c.lineWidth = mm(0.4); c.strokeRect(mm(0.2), mm(0.2), cv.width - mm(0.4), cv.height - mm(0.4)); }
     const P = 3;                                   // 안쪽 여백(mm)
     // 머리글
-    c.fillStyle = '#1e3a8a'; c.fillRect(mm(P), mm(P), mm(Wmm - 2 * P), mm(7));
+    c.fillStyle = mono ? '#000' : '#1e3a8a'; c.fillRect(mm(P), mm(P), mm(Wmm - 2 * P), mm(7));
     c.fillStyle = '#fff'; c.textBaseline = 'middle';
     c.font = `900 ${mm(5)}px ${FONT}`; c.fillText('입고 소재', mm(P + 2), mm(P + 3.6));
     c.font = `${mm(2.8)}px ${FONT}`; c.textAlign = 'right'; c.fillText('(주)태진다이텍', mm(Wmm - P - 2), mm(P + 3.6)); c.textAlign = 'left';
     // 강종 띠
     if (g.MatGrade) g.MatGrade.drawBand(c, L.material, mm(P), mm(P + 8), mm(Wmm - 2 * P), mm(8.5), FONT, L.t, L.w, !border);   // 테두리 없음 = 라벨 프린터 → 흑백
     // QR
-    const qr = await loadImg(qrSrc);
-    c.imageSmoothingEnabled = false;
-    const qy = P + 18, qs = 29;
-    c.drawImage(qr, mm(P), mm(qy), mm(qs), mm(qs));
+    const qy = P + 18, qs = mono ? 34 : 29;   // 라벨 프린터는 아래 여백까지 써서 QR 을 키움 (스캔 거리·인식률)
+    if (String(qrSrc).startsWith('data:')) {
+      const qr = await loadImg(qrSrc);
+      c.imageSmoothingEnabled = false;
+      c.drawImage(qr, mm(P), mm(qy), mm(qs), mm(qs));
+    } else {
+      const q = qrMake(qrSrc), n = q.getModuleCount();
+      const cell = Math.floor(mm(qs) / n), off = Math.floor((mm(qs) - cell * n) / 2);   // 정수 픽셀 모듈
+      const x0 = Math.round(mm(P)) + off, y0 = Math.round(mm(qy)) + off;
+      c.fillStyle = '#000';
+      for (let r = 0; r < n; r++) for (let k = 0; k < n; k++) if (q.isDark(r, k)) c.fillRect(x0 + k * cell, y0 + r * cell, cell, cell);
+    }
     // 정보
     const rows = [['HEAT', L.heat, true], ['재질', L.material], ['규격', `${L.t}t × ${L.w}W`],
                   ['중량', L.kg ? Number(L.kg).toLocaleString() + ' kg' : '-'], ['공급사', L.supplier || ''], ['입고', L.date || '']];
     let y = qy + 2; const x0 = P + qs + 3;
     rows.forEach(([k, v, big]) => {
-      c.fillStyle = '#444'; c.font = `600 ${mm(2.9)}px ${FONT}`; c.fillText(k, mm(x0), mm(y));
+      c.fillStyle = mono ? '#000' : '#444'; c.font = `${mono ? 700 : 600} ${mm(2.9)}px ${FONT}`; c.fillText(k, mm(x0), mm(y));
       c.fillStyle = '#000'; c.font = `${big ? 900 : 700} ${mm(big ? 4.2 : 3)}px ${FONT}`;
       c.fillText(String(v), mm(x0 + 12), mm(y), mm(Wmm - x0 - 12 - P));
-      y += big ? 5.4 : 4.3;
+      y += big ? (mono ? 6.4 : 5.4) : (mono ? 5.2 : 4.3);
     });
     // 하단
     const fy = Hmm - P - 4;
     c.strokeStyle = '#000'; c.lineWidth = mm(0.3); c.beginPath(); c.moveTo(mm(P), mm(fy)); c.lineTo(mm(Wmm - P), mm(fy)); c.stroke();
     c.fillStyle = '#000'; c.font = `900 ${mm(3.6)}px ${FONT}`; c.fillText(`코일 ${L.seq}/${L.n}`, mm(P), mm(fy + 2.4));
-    c.font = `${mm(2.6)}px ${FONT}`; c.textAlign = 'right'; c.fillText(`#${L.certId} · 수입검사 합격 후 장착`, mm(Wmm - P), mm(fy + 2.4)); c.textAlign = 'left';
+    c.font = `${mono ? 700 : 400} ${mm(2.6)}px ${FONT}`; c.textAlign = 'right'; c.fillText(`#${L.certId} · 수입검사 합격 후 장착`, mm(Wmm - P), mm(fy + 2.4)); c.textAlign = 'left';
+    if (mono) {   // 회색 가장자리(안티앨리어싱)를 흑/백으로 — 감열 프린터가 회색을 망점으로 찍어 글자가 번지는 것 방지
+      const im = c.getImageData(0, 0, cv.width, cv.height), d = im.data;
+      for (let i = 0; i < d.length; i += 4) { const v = (d[i] * 299 + d[i + 1] * 587 + d[i + 2] * 114) / 1000 < 150 ? 0 : 255; d[i] = d[i + 1] = d[i + 2] = v; d[i + 3] = 255; }
+      c.putImageData(im, 0, 0);
+    }
     return cv.toDataURL('image/png');
   }
   async function downloadPdf(labels, size, fileName) {
@@ -206,7 +224,7 @@ ${roll ? '.lb{border:0;padding:3mm;break-after:page;page-break-after:always}' : 
     const W = roll ? 100 : 99, H = roll ? 70 : 67;
     for (let i = 0; i < labels.length; i++) {
       const L = labels[i];
-      const png = await drawLabel(L, qrImg(`${base}?cert=${L.certId}&c=${L.seq}`), W, H, !roll);
+      const png = await drawLabel(L, `${base}?cert=${L.certId}&c=${L.seq}`, W, H, !roll);
       if (roll) {
         if (i) doc.addPage([100, 70], 'landscape');
         doc.addImage(png, 'PNG', 0, 0, W, H, undefined, 'FAST');   // FAST = 압축 (없으면 장당 약 3MB)
