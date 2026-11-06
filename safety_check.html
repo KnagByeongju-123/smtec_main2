@@ -144,7 +144,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
     <div class="fg">
       <label class="fl">점검장소 <span style="font-size:10px;color:var(--text3)">마스터 연동 · QR스캔 가능</span></label>
       <div style="display:flex;gap:6px">
-        <select id="zoneSelect" onchange="document.getElementById('zoneInput').value=this.value" style="flex:1">
+        <select id="zoneSelect" onchange="document.getElementById('zoneInput').value=this.value;renderCheckList()" style="flex:1">
           <option value="">선택하세요</option>
         </select>
         <button type="button" class="qr-btn" onclick="scanZoneQR()" style="flex-shrink:0">📷 QR</button>
@@ -208,7 +208,10 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
   <!-- 점검항목 관리 -->
   <div class="card">
     <div class="card-title">⚠️ 점검항목 관리</div>
-    <div style="font-size:10px;color:var(--text3);margin-bottom:8px;padding:6px 8px;background:rgba(249,115,22,.08);border-radius:6px">💡 점검항목은 Supabase <code>common_code</code> 테이블에 저장됩니다 (code_group: safety_item)</div>
+    <select id="itemForm" onchange="renderFireItemListUI()" style="width:100%;margin-bottom:8px;padding:8px;font-size:13px;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit">
+      <option value="press">프레스동 (B·C동) 기본 항목</option><option value="aisle">중앙통로 적치 (프레스동에 추가)</option><option value="coil">코일·고중량물 보관 (프레스동에 추가)</option>
+      <option value="office">A동 사무실</option><option value="f2">2층 검사실</option><option value="roof">옥상</option><option value="out">외곽</option></select>
+    <div style="font-size:10px;color:var(--text3);margin-bottom:8px;padding:6px 8px;background:rgba(249,115,22,.08);border-radius:6px">💡 점검항목은 Supabase <code>common_code</code> 테이블에 저장됩니다 (code_group: <span id="itemGroupName">safety_item</span>) · 점검 장소가 A동(사무실)·2층(검사실)·옥상·외곽이면 해당 양식, 그 밖(B·C동)은 프레스동 양식</div>
     <div id="fireItemList"></div>
     <div style="display:flex;gap:6px;margin-top:8px">
       <input type="text" id="newFireItem" placeholder="항목명 입력" style="flex:1;padding:9px 12px;font-size:13px;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit">
@@ -538,14 +541,71 @@ async function moveCodeItem(idx,dir,cache,codeGroup,renderFn){
 }
 
 // ===== 점검항목 =====
-function getItems(){return _itemCache.length?_itemCache:DEFAULT_ITEMS.map((n,i)=>({id:null,name:n,sort:i+1}))}
+function getBaseItems(){return _itemCache.length?_itemCache:DEFAULT_ITEMS.map((n,i)=>({id:null,name:n,sort:i+1}))}
+/* 코일·고중량물 보관 점검 항목 (SQ 2026-07-20 6_1 : 코일 구름·넘어짐 방지 가이드·스토퍼 미설치, 고중량물 보관 안전기준 수립)
+   마스터 common_code 'safety_item_coil' (비어 있으면 아래 기본값) · 결과 키는 '[코일] 항목명' 으로 기존 항목과 구분 */
+const DEFAULT_COIL_ITEMS=['구름 방지 스토퍼(쐐기) 설치·고정 상태','코일 간 넘어짐 방지 가이드(환봉) 설치 상태','적재 기준 준수 (단적재·눕힘/세움 방향·받침대 위 보관)',
+  '코일 받침대·랙 변형·손상 없음 및 최대 하중 표시','보관구역 구획선·통로 폭 확보, 보관구역 내 작업자 출입 통제','결속 밴드 절단 후 풀림·튕김 방지 조치',
+  '운반 장비(지게차·호이스트) 훅·슬링·코일 리프터 상태'];
+let _coilCache=[];
+/* B·C동 중앙통로 제품·공박스 적치 관리 (마스터 common_code 'safety_item_aisle') */
+const DEFAULT_AISLE_ITEMS=['중앙통로 적치 구역 바닥 구획선 표시, 구획선 밖 적치 없음','제품·공박스 적재 높이 기준 준수, 기울어짐·넘어짐 없음',
+  '중앙통로 지게차·보행 통행 폭 확보 (적치물이 통로 침범 없음)','소화기·소화전·비상구·분전반 앞 적치 없음','제품(품번·LOT 식별표)과 공박스 구분 적치·표시'];
+let _aisleCache=[];
+function getAisleItems(){return (_aisleCache.length?_aisleCache:DEFAULT_AISLE_ITEMS.map((n,i)=>({id:null,name:n,sort:i+1}))).map(x=>Object.assign({},x,{name:'[통로] '+x.name,aisle:true}))}
+function getCoilItems(){return (_coilCache.length?_coilCache:DEFAULT_COIL_ITEMS.map((n,i)=>({id:null,name:n,sort:i+1}))).map(x=>Object.assign({},x,{name:'[코일] '+x.name,coil:true}))}
+/* ===== 점검 장소별 양식 =====
+   프레스동(B·C동 등) = 기본 항목 + 코일·고중량물 보관 7항목 (TJ-SP-P305-F05)
+   A동(사무실) · 2층(검사실) · 옥상 · 외곽 = 장소에 맞는 별도 항목 — 프레스 설비 항목(비상정지·양수조작 등)은 빠짐
+   항목 마스터 common_code : safety_item / safety_item_coil / safety_item_office / safety_item_2f / safety_item_roof / safety_item_out */
+const FORM_DEF={
+  office:{name:'A동 사무실',group:'safety_item_office',defaults:['비상구·피난통로 확보, 유도등·비상조명 점등','소화기 비치·압력 게이지 정상, 화재감지기 이상 없음',
+    '전기 콘센트·멀티탭 문어발·과열 없음, 개인 전열기 사용 관리','사무기기·PC 전선 정리 (바닥 케이블 걸림 없음)','통로·출입구 적치물 없음, 캐비닛·서가 고정',
+    '계단·바닥 미끄럼·파손 없음','구급함 비치·의약품 유효기간','냉난방기·환기 상태','퇴근 시 전원 차단·문단속']},
+  f2:{name:'2층 검사실',group:'safety_item_2f',defaults:['비상구·피난통로 확보, 유도등 점등','소화기 비치·압력 게이지 정상','계단 난간·미끄럼 방지 상태',
+    '전기 콘센트·멀티탭 과부하·과열 없음','측정기·검사기 전원선 정리 (바닥 케이블 걸림 없음)','검사 대기품·박스 통로 적치 없음 (적재 높이 준수)',
+    '세척제·방청유 등 화학물질 MSDS 게시·밀폐 보관','검사 작업면 조도 적정','개인보호구(장갑 등) 비치·착용','냉난방기·환기 상태']},
+  /* 옥상 = 회사 전기설비(수변전·배전반)가 모두 있고 정원(사람 이용 공간)도 있는 곳 → 전기설비 + 정원 항목 */
+  roof:{name:'옥상 (전기설비·정원)',group:'safety_item_roof',defaults:[
+    '출입문 잠금·전기 담당자 외 출입 통제, "고압 위험" 표지',
+    '수변전설비(큐비클)·변압기 외함 잠금·접지선 연결 상태',
+    '변압기 이상음·이상 발열·누유 없음 (온도계 확인)',
+    '배전반·분전반 문 닫힘·잠금, 내부 이물·습기 없음',
+    '누전차단기 시험 버튼 동작 (월 1회)',
+    '케이블 트레이·전선 피복 손상·노출 없음, 고정 상태',
+    '우천·강풍 대비 방수 커버·외함 밀폐',
+    '절연장갑·절연매트 비치, 전기화재용 소화기(CO2) 비치',
+    '정원 구역과 전기설비 구역 분리 (펜스·잠금, 정원 이용자 접근 불가)',
+    '정원 안전난간 고정·높이 상태, 난간 옆 밟고 올라설 화분·의자 없음',
+    '화분·조경물·파라솔 고정 (강풍 시 넘어짐·낙하·비산 없음)',
+    '관수 배관·호스 누수 없음, 물이 전기설비 쪽으로 흐르지 않음',
+    '배수구 흙·낙엽 막힘 없음, 방수층 손상·누수 흔적 없음',
+    '실외기·배관 고정 상태, 추락 위험 구간 표시']},
+  out:{name:'외곽',group:'safety_item_out',defaults:['위험물·가스 저장소 잠금·표지','소화전·소화기 주변 장애물 없음','지게차·차량 통행로 구획·반사경 상태',
+    '상하차 구역 정리·캐노피 상태 (하차 대기 코일은 당일 창고 입고)','폐기물·스크랩 보관장 분리·정리','배수로·우수관 막힘 없음',
+    '담장·출입문 시건 상태','외부 조명 점등']},
+};
+const FORM_CACHE={office:[],f2:[],roof:[],out:[]};
+function formOf(zone){ const z=String(zone||''); if(/A동|사무실/.test(z))return 'office'; if(/2층|검사실/.test(z))return 'f2'; if(/옥상/.test(z))return 'roof'; if(/외곽/.test(z))return 'out'; return 'press'; }
+function formName(f){ return f==='press'?'프레스동 B·C동 (기본 + 중앙통로 적치 + 코일·고중량물 보관)':FORM_DEF[f].name; }
+function getFormItems(f){ const c=FORM_CACHE[f]; return c&&c.length?c:FORM_DEF[f].defaults.map((n,i)=>({id:null,name:n,sort:i+1})); }
+function curForm(){ const z=(document.getElementById('zoneInput')||{}).value||(document.getElementById('zoneSelect')||{}).value||''; return formOf(z); }
+function getItems(){ const f=curForm(); return f==='press'?getBaseItems().concat(getAisleItems(),getCoilItems()):getFormItems(f); }
+/* 설정 화면에서 고른 양식의 [캐시 변수명, code_group] */
+function editForm(){ const f=(document.getElementById('itemForm')||{}).value||'press';
+  if(f==='press')return{f,cache:'_itemCache',group:'safety_item'}; if(f==='coil')return{f,cache:'_coilCache',group:'safety_item_coil'};
+  if(f==='aisle')return{f,cache:'_aisleCache',group:'safety_item_aisle'};
+  return{f,cache:"FORM_CACHE['"+f+"']",group:FORM_DEF[f].group}; }
+function editCache(){ const e=editForm(); return e.f==='press'?_itemCache:e.f==='coil'?_coilCache:e.f==='aisle'?_aisleCache:FORM_CACHE[e.f]; }
 function renderFireItemListUI(){
-  const c=document.getElementById('fireItemList');const list=getItems();
-  c.innerHTML=list.map((item,i)=>`<div class="stg-item"><span class="stg-no">${i+1}</span><span>${item.name}</span><button onclick="moveCodeItem(${i},-1,_itemCache,'safety_item',renderFireItemListUI)" title="위로">▲</button><button onclick="moveCodeItem(${i},1,_itemCache,'safety_item',renderFireItemListUI)" title="아래로">▼</button><button class="stg-del" onclick="removeCodeItem(${i},_itemCache,'safety_item','fireItemStatus',renderFireItemListUI);renderCheckList()">✕</button></div>`).join('');
+  const c=document.getElementById('fireItemList');const E=editForm();const list=editCache();
+  const gn=document.getElementById('itemGroupName');if(gn)gn.textContent=E.group;
+  c.innerHTML=list.map((item,i)=>`<div class="stg-item"><span class="stg-no">${i+1}</span><span>${item.name}</span><button onclick="moveCodeItem(${i},-1,${E.cache},'${E.group}',renderFireItemListUI)" title="위로">▲</button><button onclick="moveCodeItem(${i},1,${E.cache},'${E.group}',renderFireItemListUI)" title="아래로">▼</button><button class="stg-del" onclick="removeCodeItem(${i},${E.cache},'${E.group}','fireItemStatus',renderFireItemListUI);renderCheckList()">✕</button></div>`).join('');
 }
 function addFireItem(){
   const inp=document.getElementById('newFireItem');
-  addCodeItem('safety_item',inp.value.trim(),_itemCache,'fireItemList','fireItemStatus',()=>{renderFireItemListUI();renderCheckList()});
+  const E=editForm();
+  addCodeItem(E.group,inp.value.trim(),editCache(),'fireItemList','fireItemStatus',()=>{renderFireItemListUI();renderCheckList()});
   inp.value='';
 }
 
@@ -598,10 +658,14 @@ function addZone(){
 // ===== 점검 항목 체크리스트 (동적) =====
 function renderCheckList(){
   const c=document.getElementById('checkList');c.innerHTML='';
+  const fh=document.createElement('div');fh.style.cssText='font-size:12px;font-weight:800;color:var(--text2);margin:0 0 8px';
+  fh.textContent='📋 점검 양식 : '+formName(curForm())+(curForm()==='press'?'':' · 장소를 바꾸면 양식이 바뀝니다');c.appendChild(fh);
   const items=getItems();checkData={};
   items.forEach((item,i)=>{
     const key=item.name;
     checkData[key]={status:'',note:'',photos:[]};
+    if(item.aisle&&!(items[i-1]||{}).aisle){const h=document.createElement('div');h.style.cssText='font-size:12px;font-weight:800;color:var(--accent);margin:12px 0 6px';h.textContent='📦 중앙통로 제품·공박스 적치';c.appendChild(h);}
+    if(item.coil&&!(items[i-1]||{}).coil){const h=document.createElement('div');h.style.cssText='font-size:12px;font-weight:800;color:var(--accent);margin:12px 0 6px';h.textContent='🧲 코일·고중량물 보관 (TJ-SP-P305-F05)';c.appendChild(h);}
     const div=document.createElement('div');div.className='check-item';div.id='ci_'+i;
     div.innerHTML=`
       <span class="check-label">${key}</span>
@@ -735,7 +799,7 @@ function stopQR(){
 
 function scanZoneQR(){
   startQR('📍 점검장소 QR 스캔',text=>{
-    document.getElementById('zoneInput').value=text;
+    document.getElementById('zoneInput').value=text;setTimeout(renderCheckList,0);
     // select에 해당 값이 있으면 선택, 없으면 옵션 추가
     const sel=document.getElementById('zoneSelect');
     let found=false;
@@ -902,6 +966,9 @@ function loadSettingsUI(){
   loadCodeList('safety_item',DEFAULT_ITEMS).then(d=>{_itemCache=d;renderFireItemListUI();renderCheckList()});
   loadCodeList('safety_inspector',DEFAULT_INSPECTORS).then(d=>{_inspCache=d;renderInspectorListUI();renderInspectorSelect()});
   loadCodeList('safety_zone',DEFAULT_ZONES).then(d=>{_zoneCache=d;renderZoneListUI();renderHistZoneFilter();renderZoneSelect()});
+  loadCodeList('safety_item_coil',DEFAULT_COIL_ITEMS).then(d=>{_coilCache=d;renderCheckList()});
+  loadCodeList('safety_item_aisle',DEFAULT_AISLE_ITEMS).then(d=>{_aisleCache=d;renderCheckList()});
+  Object.keys(FORM_DEF).forEach(f=>loadCodeList(FORM_DEF[f].group,FORM_DEF[f].defaults).then(d=>{FORM_CACHE[f]=d;renderCheckList();renderFireItemListUI()}));
   loadNotifyConfig();
   loadNtfyRulesFromServer();
   checkConn();
@@ -1325,6 +1392,9 @@ window.addEventListener('DOMContentLoaded',async()=>{
     _itemCache=await loadCodeList('safety_item',DEFAULT_ITEMS);
     _inspCache=await loadCodeList('safety_inspector',DEFAULT_INSPECTORS);
     _zoneCache=await loadCodeList('safety_zone',DEFAULT_ZONES);
+    _coilCache=await loadCodeList('safety_item_coil',DEFAULT_COIL_ITEMS);
+    _aisleCache=await loadCodeList('safety_item_aisle',DEFAULT_AISLE_ITEMS);
+    for(const f of Object.keys(FORM_DEF)) FORM_CACHE[f]=await loadCodeList(FORM_DEF[f].group,FORM_DEF[f].defaults);
     loadNotifyConfig();
   }
   renderInspectorSelect();renderZoneSelect();renderCheckList();
