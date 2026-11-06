@@ -126,7 +126,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
     <div class="fg-row"><div class="fg"><label class="field-label">세척조 청소 주기(일)</label><input type="number" id="tankCleanDays" min="1"></div>
       <div class="fg"><label class="field-label">세척액 전량교체 주기(일)</label><input type="number" id="tankChangeDays" min="1"></div></div>
     <div class="fg"><label class="field-label">폐유 배출·신규 보충 주기(일) <span style="font-weight:400">— 비우면 기록만</span></label><input type="number" id="tankTopupDays" min="1" placeholder="기록만"></div>
-    <div style="font-size:11px;font-weight:700;color:var(--text2);margin:8px 0 4px">호기 사용 여부</div>
+    <div style="font-size:11px;font-weight:700;color:var(--text2);margin:8px 0 4px">호기 사용 여부 <span style="font-weight:400;color:var(--text3)">— 미사용 호기는 점검·수리 호기 선택에서 빠짐 (지난 이력 조회는 가능)</span></div>
     <div id="tankModeBox"></div>
     <div style="font-size:11px;color:var(--text3);margin-top:4px">· 세척액 전량교체: 세척액을 전부 빼고 새로 채움 (주기 관리)<br>· 폐유 배출·신규 보충: 평소 뜬 기름(폐유)만 빼고 신규 세척액을 보충 (실시 기록)<br>· 필터 교환은 세척기에 조(세척조)별로 설정된 <b>가동시간</b>에 맞춰 하므로, 앱은 교환일과 설정값만 기록합니다</div>
     <button type="button" onclick="tankSaveCfg()" style="margin-top:8px;padding:8px 14px;border-radius:8px;border:none;background:var(--accent);color:#fff;font-weight:700;font-family:inherit;cursor:pointer">💾 주기 저장</button>
@@ -177,7 +177,7 @@ CREATE POLICY "anon_all" ON wash_machine_repair FOR ALL TO anon USING (true) WIT
 /* ===== 🧽 세척조 청소 · 세척액 전량교체 주기 관리 (SQ 2026-07-20 1_7 "세척조 청소 주기·실시 기록 누락") =====
    저장: kv_store 'wash_tank_pm_v1' = { cfg:{clean:일, change:일, topup:일|0, mode:{호기:'on'|'off'}}, hist:[{id,date,machine,kind,worker,memo,photo,at,tank?,setH?}] }
    2호기(2026-11 현장 확인): 평소 폐유를 빼고 신규 세척액 보충, 세척액 전량 배출·교체도 함 → 청소·전량교체(주기) + 폐유 배출·보충(기록, 주기 선택)
-   1호기 미사용 → mode 'off' (호기 목록은 지우지 않고 세척조 관리에서만 뺌)
+   1호기 미사용 → mode 'off' (호기 목록은 지우지 않고 세척조 관리·일상점검·수리 선택에서 뺌, 이력 조회는 유지)
    필터 교환 — 세척기에 조별 가동시간으로 설정돼 있어 주기 계산 없이 조별 교환일·설정값만 기록
    상태: 호기별 최근 실시일 + 주기 → 다음 예정일 · D-day (청소 7일 전 / 교체 30일 전 임박) */
 const TANK_KEY='wash_tank_pm_v1';
@@ -249,7 +249,7 @@ function tankRender(){
   const dl=document.getElementById('tankTankList');if(dl)dl.innerHTML=[...new Set(TANK.hist.map(h=>h.tank).filter(Boolean))].sort().map(t=>`<option value="${tankEsc(t)}">`).join('');
   const mb=document.getElementById('tankModeBox');
   if(mb&&!mb.contains(document.activeElement))mb.innerHTML=tankAllMachines().map(m=>`<div style="display:flex;align-items:center;gap:8px;margin:3px 0"><span style="width:60px;font-size:12px">${tankEsc(m)}</span>
-    <select data-m="${tankEsc(m)}" style="flex:1"><option value="on"${tankMode(m)==='on'?' selected':''}>사용</option><option value="off"${tankMode(m)==='off'?' selected':''}>미사용 (세척조 관리에서 제외)</option></select></div>`).join('');
+    <select data-m="${tankEsc(m)}" style="flex:1"><option value="on"${tankMode(m)==='on'?' selected':''}>사용</option><option value="off"${tankMode(m)==='off'?' selected':''}>미사용 (일상점검·수리·세척조 관리에서 제외)</option></select></div>`).join('');
   const sel=document.getElementById('tankMachine');
   if(sel){const v=sel.value;sel.innerHTML=ms.map(m=>`<option>${tankEsc(m)}</option>`).join('');if(v&&ms.includes(v))sel.value=v}
   const h=TANK.hist.slice().sort((a,b)=>String(b.date).localeCompare(String(a.date))||(b.id-a.id)).slice(0,8);
@@ -263,6 +263,7 @@ function tankRender(){
   const cd=document.getElementById('tankCleanDays'),cg=document.getElementById('tankChangeDays'),ct=document.getElementById('tankTopupDays');
   if(cd&&document.activeElement!==cd)cd.value=TANK.cfg.clean;if(cg&&document.activeElement!==cg)cg.value=TANK.cfg.change;
   if(ct&&document.activeElement!==ct)ct.value=+TANK.cfg.topup||'';
+  if(typeof machFillActive==='function')machFillActive();
 }
 /* 필터 교환 — 조별 최근 교환일 · 세척기 설정 교환시간 */
 function tankFilterHtml(m){
@@ -395,10 +396,18 @@ async function sendTelegram(row){const s=getSettings();if(!s.tg_bot||!s.tg_users
 const W_DEFAULT_INSPECTORS=['강병주','김상기','오현민','문수진','허미정','강창구','서상봉','천남이'];
 const W_DEFAULT_MACHINES=['1호기','2호기','3호기'];
 let _inspCache=[],_machCache=[];
-async function loadSettingsUI(){if(isConfigured()){await loadList('w_inspector');await loadList('w_machine');initHistDates()}if(!_inspCache.length){_inspCache=W_DEFAULT_INSPECTORS.map((n,i)=>({id:null,name:n,sort:i+1}));renderListUI('inspectorList',_inspCache,'w_inspector');fillSelect('inspector',_inspCache)}if(!_machCache.length){_machCache=W_DEFAULT_MACHINES.map((n,i)=>({id:null,name:n,sort:i+1}));renderListUI('machineList',_machCache,'w_machine');fillSelect('machine',_machCache);fillSelect('histMachine',_machCache,true);fillSelect('repairMachine',_machCache)}updateConnInfo()}
+async function loadSettingsUI(){if(isConfigured()){await loadList('w_inspector');await loadList('w_machine');initHistDates()}if(!_inspCache.length){_inspCache=W_DEFAULT_INSPECTORS.map((n,i)=>({id:null,name:n,sort:i+1}));renderListUI('inspectorList',_inspCache,'w_inspector');fillSelect('inspector',_inspCache)}if(!_machCache.length){_machCache=W_DEFAULT_MACHINES.map((n,i)=>({id:null,name:n,sort:i+1}));renderListUI('machineList',_machCache,'w_machine');fillSelect('machine',_machCache);fillSelect('histMachine',_machCache,true);fillSelect('repairMachine',_machCache);machFillActive()}updateConnInfo()}
 function updateConnInfo(){const sbOk=isConfigured();const tgCnt=getTgRules().length;const dcCnt=getDcRules().length;const ntfyCnt=getNtfyRules().length;document.getElementById('stgConnInfo').innerHTML=(sbOk?'🟢':'🔴')+' Supabase: '+(sbOk?'설정됨':'미설정')+'<br>'+(tgCnt?'🟢':'🔴')+' 텔레그램: '+tgCnt+'명<br>'+(dcCnt?'🟢':'🔴')+' 디스코드: '+dcCnt+'개<br>'+(ntfyCnt?'🟢':'🔴')+' ntfy: '+ntfyCnt+'개'}
 async function loadList(code){try{const d=await sbSelect('common_code','code_group=eq.'+code+'&order=sort_order.asc');const list=(d||[]).map(r=>({id:r.id,name:String(r.code_value||'').trim(),sort:r.sort_order||0}));if(code==='w_inspector'){_inspCache=list;renderListUI('inspectorList',list,code);fillSelect('inspector',list)}else{_machCache=list;renderListUI('machineList',list,code);fillSelect('machine',list);fillSelect('histMachine',list,true);fillSelect('repairMachine',list)}}catch(e){}}
-(function(){const _ll=loadList;loadList=async function(code){const r=await _ll.apply(this,arguments);if(code==='w_machine'&&typeof TANK_OK!=='undefined'&&TANK_OK)tankRender();return r}})();
+(function(){const _ll=loadList;loadList=async function(code){const r=await _ll.apply(this,arguments);if(code==='w_machine'){machFillActive();if(typeof TANK_OK!=='undefined'&&TANK_OK)tankRender()}return r}})();
+/* 미사용 호기(세척조 관리 '호기 사용 여부' = 미사용)는 일상점검·수리 기록 선택에서 뺀다. 이력 조회(histMachine)는 지난 기록을 보도록 전체 유지 */
+function machFillActive(){
+  if(typeof tankMode!=='function')return;
+  const act=(_machCache||[]).filter(w=>tankMode(w.name)!=='off');
+  ['machine','repairMachine'].forEach(id=>{const s=document.getElementById(id);if(!s)return;fillSelect(id,act);if(s.value&&!act.some(w=>w.name===s.value))s.value=''});
+  const L=document.getElementById('machineList');
+  if(L)L.querySelectorAll('.stg-name').forEach(e=>{const n=e.textContent.replace(/ \(미사용\)$/,'');e.textContent=n+(tankMode(n)==='off'?' (미사용)':'')});
+}
 function renderListUI(elId,list,code){const c=document.getElementById(elId);c.innerHTML='';list.forEach((w,i)=>{c.innerHTML+='<div class="stg-list-item"><span style="color:var(--text3);font-size:11px;min-width:18px">'+(i+1)+'</span><span class="stg-name">'+w.name+'</span><button class="stg-del" onclick="delItem(\''+code+'\','+w.id+')">✕</button></div>'})}
 function fillSelect(selId,list,addAll){const s=document.getElementById(selId);const v=s.value;s.innerHTML=addAll?'<option value="">전체</option>':'<option value="">선택</option>';list.forEach(w=>{const o=document.createElement('option');o.value=w.name;o.textContent=w.name;s.appendChild(o)});if(v)s.value=v}
 async function addInspector(){const inp=document.getElementById('newInspectorName');const n=inp.value.trim();if(!n)return;const ns=_inspCache.length?Math.max(..._inspCache.map(w=>w.sort))+1:1;try{await sbInsert('common_code',{code_group:'w_inspector',code_value:n,sort_order:ns});inp.value='';toast('✅ '+n);await loadList('w_inspector')}catch(e){toast('❌ '+e.message)}}
