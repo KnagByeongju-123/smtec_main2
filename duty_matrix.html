@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<script src="audit.js?v=7"></script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>업무분장 관리대장</title>
+<!--
+  업무분장 관리대장 (SQ 2026-07-20 6_4 대응)
+  지적: 사내 안전관리자 퇴사로 '현장 산업안전보건 점검 · 안전보건 대행업체 업무지원' 담당이 바뀌었으나
+        지침서(TJ-MP-Q200-1) 업무분장 미갱신
+  기능: ① 문서별 업무·담당자(정/부) 대장
+        ② 담당자가 인원 마스터(user_pin = 접속핀관리)에 없으면 '퇴사·미등록 담당' 자동 경고
+        ③ 담당 변경 → '문서 개정 대기' → 개정 Rev·개정일 입력 시 해제 (변경·개정 이력 보존)
+  저장: kv_store 'duty_matrix_v1' = { rows:[...], hist:[...] }
+-->
+<style>
+:root{--bg:#f4f6fa;--surface:#fff;--line:#dfe3ea;--text:#172033;--text2:#4a5568;--text3:#8a94a6;--accent:#1e40af;--ok:#15803d;--okbg:#e8f6ec;--warn:#b45309;--warnbg:#fff4e0;--bad:#b91c1c;--badbg:#fdecec}
+@media (prefers-color-scheme:dark){:root{--bg:#0f172a;--surface:#1e293b;--line:#334155;--text:#e2e8f0;--text2:#cbd5e1;--text3:#94a3b8;--accent:#60a5fa;--ok:#4ade80;--okbg:rgba(74,222,128,.12);--warn:#fbbf24;--warnbg:rgba(251,191,36,.12);--bad:#f87171;--badbg:rgba(248,113,113,.12)}}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Malgun Gothic','맑은 고딕','Apple SD Gothic Neo','Noto Sans KR',sans-serif;background:var(--bg);color:var(--text);font-size:14px;line-height:1.5;padding:0 0 40px}
+.hdr{background:#1e3a8a;color:#fff;padding:16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.hdr h1{font-size:18px;font-weight:900}.hdr p{font-size:12px;color:#c7d2fe}
+.hdr .sp{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap}
+.wrap{max-width:1200px;margin:0 auto;padding:14px 16px}
+.btn{border:1px solid var(--line);background:var(--surface);color:var(--text);border-radius:8px;padding:7px 12px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}.btn.sm{padding:4px 9px;font-size:12px}
+.btn.warn{background:var(--warn);border-color:var(--warn);color:#fff}
+.hdr .btn{background:rgba(255,255,255,.15);border-color:rgba(255,255,255,.3);color:#fff}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
+.kpi{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 12px;cursor:pointer}
+.kpi .k{font-size:12px;color:var(--text3);font-weight:700}.kpi .v{font-size:22px;font-weight:900}
+.kpi.bad .v{color:var(--bad)}.kpi.warn .v{color:var(--warn)}.kpi.ok .v{color:var(--ok)}
+.kpi[aria-pressed=true]{outline:2px solid var(--accent)}
+.bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+input,select,textarea{font-family:inherit;font-size:13px;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--text)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-bottom:12px}
+table{width:100%;border-collapse:collapse}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;font-size:13px}
+th{background:var(--bg);font-size:12px;color:var(--text2);white-space:nowrap}
+td.doc{white-space:nowrap;font-weight:700}td .sub{font-size:11px;color:var(--text3);font-weight:400}
+.pill{display:inline-block;border-radius:20px;padding:1px 8px;font-size:11px;font-weight:800;white-space:nowrap}
+.p-bad{background:var(--badbg);color:var(--bad)}.p-warn{background:var(--warnbg);color:var(--warn)}.p-ok{background:var(--okbg);color:var(--ok)}
+.who.gone{color:var(--bad);text-decoration:line-through}
+.acts{display:flex;gap:4px;flex-wrap:wrap}
+.empty{padding:26px;text-align:center;color:var(--text3)}
+.note{font-size:12px;color:var(--text3)}
+.mask{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;padding:16px;z-index:50}
+.mask.on{display:flex}
+.dlg{background:var(--surface);border-radius:12px;padding:18px;width:min(560px,100%);max-height:90vh;overflow:auto}
+.dlg h3{font-size:16px;margin-bottom:10px}
+.fg{display:flex;flex-direction:column;gap:3px;margin-bottom:9px}.fg label{font-size:12px;font-weight:700;color:var(--text2)}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#111827;color:#fff;padding:9px 16px;border-radius:8px;font-size:13px;opacity:0;transition:.2s;pointer-events:none;z-index:60}
+.toast.on{opacity:1}
+.hist td{font-size:12px}
+@media (max-width:720px){.kpis{grid-template-columns:repeat(2,1fr)}.row2{grid-template-columns:1fr}
+  table.main thead{display:none}table.main tr{display:block;border-bottom:1px solid var(--line);padding:8px 10px}
+  table.main td{display:block;border:0;padding:2px 0}td.doc{white-space:normal}}
+@media print{.hdr .sp,.bar,.acts,.kpis{display:none}body{background:#fff}}
+</style>
+</head>
+<body>
+<div class="hdr">
+  <div><h1>📑 업무분장 관리대장</h1><p>문서별 업무 담당자 · 퇴사/변경 시 문서 개정 추적 (SQ 6_4 · IATF 5.3)</p></div>
+  <div class="sp">
+    <button class="btn" onclick="openRow()">＋ 업무 등록</button>
+    <button class="btn" onclick="exportCsv()">CSV 내보내기</button>
+    <button class="btn" onclick="window.print()">인쇄</button>
+  </div>
+</div>
+<div class="wrap">
+  <div class="kpis" id="kpis"></div>
+  <div class="bar">
+    <select id="fDoc" onchange="render()"><option value="">문서 전체</option></select>
+    <input type="search" id="q" placeholder="업무 · 담당자 · 부서 검색" oninput="render()" style="flex:1;min-width:160px">
+    <span class="note" id="st">불러오는 중…</span>
+  </div>
+  <div class="card"><table class="main"><thead><tr><th>문서</th><th>업무</th><th>부서</th><th>담당(정)</th><th>담당(부)</th><th>상태</th><th></th></tr></thead><tbody id="tb"></tbody></table></div>
+  <div class="card" style="padding:12px 14px">
+    <div style="font-weight:800;margin-bottom:6px">변경·개정 이력 <span class="note">최근 30건</span></div>
+    <table class="hist"><tbody id="hb"></tbody></table>
+  </div>
+  <div class="note">
+    · 담당자 이름은 <b>접속핀관리(인원 마스터)</b>와 대조합니다. 퇴사자를 접속핀관리에서 삭제하면 그 사람이 맡은 업무가 <b>퇴사·미등록 담당</b>으로 표시됩니다.<br>
+    · <b>[담당 변경]</b>을 하면 해당 문서는 <b>문서 개정 대기</b>가 되고, 실제 문서(지침서·절차서)를 개정한 뒤 <b>[개정 완료]</b>에 Rev·개정일을 넣어야 해제됩니다.
+  </div>
+</div>
+
+<div class="mask" id="mRow"><div class="dlg">
+  <h3 id="mRowT">업무 등록</h3>
+  <div class="row2">
+    <div class="fg"><label>문서번호</label><input id="r_docNo" placeholder="예: TJ-MP-Q200-1" list="dlDocs"></div>
+    <div class="fg"><label>문서명</label><input id="r_docName" placeholder="예: 안전보건관리 지침서"></div>
+  </div>
+  <div class="fg"><label>업무</label><input id="r_duty" placeholder="예: 현장 산업안전보건 점검 · 안전보건 대행업체 업무지원"></div>
+  <div class="row2">
+    <div class="fg"><label>부서</label><input id="r_dept" list="dlDepts"></div>
+    <div class="fg"><label>현재 문서 Rev (선택)</label><input id="r_rev" placeholder="예: Rev.3"></div>
+  </div>
+  <div class="row2">
+    <div class="fg"><label>담당(정)</label><input id="r_main" list="dlPeople"></div>
+    <div class="fg"><label>담당(부)</label><input id="r_sub" list="dlPeople"></div>
+  </div>
+  <div class="fg"><label>비고</label><input id="r_note"></div>
+  <div style="display:flex;gap:6px;justify-content:flex-end;margin-top:6px">
+    <button class="btn" id="mRowDel" style="margin-right:auto;color:var(--bad)" onclick="delRow()">삭제</button>
+    <button class="btn" onclick="closeM()">취소</button><button class="btn pri" onclick="saveRow()">저장</button>
+  </div>
+</div></div>
+
+<div class="mask" id="mChg"><div class="dlg">
+  <h3>담당 변경</h3>
+  <div class="note" id="mChgInfo" style="margin-bottom:10px"></div>
+  <div class="row2">
+    <div class="fg"><label>새 담당(정)</label><input id="c_main" list="dlPeople"></div>
+    <div class="fg"><label>새 담당(부)</label><input id="c_sub" list="dlPeople"></div>
+  </div>
+  <div class="row2">
+    <div class="fg"><label>변경일</label><input type="date" id="c_date"></div>
+    <div class="fg"><label>사유</label><select id="c_why"><option>퇴사</option><option>부서 이동</option><option>업무 재배정</option><option>휴직·장기부재</option><option>기타</option></select></div>
+  </div>
+  <div class="fg"><label>상세 (선택)</label><input id="c_memo"></div>
+  <div class="note" style="margin-bottom:8px">저장하면 이 문서는 <b>문서 개정 대기</b>가 됩니다. 문서를 개정한 뒤 [개정 완료]를 누르세요.</div>
+  <div style="display:flex;gap:6px;justify-content:flex-end"><button class="btn" onclick="closeM()">취소</button><button class="btn pri" onclick="saveChg()">변경 저장</button></div>
+</div></div>
+
+<div class="mask" id="mRev"><div class="dlg">
+  <h3>문서 개정 완료</h3>
+  <div class="note" id="mRevInfo" style="margin-bottom:10px"></div>
+  <div class="row2">
+    <div class="fg"><label>개정 Rev</label><input id="v_rev" placeholder="예: Rev.4"></div>
+    <div class="fg"><label>개정일</label><input type="date" id="v_date"></div>
+  </div>
+  <div class="fg"><label>개정 내용 (선택)</label><input id="v_memo" placeholder="예: 6.2 업무분장표 담당자 변경 반영"></div>
+  <div style="display:flex;gap:6px;justify-content:flex-end"><button class="btn" onclick="closeM()">취소</button><button class="btn pri" onclick="saveRev()">개정 완료</button></div>
+</div></div>
+
+<datalist id="dlPeople"></datalist><datalist id="dlDepts"></datalist><datalist id="dlDocs"></datalist>
+<div class="toast" id="toast"></div>
+
+<script>
+const SB_URL='https://omngtyewdaqpphnzeate.supabase.co';
+const SB_KEY='sb_publishable_9j2YkkL-7ul1TrhH-NjVdQ_vWDG2-1D';
+const KV_KEY='duty_matrix_v1';
+const H=()=>({'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Content-Type':'application/json'});
+const $=s=>document.querySelector(s);
+const esc=v=>String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const today=()=>new Date(Date.now()+9*36e5).toISOString().slice(0,10);
+const nm=s=>String(s||'').replace(/\s+/g,'');
+let D={rows:[],hist:[]}, PEOPLE=[], LOADED=false, FILTER='', CUR=null;
+
+function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('on');clearTimeout(toast._t);toast._t=setTimeout(()=>t.classList.remove('on'),2200)}
+function me(){try{const u=window.tjAudit&&tjAudit.user&&tjAudit.user();if(u&&u.name)return u.name}catch(e){}return ''}
+
+async function fetchKV(){
+  const r=await fetch(`${SB_URL}/rest/v1/kv_store?key=eq.${KV_KEY}&select=value`,{headers:H(),cache:'no-store'});
+  if(!r.ok)throw new Error('HTTP '+r.status);
+  const d=await r.json();const v=(d[0]&&d[0].value)||{};
+  return{rows:Array.isArray(v.rows)?v.rows:[],hist:Array.isArray(v.hist)?v.hist:[]};
+}
+/* 최신본을 다시 받아 고친 뒤 저장 (다른 사람이 동시에 고친 내용 보호) */
+async function mutate(fn){
+  const cur=await fetchKV(); fn(cur);
+  const r=await fetch(`${SB_URL}/rest/v1/kv_store?on_conflict=key`,{method:'POST',
+    headers:Object.assign(H(),{'Prefer':'resolution=merge-duplicates,return=minimal'}),body:JSON.stringify({key:KV_KEY,value:cur})});
+  if(!r.ok)throw new Error('HTTP '+r.status+' '+(await r.text()).slice(0,120));
+  D=cur; render();
+}
+async function load(){
+  try{
+    const [kv,pp]=await Promise.all([fetchKV(),
+      fetch(`${SB_URL}/rest/v1/user_pin?select=name,dept,position&order=dept,name`,{headers:H()}).then(r=>{if(!r.ok)throw new Error('인원 HTTP '+r.status);return r.json()})]);
+    D=kv; PEOPLE=pp.filter(p=>p.name); LOADED=true;
+    $('#dlPeople').innerHTML=PEOPLE.map(p=>`<option value="${esc(p.name)}">${esc(p.dept||'')}${p.position?' · '+esc(p.position):''}</option>`).join('');
+    $('#dlDepts').innerHTML=[...new Set(PEOPLE.map(p=>p.dept).filter(Boolean))].map(d=>`<option value="${esc(d)}">`).join('');
+    $('#st').textContent=`인원 마스터 ${PEOPLE.length}명 대조 · ${new Date().toLocaleTimeString('ko-KR')}`;
+  }catch(e){ $('#st').textContent='⚠ 불러오기 실패: '+e.message; }
+  render();
+}
+/* 담당자가 인원 마스터에 있는지 (이름 기준) */
+function inStaff(name){ if(!name)return true; return PEOPLE.some(p=>nm(p.name)===nm(name)); }
+function stateOf(r){
+  const gone=[r.main,r.sub].filter(x=>x&&!inStaff(x));
+  if(!r.main) return{k:'nomain',t:'담당(정) 미지정',c:'p-bad',gone};
+  if(gone.length) return{k:'gone',t:'퇴사·미등록 담당',c:'p-bad',gone};
+  if(r.pend) return{k:'pend',t:'문서 개정 대기',c:'p-warn',gone};
+  return{k:'ok',t:'정상',c:'p-ok',gone};
+}
+function render(){
+  const rows=D.rows.map(r=>({r,s:stateOf(r)}));
+  const n={all:rows.length,gone:rows.filter(x=>x.s.k==='gone'||x.s.k==='nomain').length,pend:rows.filter(x=>x.s.k==='pend').length,ok:rows.filter(x=>x.s.k==='ok').length};
+  $('#kpis').innerHTML=[['','등록 업무',n.all,''],['gone','퇴사·미등록 담당',n.gone,n.gone?'bad':'ok'],['pend','문서 개정 대기',n.pend,n.pend?'warn':'ok'],['ok','정상',n.ok,'ok']]
+    .map(([f,k,v,c])=>`<div class="kpi ${c}" aria-pressed="${FILTER===f}" onclick="FILTER='${f}';render()"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+  const docs=[...new Set(D.rows.map(r=>r.docNo).filter(Boolean))].sort();
+  const fd=$('#fDoc'), fv=fd.value;
+  fd.innerHTML='<option value="">문서 전체</option>'+docs.map(d=>`<option>${esc(d)}</option>`).join(''); if(docs.includes(fv))fd.value=fv;
+  $('#dlDocs').innerHTML=docs.map(d=>`<option value="${esc(d)}">`).join('');
+  const q=$('#q').value.trim().toLowerCase();
+  const list=rows.filter(({r,s})=>{
+    if(fd.value&&r.docNo!==fd.value)return false;
+    if(FILTER==='gone'&&!(s.k==='gone'||s.k==='nomain'))return false;
+    if(FILTER&&FILTER!=='gone'&&s.k!==FILTER)return false;
+    if(q&&![r.docNo,r.docName,r.duty,r.dept,r.main,r.sub].join(' ').toLowerCase().includes(q))return false;
+    return true;
+  }).sort((a,b)=>({nomain:0,gone:0,pend:1,ok:2}[a.s.k]-{nomain:0,gone:0,pend:1,ok:2}[b.s.k])||String(a.r.docNo).localeCompare(String(b.r.docNo)));
+  const who=(x)=>x?`<span class="who ${inStaff(x)?'':'gone'}" title="${inStaff(x)?'':'인원 마스터에 없음 (퇴사·미등록)'}">${esc(x)}</span>`:'<span class="note">—</span>';
+  $('#tb').innerHTML=list.length?list.map(({r,s})=>`<tr>
+    <td class="doc">${esc(r.docNo||'—')}<div class="sub">${esc(r.docName||'')}${r.rev?' · '+esc(r.rev):''}</div></td>
+    <td>${esc(r.duty)}${r.note?`<div class="sub">${esc(r.note)}</div>`:''}</td>
+    <td>${esc(r.dept||'')}</td><td>${who(r.main)}</td><td>${who(r.sub)}</td>
+    <td><span class="pill ${s.c}">${s.t}</span>${r.pend?`<div class="sub">${esc(r.pend.date)} ${esc(r.pend.from||'—')} → ${esc(r.pend.to||'—')}</div>`:''}</td>
+    <td><div class="acts">
+      <button class="btn sm ${s.k==='gone'||s.k==='nomain'?'warn':''}" onclick="openChg('${r.id}')">담당 변경</button>
+      ${r.pend?`<button class="btn sm pri" onclick="openRev('${r.id}')">개정 완료</button>`:''}
+      <button class="btn sm" onclick="openRow('${r.id}')">수정</button></div></td></tr>`).join('')
+    :`<tr><td colspan="7" class="empty">${LOADED&&!D.rows.length?'등록된 업무가 없습니다. [＋ 업무 등록]으로 지침서·절차서의 업무분장표를 옮겨 적으세요.':'해당하는 업무가 없습니다.'}</td></tr>`;
+  const h=D.hist.slice().sort((a,b)=>String(b.at).localeCompare(String(a.at))).slice(0,30);
+  $('#hb').innerHTML=h.length?h.map(x=>`<tr><td style="white-space:nowrap">${esc(x.date||String(x.at).slice(0,10))}</td><td><span class="pill ${x.kind==='문서개정'?'p-ok':x.kind==='담당변경'?'p-warn':''}">${esc(x.kind)}</span></td>
+    <td>${esc(x.docNo||'')} · ${esc(x.duty||'')}</td><td>${esc(x.text||'')}</td><td style="white-space:nowrap">${esc(x.by||'')}</td></tr>`).join('')
+    :'<tr><td class="empty">이력이 없습니다.</td></tr>';
+}
+function closeM(){document.querySelectorAll('.mask').forEach(m=>m.classList.remove('on'));CUR=null}
+function rowOf(id){return D.rows.find(r=>r.id===id)}
+const genId=()=>'d'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+
+function openRow(id){
+  CUR=id||null; const r=id?rowOf(id):{};
+  $('#mRowT').textContent=id?'업무 수정':'업무 등록';
+  ['docNo','docName','duty','dept','rev','main','sub','note'].forEach(k=>$('#r_'+k).value=r[k]||'');
+  $('#r_main').disabled=$('#r_sub').disabled=!!id;   // 담당자 변경은 [담당 변경]으로만 (이력·개정 추적)
+  $('#mRowDel').style.display=id?'':'none';
+  $('#mRow').classList.add('on');
+}
+async function saveRow(){
+  const v={};['docNo','docName','duty','dept','rev','main','sub','note'].forEach(k=>v[k]=$('#r_'+k).value.trim());
+  if(!v.docNo||!v.duty){toast('문서번호와 업무를 입력하세요');return}
+  if(!CUR&&v.main&&!inStaff(v.main)&&!confirm(`'${v.main}'은(는) 인원 마스터에 없습니다. 그대로 등록할까요?`))return;
+  const id=CUR, by=me();
+  try{
+    await mutate(d=>{
+      if(id){ const r=d.rows.find(x=>x.id===id); if(!r)throw new Error('이미 삭제된 업무입니다');
+        ['docNo','docName','duty','dept','rev','note'].forEach(k=>r[k]=v[k]); r.updatedAt=new Date().toISOString(); }
+      else{ d.rows.push(Object.assign({id:genId(),createdAt:new Date().toISOString()},v));
+        d.hist.push({id:genId(),at:new Date().toISOString(),date:today(),kind:'등록',docNo:v.docNo,duty:v.duty,text:`담당 정 ${v.main||'—'} / 부 ${v.sub||'—'}`,by}); }
+    });
+    closeM(); toast('저장했습니다');
+  }catch(e){alert('저장 실패: '+e.message)}
+}
+async function delRow(){
+  const r=rowOf(CUR); if(!r||!confirm(`'${r.docNo} · ${r.duty}' 업무를 대장에서 삭제할까요? (이력은 남습니다)`))return;
+  const id=CUR, by=me();
+  try{ await mutate(d=>{ d.rows=d.rows.filter(x=>x.id!==id);
+      d.hist.push({id:genId(),at:new Date().toISOString(),date:today(),kind:'삭제',docNo:r.docNo,duty:r.duty,text:`담당 정 ${r.main||'—'} / 부 ${r.sub||'—'}`,by}); });
+    closeM(); toast('삭제했습니다'); }catch(e){alert('삭제 실패: '+e.message)}
+}
+function openChg(id){
+  const r=rowOf(id); CUR=id;
+  $('#mChgInfo').innerHTML=`<b>${esc(r.docNo)}</b> ${esc(r.docName||'')}<br>${esc(r.duty)}<br>현재: 정 <b>${esc(r.main||'—')}</b>${r.main&&!inStaff(r.main)?' (퇴사·미등록)':''} / 부 <b>${esc(r.sub||'—')}</b>${r.sub&&!inStaff(r.sub)?' (퇴사·미등록)':''}`;
+  $('#c_main').value=r.main||''; $('#c_sub').value=r.sub||''; $('#c_date').value=today(); $('#c_memo').value='';
+  $('#c_why').value=[r.main,r.sub].some(x=>x&&!inStaff(x))?'퇴사':'업무 재배정';
+  $('#mChg').classList.add('on');
+}
+async function saveChg(){
+  const r=rowOf(CUR); if(!r)return;
+  const nmain=$('#c_main').value.trim(), nsub=$('#c_sub').value.trim(), date=$('#c_date').value||today(), why=$('#c_why').value, memo=$('#c_memo').value.trim();
+  if(!nmain){toast('새 담당(정)을 입력하세요');return}
+  if(nmain===r.main&&nsub===(r.sub||'')){toast('바뀐 내용이 없습니다');return}
+  const bad=[nmain,nsub].filter(x=>x&&!inStaff(x));
+  if(bad.length&&!confirm(`${bad.join(', ')} 은(는) 인원 마스터에 없습니다. 그대로 저장할까요?`))return;
+  const id=CUR, by=me();
+  const from=`정 ${r.main||'—'} / 부 ${r.sub||'—'}`, to=`정 ${nmain} / 부 ${nsub||'—'}`;
+  try{
+    await mutate(d=>{ const x=d.rows.find(y=>y.id===id); if(!x)throw new Error('이미 삭제된 업무입니다');
+      const keep=x.pend&&x.pend.from;   // 개정 전에 또 바뀌면 최초 변경 전 담당을 유지
+      x.main=nmain; x.sub=nsub; x.updatedAt=new Date().toISOString();
+      x.pend={date,why,from:keep||from,to,memo,by};
+      d.hist.push({id:genId(),at:new Date().toISOString(),date,kind:'담당변경',docNo:x.docNo,duty:x.duty,text:`${from} → ${to} (${why}${memo?' · '+memo:''})`,by});
+    });
+    closeM(); toast('담당 변경 저장 — 문서 개정 후 [개정 완료]를 누르세요');
+  }catch(e){alert('저장 실패: '+e.message)}
+}
+function openRev(id){
+  const r=rowOf(id); CUR=id;
+  $('#mRevInfo').innerHTML=`<b>${esc(r.docNo)}</b> ${esc(r.docName||'')}<br>${esc(r.duty)}<br>변경: ${esc(r.pend.from)} → ${esc(r.pend.to)} (${esc(r.pend.date)} · ${esc(r.pend.why)})`;
+  $('#v_rev').value=''; $('#v_date').value=today(); $('#v_memo').value='';
+  $('#mRev').classList.add('on');
+}
+async function saveRev(){
+  const r=rowOf(CUR); if(!r)return;
+  const rev=$('#v_rev').value.trim(), date=$('#v_date').value||today(), memo=$('#v_memo').value.trim();
+  if(!rev){toast('개정 Rev를 입력하세요');return}
+  if(date<r.pend.date&&!confirm('개정일이 담당 변경일보다 빠릅니다. 그대로 저장할까요?'))return;
+  const id=CUR, by=me();
+  try{
+    await mutate(d=>{ const x=d.rows.find(y=>y.id===id); if(!x)throw new Error('이미 삭제된 업무입니다');
+      d.hist.push({id:genId(),at:new Date().toISOString(),date,kind:'문서개정',docNo:x.docNo,duty:x.duty,
+        text:`${rev} 개정 — ${x.pend?x.pend.from+' → '+x.pend.to:''}${memo?' · '+memo:''} (변경 후 ${x.pend?Math.max(0,Math.round((new Date(date)-new Date(x.pend.date))/864e5)):0}일)`,by});
+      x.rev=rev; x.revDate=date; delete x.pend; x.updatedAt=new Date().toISOString();
+    });
+    closeM(); toast('문서 개정 완료로 처리했습니다');
+  }catch(e){alert('저장 실패: '+e.message)}
+}
+function exportCsv(){
+  const head=['문서번호','문서명','현재 Rev','업무','부서','담당(정)','담당(부)','상태','개정 대기 내용','비고'];
+  const rows=D.rows.map(r=>{const s=stateOf(r);return[r.docNo,r.docName,r.rev,r.duty,r.dept,r.main,r.sub,s.t+(s.gone.length?' ('+s.gone.join(',')+' 인원 마스터 없음)':''),r.pend?`${r.pend.date} ${r.pend.from} → ${r.pend.to}`:'',r.note]});
+  const csv='﻿'+[head,...rows].map(a=>a.map(v=>`"${String(v==null?'':v).replace(/"/g,'""')}"`).join(',')).join('\r\n');
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download=`업무분장_관리대장_${today()}.csv`;a.click();
+}
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeM()});
+load();
+</script>
+</body>
+</html>
