@@ -63,16 +63,15 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
     <div class="card-title">🧽 세척조 청소 · 세척액 교체 주기</div>
     <div id="tankStatus" style="font-size:12px;color:var(--text3)">불러오는 중…</div>
     <details id="tankFormBox" style="margin-top:10px">
-      <summary style="cursor:pointer;font-size:13px;font-weight:700;color:var(--accent)">＋ 청소·교체 실시 기록</summary>
+      <summary style="cursor:pointer;font-size:13px;font-weight:700;color:var(--accent)">＋ 청소·교체·보충·필터 교환 실시 기록</summary>
       <div style="margin-top:10px">
         <div class="fg-row"><div class="fg"><label>실시일자</label><input type="date" id="tankDate"></div><div class="fg"><label>호기</label><select id="tankMachine"></select></div></div>
-        <div class="fg-row"><div class="fg"><label>구분</label><select id="tankKind">
-          <option value="세척조 청소">세척조 청소</option>
-          <option value="세척액 전량교체">세척액 전량교체</option>
-          <option value="세척조 청소+세척액 전량교체">세척조 청소 + 세척액 전량교체</option></select></div>
+        <div class="fg-row"><div class="fg"><label>구분</label><select id="tankKind" onchange="tankKindChg()"></select></div>
           <div class="fg"><label>실시자</label><input type="text" id="tankWorker" placeholder="이름"></div></div>
+        <div class="fg-row" id="tankFilterRow" style="display:none"><div class="fg"><label>조 (세척조)</label><input type="text" id="tankTankNo" list="tankTankList" placeholder="예: 1조"><datalist id="tankTankList"></datalist></div>
+          <div class="fg"><label>세척기 설정 교환시간(h)</label><input type="number" id="tankSetH" min="1" placeholder="세척기 화면 설정값"></div></div>
         <div class="fg"><label>내용 / 특이사항</label><textarea id="tankMemo" rows="2" placeholder="예: 바닥 슬러지 제거, 필터 세척, 원액 ○○L 투입"></textarea></div>
-        <div class="fg"><label>사진 (선택 · 청소 후)</label><input type="file" id="tankPhoto" accept="image/*" capture="environment"></div>
+        <div class="fg"><label>사진 (선택 · 청소·교환 후)</label><input type="file" id="tankPhoto" accept="image/*" capture="environment"></div>
         <button type="button" class="submit-btn" style="margin-top:8px" onclick="tankSubmit()">💾 실시 기록 저장</button>
       </div>
     </details>
@@ -126,6 +125,10 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
     <div style="font-size:11px;color:var(--text3);margin-bottom:8px">💡 세척 작업표준 기준 (SQ 기준 : 최소 6개월 1회 세척조 청소·세척액 전량교체). 서버에 저장되어 모든 기기에 적용됩니다.</div>
     <div class="fg-row"><div class="fg"><label class="field-label">세척조 청소 주기(일)</label><input type="number" id="tankCleanDays" min="1"></div>
       <div class="fg"><label class="field-label">세척액 전량교체 주기(일)</label><input type="number" id="tankChangeDays" min="1"></div></div>
+    <div class="fg"><label class="field-label">폐유 배출·신규 보충 주기(일) <span style="font-weight:400">— 비우면 기록만</span></label><input type="number" id="tankTopupDays" min="1" placeholder="기록만"></div>
+    <div style="font-size:11px;font-weight:700;color:var(--text2);margin:8px 0 4px">호기 사용 여부</div>
+    <div id="tankModeBox"></div>
+    <div style="font-size:11px;color:var(--text3);margin-top:4px">· 세척액 전량교체: 세척액을 전부 빼고 새로 채움 (주기 관리)<br>· 폐유 배출·신규 보충: 평소 뜬 기름(폐유)만 빼고 신규 세척액을 보충 (실시 기록)<br>· 필터 교환은 세척기에 조(세척조)별로 설정된 <b>가동시간</b>에 맞춰 하므로, 앱은 교환일과 설정값만 기록합니다</div>
     <button type="button" onclick="tankSaveCfg()" style="margin-top:8px;padding:8px 14px;border-radius:8px;border:none;background:var(--accent);color:#fff;font-weight:700;font-family:inherit;cursor:pointer">💾 주기 저장</button>
     <span id="tankCfgSt" style="font-size:11px;color:var(--text3);margin-left:8px"></span>
   </div>
@@ -172,16 +175,20 @@ CREATE POLICY "anon_all" ON wash_machine_repair FOR ALL TO anon USING (true) WIT
 <div class="toast" id="toast"></div>
 <script>
 /* ===== 🧽 세척조 청소 · 세척액 전량교체 주기 관리 (SQ 2026-07-20 1_7 "세척조 청소 주기·실시 기록 누락") =====
-   저장: kv_store 'wash_tank_pm_v1' = { cfg:{clean:일, change:일}, hist:[{id,date,machine,kind,worker,memo,photo,at}] }
+   저장: kv_store 'wash_tank_pm_v1' = { cfg:{clean:일, change:일, topup:일|0, mode:{호기:'on'|'off'}}, hist:[{id,date,machine,kind,worker,memo,photo,at,tank?,setH?}] }
+   2호기(2026-11 현장 확인): 평소 폐유를 빼고 신규 세척액 보충, 세척액 전량 배출·교체도 함 → 청소·전량교체(주기) + 폐유 배출·보충(기록, 주기 선택)
+   1호기 미사용 → mode 'off' (호기 목록은 지우지 않고 세척조 관리에서만 뺌)
+   필터 교환 — 세척기에 조별 가동시간으로 설정돼 있어 주기 계산 없이 조별 교환일·설정값만 기록
    상태: 호기별 최근 실시일 + 주기 → 다음 예정일 · D-day (청소 7일 전 / 교체 30일 전 임박) */
 const TANK_KEY='wash_tank_pm_v1';
-let TANK={cfg:{clean:30,change:180},hist:[]},TANK_OK=false;
+let TANK={cfg:{clean:30,change:180,topup:0,mode:{'1호기':'off'}},hist:[]},TANK_OK=false;
 function tankHdr(){const k=getSbKey();return{'apikey':k,'Authorization':'Bearer '+k,'Content-Type':'application/json'}}
 async function tankFetch(){
   const r=await fetch(getSbUrl()+'/rest/v1/kv_store?key=eq.'+TANK_KEY+'&select=value',{headers:tankHdr(),cache:'no-store'});
   if(!r.ok)throw new Error('HTTP '+r.status);
   const d=await r.json();const v=(d[0]&&d[0].value)||{};
-  return{cfg:Object.assign({clean:30,change:180},v.cfg||{}),hist:Array.isArray(v.hist)?v.hist:[]};
+  const cfg=Object.assign({clean:30,change:180,topup:0},v.cfg||{});cfg.mode=Object.assign({'1호기':'off'},cfg.mode||{});
+  return{cfg,hist:Array.isArray(v.hist)?v.hist:[]};
 }
 /* 최신본을 다시 받아 수정 → 저장 (다른 기기 기록 보호) */
 async function tankMutate(fn){
@@ -197,15 +204,19 @@ async function tankLoad(){
   try{TANK=await tankFetch();TANK_OK=true}catch(e){TANK_OK=false;document.getElementById('tankStatus').textContent='⚠ 불러오기 실패: '+e.message;return}
   tankRender();
 }
-function tankMachines(){
+function tankAllMachines(){
   const m=(_machCache||[]).map(x=>x.name).filter(Boolean);
   TANK.hist.forEach(h=>{if(h.machine&&!m.includes(h.machine))m.push(h.machine)});
-  return m.length?m:['1호기'];
+  return m.length?m:['2호기'];
 }
-const TANK_TYPES=[['clean','세척조 청소','청소',7],['change','세척액 전량교체','교체',30]];
+const tankMachines=()=>tankAllMachines().filter(m=>tankMode(m)!=='off');   /* 미사용 호기 제외 */
+const TANK_TYPES=[['clean','세척조 청소','청소',7],['change','세척액 전량교체','교체',30],['topup','폐유 배출·신규 보충','보충',3]];
+const tankMode=m=>(TANK.cfg.mode||{})[m]==='off'?'off':'on';
+const tankTypes=()=>TANK_TYPES;
 function tankState(machine,t){
-  const [key,,word,lead]=t;const days=+TANK.cfg[key]||(key==='clean'?30:180);
+  const [key,,word,lead]=t;const days=key==='topup'?(+TANK.cfg.topup||0):(+TANK.cfg[key]||(key==='clean'?30:180));
   const last=TANK.hist.filter(h=>h.machine===machine&&String(h.kind||'').includes(word)).map(h=>h.date).sort().pop()||null;
+  if(!days)return{k:last?'rec':'none',last,next:null,dd:null,days:0};   /* 주기 없음 = 기록만 */
   if(!last)return{k:'never',last:null,next:null,dd:null,days};
   const nx=new Date(last+'T00:00:00');nx.setDate(nx.getDate()+days);
   const next=kstDateStr(nx);const dd=Math.round((new Date(next+'T00:00:00')-new Date(kstDateStr()+'T00:00:00'))/864e5);
@@ -213,39 +224,61 @@ function tankState(machine,t){
 }
 /* 점검 제출·알림용 경고 문구 (주기 초과/기록 없음) */
 function tankWarnText(machine){
-  if(!TANK_OK)return'';
-  const w=TANK_TYPES.map(t=>{const s=tankState(machine,t);
+  if(!TANK_OK||tankMode(machine)==='off')return'';
+  const w=tankTypes(machine).map(t=>{const s=tankState(machine,t);
     return s.k==='over'?`${t[1]} 주기 초과 ${-s.dd}일 (최근 ${s.last})`:s.k==='never'?`${t[1]} 실시 기록 없음`:''}).filter(Boolean);
   return w.length?'⚠ '+machine+' '+w.join(' · '):'';
 }
 function tankEsc(v){return String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function tankRender(){
   const box=document.getElementById('tankStatus');if(!box)return;
-  const col={over:'#ef4444',never:'#ef4444',soon:'#f59e0b',ok:'#22c55e'};
+  const col={over:'#ef4444',never:'#ef4444',soon:'#f59e0b',ok:'#22c55e',rec:'#94a3b8',none:'#94a3b8'};
   const ms=tankMachines();
   box.innerHTML=ms.map(m=>`<div style="background:var(--bg);border:1px solid rgba(255,255,255,.06);border-radius:10px;padding:10px 12px;margin-bottom:6px">
-    <div style="font-weight:700;color:var(--text);margin-bottom:6px">${tankEsc(m)}</div>
-    ${TANK_TYPES.map(t=>{const s=tankState(m,t);const c=col[s.k];
-      const right=s.k==='never'?'기록 없음':s.k==='over'?`${-s.dd}일 초과`:`D-${s.dd}`;
+    <div style="font-weight:700;color:var(--text);margin-bottom:6px">${tankEsc(m)} </div>
+    ${tankTypes(m).map(t=>{const s=tankState(m,t);const c=col[s.k];
+      const right=s.k==='never'?'기록 없음':s.k==='over'?`${-s.dd}일 초과`:s.k==='rec'?'최근 '+s.last.slice(5):s.k==='none'?'기록 없음':`D-${s.dd}`;
       return `<div style="padding:4px 0">
         <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline">
-          <span style="color:var(--text2);white-space:nowrap">${t[1]} <span style="color:var(--text3);font-size:11px">${s.days}일 주기</span></span>
+          <span style="color:var(--text2);white-space:nowrap">${t[1]} <span style="color:var(--text3);font-size:11px">${s.days?s.days+'일 주기':'기록만'}</span></span>
           <b style="color:${c};font-size:13px;white-space:nowrap">${right}</b></div>
-        <div style="font-size:11px;color:var(--text3)">${s.last?'최근 '+s.last+' → 다음 '+s.next:'실시 기록 없음 — 청소·교체 후 아래에서 기록'}</div></div>`}).join('')}
+        <div style="font-size:11px;color:var(--text3)">${s.next?'최근 '+s.last+' → 다음 '+s.next:s.last?'최근 '+s.last:'실시 기록 없음 — 실시 후 아래에서 기록'}</div></div>`}).join('')}
+    ${tankFilterHtml(m)}
   </div>`).join('');
+  tankKindOpts();
+  const dl=document.getElementById('tankTankList');if(dl)dl.innerHTML=[...new Set(TANK.hist.map(h=>h.tank).filter(Boolean))].sort().map(t=>`<option value="${tankEsc(t)}">`).join('');
+  const mb=document.getElementById('tankModeBox');
+  if(mb&&!mb.contains(document.activeElement))mb.innerHTML=tankAllMachines().map(m=>`<div style="display:flex;align-items:center;gap:8px;margin:3px 0"><span style="width:60px;font-size:12px">${tankEsc(m)}</span>
+    <select data-m="${tankEsc(m)}" style="flex:1"><option value="on"${tankMode(m)==='on'?' selected':''}>사용</option><option value="off"${tankMode(m)==='off'?' selected':''}>미사용 (세척조 관리에서 제외)</option></select></div>`).join('');
   const sel=document.getElementById('tankMachine');
   if(sel){const v=sel.value;sel.innerHTML=ms.map(m=>`<option>${tankEsc(m)}</option>`).join('');if(v&&ms.includes(v))sel.value=v}
   const h=TANK.hist.slice().sort((a,b)=>String(b.date).localeCompare(String(a.date))||(b.id-a.id)).slice(0,8);
   document.getElementById('tankHist').innerHTML=h.length?`<div style="font-size:11px;font-weight:700;color:var(--text3);margin:4px 0">최근 실시 기록</div>`+
     h.map(x=>`<div style="display:flex;gap:8px;align-items:flex-start;font-size:12px;padding:6px 0;border-top:1px solid rgba(255,255,255,.05)">
-      <div style="flex:1"><b>${tankEsc(x.date)}</b> · ${tankEsc(x.machine)} · <span style="color:var(--accent)">${tankEsc(x.kind)}</span> · ${tankEsc(x.worker)}
+      <div style="flex:1"><b>${tankEsc(x.date)}</b> · ${tankEsc(x.machine)}${x.tank?' '+tankEsc(x.tank):''} · <span style="color:var(--accent)">${tankEsc(x.kind)}</span>${x.setH?' ('+tankEsc(x.setH)+'h)':''} · ${tankEsc(x.worker)}
         ${x.memo?`<div style="color:var(--text3);margin-top:2px">${tankEsc(x.memo)}</div>`:''}</div>
       ${x.photo?`<a href="${tankEsc(x.photo)}" target="_blank" rel="noopener" style="color:var(--accent);font-size:11px">사진</a>`:''}
       <button type="button" onclick="tankDel(${+x.id})" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:12px" title="삭제">✕</button></div>`).join('')
     :'<div style="font-size:11px;color:var(--text3)">실시 기록이 없습니다. 청소·교체를 하면 위에서 기록하세요.</div>';
-  const cd=document.getElementById('tankCleanDays'),cg=document.getElementById('tankChangeDays');
+  const cd=document.getElementById('tankCleanDays'),cg=document.getElementById('tankChangeDays'),ct=document.getElementById('tankTopupDays');
   if(cd&&document.activeElement!==cd)cd.value=TANK.cfg.clean;if(cg&&document.activeElement!==cg)cg.value=TANK.cfg.change;
+  if(ct&&document.activeElement!==ct)ct.value=+TANK.cfg.topup||'';
 }
+/* 필터 교환 — 조별 최근 교환일 · 세척기 설정 교환시간 */
+function tankFilterHtml(m){
+  const by={};TANK.hist.filter(h=>h.machine===m&&String(h.kind||'').includes('필터')).forEach(h=>{const k=h.tank||'-';if(!by[k]||String(h.date)>String(by[k].date))by[k]=h});
+  const ks=Object.keys(by).sort();
+  return `<div style="padding:4px 0"><div style="display:flex;justify-content:space-between;gap:8px"><span style="color:var(--text2)">필터 교환 <span style="color:var(--text3);font-size:11px">세척기 설정 시간 기준 · 기록만</span></span>${ks.length?'':'<b style="color:#94a3b8;font-size:13px">기록 없음</b>'}</div>
+    ${ks.map(k=>`<div style="font-size:11px;color:var(--text3)">${tankEsc(k)} · 최근 ${tankEsc(by[k].date)}${by[k].setH?' · 설정 '+tankEsc(by[k].setH)+'h':''}</div>`).join('')}</div>`;
+}
+function tankKindOpts(){
+  const sel=document.getElementById('tankKind'),m=(document.getElementById('tankMachine')||{}).value;if(!sel)return;
+  const v=sel.value;
+  const o=['세척조 청소','세척액 전량교체','세척조 청소+세척액 전량교체','폐유 배출·신규 보충','필터 교환'];
+  sel.innerHTML=o.map(x=>`<option value="${x}">${x.replace('+',' + ')}</option>`).join('');if(o.includes(v))sel.value=v;
+  tankKindChg();
+}
+function tankKindChg(){const f=document.getElementById('tankFilterRow');if(f)f.style.display=String((document.getElementById('tankKind')||{}).value||'').includes('필터')?'':'none'}
 async function tankUploadPhoto(file){
   if(!file)return'';
   if(file.type.startsWith('image/'))file=await compressImage(file,1280,1280,0.6);
@@ -260,12 +293,15 @@ async function tankSubmit(){
         memo=document.getElementById('tankMemo').value.trim(),pf=document.getElementById('tankPhoto').files[0];
   if(!date||!machine||!worker){alert('실시일자·호기·실시자를 입력하세요.');return}
   if(date>kstDateStr()){alert('미래 날짜는 기록할 수 없습니다.');return}
+  const isF=kind.includes('필터'),tank=isF?document.getElementById('tankTankNo').value.trim():'',setH=isF?(+document.getElementById('tankSetH').value||0):0;
+  if(isF&&!tank){alert('필터를 교환한 조(세척조)를 입력하세요. 예: 1조');return}
   try{
     const photo=pf?await tankUploadPhoto(pf):'';
-    await tankMutate(v=>v.hist.push({id:Date.now(),date,machine,kind,worker,memo,photo,at:new Date().toISOString()}));
+    const rec={id:Date.now(),date,machine,kind,worker,memo,photo,at:new Date().toISOString()};if(isF){rec.tank=tank;if(setH)rec.setH=setH}
+    await tankMutate(v=>v.hist.push(rec));
     document.getElementById('tankMemo').value='';document.getElementById('tankPhoto').value='';
     document.getElementById('tankFormBox').open=false;
-    toast('✅ '+machine+' '+kind+' 기록 저장');
+    toast('✅ '+machine+' '+(tank?tank+' ':'')+kind+' 기록 저장');
   }catch(e){alert('저장 실패: '+e.message)}
 }
 async function tankDel(id){
@@ -274,10 +310,13 @@ async function tankDel(id){
   try{await tankMutate(v=>{v.hist=v.hist.filter(h=>+h.id!==+id)});toast('🗑 삭제됨')}catch(e){alert('삭제 실패: '+e.message)}
 }
 async function tankSaveCfg(){
-  const c=+document.getElementById('tankCleanDays').value,g=+document.getElementById('tankChangeDays').value;
+  const c=+document.getElementById('tankCleanDays').value,g=+document.getElementById('tankChangeDays').value,tp=+document.getElementById('tankTopupDays').value||0;
   if(!(c>0&&g>0)){alert('주기를 1일 이상으로 입력하세요.');return}
+  if(tp<0){alert('보충 주기는 0 이상으로 입력하세요.');return}
+  if(c>183&&!confirm('세척조 청소 주기가 6개월을 넘습니다. (SQ 기준 최소 6개월 1회) 계속할까요?'))return;
+  const mode={};document.querySelectorAll('#tankModeBox select[data-m]').forEach(x=>mode[x.dataset.m]=x.value);
   if(g>183&&!confirm('세척액 전량교체 주기가 6개월을 넘습니다. (SQ 기준 최소 6개월 1회) 계속할까요?'))return;
-  try{await tankMutate(v=>{v.cfg={clean:c,change:g}});document.getElementById('tankCfgSt').textContent='저장됨 '+kstTimeStr()}catch(e){alert('저장 실패: '+e.message)}
+  try{await tankMutate(v=>{v.cfg={clean:c,change:g,topup:tp,mode:Object.assign({},v.cfg.mode||{},mode)}});document.getElementById('tankCfgSt').textContent='저장됨 '+kstTimeStr()}catch(e){alert('저장 실패: '+e.message)}
 }
 document.addEventListener('DOMContentLoaded',()=>{
   const d=document.getElementById('tankDate');if(d)d.value=kstDateStr();
