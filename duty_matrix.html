@@ -82,7 +82,7 @@ td.doc{white-space:nowrap;font-weight:700}td .sub{font-size:11px;color:var(--tex
     <table class="hist"><tbody id="hb"></tbody></table>
   </div>
   <div class="note">
-    · 담당자 이름은 <b>접속핀관리(인원 마스터)</b>와 대조합니다. 퇴사자를 접속핀관리에서 삭제하면 그 사람이 맡은 업무가 <b>퇴사·미등록 담당</b>으로 표시됩니다.<br>
+    · 담당자 이름은 <b>접속핀관리(인원 마스터)</b>와 대조합니다. 퇴사자를 접속핀관리에서 삭제하면 그 사람이 맡은 업무가 <b>퇴사·미등록 담당</b>으로 표시됩니다. 대행업체 등 외부 인원은 이름 뒤에 <b>(외부)</b>를 붙이면 대조에서 빠집니다.<br>
     · <b>[담당 변경]</b>을 하면 해당 문서는 <b>문서 개정 대기</b>가 되고, 실제 문서(지침서·절차서)를 개정한 뒤 <b>[개정 완료]</b>에 Rev·개정일을 넣어야 해제됩니다.
   </div>
 </div>
@@ -151,7 +151,7 @@ const nm=s=>String(s||'').replace(/\s+/g,'');
 let D={rows:[],hist:[]}, PEOPLE=[], LOADED=false, FILTER='', CUR=null;
 
 function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('on');clearTimeout(toast._t);toast._t=setTimeout(()=>t.classList.remove('on'),2200)}
-function me(){try{const u=window.tjAudit&&tjAudit.user&&tjAudit.user();if(u&&u.name)return u.name}catch(e){}return ''}
+function me(){try{const u=window.tjAudit&&tjAudit.user&&tjAudit.user();if(u&&u.name)return u.name}catch(e){}return '(로그인 없음)'}
 
 async function fetchKV(){
   const r=await fetch(`${SB_URL}/rest/v1/kv_store?key=eq.${KV_KEY}&select=value`,{headers:H(),cache:'no-store'});
@@ -167,19 +167,23 @@ async function mutate(fn){
   if(!r.ok)throw new Error('HTTP '+r.status+' '+(await r.text()).slice(0,120));
   D=cur; render();
 }
+let STAFF_OK=false;   // 인원 마스터를 못 읽으면 퇴사 판정을 하지 않는다 (전원이 '퇴사'로 보이는 것 방지)
 async function load(){
+  const msg=[];
+  try{ D=await fetchKV(); LOADED=true; }catch(e){ msg.push('⚠ 대장 불러오기 실패: '+e.message); }
   try{
-    const [kv,pp]=await Promise.all([fetchKV(),
-      fetch(`${SB_URL}/rest/v1/user_pin?select=name,dept,position&order=dept,name`,{headers:H()}).then(r=>{if(!r.ok)throw new Error('인원 HTTP '+r.status);return r.json()})]);
-    D=kv; PEOPLE=pp.filter(p=>p.name); LOADED=true;
+    const r=await fetch(`${SB_URL}/rest/v1/user_pin?select=name,dept,position&order=dept,name`,{headers:H()});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    PEOPLE=(await r.json()).filter(p=>p.name); STAFF_OK=true;
     $('#dlPeople').innerHTML=PEOPLE.map(p=>`<option value="${esc(p.name)}">${esc(p.dept||'')}${p.position?' · '+esc(p.position):''}</option>`).join('');
     $('#dlDepts').innerHTML=[...new Set(PEOPLE.map(p=>p.dept).filter(Boolean))].map(d=>`<option value="${esc(d)}">`).join('');
-    $('#st').textContent=`인원 마스터 ${PEOPLE.length}명 대조 · ${new Date().toLocaleTimeString('ko-KR')}`;
-  }catch(e){ $('#st').textContent='⚠ 불러오기 실패: '+e.message; }
+    msg.push(`인원 마스터 ${PEOPLE.length}명 대조 · ${new Date().toLocaleTimeString('ko-KR')}`);
+  }catch(e){ STAFF_OK=false; msg.push('⚠ 인원 마스터를 읽지 못해 퇴사 대조를 하지 않았습니다 ('+e.message+')'); }
+  $('#st').textContent=msg.join(' · ');
   render();
 }
-/* 담당자가 인원 마스터에 있는지 (이름 기준) */
-function inStaff(name){ if(!name)return true; return PEOPLE.some(p=>nm(p.name)===nm(name)); }
+/* 담당자가 인원 마스터에 있는지 (이름 기준) · 외부 인원은 이름 뒤에 (외부) 를 붙이면 대조에서 뺀다 */
+function inStaff(name){ if(!name||!STAFF_OK)return true; if(/\(외부\)\s*$/.test(name))return true; return PEOPLE.some(p=>nm(p.name)===nm(name)); }
 function stateOf(r){
   const gone=[r.main,r.sub].filter(x=>x&&!inStaff(x));
   if(!r.main) return{k:'nomain',t:'담당(정) 미지정',c:'p-bad',gone};
