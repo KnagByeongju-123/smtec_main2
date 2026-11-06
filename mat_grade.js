@@ -7,7 +7,8 @@
 //    → 라벨 자체에 강종과 사내 식별색을 크게 인쇄 (흑백 출력 대비 '식별색 ○○' 글자도 함께)
 //
 //  사내 소재 식별색 기준 (2026-11 품질관리팀 제공)
-//    스테인리스 : SUS304 노랑 · SUS430 파랑 · SPCC 없음
+//    스테인리스 : SUS304 노랑 · SUS304J1 노랑(304와 같은 색, 혼동 주의 문구) · SUS430 파랑 · SPCC 없음
+//    A1008 : 당사 사용 재질 아님 → 식별색 대신 '당사 미사용 재질 · 입고 확인' 경고
 //    탄소강(SKF ATC · SKF KOREA) : 재질 + 두께(T) + 폭(W) 로 결정 — 같은 규격이라도 재질에 따라 다름
 //      S55CM-S 1.01×126 BDA-1106 초록  | S70CM-S 1.25×134 BDA-1113  파랑
 //      S55CM-S 1.01×144 BDA-1159 빨강  | S67CM-S 1.01×134 BDA-1113D 노랑
@@ -56,8 +57,13 @@
     ['C67S',  1.25, 137, 'BDA-1179', '흰색', 'C67S'],
     ['C67S',  1.25, 146, 'BDA-1156', '검정', 'C67S'],
   ];
-  const BY_FAMILY = { 'SUS304': '노랑', 'SUS430': '파랑', 'SPCC': '없음' };
-  const SIMILAR = { 'SUS304': 'SUS430', 'SUS430': 'SUS304', 'SUS304J1': 'SUS304 · SUS430' };
+  const BY_FAMILY = { 'SUS304': '노랑', 'SUS304J1': '노랑', 'SUS430': '파랑', 'SPCC': '없음' };
+  const SIMILAR = { 'SUS304': 'SUS430', 'SUS430': 'SUS304' };
+  // 주의 문구 (식별색이 같거나 당사 미사용 재질)
+  const CAUTION = {
+    'SUS304J1': 'SUS304와 같은 노랑 — 강종(J1) 확인 주의',
+    'A1008': '당사 사용 재질 아님 — 입고 확인 필요',
+  };
 
   /* 재질·두께·폭 → { code(표시명), color(식별색 이름|''), item(품명), bg, fg, bd, similar, raw }
      color '' = 기준표에 없는 규격 (식별색 미지정) */
@@ -71,10 +77,10 @@
       if (hit) { color = hit[4]; item = hit[3]; }
     }
     const [bg, fg, bd] = COLORS[color] || ['#e5e7eb', '#111', '#6b7280'];
-    return { code, family: fam, color, item, bg, fg, bd, similar: SIMILAR[fam] || '', raw };
+    return { code, family: fam, color, item, bg, fg, bd: fam === 'A1008' ? '#dc2626' : bd, similar: SIMILAR[fam] || '', caution: CAUTION[fam] || '', raw };
   }
-  const colorText = (G) => G.color === '없음' ? '식별색 없음' : G.color ? '식별색 ' + G.color : '식별색 미지정';
-  const subText = (G) => [G.item ? G.item + '용' : '', G.similar ? G.similar + '와 혼동 주의' : ''].filter(Boolean).join(' · ');
+  const colorText = (G) => G.family === 'A1008' ? '⚠ 미사용 재질' : G.color === '없음' ? '식별색 없음' : G.color ? '식별색 ' + G.color : '식별색 미지정';
+  const subText = (G) => G.caution || [G.item ? G.item + '용' : '', G.similar ? G.similar + '와 혼동 주의' : ''].filter(Boolean).join(' · ');
 
   /* 식별색 띠 HTML (라벨 안) */
   function bandHtml(material, esc, t, w) {

@@ -33,7 +33,7 @@
     if (g.MatGrade) return Promise.resolve();
     return new Promise((ok) => {
       const el = document.createElement('script');
-      el.src = HERE + 'mat_grade.js?v=2'; el.onload = ok; el.onerror = ok;
+      el.src = HERE + 'mat_grade.js?v=3'; el.onload = ok; el.onerror = ok;
       document.head.appendChild(el);
     });
   }
