@@ -122,7 +122,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
 <div class="form-wrap">
   <div class="card"><div class="card-title">📊 이력 관리</div><div class="fg-row"><div class="fg"><label class="field-label">시작일</label><input type="date" id="histStartDate"></div><div class="fg"><label class="field-label">종료일</label><input type="date" id="histEndDate"></div></div><div class="fg"><label class="field-label">호기</label><select id="histMachine"><option value="">전체</option></select></div><div style="display:flex;gap:6px;margin-top:4px"><button type="button" onclick="histPreview()" style="flex:1;padding:10px;background:linear-gradient(135deg,#0891b2,#06b6d4);border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">🔍 조회</button><button type="button" onclick="histDownload()" style="flex:1;padding:10px;background:linear-gradient(135deg,#059669,#34d399);border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">📥 엑셀</button></div><div style="display:flex;gap:6px;margin-top:6px"><button type="button" onclick="histDeleteFiltered()" style="flex:1;padding:10px;background:rgba(239,68,68,.15);border:1.5px solid rgba(239,68,68,.3);border-radius:8px;color:#ef4444;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">🗑 선택범위 삭제</button></div><div id="histMgmtStatus" style="font-size:11px;margin-top:8px;color:var(--text3)"></div><div id="histPreviewArea" style="margin-top:10px;max-height:300px;overflow-y:auto"></div></div>
   <div class="card"><div class="card-title">🧽 세척조 관리 주기</div>
-    <div style="font-size:11px;color:var(--text3);margin-bottom:8px">💡 세척 작업표준 기준 (SQ 기준 : 최소 6개월 1회 세척조 청소·세척액 전량교체). 서버에 저장되어 모든 기기에 적용됩니다.</div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:8px">💡 세척공정 일상점검 체크시트(TJP-M0706-08 Rev.6) 기준 : 월초 1회 세척조 청소·세척액 전량교체 (SQ 기준 최소 6개월 1회). 서버에 저장되어 모든 기기에 적용됩니다.</div>
     <div class="fg-row"><div class="fg"><label class="field-label">세척조 청소 주기(일)</label><input type="number" id="tankCleanDays" min="1"></div>
       <div class="fg"><label class="field-label">세척액 전량교체 주기(일)</label><input type="number" id="tankChangeDays" min="1"></div></div>
     <div class="fg"><label class="field-label">폐유 배출·신규 보충 주기(일) <span style="font-weight:400">— 비우면 기록만</span></label><input type="number" id="tankTopupDays" min="1" placeholder="기록만"></div>
@@ -181,13 +181,13 @@ CREATE POLICY "anon_all" ON wash_machine_repair FOR ALL TO anon USING (true) WIT
    필터 교환 — 세척기에 조별 가동시간으로 설정돼 있어 주기 계산 없이 조별 교환일·설정값만 기록
    상태: 호기별 최근 실시일 + 주기 → 다음 예정일 · D-day (청소 7일 전 / 교체 30일 전 임박) */
 const TANK_KEY='wash_tank_pm_v1';
-let TANK={cfg:{clean:30,change:180,topup:0,mode:{'1호기':'off'}},hist:[]},TANK_OK=false;
+let TANK={cfg:{clean:30,change:30,topup:0,mode:{'1호기':'off'}},hist:[]},TANK_OK=false;
 function tankHdr(){const k=getSbKey();return{'apikey':k,'Authorization':'Bearer '+k,'Content-Type':'application/json'}}
 async function tankFetch(){
   const r=await fetch(getSbUrl()+'/rest/v1/kv_store?key=eq.'+TANK_KEY+'&select=value',{headers:tankHdr(),cache:'no-store'});
   if(!r.ok)throw new Error('HTTP '+r.status);
   const d=await r.json();const v=(d[0]&&d[0].value)||{};
-  const cfg=Object.assign({clean:30,change:180,topup:0},v.cfg||{});cfg.mode=Object.assign({'1호기':'off'},cfg.mode||{});
+  const cfg=Object.assign({clean:30,change:30,topup:0},v.cfg||{});cfg.mode=Object.assign({'1호기':'off'},cfg.mode||{});
   return{cfg,hist:Array.isArray(v.hist)?v.hist:[]};
 }
 /* 최신본을 다시 받아 수정 → 저장 (다른 기기 기록 보호) */
@@ -210,11 +210,11 @@ function tankAllMachines(){
   return m.length?m:['2호기'];
 }
 const tankMachines=()=>tankAllMachines().filter(m=>tankMode(m)!=='off');   /* 미사용 호기 제외 */
-const TANK_TYPES=[['clean','세척조 청소','청소',7],['change','세척액 전량교체','교체',30],['topup','폐유 배출·신규 보충','보충',3]];
+const TANK_TYPES=[['clean','세척조 청소','청소',7],['change','세척액 전량교체','교체',7],['topup','폐유 배출·신규 보충','보충',3]];
 const tankMode=m=>(TANK.cfg.mode||{})[m]==='off'?'off':'on';
 const tankTypes=()=>TANK_TYPES;
 function tankState(machine,t){
-  const [key,,word,lead]=t;const days=key==='topup'?(+TANK.cfg.topup||0):(+TANK.cfg[key]||(key==='clean'?30:180));
+  const [key,,word,lead]=t;const days=key==='topup'?(+TANK.cfg.topup||0):(+TANK.cfg[key]||30);
   const last=TANK.hist.filter(h=>h.machine===machine&&String(h.kind||'').includes(word)).map(h=>h.date).sort().pop()||null;
   if(!days)return{k:last?'rec':'none',last,next:null,dd:null,days:0};   /* 주기 없음 = 기록만 */
   if(!last)return{k:'never',last:null,next:null,dd:null,days};
