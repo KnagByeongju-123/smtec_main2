@@ -33,11 +33,11 @@
     if (g.MatGrade) return Promise.resolve();
     return new Promise((ok) => {
       const el = document.createElement('script');
-      el.src = HERE + 'mat_grade.js?v=3'; el.onload = ok; el.onerror = ok;
+      el.src = HERE + 'mat_grade.js?v=4'; el.onload = ok; el.onerror = ok;
       document.head.appendChild(el);
     });
   }
-  const band = (L) => g.MatGrade ? g.MatGrade.bandHtml(L.material, esc, L.t, L.w) : '';
+  const band = (L, mono) => g.MatGrade ? g.MatGrade.bandHtml(L.material, esc, L.t, L.w, mono) : '';
   const css = () => LABEL_CSS + (g.MatGrade ? g.MatGrade.BAND_CSS : '');
   function qrImg(text) {
     const qr = g.qrcode(0, 'M');
@@ -63,10 +63,10 @@
     return out;
   }
 
-  function cardHtml(L, img) {
+  function cardHtml(L, img, mono) {   // mono : 흑백 라벨 프린터용 식별색 표시
     return `<div class="lb">
       <div class="hd"><span>입고 소재</span><small>(주)태진다이텍</small></div>
-      ${band(L)}
+      ${band(L, mono)}
       <div class="bd"><img class="qr" src="${img}" alt="QR">
         <table>
           <tr><th>HEAT</th><td class="heat">${esc(L.heat)}</td></tr>
@@ -112,7 +112,7 @@
       await loadQrGen(); await loadGrade();
       const base = baseUrl();
       const roll = size === 'roll';
-      const cards = labels.map((L) => cardHtml(L, qrImg(`${base}?cert=${L.certId}&c=${L.seq}`))).join('');
+      const cards = labels.map((L) => cardHtml(L, qrImg(`${base}?cert=${L.certId}&c=${L.seq}`), roll)).join('');
       w.document.open();
       w.document.write(`<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><title>소재 QR 라벨 ${labels.length}매</title>
 <style>
@@ -173,7 +173,7 @@ ${roll ? '.lb{border:0;padding:3mm;break-after:page;page-break-after:always}' : 
     c.font = `900 ${mm(5)}px ${FONT}`; c.fillText('입고 소재', mm(P + 2), mm(P + 3.6));
     c.font = `${mm(2.8)}px ${FONT}`; c.textAlign = 'right'; c.fillText('(주)태진다이텍', mm(Wmm - P - 2), mm(P + 3.6)); c.textAlign = 'left';
     // 강종 띠
-    if (g.MatGrade) g.MatGrade.drawBand(c, L.material, mm(P), mm(P + 8), mm(Wmm - 2 * P), mm(8.5), FONT, L.t, L.w);
+    if (g.MatGrade) g.MatGrade.drawBand(c, L.material, mm(P), mm(P + 8), mm(Wmm - 2 * P), mm(8.5), FONT, L.t, L.w, !border);   // 테두리 없음 = 라벨 프린터 → 흑백
     // QR
     const qr = await loadImg(qrSrc);
     c.imageSmoothingEnabled = false;

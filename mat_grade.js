@@ -4,7 +4,8 @@
 //
 //  SQ 평가(2026-07-20) 5_3 지적 대응:
 //    SUS430 · SUS304 는 외관으로 구분이 어려워 식별표 외 스티커로 이중관리했으나 부착 누락 발생
-//    → 라벨 자체에 강종과 사내 식별색을 크게 인쇄 (흑백 출력 대비 '식별색 ○○' 글자도 함께)
+//    → 라벨 자체에 강종과 사내 식별색을 크게 인쇄
+//      컬러(A4) : 식별색 바탕 띠 / 흑백 라벨 프린터(100×70) : 흰 바탕 + 색 이름을 검정 박스 흰 글자로 크게
 //
 //  사내 소재 식별색 기준 (2026-11 품질관리팀 제공)
 //    스테인리스 : SUS304 노랑 · SUS304J1 노랑(304와 같은 색, 혼동 주의 문구) · SUS430 파랑 · SPCC 없음
@@ -82,22 +83,52 @@
   const colorText = (G) => G.family === 'A1008' ? '⚠ 미사용 재질' : G.color === '없음' ? '식별색 없음' : G.color ? '식별색 ' + G.color : '식별색 미지정';
   const subText = (G) => G.caution || [G.item ? G.item + '용' : '', G.similar ? G.similar + '와 혼동 주의' : ''].filter(Boolean).join(' · ');
 
-  /* 식별색 띠 HTML (라벨 안) */
-  function bandHtml(material, esc, t, w) {
+  /* 흑백(감열 라벨 프린터)용 : 색 띠는 회색·검정으로 뭉개지므로 색 이름을 검정 바탕 흰 글자로 크게 */
+  const monoWord = (G) => G.family === 'A1008' ? '⚠미사용' : G.color && G.color !== '없음' ? G.color : '';
+  /* 식별색 띠 HTML (라벨 안) — mono=true : 흑백 프린터용 */
+  function bandHtml(material, esc, t, w, mono) {
     const G = of(material, t, w);
     const e = esc || ((v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])));
     const dash = (G.color === '없음' || !G.color) ? 'dashed' : 'solid';
+    if (mono) {
+      const wd = monoWord(G);
+      return `<div class="mg-band" style="background:#fff;color:#000;border:.7mm ${dash} #000">
+      <span class="mg-code">${e(G.code)}</span>
+      <span class="mg-sim">${wd ? `<span class="mg-word">${e(wd)}</span>` : `<b>${e(colorText(G))}</b>`}${subText(G) ? '<br>' + e(subText(G)) : ''}</span></div>`;
+    }
     return `<div class="mg-band" style="background:${G.bg};color:${G.fg};border:.6mm ${dash} ${G.bd}">
       <span class="mg-code">${e(G.code)}</span>
       <span class="mg-sim"><b>${e(colorText(G))}</b>${subText(G) ? '<br>' + e(subText(G)) : ''}</span></div>`;
   }
   const BAND_CSS = `.mg-band{display:flex;align-items:center;justify-content:space-between;gap:2mm;padding:.4mm 2mm;margin-top:1mm;min-height:9mm;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 .mg-band .mg-code{font-size:19pt;font-weight:900;letter-spacing:1px;line-height:1;white-space:nowrap}
-.mg-band .mg-sim{font-size:7pt;font-weight:700;text-align:right;line-height:1.25}.mg-band .mg-sim b{font-size:10pt}`;
+.mg-band .mg-sim{font-size:7pt;font-weight:700;text-align:right;line-height:1.25}.mg-band .mg-sim b{font-size:10pt}
+.mg-band .mg-word{display:inline-block;background:#000;color:#fff;font-size:15pt;font-weight:900;padding:.3mm 2.5mm;margin-bottom:.4mm;-webkit-print-color-adjust:exact;print-color-adjust:exact}`;
 
   /* 캔버스에 식별색 띠 그리기 (x,y,w,h : 픽셀) */
-  function drawBand(c, material, x, y, w, h, font, t, wd) {
+  function drawBand(c, material, x, y, w, h, font, t, wd, mono) {
     const G = of(material, t, wd);
+    if (mono) {
+      c.fillStyle = '#fff'; c.fillRect(x, y, w, h);
+      c.save(); c.strokeStyle = '#000'; c.lineWidth = Math.max(2, h * 0.08);
+      if (G.color === '없음' || !G.color) c.setLineDash([h * 0.25, h * 0.15]);
+      c.strokeRect(x, y, w, h); c.restore();
+      c.fillStyle = '#000'; c.textBaseline = 'middle'; c.textAlign = 'left';
+      c.font = `900 ${Math.round(h * 0.68)}px ${font}`;
+      c.fillText(G.code, x + h * 0.25, y + h / 2, w * 0.5);
+      const word = monoWord(G), sub = subText(G);
+      if (word) {
+        c.font = `900 ${Math.round(h * 0.5)}px ${font}`;
+        const tw = Math.min(c.measureText(word).width + h * 0.5, w * 0.4), bx = x + w - h * 0.15 - tw, bh = h * (sub ? 0.58 : 0.8), by = y + h * (sub ? 0.08 : 0.1);
+        c.fillStyle = '#000'; c.fillRect(bx, by, tw, bh);
+        c.fillStyle = '#fff'; c.textAlign = 'center'; c.fillText(word, bx + tw / 2, by + bh / 2, tw - h * 0.2);
+      } else {
+        c.textAlign = 'right'; c.font = `800 ${Math.round(h * 0.34)}px ${font}`;
+        c.fillText(colorText(G), x + w - h * 0.2, y + h * (sub ? 0.34 : 0.5), w * 0.42);
+      }
+      if (sub) { c.fillStyle = '#000'; c.textAlign = 'right'; c.font = `700 ${Math.round(h * 0.22)}px ${font}`; c.fillText(sub, x + w - h * 0.15, y + h * 0.83, w * 0.45); }
+      c.textAlign = 'left'; return;
+    }
     c.fillStyle = G.bg; c.fillRect(x, y, w, h);
     c.save(); c.strokeStyle = G.bd; c.lineWidth = Math.max(2, h * 0.07);
     if (G.color === '없음' || !G.color) c.setLineDash([h * 0.25, h * 0.15]);
