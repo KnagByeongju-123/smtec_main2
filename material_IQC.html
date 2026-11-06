@@ -2,6 +2,7 @@
 <html lang="ko">
 <head>
 <script src="audit.js?v=7"></script>
+<script src="coil_label.js?v=4"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>소재 수입검사 v3.9 | (주)태진다이텍</title>
@@ -1369,7 +1370,7 @@ function renderDone(){
       <td><span class="badge ${judClass}">${d.finalJudge||'-'}</span></td>
       <td>
         <button class="btn btn-pri btn-sm" onclick="viewCert(${idx})">📄 성적서</button>
-        ${d.finalJudge==='OK' ? `<button class="btn btn-sm" style="background:#16a34a;color:#fff" onclick="printCoilLabels(${idx})" title="코일별 IQC 합격 라벨(QR) 출력 — 현장에서 QR 스캔으로 장착">🏷 라벨</button>` : ''}
+        ${d.finalJudge==='OK' ? `<button class="btn btn-sm" style="background:#16a34a;color:#fff" onclick="printCoilLabels(${idx})" title="코일별 IQC 합격 라벨(QR) 출력 — 현장에서 QR 스캔으로 장착">🏷 라벨</button><button class="btn btn-sm" style="background:#111;color:#fff" onclick="zebraCoilLabels(${idx},this)" title="Zebra 감열 라벨 프린터(100×70)로 선명하게 출력 — Browser Print 가 없으면 .zpl 파일 저장">🦓 Zebra</button>` : ''}
         <button class="btn btn-warn btn-sm" onclick="reEditInsp(${idx})">수정</button>
         <button class="btn btn-dng btn-sm" onclick="deleteInsp(${idx})">삭제</button>
       </td>
@@ -2467,6 +2468,42 @@ td.heat{font-size:11pt;font-weight:900}
     console.error('[라벨 출력]', e);
     try{ w.close(); }catch(_){}
     alert('라벨 출력 실패: ' + e.message);
+  }
+}
+
+/* Zebra 감열 라벨 프린터용 IQC 합격 라벨 (100×70mm, ZPL)
+   해상도는 소재입고 화면에서 고른 값(localStorage zebra_dpmm, 기본 203dpi = 8) */
+async function zebraCoilLabels(idx, btn){
+  const d = inspections[idx];
+  if(!d) return;
+  if(d.finalJudge !== 'OK'){ alert('판정 OK 검사건만 합격 라벨을 출력할 수 있습니다.'); return; }
+  const ids = (d.certIds||[]).filter(Boolean);
+  if(!ids.length){ alert('이 검사건에 연결된 입고 코일(inspection_certs)이 없습니다.'); return; }
+  if(!window.CoilLabel){ alert('라벨 모듈을 불러오지 못했습니다. 새로고침(Ctrl+F5) 후 다시 시도하세요.'); return; }
+  let dpmm = 8; try{ dpmm = +(localStorage.getItem('zebra_dpmm') || 8) || 8; }catch(_){}
+  const t = btn ? btn.textContent : '';
+  if(btn){ btn.disabled = true; btn.textContent = '⏳'; }
+  try{
+    const res = await fetch(SB_URL + '/rest/v1/inspection_certs?select=id,supplier,material_type,thickness,width_mm,lot_no,lots_detail,heat_no,coil_count,weight,receipt_date,recv_date,final_judge&id=in.(' + ids.join(',') + ')', {
+      headers: { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY }
+    });
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    const ok = (await res.json()).filter(r => String(r.final_judge||'').trim().toUpperCase() === 'OK').sort((a, b) => a.id - b.id);
+    if(!ok.length) throw new Error('서버의 final_judge가 OK인 코일이 없습니다. 검사완료 저장 상태를 확인하세요.');
+    const labels = CoilLabel.fromCerts(ok.map(r => Object.assign({}, r, { receipt_date: r.receipt_date || r.recv_date })), []);
+    labels.forEach(L => {
+      const r = ok.find(x => x.id === L.certId);
+      if(!L.kg && r && r.weight) L.kg = Math.round((+r.weight) / L.n);
+      L.title = 'IQC 합격'; L.sub = '(주)태진다이텍 수입검사';
+      L.foot = `${d.certNo || ''} · 검사 ${d.inspDate || '-'} · #${L.certId}`;
+    });
+    const name = `IQC합격라벨_${String(d.lotBase || ids[0]).replace(/[\\/:*?"<>|\s]/g, '')}_${labels.length}매_Zebra${dpmm === 12 ? '300' : '203'}dpi.zpl`;
+    const r = await CoilLabel.zebra(labels, { dpmm }, name);
+    alert(r.printed ? `Zebra(${r.printed})로 ${labels.length}매 출력했습니다.` : `${name} 파일을 저장했습니다.\nZebra Setup Utilities → [Open Communication With Printer] 또는 [Send File]로 프린터에 보내 출력하세요.`);
+  }catch(e){
+    alert('Zebra 출력 실패: ' + e.message);
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = t; }
   }
 }
 

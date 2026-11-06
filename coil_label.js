@@ -204,5 +204,120 @@ ${roll ? '.lb{border:0;padding:3mm;break-after:page;page-break-after:always}' : 
     doc.save(fileName || `소재QR라벨_${labels.length}매.pdf`);
   }
 
-  g.CoilLabel = { fromCerts, preview, print, downloadPdf, drawLabel, baseUrl };
+  /* ── Zebra 라벨 프린터 (ZPL) ─────────────────────────────
+     PDF·브라우저 인쇄는 드라이버가 그림을 늘리고 회색을 점으로 바꿔(디더링) 감열 프린터에서 흐리게 나온다
+     → 프린터 해상도(203dpi = 8 dots/mm, 300dpi = 12 dots/mm)에 딱 맞춘 흑백 그림을 직접 만들어 ZPL(^GFA)로 보낸다
+       · QR 은 칸 하나를 정수 도트로 그려 경계가 깨끗하다 · 글자는 굵게, 회색 없이 검정만
+       · 한글은 프린터 글꼴이 없어도 그림으로 들어가므로 깨지지 않는다
+     opt: {dpmm: 8|12, w: 100, h: 70}(mm)  · 라벨 L 에 title/sub/foot 가 있으면 머리글·하단 문구로 사용 (IQC 합격 라벨) */
+  function monoLabel(L, url, dpmm, Wmm, Hmm) {
+    const d = dpmm, cv = document.createElement('canvas');
+    cv.width = Math.round(Wmm * d); cv.height = Math.round(Hmm * d);
+    const c = cv.getContext('2d');
+    const mm = (v) => Math.round(v * d);
+    c.fillStyle = '#fff'; c.fillRect(0, 0, cv.width, cv.height);
+    c.fillStyle = '#000'; c.textBaseline = 'middle';
+    const P = 2.5;
+    // 머리글 (검정 바탕 흰 글자)
+    c.fillRect(mm(P), mm(P), cv.width - 2 * mm(P), mm(8));
+    c.fillStyle = '#fff';
+    c.font = `900 ${mm(5.6)}px ${FONT}`; c.fillText(L.title || '입고 소재', mm(P + 2), mm(P + 4.2));
+    c.font = `700 ${mm(3.4)}px ${FONT}`; c.textAlign = 'right'; c.fillText(L.sub || '(주)태진다이텍', cv.width - mm(P + 2), mm(P + 4.2)); c.textAlign = 'left';
+    c.fillStyle = '#000';
+    // QR — 칸 크기를 정수 도트로
+    const q = g.qrcode(0, 'M'); q.addData(url); q.make();
+    const n = q.getModuleCount(), box = mm(Math.min(36, Hmm - 24)), m = Math.max(2, Math.floor(box / n));
+    const qx = mm(P + 0.5), qy = mm(P + 10.5) + Math.floor((box - m * n) / 2);
+    for (let r = 0; r < n; r++) for (let k = 0; k < n; k++) if (q.isDark(r, k)) c.fillRect(qx + k * m, qy + r * m, m, m);
+    // 정보
+    const x0 = qx + box + mm(3), xv = x0 + mm(13), maxW = cv.width - mm(P) - xv;
+    const rows = [['HEAT', L.heat, 1], ['재질', L.material], ['규격', `${L.t}t × ${L.w}W`],
+                  ['중량', L.kg ? Number(L.kg).toLocaleString() + ' kg' : '-'], ['공급사', L.supplier || ''], ['입고', L.date || '']];
+    let y = mm(P + 13);
+    rows.forEach(([k, v, big]) => {
+      c.font = `700 ${mm(3.3)}px ${FONT}`; c.fillText(k, x0, y);
+      c.font = `${big ? 900 : 700} ${mm(big ? 5.4 : 3.7)}px ${FONT}`;
+      c.fillText(String(v), xv, y, maxW);
+      y += mm(big ? 7 : 5.2);
+    });
+    // 하단
+    const fy = cv.height - mm(P + 6);
+    c.fillRect(mm(P), fy, cv.width - 2 * mm(P), Math.max(2, mm(0.3)));
+    c.font = `900 ${mm(4.6)}px ${FONT}`; c.fillText(`코일 ${L.seq}/${L.n}`, mm(P), fy + mm(3.4));
+    c.font = `700 ${mm(3)}px ${FONT}`; c.textAlign = 'right'; c.fillText(L.foot || `#${L.certId} · 수입검사 합격 후 장착`, cv.width - mm(P), fy + mm(3.4), cv.width - mm(P + 30)); c.textAlign = 'left';
+    return cv;
+  }
+  // 캔버스 → ZPL ^GFA (흑백 1비트, Zebra ASCII 압축)
+  function gfa(cv) {
+    const W = cv.width, H = cv.height, bpr = Math.ceil(W / 8);
+    const px = cv.getContext('2d').getImageData(0, 0, W, H).data;
+    const HEX = '0123456789ABCDEF';
+    const cnt = (n) => { let s = ''; while (n >= 400) { s += 'z'; n -= 400; } if (n >= 20) { s += String.fromCharCode(102 + Math.floor(n / 20)); n %= 20; } if (n) s += String.fromCharCode(70 + n); return s; };
+    let out = '', prev = null;
+    for (let y = 0; y < H; y++) {
+      let row = '';
+      for (let b = 0; b < bpr; b++) {
+        let v = 0;
+        for (let i = 0; i < 8; i++) {
+          const x = b * 8 + i; if (x >= W) continue;
+          const o = (y * W + x) * 4;
+          if (px[o] * 0.3 + px[o + 1] * 0.59 + px[o + 2] * 0.11 < 140) v |= 0x80 >> i;
+        }
+        row += HEX[v >> 4] + HEX[v & 15];
+      }
+      if (row === prev) { out += ':'; continue; }
+      prev = row;
+      let r = row, tail = '';
+      const z = r.match(/0+$/); if (z) { r = r.slice(0, -z[0].length); tail = ','; }
+      if (!r) { out += ','; continue; }
+      let i = 0;
+      while (i < r.length) { let j = i; while (j < r.length && r[j] === r[i]) j++; out += (j - i > 1 ? cnt(j - i) : '') + r[i]; i = j; }
+      out += tail;
+    }
+    return { total: bpr * H, bpr, data: out };
+  }
+  function toZpl(labels, opt) {
+    opt = opt || {};
+    const d = opt.dpmm || 8, Wmm = opt.w || 100, Hmm = opt.h || 70, base = baseUrl();
+    return labels.map((L) => {
+      const g1 = gfa(monoLabel(L, `${base}?cert=${L.certId}&c=${L.seq}`, d, Wmm, Hmm));
+      return `^XA\n^FX 소재 QR 라벨 ${L.heat} (코일 ${L.seq}/${L.n}, #${L.certId})\n^PW${Math.round(Wmm * d)}^LL${Math.round(Hmm * d)}^LH0,0^PR3^CI28\n`
+        + `^FO0,0^GFA,${g1.total},${g1.total},${g1.bpr},${g1.data}^FS\n^PQ1\n^XZ\n`;
+    }).join('');
+  }
+  function saveText(text, name) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type: 'application/octet-stream' }));
+    a.download = name; document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+  }
+  // Zebra Browser Print(PC 에 설치된 Zebra 프로그램)가 있으면 바로 출력, 없으면 .zpl 파일로 저장
+  async function zebraBrowserPrint(zpl) {
+    for (const host of ['http://127.0.0.1:9100', 'https://127.0.0.1:9101']) {
+      try {
+        const ac = new AbortController(); const t = setTimeout(() => ac.abort(), 2500);
+        const r = await fetch(host + '/default?type=printer', { signal: ac.signal }); clearTimeout(t);
+        if (!r.ok) continue;
+        const dev = await r.json().catch(() => null);
+        if (!dev || !dev.uid) continue;
+        const w = await fetch(host + '/write', { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=UTF-8' }, body: JSON.stringify({ device: dev, data: zpl }) });
+        if (w.ok) return dev.name || 'Zebra';
+      } catch (_) {}
+    }
+    return null;
+  }
+  async function zebra(labels, opt, fileName) {
+    await loadQrGen();
+    const zpl = toZpl(labels, opt);
+    const log = (via) => { try { g.tjAudit && g.tjAudit.send('print', { title: `소재 QR 라벨 ${labels.length}매 (Zebra)`, detail: { via, labels: labels.length, dpmm: (opt || {}).dpmm || 8 } }); } catch (_) {} };
+    if (!(opt && opt.fileOnly)) {
+      const name = await zebraBrowserPrint(zpl);
+      if (name) { log('zebra-browserprint'); return { printed: name }; }
+    }
+    saveText(zpl, fileName || `소재QR라벨_${labels.length}매.zpl`);
+    log('zebra-zpl-file');
+    return { file: true };
+  }
+
+  g.CoilLabel = { fromCerts, preview, print, downloadPdf, drawLabel, baseUrl, monoLabel, toZpl, zebra };
 })(window);
