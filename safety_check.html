@@ -209,7 +209,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
   <div class="card">
     <div class="card-title">⚠️ 점검항목 관리</div>
     <select id="itemForm" onchange="renderFireItemListUI()" style="width:100%;margin-bottom:8px;padding:8px;font-size:13px;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit">
-      <option value="press">프레스동 (B·C동) 기본 항목</option><option value="coil">코일·고중량물 보관 (프레스동에 추가)</option>
+      <option value="press">프레스동 (B·C동) 기본 항목</option><option value="aisle">중앙통로 적치 (프레스동에 추가)</option><option value="coil">코일·고중량물 보관 (프레스동에 추가)</option>
       <option value="office">A동 사무실</option><option value="f2">2층 검사실</option><option value="roof">옥상</option><option value="out">외곽</option></select>
     <div style="font-size:10px;color:var(--text3);margin-bottom:8px;padding:6px 8px;background:rgba(249,115,22,.08);border-radius:6px">💡 점검항목은 Supabase <code>common_code</code> 테이블에 저장됩니다 (code_group: <span id="itemGroupName">safety_item</span>) · 점검 장소가 A동(사무실)·2층(검사실)·옥상·외곽이면 해당 양식, 그 밖(B·C동)은 프레스동 양식</div>
     <div id="fireItemList"></div>
@@ -548,6 +548,11 @@ const DEFAULT_COIL_ITEMS=['구름 방지 스토퍼(쐐기) 설치·고정 상태
   '코일 받침대·랙 변형·손상 없음 및 최대 하중 표시','보관구역 구획선·통로 폭 확보, 보관구역 내 작업자 출입 통제','결속 밴드 절단 후 풀림·튕김 방지 조치',
   '운반 장비(지게차·호이스트) 훅·슬링·코일 리프터 상태'];
 let _coilCache=[];
+/* B·C동 중앙통로 제품·공박스 적치 관리 (마스터 common_code 'safety_item_aisle') */
+const DEFAULT_AISLE_ITEMS=['중앙통로 적치 구역 바닥 구획선 표시, 구획선 밖 적치 없음','제품·공박스 적재 높이 기준 준수, 기울어짐·넘어짐 없음',
+  '중앙통로 지게차·보행 통행 폭 확보 (적치물이 통로 침범 없음)','소화기·소화전·비상구·분전반 앞 적치 없음','제품(품번·LOT 식별표)과 공박스 구분 적치·표시'];
+let _aisleCache=[];
+function getAisleItems(){return (_aisleCache.length?_aisleCache:DEFAULT_AISLE_ITEMS.map((n,i)=>({id:null,name:n,sort:i+1}))).map(x=>Object.assign({},x,{name:'[통로] '+x.name,aisle:true}))}
 function getCoilItems(){return (_coilCache.length?_coilCache:DEFAULT_COIL_ITEMS.map((n,i)=>({id:null,name:n,sort:i+1}))).map(x=>Object.assign({},x,{name:'[코일] '+x.name,coil:true}))}
 /* ===== 점검 장소별 양식 =====
    프레스동(B·C동 등) = 기본 항목 + 코일·고중량물 보관 7항목 (TJ-MP-Q200-2)
@@ -582,15 +587,16 @@ const FORM_DEF={
 };
 const FORM_CACHE={office:[],f2:[],roof:[],out:[]};
 function formOf(zone){ const z=String(zone||''); if(/A동|사무실/.test(z))return 'office'; if(/2층|검사실/.test(z))return 'f2'; if(/옥상/.test(z))return 'roof'; if(/외곽/.test(z))return 'out'; return 'press'; }
-function formName(f){ return f==='press'?'프레스동 (기본 + 코일·고중량물 보관)':FORM_DEF[f].name; }
+function formName(f){ return f==='press'?'프레스동 B·C동 (기본 + 중앙통로 적치 + 코일·고중량물 보관)':FORM_DEF[f].name; }
 function getFormItems(f){ const c=FORM_CACHE[f]; return c&&c.length?c:FORM_DEF[f].defaults.map((n,i)=>({id:null,name:n,sort:i+1})); }
 function curForm(){ const z=(document.getElementById('zoneInput')||{}).value||(document.getElementById('zoneSelect')||{}).value||''; return formOf(z); }
-function getItems(){ const f=curForm(); return f==='press'?getBaseItems().concat(getCoilItems()):getFormItems(f); }
+function getItems(){ const f=curForm(); return f==='press'?getBaseItems().concat(getAisleItems(),getCoilItems()):getFormItems(f); }
 /* 설정 화면에서 고른 양식의 [캐시 변수명, code_group] */
 function editForm(){ const f=(document.getElementById('itemForm')||{}).value||'press';
   if(f==='press')return{f,cache:'_itemCache',group:'safety_item'}; if(f==='coil')return{f,cache:'_coilCache',group:'safety_item_coil'};
+  if(f==='aisle')return{f,cache:'_aisleCache',group:'safety_item_aisle'};
   return{f,cache:"FORM_CACHE['"+f+"']",group:FORM_DEF[f].group}; }
-function editCache(){ const e=editForm(); return e.f==='press'?_itemCache:e.f==='coil'?_coilCache:FORM_CACHE[e.f]; }
+function editCache(){ const e=editForm(); return e.f==='press'?_itemCache:e.f==='coil'?_coilCache:e.f==='aisle'?_aisleCache:FORM_CACHE[e.f]; }
 function renderFireItemListUI(){
   const c=document.getElementById('fireItemList');const E=editForm();const list=editCache();
   const gn=document.getElementById('itemGroupName');if(gn)gn.textContent=E.group;
@@ -658,6 +664,7 @@ function renderCheckList(){
   items.forEach((item,i)=>{
     const key=item.name;
     checkData[key]={status:'',note:'',photos:[]};
+    if(item.aisle&&!(items[i-1]||{}).aisle){const h=document.createElement('div');h.style.cssText='font-size:12px;font-weight:800;color:var(--accent);margin:12px 0 6px';h.textContent='📦 중앙통로 제품·공박스 적치';c.appendChild(h);}
     if(item.coil&&!(items[i-1]||{}).coil){const h=document.createElement('div');h.style.cssText='font-size:12px;font-weight:800;color:var(--accent);margin:12px 0 6px';h.textContent='🧲 코일·고중량물 보관 (TJ-MP-Q200-2)';c.appendChild(h);}
     const div=document.createElement('div');div.className='check-item';div.id='ci_'+i;
     div.innerHTML=`
@@ -960,6 +967,7 @@ function loadSettingsUI(){
   loadCodeList('safety_inspector',DEFAULT_INSPECTORS).then(d=>{_inspCache=d;renderInspectorListUI();renderInspectorSelect()});
   loadCodeList('safety_zone',DEFAULT_ZONES).then(d=>{_zoneCache=d;renderZoneListUI();renderHistZoneFilter();renderZoneSelect()});
   loadCodeList('safety_item_coil',DEFAULT_COIL_ITEMS).then(d=>{_coilCache=d;renderCheckList()});
+  loadCodeList('safety_item_aisle',DEFAULT_AISLE_ITEMS).then(d=>{_aisleCache=d;renderCheckList()});
   Object.keys(FORM_DEF).forEach(f=>loadCodeList(FORM_DEF[f].group,FORM_DEF[f].defaults).then(d=>{FORM_CACHE[f]=d;renderCheckList();renderFireItemListUI()}));
   loadNotifyConfig();
   loadNtfyRulesFromServer();
@@ -1385,6 +1393,7 @@ window.addEventListener('DOMContentLoaded',async()=>{
     _inspCache=await loadCodeList('safety_inspector',DEFAULT_INSPECTORS);
     _zoneCache=await loadCodeList('safety_zone',DEFAULT_ZONES);
     _coilCache=await loadCodeList('safety_item_coil',DEFAULT_COIL_ITEMS);
+    _aisleCache=await loadCodeList('safety_item_aisle',DEFAULT_AISLE_ITEMS);
     for(const f of Object.keys(FORM_DEF)) FORM_CACHE[f]=await loadCodeList(FORM_DEF[f].group,FORM_DEF[f].defaults);
     loadNotifyConfig();
   }
