@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!-- saved from url=(0068)https://knagbyeongju-123.github.io/smtec_main2/request_outgoing.html -->
 <html lang="ko"><head>
-<script src="audit.js?v=7"></script><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<script src="audit.js?v=7"></script><script src="final_check.js?v=1"></script><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>출하의뢰서 관리 v1.2</title>
@@ -422,7 +422,17 @@ async function downloadWorkTemplate(){try{await ensureXLSX()}catch(err){toast('�
 function importWorkExcel(){document.getElementById('workFileInput').click()}
 document.getElementById('workFileInput').addEventListener('change',async function(e){const file=e.target.files[0];if(!file)return;e.target.value='';const prog=document.getElementById('workImportProgress');prog.style.display='block';prog.textContent='파일 읽는 중...';try{await ensureXLSX();const data=await file.arrayBuffer();const wb=XLSX.read(data,{type:'array'});const ws=wb.Sheets[wb.SheetNames[0]];const rows=XLSX.utils.sheet_to_json(ws,{header:1});if(rows.length<2){toast('데이터 없음');prog.style.display='none';return}const hdr=rows[0].map(h=>String(h||'').trim());let cP=-1,cQ=-1,cL=-1,cB=-1;hdr.forEach((h,i)=>{const l=h.toLowerCase();if(cP<0&&(h==='품번'||l==='part'||l==='part_no'))cP=i;if(cQ<0&&(h==='수량'||l==='qty'||l==='quantity'))cQ=i;if(cL<0&&(h==='로트번호'||h==='로트'||h==='LOT'||l==='lot'||l==='lot_no'))cL=i;if(cB<0&&(h==='박스수량'||h==='박스수'||l==='box_count'))cB=i});if(cP<0)cP=0;if(cQ<0&&hdr.length>1){for(let i=1;i<hdr.length;i++){if(rows.length>1&&!isNaN(rows[1][i])){cQ=i;break}}}const items=[];for(let i=1;i<rows.length;i++){const pn=String(rows[i][cP]||'').trim();if(!pn)continue;const qty=cQ>=0?(parseInt(rows[i][cQ])||0):0;const lot=cL>=0?String(rows[i][cL]||'').trim():'';const bcR=cB>=0?(parseInt(rows[i][cB])||0):0;const bs=findBoxSize(pn);let bc=bcR;if(!bc&&bs&&qty)bc=Math.ceil(qty/bs);items.push({part_no:pn,box_size:bs,box_count:bc,qty:qty||null,lot_no:lot,sort_order:workItems.length+items.length,status:'working'})}if(!items.length){toast('유효한 품목 없음');prog.style.display='none';return}if(!confirm('📤 '+items.length+'건 불러오기?')){prog.style.display='none';return}let done=0;for(let i=0;i<items.length;i+=50){const ch=items.slice(i,i+50);await sbInsert('shipment_work',ch);done+=ch.length;prog.textContent='등록 중... '+done+'/'+items.length}prog.style.display='none';toast('✅ '+items.length+'건 완료');loadWork()}catch(e){prog.style.display='none';toast('실패: '+e.message)}});
 
-async function moveAllToHistory(){if(!workItems.length){toast('등록할 품목 없음');return}const nl=workItems.filter(w=>!w.lot_no||!w.lot_no.trim());if(nl.length&&!confirm(nl.length+'건 로트 미등록. 진행?'))return;if(!confirm(workItems.length+'건 이력 등록?'))return;const rd=lsGet('WORK_DATE',new Date().toISOString().split('T')[0])||new Date().toISOString().split('T')[0];const hr=workItems.map(w=>({reg_date:rd,part_no:w.part_no,box_size:w.box_size,box_count:w.box_count,qty:w.qty,lot_no:w.lot_no||''}));try{
+async function moveAllToHistory(){if(!workItems.length){toast('등록할 품목 없음');return}const nl=workItems.filter(w=>!w.lot_no||!w.lot_no.trim());if(nl.length&&!confirm(nl.length+'건 로트 미등록. 진행?'))return;
+  /* SQ 2_8 : 출하 전 최종검사(qc_shipping_inspection) 합격 기록 대조 — 없으면 경고하고 이력 메모에 남김 */
+  const noInsp=new Set();
+  try{ if(window.FinalCheck){
+    const ds=workItems.flatMap(w=>FinalCheck.lotDates(w.lot_no)).sort();
+    if(ds.length){ await FinalCheck.load(ds[0]);
+      const bad=[]; workItems.forEach(w=>{ if(!w.lot_no)return; const f=FinalCheck.find(w.part_no,w.lot_no); const miss=f.lots.filter(l=>!l.ok.length);
+        if(miss.length){ noInsp.add(w.id); bad.push('· '+w.part_no+' LOT '+miss.map(l=>l.d.slice(2).replace(/-/g,'')).join(',')+(f.all.length?'':' (검사 품번 대조 안 됨)')); } });
+      if(bad.length&&!confirm('⚠ 최종검사 합격 기록을 찾지 못한 품목 '+bad.length+'건\n'+bad.slice(0,12).join('\n')+(bad.length>12?'\n외 '+(bad.length-12)+'건':'')
+        +'\n\n검사완료 식별표가 붙은 검사품인지 확인하세요.\n그래도 등록하면 출하 이력 메모에 [검사기록 미확인]이 남습니다.'))return; } } }catch(e){ console.warn('[최종검사 대조]',e); }
+  if(!confirm(workItems.length+'건 이력 등록?'))return;const rd=lsGet('WORK_DATE',new Date().toISOString().split('T')[0])||new Date().toISOString().split('T')[0];const hr=workItems.map(w=>Object.assign({reg_date:rd,part_no:w.part_no,box_size:w.box_size,box_count:w.box_count,qty:w.qty,lot_no:w.lot_no||''},noInsp.has(w.id)?{memo:'[검사기록 미확인]'}:{}));try{
   try{await sbInsert('shipment_history',hr.map(x=>Object.assign({},x,{destination:selectedCustomer||''})));}
   catch(e){if(String(e.message).indexOf('destination')>=0)await sbInsert('shipment_history',hr);else throw e;}
   await sbDelete('shipment_work','status=eq.working');toast('✅ '+hr.length+'건 이력 등록');loadWork();

@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<script src="audit.js?v=7"></script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>검사완료 식별표</title>
+<!--
+  완제품 검사완료 식별표 (SQ 2026-07-20 2_8 대응)
+  지적: 최종검사 완료품에 대한 생산 LOT 및 검사완료 식별 미흡 — 검사 완료품과 미검사품 식별 구분 불명확
+  ① 최종(출하)검사 기록(qc_shipping_inspection, 판정 OK)에서 '검사완료' 식별표를 박스 수만큼 출력
+     — 품번 · 생산 LOT · 검사일시 · 검사자 · 호기 · 박스 n/N · QR
+  ② QR 스캔(#v=기록번호) → 그 검사 기록을 서버에서 다시 읽어 '검사완료 확인' 화면 표시 (위조·오부착 확인)
+  ③ 발행 이력 kv_store 'final_tag_log_v1' — 어떤 검사 기록으로 몇 장을 누가 출력했는지
+  출하 등록(request_outgoing.html)은 final_check.js 로 품번·LOT 의 검사 기록을 대조해 없으면 경고
+-->
+<script src="final_check.js?v=1"></script>
+<script src="lib/qrcode-generator-1.4.4.js"></script>
+<style>
+:root{--bg:#f3f5f7;--panel:#fff;--line:#d9dfe6;--ink:#17202a;--ink2:#4b5866;--ink3:#7f8b97;--ok:#15803d;--okbg:#e6f4ec;--bad:#b91c1c;--badbg:#fdeaea;--acc:#1e3a8a}
+@media (prefers-color-scheme:dark){:root{--bg:#10151b;--panel:#1a2129;--line:#2d3741;--ink:#e6ebf0;--ink2:#b6c0ca;--ink3:#87939f;--ok:#6fd39c;--okbg:#173326;--bad:#f08a8a;--badbg:#3c1d1d;--acc:#8fb3f0}}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Malgun Gothic','맑은 고딕','Apple SD Gothic Neo',sans-serif;background:var(--bg);color:var(--ink);font-size:14px;line-height:1.5;padding-bottom:40px}
+.hdr{background:#14532d;color:#fff;padding:14px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.hdr h1{font-size:18px;font-weight:900}.hdr p{font-size:12px;color:#bbf7d0}
+.wrap{max-width:1100px;margin:0 auto;padding:12px 16px}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px}
+input,select{font:inherit;font-size:13px;padding:6px 8px;border:1px solid var(--line);border-radius:7px;background:var(--panel);color:var(--ink)}
+.btn{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:7px;padding:7px 12px;font:inherit;font-size:13px;font-weight:700;cursor:pointer}
+.btn.pri{background:#15803d;border-color:#15803d;color:#fff}.btn:disabled{opacity:.5;cursor:default}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:auto;margin-bottom:12px}
+table{width:100%;border-collapse:collapse}th,td{padding:7px 9px;border-bottom:1px solid var(--line);text-align:left;font-size:13px;white-space:nowrap}
+th{background:var(--bg);font-size:12px;color:var(--ink2)}
+td.pn{font-weight:800}.sub{font-size:11px;color:var(--ink3)}
+.pill{display:inline-block;border-radius:20px;padding:1px 8px;font-size:11px;font-weight:800}
+.p-ok{background:var(--okbg);color:var(--ok)}.p-bad{background:var(--badbg);color:var(--bad)}
+.note{font-size:12px;color:var(--ink3);margin:6px 0}
+.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:9px 12px}.kpi b{display:block;font-size:20px}.kpi span{font-size:12px;color:var(--ink3)}
+.verify{max-width:520px;margin:20px auto;background:var(--panel);border:3px solid var(--ok);border-radius:14px;padding:20px;text-align:center}
+.verify.bad{border-color:var(--bad)}
+.verify h2{font-size:28px;font-weight:900;color:var(--ok)}.verify.bad h2{color:var(--bad)}
+.verify .pnv{font-size:24px;font-weight:900;margin:8px 0}
+.verify dl{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;text-align:left;margin-top:12px;font-size:15px}.verify dt{color:var(--ink3)}.verify dd{font-weight:700}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#111827;color:#fff;padding:9px 16px;border-radius:8px;font-size:13px;opacity:0;transition:.2s;pointer-events:none}.toast.on{opacity:1}
+@media (max-width:640px){.kpis{grid-template-columns:1fr 1fr}}
+</style>
+</head>
+<body>
+<div class="hdr"><div><h1>✅ 완제품 검사완료 식별표</h1><p>최종(출하)검사 합격 기록 → 박스별 검사완료 표 출력 · QR 로 검사 기록 확인 (SQ 2_8)</p></div></div>
+<div class="wrap" id="app">
+  <div class="bar">
+    <label>검사일 <input type="date" id="d" onchange="load()"></label>
+    <input type="search" id="q" placeholder="품번 · 품명 · 검사자" oninput="render()" style="flex:1;min-width:140px">
+    <span class="note" id="st">불러오는 중…</span>
+  </div>
+  <div class="kpis" id="kpis"></div>
+  <div class="card"><table><thead><tr><th><input type="checkbox" id="all" onchange="selAll(this.checked)" aria-label="전체 선택"></th><th>검사시각</th><th>품번</th><th>고객사</th><th>호기·금형</th><th>검사자</th><th>판정</th><th>식별표</th></tr></thead><tbody id="tb"></tbody></table></div>
+  <div class="card" style="padding:12px 14px;overflow:visible">
+    <div class="bar" style="margin:0">
+      <b>선택 <span id="nSel">0</span>건</b>
+      <label>생산 LOT <input id="lot" placeholder="검사일 기준 자동" style="width:120px" title="비우면 각 검사일의 YYMMDD"></label>
+      <label>박스 수 <input type="number" id="boxes" min="1" max="50" value="1" style="width:70px"></label>
+      <label>형식 <select id="fmt"><option value="roll">라벨 프린터 100×70 (흑백)</option><option value="a4">A4 2×4 (99×67)</option></select></label>
+      <button class="btn pri" id="btnPrint" onclick="printTags()" disabled>🖨 검사완료 표 출력</button>
+    </div>
+    <div class="note">판정 OK 기록만 출력됩니다. 출력하면 발행 이력(검사기록·LOT·장수·발행자)이 남습니다. 박스마다 1장씩 붙이고, 미검사품에는 붙이지 않습니다.</div>
+  </div>
+  <div class="card" style="padding:12px 14px"><b>발행 이력</b> <span class="note">선택한 검사일</span><table><tbody id="hb"></tbody></table></div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const SB_URL='https://omngtyewdaqpphnzeate.supabase.co', SB_KEY='sb_publishable_9j2YkkL-7ul1TrhH-NjVdQ_vWDG2-1D';
+const LOG_KEY='final_tag_log_v1';
+const H=()=>({apikey:SB_KEY,Authorization:'Bearer '+SB_KEY,'Content-Type':'application/json'});
+const $=s=>document.querySelector(s);
+const esc=v=>String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const kst=()=>new Date(Date.now()+9*36e5).toISOString();
+const today=()=>kst().slice(0,10);
+const lot6=d=>String(d||'').replace(/-/g,'').slice(2,8);
+const isOk=r=>String(r.result||'').toUpperCase()==='OK';
+let ROWS=[], LOG={logs:[]}, SEL=new Set();
+function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('on');clearTimeout(toast._t);toast._t=setTimeout(()=>t.classList.remove('on'),2200)}
+function me(){try{const u=window.tjAudit&&tjAudit.user&&tjAudit.user();if(u&&u.name)return u.name}catch(e){}return ''}
+const PUBLIC_BASE='https://knagbyeongju-123.github.io/smtec_main2/';
+function base(){const local=!/^https?:$/.test(location.protocol)||/^(localhost|127\.)/.test(location.hostname);return (local?PUBLIC_BASE:new URL('.',location.href).href)+'final_tag.html';}
+
+async function logFetch(){const r=await fetch(`${SB_URL}/rest/v1/kv_store?key=eq.${LOG_KEY}&select=value`,{headers:H(),cache:'no-store'});if(!r.ok)throw new Error('HTTP '+r.status);const d=await r.json();const v=(d[0]&&d[0].value)||{};return{logs:Array.isArray(v.logs)?v.logs:[]};}
+async function logAdd(items){const cur=await logFetch();cur.logs.push(...items);
+  const r=await fetch(`${SB_URL}/rest/v1/kv_store?on_conflict=key`,{method:'POST',headers:Object.assign(H(),{Prefer:'resolution=merge-duplicates,return=minimal'}),body:JSON.stringify({key:LOG_KEY,value:cur})});
+  if(!r.ok)throw new Error('HTTP '+r.status); LOG=cur;}
+
+async function load(){
+  const d=$('#d').value||today(); SEL.clear(); $('#st').textContent='불러오는 중…';
+  try{
+    await FinalCheck.load(d);
+    ROWS=FinalCheck.records().filter(r=>r.inspection_date===d);
+    try{LOG=await logFetch();}catch(e){}
+    $('#st').textContent=`${d} 최종검사 ${ROWS.length}건`;
+  }catch(e){ROWS=[];$('#st').textContent='⚠ 불러오기 실패: '+e.message;}
+  render();
+}
+function issued(id){return LOG.logs.filter(x=>x.qsi===id);}
+function render(){
+  const q=$('#q').value.trim().toLowerCase();
+  const list=ROWS.filter(r=>!q||[r.part&&r.part.part_number,r.part&&r.part.part_name,r.inspector].join(' ').toLowerCase().includes(q));
+  const ok=ROWS.filter(isOk), done=ok.filter(r=>issued(r.id).length);
+  $('#kpis').innerHTML=[[ROWS.length+'건','최종검사 기록'],[ok.length+'건','판정 OK'],[`${done.length} / ${ok.length}`,'검사완료 표 발행']]
+    .map(([b,s])=>`<div class="kpi"><b>${b}</b><span>${s}</span></div>`).join('');
+  $('#tb').innerHTML=list.length?list.map(r=>{const p=r.part||{},iss=issued(r.id),n=iss.reduce((a,x)=>a+(+x.n||0),0);
+    return `<tr><td>${isOk(r)?`<input type="checkbox" ${SEL.has(r.id)?'checked':''} onchange="sel(${+r.id},this.checked)" aria-label="선택">`:''}</td>
+      <td>${esc(String(r.inspection_time||'').slice(0,5))}</td>
+      <td class="pn">${esc(p.part_number||'(품번 없음 #'+r.part_id+')')}<div class="sub">${esc(p.part_name||'')}</div></td>
+      <td>${esc(p.customer||'')}</td><td>${esc(r.ho?r.ho+'호기':'')}${r.mold_no?'<div class="sub">'+esc(r.mold_no)+'</div>':''}</td>
+      <td>${esc(r.inspector||'')}</td><td><span class="pill ${isOk(r)?'p-ok':'p-bad'}">${esc(r.result||'-')}</span></td>
+      <td>${n?`<span class="pill p-ok">발행 ${n}매</span>`:isOk(r)?'<span class="sub">미발행</span>':'<span class="sub">출력 불가</span>'}</td></tr>`}).join('')
+    :'<tr><td colspan="8" style="text-align:center;padding:20px;color:var(--ink3)">이 날짜의 최종검사 기록이 없습니다.</td></tr>';
+  const d=$('#d').value||today(), hl=LOG.logs.filter(x=>x.d===d).slice().reverse();
+  $('#hb').innerHTML=hl.length?hl.map(x=>`<tr><td>${esc(String(x.at).slice(11,16))}</td><td class="pn">${esc(x.pn)}</td><td>LOT ${esc(x.lot)}</td><td>${esc(x.n)}매</td><td>${esc(x.by||'')}</td></tr>`).join('')
+    :'<tr><td class="sub" style="padding:10px">발행 이력이 없습니다.</td></tr>';
+  $('#nSel').textContent=SEL.size; $('#btnPrint').disabled=!SEL.size;
+}
+function sel(id,on){on?SEL.add(id):SEL.delete(id);render();}
+function selAll(on){SEL.clear();if(on)ROWS.filter(isOk).forEach(r=>SEL.add(r.id));render();}
+
+function qrSvg(text){const q=qrcode(0,'M');q.addData(text);q.make();
+  return 'data:image/svg+xml;base64,'+btoa(q.createSvgTag({cellSize:1,margin:0,scalable:true}).replace('<svg ','<svg shape-rendering="crispEdges" '));}
+function tagHtml(r,lot,i,n){const p=r.part||{};
+  return `<div class="tg"><div class="hd"><span>검사완료</span><b>합 격</b></div>
+    <div class="pn">${esc(p.part_number||'')}</div><div class="nm">${esc(p.part_name||'')}${p.customer?' · '+esc(p.customer):''}</div>
+    <div class="bd"><img class="qr" src="${qrSvg(base()+'#v='+r.id+'-'+lot)}" alt="QR">
+      <table><tr><th>생산 LOT</th><td class="lot">${esc(lot)}</td></tr>
+        <tr><th>검사일시</th><td>${esc(r.inspection_date)} ${esc(String(r.inspection_time||'').slice(0,5))}</td></tr>
+        <tr><th>검사자</th><td>${esc(r.inspector||'')}</td></tr>
+        <tr><th>호기</th><td>${esc(r.ho?r.ho+'호기':'-')}${r.mold_no?' · '+esc(r.mold_no):''}</td></tr></table></div>
+    <div class="ft"><b>박스 ${i}/${n}</b><span>최종검사 #${esc(r.id)} · (주)태진다이텍 품질관리팀</span></div></div>`;}
+async function printTags(){
+  const fmt=$('#fmt').value, roll=fmt==='roll', n=Math.max(1,Math.min(50,parseInt($('#boxes').value,10)||1));
+  const lotIn=$('#lot').value.trim();
+  if(lotIn&&!/^\d{6}$/.test(lotIn)){alert('생산 LOT 는 생산일자 6자리(예: 261106)로 입력하세요.');return}
+  const rows=ROWS.filter(r=>SEL.has(r.id)&&isOk(r)); if(!rows.length)return;
+  const by=me();
+  const w=window.open('','_blank'); if(!w){alert('팝업이 차단되었습니다. 팝업을 허용해 주세요.');return}
+  const tags=[]; rows.forEach(r=>{const lot=lotIn||lot6(r.inspection_date); for(let i=1;i<=n;i++)tags.push(tagHtml(r,lot,i,n));});
+  w.document.write(`<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><title>검사완료 식별표 ${tags.length}매</title><style>
+@page{${roll?'size:100mm 70mm;margin:0':'size:A4;margin:8mm 6mm'}}*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Malgun Gothic','맑은 고딕',sans-serif;color:#000}
+.bar{padding:10px;background:#f1f5f9;border-bottom:1px solid #cbd5e0;font-size:13px;display:flex;gap:10px;align-items:center}.bar button{padding:6px 16px;font-weight:700;cursor:pointer}
+.grid{display:grid;${roll?'grid-template-columns:100mm;grid-auto-rows:70mm':'grid-template-columns:99mm 99mm;grid-auto-rows:67mm;justify-content:center'}}
+.tg{${roll?'padding:3mm;break-after:page;page-break-after:always':'border:1.5px solid #000;padding:2.5mm 3mm'};display:flex;flex-direction:column;overflow:hidden;break-inside:avoid}
+.hd{display:flex;justify-content:space-between;align-items:center;background:#000;color:#fff;padding:1mm 3mm;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.hd span{font-size:20pt;font-weight:900;letter-spacing:3px}.hd b{font-size:15pt;font-weight:900;border:.6mm solid #fff;padding:0 2mm}
+.pn{font-size:19pt;font-weight:900;margin-top:1.5mm;line-height:1.1;word-break:break-all}.nm{font-size:8.5pt;font-weight:700}
+.bd{flex:1;display:flex;gap:3mm;align-items:center;margin-top:1mm}.qr{width:24mm;height:24mm;flex-shrink:0}
+table{border-collapse:collapse;font-size:9pt;width:100%}th{text-align:left;width:15mm;font-weight:700;padding:.3mm 0}td{font-weight:800;padding:.3mm 0}
+td.lot{font-size:17pt;font-weight:900;letter-spacing:1px}
+.ft{border-top:.4mm solid #000;padding-top:1mm;display:flex;justify-content:space-between;align-items:baseline;font-size:7.5pt;font-weight:700}.ft b{font-size:12pt}
+@media print{.bar{display:none}}</style></head><body>
+<div class="bar"><b>✅ 검사완료 식별표 ${tags.length}매</b> ${roll?'라벨 프린터 100×70':'A4 2×4'} <button onclick="print()">🖨 인쇄</button><span style="color:#64748b">박스마다 1장 · 미검사품에는 붙이지 않음</span></div>
+<div class="grid">${tags.join('')}</div><script>window.onload=function(){setTimeout(function(){print()},300)}<\/script></body></html>`);
+  w.document.close();
+  try{ await logAdd(rows.map(r=>({id:'t'+Date.now().toString(36)+r.id,qsi:r.id,d:r.inspection_date,pn:(r.part||{}).part_number||'',lot:lotIn||lot6(r.inspection_date),n,at:kst().slice(0,16).replace('T',' '),by})));
+    toast(`${tags.length}매 발행 이력을 남겼습니다`); render(); }catch(e){ toast('⚠ 발행 이력 저장 실패: '+e.message); }
+}
+
+/* QR 스캔 → 검사 기록 확인 화면 (#v=기록번호-LOT) */
+async function verify(v){
+  const [id,lot]=String(v).split('-'); const app=$('#app');
+  app.innerHTML='<div class="verify"><h2>확인 중…</h2></div>';
+  try{
+    const r=await fetch(`${SB_URL}/rest/v1/qc_shipping_inspection?id=eq.${encodeURIComponent(id)}&select=id,part_id,inspection_date,inspection_time,inspector,result,ho,mold_no`,{headers:H()});
+    const rec=(await r.json())[0]; if(!rec)throw new Error('검사 기록을 찾을 수 없습니다 (#'+id+')');
+    const p=((await (await fetch(`${SB_URL}/rest/v1/qc_part?id=eq.${rec.part_id}&select=part_number,part_name,customer`,{headers:H()})).json())[0])||{};
+    const ok=isOk(rec);
+    app.innerHTML=`<div class="verify ${ok?'':'bad'}"><h2>${ok?'✅ 검사완료 · 합격':'⛔ 합격 기록 아님 — 출하 금지'}</h2>
+      <div class="pnv">${esc(p.part_number||'')}</div><div>${esc(p.part_name||'')}${p.customer?' · '+esc(p.customer):''}</div>
+      <dl><dt>생산 LOT</dt><dd>${esc(lot||'-')}</dd><dt>검사일시</dt><dd>${esc(rec.inspection_date)} ${esc(String(rec.inspection_time||'').slice(0,5))}</dd>
+        <dt>검사자</dt><dd>${esc(rec.inspector||'')}</dd><dt>판정</dt><dd>${esc(rec.result||'')}</dd><dt>호기</dt><dd>${esc(rec.ho?rec.ho+'호기':'-')}</dd><dt>기록번호</dt><dd>#${esc(rec.id)}</dd></dl>
+      <p class="note" style="margin-top:12px">박스의 품번·LOT 가 위 내용과 같은지 확인하세요.</p></div>`;
+  }catch(e){ app.innerHTML=`<div class="verify bad"><h2>⛔ 확인 실패</h2><p>${esc(e.message)}</p></div>`; }
+}
+const hv=(location.hash.match(/v=([\d]+-?\d*)/)||[])[1];
+if(hv) verify(hv); else { $('#d').value=today(); load(); }
+addEventListener('hashchange',()=>{const v=(location.hash.match(/v=([\d]+-?\d*)/)||[])[1]; if(v) verify(v); else location.reload();});
+</script>
+</body>
+</html>
