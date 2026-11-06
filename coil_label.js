@@ -1,7 +1,7 @@
 // ============================================================
 //  coil_label.js — 코일 QR 라벨 (CoilLabel)
 //  사용: material_upload.html (소재입고 [최종등록] 직후 → 코일별 QR 라벨 표시·출력)
-//  강종 식별 띠: mat_grade.js (SUS430/SUS304 등 강종을 색·기호로 크게 표시 — SQ 5_3)
+//  식별색 띠: mat_grade.js (강종 + 사내 소재 식별색을 크게 표시 — SQ 5_3)
 //
 //  QR 내용 = material_attach.html?cert=<inspection_certs.id>&c=<코일순번>
 //    · IQC 합격 라벨(material_IQC.html)과 같은 QR — 현장 휴대폰으로 찍으면 소재 장착
@@ -33,11 +33,11 @@
     if (g.MatGrade) return Promise.resolve();
     return new Promise((ok) => {
       const el = document.createElement('script');
-      el.src = HERE + 'mat_grade.js?v=1'; el.onload = ok; el.onerror = ok;
+      el.src = HERE + 'mat_grade.js?v=2'; el.onload = ok; el.onerror = ok;
       document.head.appendChild(el);
     });
   }
-  const band = (m) => g.MatGrade ? g.MatGrade.bandHtml(m, esc) : '';
+  const band = (L) => g.MatGrade ? g.MatGrade.bandHtml(L.material, esc, L.t, L.w) : '';
   const css = () => LABEL_CSS + (g.MatGrade ? g.MatGrade.BAND_CSS : '');
   function qrImg(text) {
     const qr = g.qrcode(0, 'M');
@@ -66,7 +66,7 @@
   function cardHtml(L, img) {
     return `<div class="lb">
       <div class="hd"><span>입고 소재</span><small>(주)태진다이텍</small></div>
-      ${band(L.material)}
+      ${band(L)}
       <div class="bd"><img class="qr" src="${img}" alt="QR">
         <table>
           <tr><th>HEAT</th><td class="heat">${esc(L.heat)}</td></tr>
@@ -173,7 +173,7 @@ ${roll ? '.lb{border:0;padding:3mm;break-after:page;page-break-after:always}' : 
     c.font = `900 ${mm(5)}px ${FONT}`; c.fillText('입고 소재', mm(P + 2), mm(P + 3.6));
     c.font = `${mm(2.8)}px ${FONT}`; c.textAlign = 'right'; c.fillText('(주)태진다이텍', mm(Wmm - P - 2), mm(P + 3.6)); c.textAlign = 'left';
     // 강종 띠
-    if (g.MatGrade) g.MatGrade.drawBand(c, L.material, mm(P), mm(P + 8), mm(Wmm - 2 * P), mm(8.5), FONT);
+    if (g.MatGrade) g.MatGrade.drawBand(c, L.material, mm(P), mm(P + 8), mm(Wmm - 2 * P), mm(8.5), FONT, L.t, L.w);
     // QR
     const qr = await loadImg(qrSrc);
     c.imageSmoothingEnabled = false;
