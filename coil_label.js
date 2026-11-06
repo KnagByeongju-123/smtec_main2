@@ -33,7 +33,7 @@
     if (g.MatGrade) return Promise.resolve();
     return new Promise((ok) => {
       const el = document.createElement('script');
-      el.src = HERE + 'mat_grade.js?v=4'; el.onload = ok; el.onerror = ok;
+      el.src = HERE + 'mat_grade.js?v=5'; el.onload = ok; el.onerror = ok;
       document.head.appendChild(el);
     });
   }
@@ -180,7 +180,7 @@ ${roll ? '.lb{border:0;padding:3mm;break-after:page;page-break-after:always}.lb 
     // 강종 띠
     if (g.MatGrade) g.MatGrade.drawBand(c, L.material, mm(P), mm(P + 8), mm(Wmm - 2 * P), mm(8.5), FONT, L.t, L.w, !border);   // 테두리 없음 = 라벨 프린터 → 흑백
     // QR
-    const qy = P + 18, qs = mono ? 34 : 29;   // 라벨 프린터는 아래 여백까지 써서 QR 을 키움 (스캔 거리·인식률)
+    const qy = P + 19.5, qs = mono ? 34 : 29;   // 식별색 띠와 QR 사이 여백(조용한 영역) 확보   // 라벨 프린터는 아래 여백까지 써서 QR 을 키움 (스캔 거리·인식률)
     if (String(qrSrc).startsWith('data:')) {
       const qr = await loadImg(qrSrc);
       c.imageSmoothingEnabled = false;

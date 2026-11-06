@@ -30,7 +30,7 @@
   // 재질군: 표기 차이를 묶음 (C67S = S70CM-S = S67CM-S 계열, S55CM-S = S55CM = S55C)
   function norm(s) {
     return String(s || '').toUpperCase().trim()
-      .replace(/^SUS\s*/, '')
+      .replace(/^(SUS|STS)\s*/, '')
       .replace(/[\s\-()_.]/g, '')
       .replace(/(2B|BA|BB)$/, '');
   }
@@ -71,10 +71,11 @@
   function of(material, t, w) {
     const raw = String(material || '').trim();
     const fam = family(raw);
-    const code = fam.startsWith('SUS') ? fam : (raw.toUpperCase() || '재질 미상');
+    // 스테인리스는 'SUS'+강종(접미사 L·J1L 등 유지), 그 외는 입고 표기 그대로
+    const code = fam.startsWith('SUS') ? 'SUS' + norm(raw) : (raw.toUpperCase() || '재질 미상');
     let color = BY_FAMILY[fam] || '', item = '';
     if (!color && fam) {
-      const hit = SPEC.find(([f, st, sw]) => f === fam && Math.abs(+t - st) <= TOL_T && Math.abs(+w - sw) <= TOL_W);
+      const hit = SPEC.find(([f, st, sw]) => f === fam && Math.abs(+t - st) <= TOL_T + 1e-9 && Math.abs(+w - sw) <= TOL_W + 1e-9);
       if (hit) { color = hit[4]; item = hit[3]; }
     }
     const [bg, fg, bd] = COLORS[color] || ['#e5e7eb', '#111', '#6b7280'];
