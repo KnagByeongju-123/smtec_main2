@@ -1,6 +1,7 @@
 // ============================================================
 //  coil_label.js — 코일 QR 라벨 (CoilLabel)
 //  사용: material_upload.html (소재입고 [최종등록] 직후 → 코일별 QR 라벨 표시·출력)
+//  강종 식별 띠: mat_grade.js (SUS430/SUS304 등 강종을 색·기호로 크게 표시 — SQ 5_3)
 //
 //  QR 내용 = material_attach.html?cert=<inspection_certs.id>&c=<코일순번>
 //    · IQC 합격 라벨(material_IQC.html)과 같은 QR — 현장 휴대폰으로 찍으면 소재 장착
@@ -27,6 +28,17 @@
       document.head.appendChild(el);
     })), Promise.reject()).catch(() => { throw new Error('QR 라이브러리를 불러오지 못했습니다 (인터넷 확인)'); });
   }
+  // 강종 식별 띠 (mat_grade.js) — 없으면 같은 폴더에서 불러옴, 실패해도 라벨은 강종 띠 없이 출력
+  function loadGrade() {
+    if (g.MatGrade) return Promise.resolve();
+    return new Promise((ok) => {
+      const el = document.createElement('script');
+      el.src = HERE + 'mat_grade.js?v=1'; el.onload = ok; el.onerror = ok;
+      document.head.appendChild(el);
+    });
+  }
+  const band = (m) => g.MatGrade ? g.MatGrade.bandHtml(m, esc) : '';
+  const css = () => LABEL_CSS + (g.MatGrade ? g.MatGrade.BAND_CSS : '');
   function qrImg(text) {
     const qr = g.qrcode(0, 'M');
     qr.addData(text); qr.make();
@@ -54,6 +66,7 @@
   function cardHtml(L, img) {
     return `<div class="lb">
       <div class="hd"><span>입고 소재</span><small>(주)태진다이텍</small></div>
+      ${band(L.material)}
       <div class="bd"><img class="qr" src="${img}" alt="QR">
         <table>
           <tr><th>HEAT</th><td class="heat">${esc(L.heat)}</td></tr>
@@ -71,7 +84,7 @@
 .lb .hd{display:flex;justify-content:space-between;align-items:center;background:#1e3a8a;color:#fff;padding:1mm 2mm;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 .lb .hd span{font-size:15pt;font-weight:900;letter-spacing:2px} .lb .hd small{font-size:8pt}
 .lb .bd{flex:1;display:flex;gap:2mm;align-items:center;padding-top:1.5mm}
-.lb .qr{width:34mm;height:34mm;image-rendering:pixelated;flex-shrink:0}
+.lb .qr{width:30mm;height:30mm;image-rendering:pixelated;flex-shrink:0}
 .lb table{border-collapse:collapse;font-size:8.5pt;width:100%;table-layout:fixed}
 .lb th{width:12mm;text-align:left;color:#444;font-weight:600;padding:.3mm 0;vertical-align:top}
 .lb td{font-weight:700;padding:.3mm 0;word-break:break-all} .lb td.heat{font-size:12pt;font-weight:900}
@@ -80,11 +93,11 @@
 
   /* 화면 미리보기 (container 안에 라벨 카드) */
   async function preview(container, labels) {
-    await loadQrGen();
+    await loadQrGen(); await loadGrade();
     const base = baseUrl();
     if (!document.getElementById('coil-label-css')) {
       const st = document.createElement('style'); st.id = 'coil-label-css';
-      st.textContent = LABEL_CSS + `.lb-prev{display:grid;grid-template-columns:repeat(auto-fill,minmax(99mm,1fr));gap:6px}.lb-prev .lb{height:67mm}`;
+      st.textContent = css() + `.lb-prev{display:grid;grid-template-columns:repeat(auto-fill,minmax(99mm,1fr));gap:6px}.lb-prev .lb{height:67mm}`;
       document.head.appendChild(st);
     }
     container.innerHTML = `<div class="lb-prev">${labels.map((L) => cardHtml(L, qrImg(`${base}?cert=${L.certId}&c=${L.seq}`))).join('')}</div>`;
@@ -96,7 +109,7 @@
     if (!w) { alert('팝업이 차단되었습니다. 브라우저에서 팝업을 허용해 주세요.'); return; }
     w.document.write('<p style="font-family:sans-serif;padding:20px">라벨 생성 중...</p>');
     try {
-      await loadQrGen();
+      await loadQrGen(); await loadGrade();
       const base = baseUrl();
       const roll = size === 'roll';
       const cards = labels.map((L) => cardHtml(L, qrImg(`${base}?cert=${L.certId}&c=${L.seq}`))).join('');
@@ -109,7 +122,7 @@ body{font-family:'Malgun Gothic','맑은 고딕','Apple SD Gothic Neo',sans-seri
 .bar{padding:10px;background:#f1f5f9;border-bottom:1px solid #cbd5e0;font-size:13px;display:flex;gap:10px;align-items:center}
 .bar button{padding:6px 16px;font-size:13px;font-weight:700;cursor:pointer}
 .grid{display:grid;${roll ? 'grid-template-columns:100mm;grid-auto-rows:70mm' : 'grid-template-columns:99mm 99mm;grid-auto-rows:67mm;justify-content:center'}}
-${LABEL_CSS}
+${css()}
 ${roll ? '.lb{border:0;padding:3mm;break-after:page;page-break-after:always}' : ''}
 @media print{.bar{display:none}}
 </style></head><body>
@@ -159,20 +172,22 @@ ${roll ? '.lb{border:0;padding:3mm;break-after:page;page-break-after:always}' : 
     c.fillStyle = '#fff'; c.textBaseline = 'middle';
     c.font = `900 ${mm(5)}px ${FONT}`; c.fillText('입고 소재', mm(P + 2), mm(P + 3.6));
     c.font = `${mm(2.8)}px ${FONT}`; c.textAlign = 'right'; c.fillText('(주)태진다이텍', mm(Wmm - P - 2), mm(P + 3.6)); c.textAlign = 'left';
+    // 강종 띠
+    if (g.MatGrade) g.MatGrade.drawBand(c, L.material, mm(P), mm(P + 8), mm(Wmm - 2 * P), mm(8.5), FONT);
     // QR
     const qr = await loadImg(qrSrc);
     c.imageSmoothingEnabled = false;
-    const qy = P + 9.5, qs = 34;
+    const qy = P + 18, qs = 29;
     c.drawImage(qr, mm(P), mm(qy), mm(qs), mm(qs));
     // 정보
     const rows = [['HEAT', L.heat, true], ['재질', L.material], ['규격', `${L.t}t × ${L.w}W`],
                   ['중량', L.kg ? Number(L.kg).toLocaleString() + ' kg' : '-'], ['공급사', L.supplier || ''], ['입고', L.date || '']];
-    let y = qy + 3; const x0 = P + qs + 3;
+    let y = qy + 2; const x0 = P + qs + 3;
     rows.forEach(([k, v, big]) => {
       c.fillStyle = '#444'; c.font = `600 ${mm(2.9)}px ${FONT}`; c.fillText(k, mm(x0), mm(y));
       c.fillStyle = '#000'; c.font = `${big ? 900 : 700} ${mm(big ? 4.2 : 3)}px ${FONT}`;
       c.fillText(String(v), mm(x0 + 12), mm(y), mm(Wmm - x0 - 12 - P));
-      y += big ? 6 : 4.6;
+      y += big ? 5.4 : 4.3;
     });
     // 하단
     const fy = Hmm - P - 4;
@@ -182,7 +197,7 @@ ${roll ? '.lb{border:0;padding:3mm;break-after:page;page-break-after:always}' : 
     return cv.toDataURL('image/png');
   }
   async function downloadPdf(labels, size, fileName) {
-    await loadQrGen();
+    await loadQrGen(); await loadGrade();
     await loadJsPdf();
     const base = baseUrl();
     const roll = size === 'roll';
