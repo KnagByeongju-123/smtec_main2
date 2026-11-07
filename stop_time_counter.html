@@ -4,7 +4,7 @@
 <script src="audit.js?v=7"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>생산 카운터 v3.11</title>
+<title>생산 카운터 v3.12</title>
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body {
@@ -1126,7 +1126,7 @@
 </head>
 <body>
 
-<h1>🕒 생산 카운터 v3.11</h1>
+<h1>🕒 생산 카운터 v3.12</h1>
 
 <!-- ★ Supabase 연동: 호기/작업자 + 작업시작/종료 -->
 <div class="work-header">
@@ -1243,6 +1243,17 @@
   <span class="brk">고장정지</span>
 </div>
 
+<div id="mesBox" style="margin:8px 0;padding:9px 11px;border:1px solid #93c5fd;background:#eff6ff;border-radius:10px;font-size:12.5px;color:#1e3a8a">
+  <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+    <b>📡 MES 정지시간 자동 입력</b>
+    <input type="date" id="mesDate" style="font-size:12.5px;padding:3px 6px;border:1px solid #93c5fd;border-radius:6px" onchange="mesApply(false)">
+    <label style="display:flex;align-items:center;gap:3px"><input type="checkbox" id="mesAuto" checked onchange="mesApply(false)">자동</label>
+    <button type="button" onclick="mesApply(true)" style="font-size:12px;padding:4px 9px;border:1px solid #2563eb;background:#2563eb;color:#fff;border-radius:6px">지금 불러오기</button>
+    <button type="button" onclick="mesDaily()" style="font-size:12px;padding:4px 9px;border:1px solid #2563eb;background:#fff;color:#2563eb;border-radius:6px">📅 일자별 정지시간</button>
+  </div>
+  <div id="mesInfo" style="margin-top:4px;color:#334155">호기를 고르면 그 날짜의 MES 정지시간을 사유별로 자동으로 넣습니다.</div>
+</div>
+
 <div class="section-title">🔧 고장 정지 (CL-)</div>
 <div class="grid" id="grid-cl"></div>
 
@@ -1324,6 +1335,14 @@
 
 
 
+
+<div class="modal-bg" id="mesDailyModal">
+  <div class="modal" style="max-width:760px">
+    <h2>📅 일자별 정지시간 (MES) <button class="modal-x" onclick="document.getElementById('mesDailyModal').classList.remove('show')" title="닫기">✕</button></h2>
+    <div id="mesDailyBody" style="font-size:12.5px"></div>
+    <button class="modal-close" onclick="document.getElementById('mesDailyModal').classList.remove('show')">닫기</button>
+  </div>
+</div>
 
 <div class="modal-bg" id="summaryModal">
   <div class="modal">
@@ -1652,6 +1671,7 @@ function adjustCodeTime(code, deltaMin) {
   } else {
     state[code].totalMs = newMs;
   }
+  state[code].mes = false;
 
   saveState();
   updateUI();
@@ -1659,6 +1679,7 @@ function adjustCodeTime(code, deltaMin) {
 
 function toggleCode(code) {
   const s = state[code];
+  s.mes = false;                         /* 직접 잰 값 — MES 자동 반영이 덮어쓰지 않음 */
   if (s.startedAt) {
     // 정지: 누적 후 멈춤
     s.totalMs += Date.now() - s.startedAt;
@@ -1823,7 +1844,7 @@ function saveEdit() {
   if (m < 0) m = 0; if (m > 59) m = 59;
   if (sec < 0) sec = 0; if (sec > 59) sec = 59;
   const newMs = (h * 3600 + m * 60 + sec) * 1000;
-  state[editingCode].totalMs = newMs;
+  state[editingCode].totalMs = newMs; state[editingCode].mes = false;
   state[editingCode].startedAt = null;
   saveState();
   updateUI();
@@ -2698,6 +2719,7 @@ async function initSupabaseSession() {
 }
 
 document.getElementById('machineSelect').addEventListener('change', async function() {
+  mesApply(false);
   updateStartButton();
   await autoStartWorkIfNeeded();
   refreshProdInfo();
@@ -2713,8 +2735,84 @@ document.getElementById('machineSelect').addEventListener('change', async functi
   if (badEl) badEl.addEventListener('input', updateReportSummary);
 })();
 
+/* ===== MES 정지시간 자동 입력 (daily_downtime) =====
+   MES 일자·호기별 정지 이벤트(stop_events + planned_events)를 사유 이름으로 이 화면의 정지코드에 맞춰 넣는다.
+   (MES 와 이 화면의 코드 번호 체계가 달라 — 예: MES UL-A003 = 부품가공대기, 여기 UL-A003 = 설비이상 — 이름으로 대조)
+   호기: '45호기 심팩300톤' ↔ MES machine_name '45_300' (호기 번호)
+   작동 중인 카운터는 건드리지 않음 · 자동 체크 시 호기·날짜 변경과 5분마다 다시 반영 */
+const mesCanon=s=>String(s||'').replace(/[\s\/,·()]/g,'').replace('래핑','랩핑').replace('세팅','셋팅').replace('금형셋팅및교환','금형셋팅및교체').replace('타공정지원','타공정처리');
+const MES_NAME2CODE=(()=>{const m={};STOP_CODES.forEach(s=>m[mesCanon(s.name)]=s.code);return m;})();
+const mesYmd=d=>{const x=d||new Date();return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0');};
+function mesHo(name){ const m=/^(\d+)\s*호기/.exec(String(name||'')); return m?String(+m[1]).padStart(2,'0'):''; }
+function mesMachine(){ return workSession.machineCode||(document.getElementById('machineSelect')||{}).value||''; }
+async function mesFetch(ymd,ho,days){
+  let q='daily_downtime?select=ymd,machine_code,machine_name,run_min,stop_min,planned_min,rate,stop_events,planned_events,updated_at&machine_name=like.'+ho+'_*';
+  q+=days?('&ymd=gte.'+days+'&ymd=lte.'+ymd+'&order=ymd.desc'):('&ymd=eq.'+ymd);
+  return await sbReq('GET',q)||[];
+}
+function mesSum(row){
+  const by={}, miss={};
+  (row.stop_events||[]).concat(row.planned_events||[]).forEach(e=>{
+    const c=MES_NAME2CODE[mesCanon(e.name)], v=+e.min||0;
+    if(c) by[c]=(by[c]||0)+v; else miss[e.name||e.code||'?']=(miss[e.name||e.code||'?']||0)+v;
+  });
+  return {by,miss};
+}
+let mesBusy=false;
+async function mesApply(manual){
+  const info=document.getElementById('mesInfo'), dEl=document.getElementById('mesDate');
+  if(!dEl.value) dEl.value=mesYmd();
+  if(!manual&&!document.getElementById('mesAuto').checked) return;
+  const mc=mesMachine(), ho=mesHo(mc);
+  if(!mc){ info.textContent='호기를 고르면 그 날짜의 MES 정지시간을 사유별로 자동으로 넣습니다.'; return; }
+  if(!ho){ info.textContent='호기 번호를 알 수 없습니다: '+mc; return; }
+  if(mesBusy) return; mesBusy=true;
+  try{
+    const ymd=dEl.value, rows=await mesFetch(ymd,ho);
+    if(!rows.length){ info.innerHTML='<b>'+ymd+' '+ho+'호기</b> MES 정지 자료가 아직 없습니다 (MES 동기화 후 자동 반영).'; return; }
+    const r=rows[0], {by,miss}=mesSum(r);
+    const manualNow=STOP_CODES.some(s=>state[s.code]&&!state[s.code].mes&&state[s.code].totalMs>0);
+    if(manual&&manualNow&&!confirm('직접 잰 정지시간이 있습니다.\nMES 값으로 바꿀까요? (작동 중인 카운터는 그대로)')) return;
+    if(!manual&&manualNow) { info.innerHTML='직접 잰 정지시간이 있어 자동 반영을 멈췄습니다 — [지금 불러오기]로 MES 값으로 바꿀 수 있습니다.'; return; }
+    let n=0;
+    STOP_CODES.forEach(s=>{ const st=state[s.code]||(state[s.code]={totalMs:0,startedAt:null});
+      if(st.startedAt) return;                                    /* 작동 중 카운터는 유지 */
+      st.totalMs=Math.round((by[s.code]||0)*60000); st.mes=true; if(by[s.code]) n++; });
+    saveState(); try{updateUI();}catch(e){}
+    const tot=Object.values(by).reduce((a,v)=>a+v,0), mk=Object.entries(miss);
+    const up=r.updated_at?new Date(r.updated_at):null;
+    info.innerHTML='<b>'+ymd+' '+esc2(r.machine_name)+'</b> MES 정지 '+n+'개 사유 · '+Math.round(tot)+'분 반영 (가동 '+Math.round(+r.run_min||0)+'분 · 가동률 '+(r.rate!=null?r.rate+'%':'-')+')'
+      +(up?' · MES '+(up.getMonth()+1)+'/'+up.getDate()+' '+String(up.getHours()).padStart(2,'0')+':'+String(up.getMinutes()).padStart(2,'0')+' 기준':'')
+      +(mk.length?'<br><span style="color:#b45309">이 화면에 없는 사유: '+mk.map(([k,v])=>esc2(k)+' '+Math.round(v)+'분').join(', ')+'</span>':'');
+  }catch(e){ info.textContent='MES 정지시간 불러오기 실패: '+e.message; }
+  finally{ mesBusy=false; }
+}
+function esc2(v){ return String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+async function mesDaily(){
+  const mc=mesMachine(), ho=mesHo(mc), B=document.getElementById('mesDailyBody');
+  if(!ho){ alert('호기를 먼저 고르세요'); return; }
+  const to=document.getElementById('mesDate').value||mesYmd(), f=new Date(to); f.setDate(f.getDate()-30);
+  B.textContent='불러오는 중…'; document.getElementById('mesDailyModal').classList.add('show');
+  try{
+    const rows=await mesFetch(to,ho,mesYmd(f));
+    if(!rows.length){ B.textContent='MES 자료가 없습니다.'; return; }
+    const fm=v=>{v=Math.round(+v||0);return Math.floor(v/60)+':'+String(v%60).padStart(2,'0');};
+    B.innerHTML='<div style="margin-bottom:6px;color:#475569">'+esc2(rows[0].machine_name)+' · 최근 31일 · 시간 = 시:분 · 날짜를 누르면 그 날짜를 위 카운터에 넣습니다</div>'
+      +'<table style="width:100%;border-collapse:collapse"><thead><tr style="background:#f1f5f9">'
+      +['일자','가동','정지(가동률 적용)','계획정지','가동률','주요 정지 사유'].map(h=>'<th style="padding:4px;border:1px solid #e2e8f0">'+h+'</th>').join('')+'</tr></thead><tbody>'
+      +rows.map(r=>{ const {by,miss}=mesSum(r); const top=Object.entries(by).map(([c,v])=>[(STOP_CODES.find(s=>s.code===c)||{}).name||c,v]).concat(Object.entries(miss))
+          .sort((a,b)=>b[1]-a[1]).slice(0,3).map(([k,v])=>esc2(k)+' '+Math.round(v)+'분').join(', ');
+        return '<tr><td style="padding:4px;border:1px solid #e2e8f0"><a href="#" onclick="document.getElementById(\'mesDate\').value=\''+r.ymd+'\';document.getElementById(\'mesDailyModal\').classList.remove(\'show\');mesApply(true);return false">'+r.ymd+'</a></td>'
+          +'<td style="padding:4px;border:1px solid #e2e8f0;text-align:right">'+fm(r.run_min)+'</td><td style="padding:4px;border:1px solid #e2e8f0;text-align:right">'+fm(r.stop_min)+'</td>'
+          +'<td style="padding:4px;border:1px solid #e2e8f0;text-align:right">'+fm(r.planned_min)+'</td><td style="padding:4px;border:1px solid #e2e8f0;text-align:right">'+(r.rate!=null?r.rate+'%':'-')+'</td>'
+          +'<td style="padding:4px;border:1px solid #e2e8f0;text-align:left;font-weight:400">'+top+'</td></tr>'; }).join('')+'</tbody></table>';
+  }catch(e){ B.textContent='불러오기 실패: '+e.message; }
+}
+setInterval(()=>{ if(mesMachine()) mesApply(false); }, 5*60*1000);
+
 // 페이지 로드 시 자동 초기화
 initSupabaseSession();
+setTimeout(()=>mesApply(false), 2500);
 // ★ 페이지 로드 후 사용 소재 자동 로드 (호기가 있으면)
 setTimeout(loadAttachedMaterials, 1500);
 
