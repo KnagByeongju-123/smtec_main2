@@ -4,7 +4,7 @@
 <script src="audit.js?v=7"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>생산 카운터 v3.12</title>
+<title>생산 카운터 v3.13</title>
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body {
@@ -1126,7 +1126,7 @@
 </head>
 <body>
 
-<h1>🕒 생산 카운터 v3.12</h1>
+<h1>🕒 생산 카운터 v3.13</h1>
 
 <!-- ★ Supabase 연동: 호기/작업자 + 작업시작/종료 -->
 <div class="work-header">
@@ -1252,6 +1252,13 @@
     <button type="button" onclick="mesDaily()" style="font-size:12px;padding:4px 9px;border:1px solid #2563eb;background:#fff;color:#2563eb;border-radius:6px">📅 일자별 정지시간</button>
   </div>
   <div id="mesInfo" style="margin-top:4px;color:#334155">호기를 고르면 그 날짜의 MES 정지시간을 사유별로 자동으로 넣습니다.</div>
+</div>
+
+<div id="lotBox" style="margin:8px 0;padding:9px 11px;border:1px solid #fcd34d;background:#fffbeb;border-radius:10px;font-size:12.5px;color:#78350f">
+  <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:baseline"><b>🏷️ 재가동 LOT 구분</b>
+    <span style="color:#92400e">비계획 정지(5분 이상) 후 재가동하면 새 LOT (생산LOT-순번)</span>
+    <span style="margin-left:auto">현재 LOT <b id="lotNow" style="font-size:16px;color:#b45309">-</b></span></div>
+  <div id="lotList" style="margin-top:5px"></div>
 </div>
 
 <div class="section-title">🔧 고장 정지 (CL-)</div>
@@ -1681,6 +1688,7 @@ function toggleCode(code) {
   const s = state[code];
   s.mes = false;                         /* 직접 잰 값 — MES 자동 반영이 덮어쓰지 않음 */
   if (s.startedAt) {
+    try{ lotManualStop(code, s.startedAt, Date.now()); }catch(e){ console.warn('재가동 LOT 기록:',e); }
     // 정지: 누적 후 멈춤
     s.totalMs += Date.now() - s.startedAt;
     s.startedAt = null;
@@ -2809,6 +2817,83 @@ async function mesDaily(){
   }catch(e){ B.textContent='불러오기 실패: '+e.message; }
 }
 setInterval(()=>{ if(mesMachine()) mesApply(false); }, 5*60*1000);
+
+/* ===== 재가동 LOT 구분 (SQ 1_2 설비 가동중단 후 재가동) =====
+   비계획 정지(type 'unplanned' — 금형셋팅·교체, 설비이상, 부품가공대기, 금형점검, 소재입고대기)가 끝나 재가동하면 새 LOT.
+   LOT = 생산일(YYYYMMDD)-순번 : 시업~첫 비계획 정지 = -1, 재가동 후 = -2 … (LOT_MIN 분 미만 짧은 정지는 나누지 않음)
+   정지 구간 : 그 날 MES 정지 이벤트(시각 포함) 우선, MES 자료가 없으면 이 화면에서 직접 잰 비계획 정지(카운터 정지 시각)
+   재가동 초품 확인 : kv_store 'stop_restart_lot_v1' = { 'YYYY-MM-DD|호기번호': { manual:[{code,name,start,end}], first:{순번:{res,by,at,memo}} } } */
+const LOT_KEY='stop_restart_lot_v1', LOT_MIN=5;   /* LOT_MIN 분 미만 짧은 정지는 LOT 유지 */
+let LOTD={}, lotMes={};               /* lotMes['ymd|ho'] = MES 이벤트 캐시 */
+const lotType=c=>(STOP_CODES.find(s=>s.code===c)||{}).type;
+const hhmm=t=>{const d=new Date(t);return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');};
+function lotKey(){ const ho=mesHo(mesMachine()), d=(document.getElementById('mesDate')||{}).value||mesYmd(); return ho?d+'|'+ho:''; }
+async function lotLoad(){
+  try{ const r=await sbReq('GET','kv_store?key=eq.'+LOT_KEY+'&select=value'); LOTD=(r&&r[0]&&r[0].value)||{}; }catch(e){ console.warn('LOT 불러오기',e); }
+}
+async function lotSave(fn){
+  await lotLoad(); fn(LOTD);                               /* 최신본에 반영 — 다른 기기 기록 보호 */
+  await fetch(SB_URL+'/rest/v1/kv_store?on_conflict=key',{method:'POST',
+    headers:{apikey:SB_KEY,Authorization:'Bearer '+SB_KEY,'Content-Type':'application/json',Prefer:'resolution=merge-duplicates,return=minimal'},
+    body:JSON.stringify({key:LOT_KEY,value:LOTD})}).then(r=>{ if(!r.ok) throw new Error('HTTP '+r.status); });
+}
+function lotManualStop(code,start,end){
+  if(lotType(code)!=='unplanned'||end-start<LOT_MIN*60000) return;
+  const ho=mesHo(mesMachine()); if(!ho) return;
+  const k=mesYmd(new Date(start))+'|'+ho, nm=(STOP_CODES.find(s=>s.code===code)||{}).name||code;
+  lotSave(D=>{ const x=D[k]||(D[k]={}); (x.manual=x.manual||[]).push({code,name:nm,start:hhmm(start),end:hhmm(end)}); }).then(lotRender).catch(e=>console.warn(e));
+}
+/* 그 날 비계획 정지 구간 [{start,end,name,min,src}] */
+function lotAll(k){
+  const m=lotMes[k];
+  if(m&&m.length) return m;
+  return ((LOTD[k]||{}).manual||[]).map(e=>({start:e.start,end:e.end,name:e.name,min:null,src:'직접'}));
+}
+const lotStops=k=>lotAll(k).filter(e=>e.min==null||e.min>=LOT_MIN);
+async function lotFetchMes(k){
+  const [ymd,ho]=k.split('|');
+  try{ const rows=await mesFetch(ymd,ho); const r=rows[0];
+    lotMes[k]=r?(r.stop_events||[]).concat(r.planned_events||[]).filter(e=>{ const c=MES_NAME2CODE[mesCanon(e.name)]; return c&&lotType(c)==='unplanned'; })
+      .map(e=>({start:e.start,end:e.end,name:e.name,min:+e.min||0,src:'MES'})).sort((a,b)=>String(a.start).localeCompare(String(b.start))):[];
+  }catch(e){ lotMes[k]=[]; }
+}
+async function lotRefresh(){ const k=lotKey(); if(!k){ lotRender(); return; } await lotLoad(); await lotFetchMes(k); lotRender(); }
+function lotRender(){
+  const L=document.getElementById('lotList'), N=document.getElementById('lotNow'); if(!L) return;
+  const k=lotKey(); if(!k){ N.textContent='-'; L.innerHTML='<span style="color:#92400e">호기를 고르면 LOT 구간이 나옵니다.</span>'; return; }
+  const [ymd]=k.split('|'), base=ymd.replace(/-/g,''), st=lotStops(k), F=(LOTD[k]||{}).first||{};
+  let h='<table style="width:100%;border-collapse:collapse;font-size:12px"><tr style="background:#fef3c7"><th style="padding:3px;border:1px solid #fde68a">LOT</th><th style="padding:3px;border:1px solid #fde68a">구간</th><th style="padding:3px;border:1px solid #fde68a">재가동 초품</th></tr>';
+  const rows=[{seq:1,from:'시업',to:st[0]?st[0].start:'',stop:null}];
+  st.forEach((e,i)=>rows.push({seq:i+2,from:e.end,to:st[i+1]?st[i+1].start:'',stop:e}));
+  rows.forEach(r=>{ const lot=base+'-'+r.seq, f=F[r.seq];
+    if(r.stop) h+='<tr><td colspan="3" style="padding:3px 6px;border:1px solid #fde68a;background:#fff7ed;color:#9a3412">⏸ 비계획 정지 '+esc2(r.stop.start)+'~'+esc2(r.stop.end)+' '+esc2(r.stop.name)+(r.stop.min?' '+Math.round(r.stop.min)+'분':'')+' <span style="color:#a8a29e">('+r.stop.src+')</span></td></tr>';
+    h+='<tr><td style="padding:3px 6px;border:1px solid #fde68a;font-weight:800;color:#b45309;white-space:nowrap">'+lot+'</td><td style="padding:3px 6px;border:1px solid #fde68a">'+esc2(r.from)+' ~ '+esc2(r.to||'종료')+'</td><td style="padding:3px 6px;border:1px solid #fde68a">'
+      +(r.seq===1?'<span style="color:#a8a29e">시업 초품(기존 절차)</span>'
+        :f?'<b style="color:'+(f.res==='OK'?'#15803d':'#b91c1c')+'">'+esc2(f.res)+'</b> '+esc2(f.by)+' '+esc2(String(f.at).slice(11,16))+(f.memo?' · '+esc2(f.memo):'')
+        :'<button type="button" onclick="lotFirst('+r.seq+')" style="font-size:11.5px;padding:2px 8px;border:1px solid #d97706;background:#fff;color:#b45309;border-radius:6px">초품 확인</button>')+'</td></tr>'; });
+  const sh=lotAll(k).filter(e=>e.min!=null&&e.min<LOT_MIN);
+  h+='</table>'+(st.length?'':'<div style="color:#92400e;margin-top:3px">'+LOT_MIN+'분 이상 비계획 정지 없음 — 하루 한 LOT</div>')
+    +(sh.length?'<div style="color:#a8a29e;margin-top:3px">'+LOT_MIN+'분 미만 짧은 정지 '+sh.length+'건은 LOT 유지 ('+sh.map(e=>esc2(e.start)+' '+esc2(e.name)).join(', ')+')</div>':'');
+  L.innerHTML=h; N.textContent=base+'-'+rows.length;
+}
+async function lotFirst(seq){
+  const k=lotKey(); if(!k) return;
+  const lot=k.split('|')[0].replace(/-/g,'')+'-'+seq;
+  const res=prompt(lot+' 재가동 초품 확인 결과\nOK 또는 NG','OK'); if(res==null) return;
+  const rv=String(res).trim().toUpperCase(); if(!/^(OK|NG)$/.test(rv)){ alert('OK 또는 NG 로 입력하세요'); return; }
+  const memo=rv==='NG'?(prompt('NG 내용·조치 (필수)','')||'').trim():'';
+  if(rv==='NG'&&!memo){ alert('NG 이면 내용·조치를 적어 주세요'); return; }
+  /* 확인자 = 로그인(PIN) 사용자 → 작업 시작한 작업자(게스트 제외) */
+  const au=(()=>{try{return JSON.parse(localStorage.getItem('tj_audit_user')||'{}').name||'';}catch(e){return '';}})();
+  const ww=workSession.worker||{}, by=au||(ww.id!=='GUEST'&&ww.name!=='게스트'?ww.name:'');
+  if(!by){ alert('확인자 이름이 있어야 기록합니다'); return; }
+  try{ await lotSave(D=>{ const x=D[k]||(D[k]={}); (x.first=x.first||{})[seq]={res:rv,by,memo,at:new Date().toISOString()}; }); lotRender(); }
+  catch(e){ alert('저장 실패: '+e.message); }
+}
+document.getElementById('machineSelect').addEventListener('change',()=>lotRefresh());
+document.getElementById('mesDate').addEventListener('change',()=>lotRefresh());
+setInterval(()=>{ if(mesMachine()) lotRefresh(); }, 5*60*1000);
+setTimeout(lotRefresh, 3000);
 
 // 페이지 로드 시 자동 초기화
 initSupabaseSession();
