@@ -4,7 +4,7 @@
 <script src="audit.js?v=7"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>생산 카운터 v3.14</title>
+<title>생산 카운터 v3.15</title>
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body {
@@ -1126,7 +1126,7 @@
 </head>
 <body>
 
-<h1>🕒 생산 카운터 v3.14</h1>
+<h1>🕒 생산 카운터 v3.15</h1>
 
 <!-- ★ Supabase 연동: 호기/작업자 + 작업시작/종료 -->
 <div class="work-header">
@@ -1256,7 +1256,7 @@
 
 <div id="lotBox" style="margin:8px 0;padding:9px 11px;border:1px solid #fcd34d;background:#fffbeb;border-radius:10px;font-size:12.5px;color:#78350f">
   <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:baseline"><b>🏷️ 재가동 LOT 구분</b>
-    <span style="color:#92400e">비계획 정지·계획정지(물동) 5분 이상 후 재가동하면 새 LOT (생산LOT-순번)</span>
+    <span style="color:#92400e">생산계획(작업지시) 종료 후 재가동 · 비계획 정지 5분 이상 후 재가동 → 새 LOT (생산LOT-순번)</span>
     <span style="margin-left:auto">현재 LOT <b id="lotNow" style="font-size:16px;color:#b45309">-</b></span></div>
   <div id="lotList" style="margin-top:5px"></div>
 </div>
@@ -2819,15 +2819,15 @@ async function mesDaily(){
 setInterval(()=>{ if(mesMachine()) mesApply(false); }, 5*60*1000);
 
 /* ===== 재가동 LOT 구분 (SQ 1_2 설비 가동중단 후 재가동) =====
-   비계획 정지 + 계획정지(물동 UL-Z001) (type 'unplanned' — 금형셋팅·교체, 설비이상, 부품가공대기, 금형점검, 소재입고대기)가 끝나 재가동하면 새 LOT.
+   ① 생산계획(MES 작업지시 WO) 종료 후 다음 작업지시로 재가동하면 새 LOT
+   ② 작업 중 비계획 정지(type 'unplanned' — 금형셋팅·교체, 설비이상, 부품가공대기, 금형점검, 소재입고대기)가 끝나 재가동하면 새 LOT.
    LOT = 생산일(YYYYMMDD)-순번 : 시업~첫 비계획 정지 = -1, 재가동 후 = -2 … (LOT_MIN 분 미만 짧은 정지는 나누지 않음)
    정지 구간 : 그 날 MES 정지 이벤트(시각 포함) 우선, MES 자료가 없으면 이 화면에서 직접 잰 비계획 정지(카운터 정지 시각)
    재가동 초품 확인 : kv_store 'stop_restart_lot_v1' = { 'YYYY-MM-DD|호기번호': { manual:[{code,name,start,end}], first:{순번:{res,by,at,memo}} } } */
 const LOT_KEY='stop_restart_lot_v1', LOT_MIN=5;   /* LOT_MIN 분 미만 짧은 정지는 LOT 유지 */
 let LOTD={}, lotMes={};               /* lotMes['ymd|ho'] = MES 이벤트 캐시 */
 const lotType=c=>(STOP_CODES.find(s=>s.code===c)||{}).type;
-const LOT_SPLIT_PLAN=['UL-Z001'];                  /* 계획정지 중 LOT 를 나누는 코드 — 계획정지(물동). 식사·3정5행 등은 LOT 유지 */
-const lotSplits=c=>lotType(c)==='unplanned'||LOT_SPLIT_PLAN.includes(c);
+const lotSplits=c=>lotType(c)==='unplanned';      /* 정지로 LOT 를 나누는 것은 비계획 정지만 (계획정지·식사 등은 LOT 유지) */
 const hhmm=t=>{const d=new Date(t);return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');};
 function lotKey(){ const ho=mesHo(mesMachine()), d=(document.getElementById('mesDate')||{}).value||mesYmd(); return ho?d+'|'+ho:''; }
 async function lotLoad(){
@@ -2854,9 +2854,20 @@ function lotAll(k){
 const hm2min=t=>{const m=/^(\d{1,2}):(\d{2})/.exec(String(t||''));return m?(+m[1])*60+(+m[2]):null;};
 /* 시업 시각(작업 시작) 이전에 시작한 정지는 시업 전 정지 — 생산이 없으므로 LOT 를 나누지 않음 */
 const lotStops=k=>lotAll(k).filter(e=>(e.min==null||e.min>=LOT_MIN)&&!(hm2min(e.start)!=null&&hm2min(e.start)<=((workTime&&workTime.startMin)||480)));
+let lotWo={};                          /* lotWo['ymd|ho'] = [{wo,item,start,end,shot}] MES 작업지시 */
+async function lotFetchWo(k,mcode){
+  const [ymd,ho]=k.split('|');
+  try{
+    let mc=mcode;
+    if(!mc){ const x=await sbReq('GET','daily_downtime?select=machine_code&machine_name=like.'+ho+'_*&order=ymd.desc&limit=1'); mc=x&&x[0]&&x[0].machine_code; }
+    if(!mc){ lotWo[k]=[]; return; }
+    const w=await sbReq('GET','daily_production?select=item_code,item_name,work_order_no,shot_qty,start_time,end_time&ymd=eq.'+ymd+'&machine_code=eq.'+mc+'&order=start_time.asc')||[];
+    lotWo[k]=w.filter(x=>x.start_time).map(x=>({wo:x.work_order_no||'',item:x.item_code||'',start:x.start_time,end:x.end_time||'',shot:+x.shot_qty||0}));
+  }catch(e){ lotWo[k]=[]; }
+}
 async function lotFetchMes(k){
   const [ymd,ho]=k.split('|');
-  try{ const rows=await mesFetch(ymd,ho); const r=rows[0];
+  try{ const rows=await mesFetch(ymd,ho); const r=rows[0]; await lotFetchWo(k,r&&r.machine_code);
     lotMes[k]=r?(r.stop_events||[]).concat(r.planned_events||[]).filter(e=>{ const c=MES_NAME2CODE[mesCanon(e.name)]; return c&&lotSplits(c); })
       .map(e=>({start:e.start,end:e.end,name:e.name,min:+e.min||0,src:'MES'})).sort((a,b)=>String(a.start).localeCompare(String(b.start))):[];
   }catch(e){ lotMes[k]=[]; }
@@ -2865,18 +2876,28 @@ async function lotRefresh(){ const k=lotKey(); if(!k){ lotRender(); return; } aw
 function lotRender(){
   const L=document.getElementById('lotList'), N=document.getElementById('lotNow'); if(!L) return;
   const k=lotKey(); if(!k){ N.textContent='-'; L.innerHTML='<span style="color:#92400e">호기를 고르면 LOT 구간이 나옵니다.</span>'; return; }
-  const [ymd]=k.split('|'), base=ymd.replace(/-/g,''), st=lotStops(k), F=(LOTD[k]||{}).first||{};
-  let h='<table style="width:100%;border-collapse:collapse;font-size:12px"><tr style="background:#fef3c7"><th style="padding:3px;border:1px solid #fde68a">LOT</th><th style="padding:3px;border:1px solid #fde68a">구간</th><th style="padding:3px;border:1px solid #fde68a">재가동 초품</th></tr>';
-  const rows=[{seq:1,from:'시업',to:st[0]?st[0].start:'',stop:null}];
-  st.forEach((e,i)=>rows.push({seq:i+2,from:e.end,to:st[i+1]?st[i+1].start:'',stop:e}));
-  rows.forEach(r=>{ const lot=base+'-'+r.seq, f=F[r.seq];
-    if(r.stop) h+='<tr><td colspan="3" style="padding:3px 6px;border:1px solid #fde68a;background:#fff7ed;color:#9a3412">⏸ 정지 '+esc2(r.stop.start)+'~'+esc2(r.stop.end)+' '+esc2(r.stop.name)+(r.stop.min?' '+Math.round(r.stop.min)+'분':'')+' <span style="color:#a8a29e">('+r.stop.src+')</span></td></tr>';
-    h+='<tr><td style="padding:3px 6px;border:1px solid #fde68a;font-weight:800;color:#b45309;white-space:nowrap">'+lot+'</td><td style="padding:3px 6px;border:1px solid #fde68a">'+esc2(r.from)+' ~ '+esc2(r.to||'종료')+'</td><td style="padding:3px 6px;border:1px solid #fde68a">'
+  const [ymd]=k.split('|'), base=ymd.replace(/-/g,''), F=(LOTD[k]||{}).first||{}, W=lotWo[k]||[];
+  /* 작업지시가 있으면 그 생산 시간 안의 정지만 (작업지시 사이 공백의 정지는 작업지시 경계가 이미 LOT 를 나눔) */
+  /* 정지가 한 작업지시 생산 시간 안에서 시작·끝나야 LOT 를 나눔 (작업지시를 걸친 정지는 작업지시 경계가 나눔) */
+  const inRun=e=>!W.length||W.some(w=>{const a=hm2min(w.start),b=hm2min(w.end)??1440;return hm2min(e.start)>=a&&hm2min(e.end)<=b;});
+  const st=lotStops(k).filter(inRun);
+  const B=st.map(e=>({t:e.end,cut:e.start,kind:'stop',e})).concat(W.slice(1).map((w,i)=>({t:w.start,cut:W[i].end,kind:'wo',w,prev:W[i]})))
+    .sort((x,y)=>hm2min(x.t)-hm2min(y.t));
+  const itemAt=t=>{ const w=W.filter(x=>hm2min(x.start)<=hm2min(t)).pop()||W[0]; return w?w.item+(w.wo?' ('+w.wo+')':''):''; };
+  let h='<table style="width:100%;border-collapse:collapse;font-size:12px"><tr style="background:#fef3c7"><th style="padding:3px;border:1px solid #fde68a">LOT</th><th style="padding:3px;border:1px solid #fde68a">구간 · 품번(작업지시)</th><th style="padding:3px;border:1px solid #fde68a">재가동 초품</th></tr>';
+  const rows=[{seq:1,from:W[0]?W[0].start:'시업',to:B[0]?B[0].cut:(W.length?W[W.length-1].end:''),sep:null}];
+  B.forEach((x,i)=>rows.push({seq:i+2,from:x.t,to:B[i+1]?B[i+1].cut:(W.length?W[W.length-1].end:''),sep:x}));
+  rows.forEach(r=>{ const lot=base+'-'+r.seq, f=F[r.seq], x=r.sep;
+    if(x&&x.kind==='stop') h+='<tr><td colspan="3" style="padding:3px 6px;border:1px solid #fde68a;background:#fff7ed;color:#9a3412">⏸ 비계획 정지 '+esc2(x.e.start)+'~'+esc2(x.e.end)+' '+esc2(x.e.name)+(x.e.min?' '+Math.round(x.e.min)+'분':'')+' <span style="color:#a8a29e">('+x.e.src+')</span></td></tr>';
+    if(x&&x.kind==='wo') h+='<tr><td colspan="3" style="padding:3px 6px;border:1px solid #fde68a;background:#eef2ff;color:#3730a3">⏹ 생산계획 종료 '+esc2(x.prev.end)+' ('+esc2(x.prev.item)+' '+esc2(x.prev.wo)+' · '+x.prev.shot.toLocaleString()+'타) → 재가동 '+esc2(x.w.start)+'</td></tr>';
+    h+='<tr><td style="padding:3px 6px;border:1px solid #fde68a;font-weight:800;color:#b45309;white-space:nowrap">'+lot+'</td><td style="padding:3px 6px;border:1px solid #fde68a">'+esc2(r.from)+' ~ '+esc2(r.to||'종료')
+      +(W.length?'<div style="font-size:11px;color:#57534e">'+esc2(itemAt(r.from==='시업'?'00:00':r.from))+'</div>':'')+'</td><td style="padding:3px 6px;border:1px solid #fde68a">'
       +(r.seq===1?'<span style="color:#a8a29e">시업 초품(기존 절차)</span>'
         :f?'<b style="color:'+(f.res==='OK'?'#15803d':'#b91c1c')+'">'+esc2(f.res)+'</b> '+esc2(f.by)+' '+esc2(String(f.at).slice(11,16))+(f.memo?' · '+esc2(f.memo):'')
         :'<button type="button" onclick="lotFirst('+r.seq+')" style="font-size:11.5px;padding:2px 8px;border:1px solid #d97706;background:#fff;color:#b45309;border-radius:6px">초품 확인</button>')+'</td></tr>'; });
   const sh=lotAll(k).filter(e=>e.min!=null&&e.min<LOT_MIN);
-  h+='</table>'+(st.length?'':'<div style="color:#92400e;margin-top:3px">'+LOT_MIN+'분 이상 비계획·계획정지(물동) 없음 — 하루 한 LOT</div>')
+  h+='</table>'+(B.length?'':'<div style="color:#92400e;margin-top:3px">생산계획 재가동·'+LOT_MIN+'분 이상 비계획 정지 없음 — 하루 한 LOT</div>')
+    +(W.length?'':'<div style="color:#a8a29e;margin-top:3px">MES 작업지시 자료 없음 — 정지 기준으로만 나눔</div>')
     +(sh.length?'<div style="color:#a8a29e;margin-top:3px">'+LOT_MIN+'분 미만 짧은 정지 '+sh.length+'건은 LOT 유지 ('+sh.map(e=>esc2(e.start)+' '+esc2(e.name)).join(', ')+')</div>':'');
   L.innerHTML=h; N.textContent=base+'-'+rows.length;
 }
