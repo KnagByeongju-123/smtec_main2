@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<script src="audit.js?v=7"></script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>공정이동표 (파렛트) v1.0</title>
+<style>
+:root{--bg:#eef2f6;--card:#fff;--ink:#16202b;--sub:#6b7a89;--line:#dbe3ea;--blue:#1b4b7d;--blue2:#2668a8;--green:#1f8a4c;--red:#c0392b;--amber:#b7791f}
+*{box-sizing:border-box}
+body{margin:0;font-family:'Malgun Gothic','Apple SD Gothic Neo',sans-serif;background:var(--bg);color:var(--ink);font-size:16px}
+header{background:var(--blue);color:#fff;padding:12px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+header h1{margin:0;font-size:20px}
+header .who{margin-left:auto;font-size:13px;opacity:.85}
+.tabs{display:flex;gap:6px;padding:10px 16px 0}
+.tabs button{flex:1;max-width:220px;padding:14px 10px;font-size:18px;font-weight:800;border:0;border-radius:10px 10px 0 0;background:#d5dee8;color:#33475b;cursor:pointer}
+.tabs button.on{background:var(--card);color:var(--blue)}
+.pane{display:none;background:var(--card);margin:0 16px 16px;padding:16px;border-radius:0 10px 10px 10px}
+.pane.on{display:block}
+.row{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.f{display:flex;flex-direction:column;gap:4px;min-width:180px;flex:1}
+.f label{font-size:13px;color:var(--sub);font-weight:700}
+.f input,.f select{font-size:20px;padding:10px 12px;border:2px solid var(--line);border-radius:8px;background:#fff}
+.f input:focus,.f select:focus{border-color:var(--blue2);outline:0}
+.big{font-size:22px;font-weight:800;padding:16px 22px;border:0;border-radius:10px;background:var(--blue2);color:#fff;cursor:pointer}
+.big.g{background:var(--green)}.big:disabled{opacity:.45;cursor:default}
+.sm{font-size:13px;padding:6px 10px;border:1px solid var(--line);border-radius:6px;background:#f5f7fa;cursor:pointer}
+.info{background:#f5f8fb;border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:15px;line-height:1.6;margin-bottom:12px}
+.warn{background:#fdecea;border:1px solid #f5b7b1;color:var(--red);border-radius:8px;padding:10px 12px;font-weight:700;margin-bottom:12px}
+.ok{background:#e8f6ee;border:1px solid #a9dfbf;color:var(--green);border-radius:8px;padding:10px 12px;font-weight:700;margin-bottom:12px}
+#scan{font-size:26px;padding:16px;letter-spacing:1px}
+.tag{border:2px solid var(--blue);border-radius:10px;padding:12px 14px;margin-bottom:12px}
+.tag .no{font-size:22px;font-weight:900;color:var(--blue)}
+.tag table{border-collapse:collapse;width:100%;margin-top:6px}
+.tag td{padding:4px 6px;border-bottom:1px solid var(--line);font-size:17px}
+.tag td:first-child{color:var(--sub);width:120px;font-size:14px}
+table.list{border-collapse:collapse;width:100%;font-size:14px}
+table.list th,table.list td{border:1px solid var(--line);padding:6px 8px;text-align:left}
+table.list th{background:#eef2fa}
+.num{text-align:right!important}
+.muted{color:var(--sub);font-size:13px}
+h3{margin:16px 0 8px;font-size:17px}
+#toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#16202b;color:#fff;padding:12px 18px;border-radius:8px;font-size:16px;display:none;z-index:9}
+@media (max-width:640px){.f{min-width:100%}.tabs button{font-size:16px}}
+</style>
+</head>
+<body>
+<header><h1>🏷️ 공정이동표 (파렛트)</h1><span class="muted" style="color:#cfe0f3">블랭킹 → 후공정 프레스 로트 연결</span><span class="who" id="who"></span></header>
+<div class="tabs"><button data-t="issue" class="on">① 발행 (블랭킹)</button><button data-t="use">② 투입 (후공정)</button><button data-t="list">③ 재공·이력</button></div>
+
+<div class="pane on" id="p-issue">
+  <div class="row">
+    <div class="f"><label>블랭킹 설비</label><select id="i_mc"></select></div>
+    <div class="f"><label>블랭크 품번</label><select id="i_item"></select></div>
+  </div>
+  <div class="info" id="i_now">설비 정보를 불러오는 중…</div>
+  <div class="row">
+    <div class="f"><label>코일 로트 (MES 현재·최근 사용 로트)</label><select id="i_lot"></select></div>
+    <div class="f" id="i_lot2w" style="display:none"><label>로트 직접 입력</label><input id="i_lot2" placeholder="예: CWK2709B-3"></div>
+  </div>
+  <div class="row">
+    <div class="f"><label>파렛트 수량 (EA)</label><input id="i_qty" type="number" inputmode="numeric" min="1" placeholder="예: 1500"></div>
+    <div class="f"><label>작업자</label><input id="i_wk"></div>
+  </div>
+  <button class="big" id="i_go">이동표 발행 · 출력</button>
+  <p class="muted">발행하면 QR이 들어간 이동표가 출력됩니다. 파렛트에 부착하세요. 같은 날 같은 설비 순번(-01, -02 …)이 자동으로 붙습니다.</p>
+</div>
+
+<div class="pane" id="p-use">
+  <div class="row"><div class="f" style="min-width:100%"><label>이동표 QR 스캔 (스캐너로 찍거나 번호 입력 후 Enter)</label><input id="scan" placeholder="MT-261109-005-01" autocomplete="off"></div></div>
+  <div id="u_box"></div>
+</div>
+
+<div class="pane" id="p-list">
+  <div class="row" style="align-items:end"><div class="f" style="max-width:260px"><label>품번 필터</label><select id="l_item"><option value="">전체</option></select></div><button class="sm" id="l_reload">새로고침</button></div>
+  <h3>재공 (발행 · 미투입)</h3><div id="l_wip"></div>
+  <h3>최근 투입 (14일)</h3><div id="l_used"></div>
+</div>
+<div id="toast"></div>
+
+<script src="lib/qrcode-generator-1.4.4.js"></script>
+<script>
+const SB='https://omngtyewdaqpphnzeate.supabase.co',KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tbmd0eWV3ZGFxcHBobnplYXRlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4ODk4ODksImV4cCI6MjA5MDQ2NTg4OX0.Zxur3t02JHtOcXforCMSwO3i2mMaf5sViE0tXXUC0-s';
+const H={apikey:KEY,Authorization:'Bearer '+KEY,'Content-Type':'application/json'};
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmt=n=>(+n||0).toLocaleString('ko-KR');
+const kst=()=>new Date(Date.now()+9*3600e3);
+const dt=s=>{if(!s)return'';const d=new Date(new Date(s).getTime()+9*3600e3);return (d.getUTCMonth()+1)+'/'+d.getUTCDate()+' '+String(d.getUTCHours()).padStart(2,'0')+':'+String(d.getUTCMinutes()).padStart(2,'0')};
+async function get(t,q){const r=await fetch(SB+'/rest/v1/'+t+'?'+q,{headers:H});if(!r.ok)throw new Error(t+' '+r.status);return r.json()}
+function toast(m,ms){const t=$('toast');t.textContent=m;t.style.display='block';clearTimeout(toast.h);toast.h=setTimeout(()=>t.style.display='none',ms||2500)}
+const me=()=>{try{const u=window.tjAudit&&tjAudit.user();return u&&u.name||''}catch(e){return''}};
+$('who').textContent=me()?('사용자 '+me()):'';
+
+let LINKS=[],MS=[],USE=[];
+async function loadBase(){
+  [LINKS,MS]=await Promise.all([get('process_link','select=child_item_code,parent_item_code,from_machine_code,to_machine_code&active=eq.true'),
+    get('machine_status','select=machine_code,machine_name,current_item_code,item_name,lot_no,current_wo,worker,is_virtual&order=machine_code.asc')]);
+  const par=[...new Set(LINKS.map(l=>l.parent_item_code))];
+  const since=new Date(Date.now()-14*864e5).toISOString().slice(0,10);
+  USE=par.length?await get('raw_use','select=use_date,machine_code,item_code,heat_no,shot_qty,start_time&item_code=in.('+par.map(x=>encodeURIComponent('"'+x+'"')).join(',')+')&use_date=gte.'+since+'&order=use_date.desc,start_time.desc&limit=300'):[];
+}
+const mcName=c=>{const m=MS.find(x=>x.machine_code===c);return m?m.machine_name:c};
+const mcLabel=c=>{const n=mcName(c);const m=/^(\d+)_(\d+)$/.exec(n||'');return m?(m[1]+'호기'):(n||c)};
+
+/* ① 발행 */
+function fillIssue(){
+  const mcs=[...new Set(LINKS.map(l=>l.from_machine_code))];
+  $('i_mc').innerHTML=mcs.map(c=>'<option value="'+c+'">'+esc(mcLabel(c))+'</option>').join('');
+  onMc();
+}
+function onMc(){
+  const c=$('i_mc').value,m=MS.find(x=>x.machine_code===c)||{};
+  const items=[...new Set(LINKS.filter(l=>l.from_machine_code===c).map(l=>l.parent_item_code))];
+  if(m.current_item_code&&items.includes(m.current_item_code))items.sort((a,b)=>a===m.current_item_code?-1:b===m.current_item_code?1:0);
+  $('i_item').innerHTML=items.map(i=>'<option>'+esc(i)+'</option>').join('');
+  $('i_wk').value=(m.worker||'').trim()||me();
+  onItem();
+}
+function onItem(){
+  const c=$('i_mc').value,it=$('i_item').value,m=MS.find(x=>x.machine_code===c)||{};
+  const nx=LINKS.filter(l=>l.parent_item_code===it).map(l=>l.child_item_code+' ('+mcLabel(l.to_machine_code)+')');
+  const same=m.current_item_code===it;
+  $('i_now').innerHTML='현재 '+esc(mcLabel(c))+' 작업: <b>'+esc(m.current_item_code||'-')+'</b>'+(m.current_wo?' · '+esc(m.current_wo):'')+(m.lot_no?' · 로트 <b>'+esc(m.lot_no)+'</b>':'')
+    +(same?'':' <span style="color:var(--red);font-weight:700">· 선택 품번과 현재 작업 품번이 다릅니다</span>')+'<br>다음 공정: '+esc(nx.join(', ')||'-');
+  const lots=[];if(same&&m.lot_no)lots.push([m.lot_no,'현재 투입']);
+  USE.filter(u=>u.item_code===it&&u.heat_no).forEach(u=>{if(!lots.some(x=>x[0]===u.heat_no))lots.push([u.heat_no,(+u.use_date.slice(5,7))+'/'+(+u.use_date.slice(8))+' 사용'])});
+  $('i_lot').innerHTML=lots.map(x=>'<option value="'+esc(x[0])+'">'+esc(x[0])+' ('+x[1]+')</option>').join('')+'<option value="__">직접 입력…</option>';
+  $('i_lot2w').style.display=lots.length?'none':'';if(!lots.length)$('i_lot').value='__';
+}
+$('i_mc').onchange=onMc;$('i_item').onchange=onItem;
+$('i_lot').onchange=()=>{$('i_lot2w').style.display=$('i_lot').value==='__'?'':'none'};
+$('i_go').onclick=async()=>{
+  const c=$('i_mc').value,it=$('i_item').value,m=MS.find(x=>x.machine_code===c)||{};
+  const lot=($('i_lot').value==='__'?$('i_lot2').value:$('i_lot').value).trim(),qty=Math.round(+$('i_qty').value),wk=$('i_wk').value.trim();
+  if(!it)return toast('블랭크 품번을 선택하세요');
+  if(!lot)return toast('코일 로트를 선택하거나 입력하세요');
+  if(!(qty>0))return toast('파렛트 수량을 입력하세요');
+  if(!wk)return toast('작업자를 입력하세요');
+  const link=LINKS.find(l=>l.parent_item_code===it)||{};
+  $('i_go').disabled=true;
+  try{
+    const d=kst(),ymd=String(d.getUTCFullYear()).slice(2)+String(d.getUTCMonth()+1).padStart(2,'0')+String(d.getUTCDate()).padStart(2,'0');
+    const pre='MT-'+ymd+'-'+c+'-';
+    const ex=await get('move_tag','select=tag_no&tag_no=like.'+encodeURIComponent(pre+'*'));
+    let seq=ex.reduce((a,x)=>Math.max(a,+x.tag_no.slice(pre.length)||0),0)+1,row=null;
+    for(let k=0;k<5&&!row;k++,seq++){
+      const body={tag_no:pre+String(seq).padStart(2,'0'),item_code:it,item_name:m.current_item_code===it?m.item_name:null,next_item_code:link.child_item_code||null,
+        lot_no:lot,qty,machine_code:c,machine_name:mcName(c),work_order_no:m.current_item_code===it?m.current_wo:null,worker:wk};
+      const r=await fetch(SB+'/rest/v1/move_tag',{method:'POST',headers:{...H,Prefer:'return=representation'},body:JSON.stringify(body)});
+      if(r.ok)row=(await r.json())[0];else if(r.status!==409)throw new Error('저장 실패 '+r.status+' '+(await r.text()).slice(0,120));
+    }
+    if(!row)throw new Error('이동표 번호 생성 실패');
+    toast('발행: '+row.tag_no,4000);$('i_qty').value='';
+    printTags([row]);
+  }catch(e){alert(e.message)}finally{$('i_go').disabled=false}
+};
+
+/* 이동표 출력 (A4 가로 1장 = 1매, 파렛트 부착) */
+function qrSvg(text,cell){const q=qrcode(0,'M');q.addData(text);q.make();return q.createSvgTag({cellSize:cell||6,margin:2,scalable:true})}
+function tagUrl(no){return location.origin+location.pathname+'#t='+encodeURIComponent(no)}
+function printTags(rows){
+  const w=window.open('','_blank','width=1000,height=760');if(!w)return alert('팝업이 차단되었습니다. 팝업을 허용해 주세요.');
+  const tr=(k,v,big)=>'<tr><th>'+k+'</th><td'+(big?' class="b"':'')+'>'+esc(v||'')+'</td></tr>';
+  const pages=rows.map(r=>'<section><div class="hd"><div><div class="t">공정이동표</div><div class="s">블랭킹 → 후공정 · 파렛트</div></div><div class="no">'+esc(r.tag_no)+'</div></div>'
+    +'<div class="bd"><table>'+tr('블랭크 품번',r.item_code,1)+tr('다음 공정 품번',r.next_item_code,1)+tr('코일 로트',r.lot_no,1)+tr('수량',fmt(r.qty)+' EA',1)
+    +tr('생산 일시',dt(r.made_at))+tr('블랭킹 설비',mcLabel(r.machine_code))+tr('작업지시',r.work_order_no)+tr('작업자',r.worker)
+    +'<tr><th>투입 확인</th><td class="sign">설비 :&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 일시 :&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 확인 :</td></tr></table>'
+    +'<div class="qr">'+qrSvg(tagUrl(r.tag_no))+'<div class="qn">'+esc(r.tag_no)+'</div><div class="qh">후공정 투입 시 QR 스캔</div></div></div></section>').join('');
+  w.document.write('<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><title>공정이동표 '+esc(rows.map(r=>r.tag_no).join(', '))+'</title><style>'
+    +'@page{size:A4 landscape;margin:10mm}body{margin:0;font-family:"Malgun Gothic",sans-serif;color:#000}section{page-break-after:always;border:3px solid #000;padding:6mm;height:186mm;box-sizing:border-box;display:flex;flex-direction:column}'
+    +'section:last-child{page-break-after:auto}.hd{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid #000;padding-bottom:3mm;margin-bottom:4mm}'
+    +'.t{font-size:34pt;font-weight:900}.s{font-size:12pt}.no{font-size:22pt;font-weight:900}.bd{display:flex;gap:6mm;flex:1}table{border-collapse:collapse;flex:1}'
+    +'th,td{border:1.5px solid #000;padding:2.2mm 3mm;font-size:15pt;text-align:left}th{width:42mm;background:#eee;font-size:13pt}td.b{font-size:24pt;font-weight:900}td.sign{height:16mm;font-size:12pt;vertical-align:top}'
+    +'.qr{width:78mm;text-align:center}.qr svg{width:78mm;height:78mm}.qn{font-size:14pt;font-weight:900;margin-top:2mm}.qh{font-size:11pt}'
+    +'</style></head><body>'+pages+'<script>setTimeout(function(){print()},300)<\/script></body></html>');
+  w.document.close();
+}
+
+/* ② 투입 */
+function parseTag(s){s=String(s||'').trim();const m=/#t=([^&\s]+)/.exec(s);if(m)s=decodeURIComponent(m[1]);return s.toUpperCase()}
+async function showTag(no){
+  const box=$('u_box');box.innerHTML='<div class="info">조회 중…</div>';
+  try{
+    if(!LINKS.length)await loadBase();
+    const r=(await get('move_tag','select=*&tag_no=eq.'+encodeURIComponent(no)))[0];
+    if(!r){box.innerHTML='<div class="warn">이동표 '+esc(no)+' 을(를) 찾을 수 없습니다.</div>';return}
+    const tagHtml='<div class="tag"><div class="no">'+esc(r.tag_no)+' <span class="muted">· '+esc(r.status)+'</span></div><table>'
+      +'<tr><td>블랭크 품번</td><td><b>'+esc(r.item_code)+'</b></td></tr><tr><td>다음 공정 품번</td><td><b>'+esc(r.next_item_code||'-')+'</b></td></tr>'
+      +'<tr><td>코일 로트</td><td><b>'+esc(r.lot_no)+'</b></td></tr><tr><td>수량</td><td><b>'+fmt(r.qty)+' EA</b></td></tr>'
+      +'<tr><td>생산</td><td>'+esc(dt(r.made_at)+' · '+mcLabel(r.machine_code)+' · '+(r.worker||''))+'</td></tr></table></div>';
+    if(r.status==='투입'){box.innerHTML='<div class="ok">이미 투입됨 — '+esc(mcLabel(r.used_machine_code))+' · '+esc(dt(r.used_at))+' · '+esc(r.used_by||'')+(r.used_wo?' · '+esc(r.used_wo):'')+'</div>'+tagHtml;return}
+    if(r.status==='취소'){box.innerHTML='<div class="warn">취소된 이동표입니다. 투입할 수 없습니다.</div>'+tagHtml;return}
+    const tos=[...new Set(LINKS.filter(l=>l.parent_item_code===r.item_code).map(l=>l.to_machine_code))];
+    box.innerHTML=tagHtml+'<div class="row"><div class="f"><label>투입 설비</label><select id="u_mc">'+tos.map(c=>'<option value="'+c+'">'+esc(mcLabel(c))+'</option>').join('')+'</select></div>'
+      +'<div class="f"><label>투입 확인자</label><input id="u_by" value="'+esc(me())+'"></div></div><div id="u_chk"></div><button class="big g" id="u_go">투입 등록</button>';
+    const chk=()=>{const m=MS.find(x=>x.machine_code===$('u_mc').value)||{};const ok=!r.next_item_code||m.current_item_code===r.next_item_code;
+      $('u_chk').innerHTML=ok?'<div class="info">'+esc(mcLabel($('u_mc').value))+' 현재 작업: <b>'+esc(m.current_item_code||'-')+'</b>'+(m.current_wo?' · '+esc(m.current_wo):'')+'</div>'
+        :'<div class="warn">⚠ '+esc(mcLabel($('u_mc').value))+' 현재 작업 품번('+esc(m.current_item_code||'-')+')이 이동표 다음 공정 품번('+esc(r.next_item_code)+')과 다릅니다. 작업지시를 확인하세요.</div>';return ok};
+    $('u_mc').onchange=chk;chk();
+    $('u_go').onclick=async()=>{
+      const c=$('u_mc').value,m=MS.find(x=>x.machine_code===c)||{},by=$('u_by').value.trim();
+      if(!by)return toast('투입 확인자를 입력하세요');
+      if(!chk()&&!confirm('현재 작업 품번이 다릅니다. 그래도 투입 등록할까요?'))return;
+      $('u_go').disabled=true;
+      try{
+        const res=await fetch(SB+'/rest/v1/move_tag?tag_no=eq.'+encodeURIComponent(r.tag_no)+'&status=eq.%EC%9E%AC%EA%B3%B5',{method:'PATCH',headers:{...H,Prefer:'return=representation'},
+          body:JSON.stringify({status:'투입',used_machine_code:c,used_machine_name:mcName(c),used_item_code:m.current_item_code||r.next_item_code,used_wo:m.current_wo||null,used_at:new Date().toISOString(),used_by:by,updated_at:new Date().toISOString()})});
+        const j=res.ok?await res.json():[];
+        if(!j.length)throw new Error('투입 등록 실패 (이미 투입되었거나 취소된 이동표일 수 있습니다)');
+        toast('투입 등록: '+r.tag_no+' → '+mcLabel(c),4000);$('scan').value='';showTag(r.tag_no);$('scan').focus();
+      }catch(e){alert(e.message);$('u_go').disabled=false}
+    };
+  }catch(e){box.innerHTML='<div class="warn">'+esc(e.message)+'</div>'}
+}
+$('scan').addEventListener('keydown',e=>{if(e.key==='Enter'){const n=parseTag($('scan').value);if(n)showTag(n);$('scan').select()}});
+
+/* ③ 재공·이력 */
+async function loadList(){
+  const f=$('l_item').value,fq=f?'&item_code=eq.'+encodeURIComponent(f):'';
+  const since=new Date(Date.now()-14*864e5).toISOString();
+  const [wip,used]=await Promise.all([get('move_tag','select=*&status=eq.%EC%9E%AC%EA%B3%B5'+fq+'&order=made_at.asc'),get('move_tag','select=*&status=eq.%ED%88%AC%EC%9E%85&used_at=gte.'+since+fq+'&order=used_at.desc&limit=100')]);
+  const sum={};wip.forEach(r=>{sum[r.item_code]=(sum[r.item_code]||0)+r.qty});
+  $('l_wip').innerHTML=(Object.keys(sum).length?'<div class="info">'+Object.entries(sum).map(([k,v])=>'<b>'+esc(k)+'</b> '+fmt(v)+' EA').join(' · ')+'</div>':'')
+    +(wip.length?'<table class="list"><tr><th>이동표</th><th>블랭크 품번</th><th>코일 로트</th><th class="num">수량</th><th>생산</th><th>경과</th><th></th></tr>'+wip.map(r=>{const age=Math.floor((Date.now()-new Date(r.made_at))/864e5);
+      return'<tr><td>'+esc(r.tag_no)+'</td><td>'+esc(r.item_code)+'</td><td>'+esc(r.lot_no)+'</td><td class="num">'+fmt(r.qty)+'</td><td>'+esc(dt(r.made_at)+' '+(r.worker||''))+'</td><td'+(age>=7?' style="color:var(--red);font-weight:700"':'')+'>'+age+'일</td>'
+      +'<td><button class="sm" data-rp="'+esc(r.tag_no)+'">재출력</button> <button class="sm" data-cx="'+esc(r.tag_no)+'">취소</button></td></tr>'}).join('')+'</table>':'<p class="muted">재공 이동표 없음</p>');
+  $('l_used').innerHTML=used.length?'<table class="list"><tr><th>이동표</th><th>블랭크 품번</th><th>코일 로트</th><th class="num">수량</th><th>투입 설비</th><th>투입 품번 · 작업지시</th><th>투입</th></tr>'+used.map(r=>'<tr><td>'+esc(r.tag_no)+'</td><td>'+esc(r.item_code)+'</td><td>'+esc(r.lot_no)+'</td><td class="num">'+fmt(r.qty)+'</td><td>'+esc(mcLabel(r.used_machine_code))+'</td><td>'+esc((r.used_item_code||'')+(r.used_wo?' · '+r.used_wo:''))+'</td><td>'+esc(dt(r.used_at)+' '+(r.used_by||''))+'</td></tr>').join('')+'</table>':'<p class="muted">최근 투입 없음</p>';
+  $('l_wip').querySelectorAll('[data-rp]').forEach(b=>b.onclick=()=>printTags(wip.filter(r=>r.tag_no===b.dataset.rp)));
+  $('l_wip').querySelectorAll('[data-cx]').forEach(b=>b.onclick=async()=>{const why=prompt(b.dataset.cx+' 이동표를 취소합니다. 사유를 입력하세요');if(!why)return;
+    const res=await fetch(SB+'/rest/v1/move_tag?tag_no=eq.'+encodeURIComponent(b.dataset.cx)+'&status=eq.%EC%9E%AC%EA%B3%B5',{method:'PATCH',headers:H,body:JSON.stringify({status:'취소',memo:'취소: '+why+' ('+(me()||'')+')',updated_at:new Date().toISOString()})});
+    toast(res.ok?'취소했습니다':'취소 실패');loadList()});
+}
+$('l_reload').onclick=loadList;$('l_item').onchange=loadList;
+
+function tab(t){document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on',b.dataset.t===t));document.querySelectorAll('.pane').forEach(p=>p.classList.toggle('on',p.id==='p-'+t));
+  if(t==='use')setTimeout(()=>$('scan').focus(),50);if(t==='list')loadList()}
+document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>tab(b.dataset.t));
+
+(async()=>{
+  try{await loadBase()}catch(e){$('i_now').innerHTML='<span style="color:var(--red)">불러오기 실패: '+esc(e.message)+'</span>';return}
+  fillIssue();
+  $('l_item').innerHTML='<option value="">전체</option>'+[...new Set(LINKS.map(l=>l.parent_item_code))].map(i=>'<option>'+esc(i)+'</option>').join('');
+  const h=/#t=([^&]+)/.exec(location.hash);if(h){tab('use');$('scan').value=decodeURIComponent(h[1]);showTag(parseTag($('scan').value))}
+})();
+</script>
+</body>
+</html>

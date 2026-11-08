@@ -1038,7 +1038,7 @@ loadRestartLots(); setInterval(loadRestartLots,60*1000);
 /* [v7.6] 블랭킹 → 프레스 연결: 블랭킹(28호기 등)을 따로 찍고, 후공정 프레스(43호기 등)는 찍어 둔 블랭크로 따로 생산한다.
    후공정 로트는 '선행설비가 지금 무엇을 찍는가'가 아니라 선행품번(블랭크)을 생산한 코일 로트로 연결한다.
    process_link(자품번→블랭크품번) + raw_use(블랭크 생산 로트, MES 소재사용 최근 60일) — 10분마다 갱신 */
-var BLANK={},blankAt=0;
+var BLANK={},blankAt=0,MTAG=[];
 async function loadBlankLots(){
   if(Date.now()-blankAt<600000)return;
   try{
@@ -1057,12 +1057,22 @@ async function loadBlankLots(){
       B[l.child_item_code]={parent:l.parent_item_code,from:l.from_machine_code,
         days:Object.keys(days).sort().reverse().map(function(k){return{d:k,lots:days[k]}})};
     });
+    // 공정이동표 투입 기록 (확정 로트) — 최근 3일
+    var mt=await sbGet('move_tag','select=tag_no,lot_no,qty,used_machine_code,used_item_code,used_wo,used_at&status=eq.%ED%88%AC%EC%9E%85&used_at=gte.'+new Date(Date.now()-3*864e5).toISOString()+'&order=used_at.desc&limit=200');
+    MTAG=mt||[];
     BLANK=B;blankAt=Date.now();
     if(cachedData)renderMonitor(cachedData);
   }catch(e){}
 }
 function blankCell(d,all){
   var b=d&&BLANK[d.current_item_code];if(!b)return null;
+  // ① 공정이동표 QR 투입 기록이 있으면 확정 로트 (같은 작업지시 우선, 없으면 같은 품번 최근 투입)
+  var tg=MTAG.filter(function(t){return t.used_machine_code===d.machine_code&&t.used_item_code===d.current_item_code});
+  var tw=tg.filter(function(t){return d.current_wo&&t.used_wo===d.current_wo});if(tw.length)tg=tw;
+  if(tg.length){var ls=[];tg.forEach(function(t){if(ls.indexOf(t.lot_no)<0)ls.push(t.lot_no)});
+    var tt='공정이동표 투입 (확정)\n'+tg.slice(0,6).map(function(t){var x=new Date(new Date(t.used_at).getTime()+9*3600e3);return t.tag_no+'  '+t.lot_no+'  '+t.qty+'EA  '+(x.getUTCMonth()+1)+'/'+x.getUTCDate()+' '+String(x.getUTCHours()).padStart(2,'0')+':'+String(x.getUTCMinutes()).padStart(2,'0')}).join('\n');
+    return'<span title="'+tt.replace(/"/g,'&quot;')+'" style="color:#4ade80;cursor:help">\u2714 '+ls[0]+(ls.length>1?' 외 '+(ls.length-1):'')+'</span>'}
+  // ② 이동표 미투입 → 블랭크 생산 로트 후보
   var days=b.days.map(function(x){return{d:x.d,lots:x.lots.slice()}});
   // 선행설비가 지금 같은 블랭크를 찍고 있으면 오늘 로트도 넣는다 (raw_use 는 마감 후 들어옴)
   var up=(all||[]).filter(function(x){return x.machine_code===b.from&&x.current_item_code===b.parent&&x.lot_no})[0];
@@ -1071,8 +1081,8 @@ function blankCell(d,all){
   var fd=function(x){return +x.slice(5,7)+'/'+(+x.slice(8))};
   if(!days.length)return'<span title="블랭크 '+b.parent+' 최근 60일 생산 기록 없음" style="color:#fbbf24">\u21b0 블랭크 기록없음</span>';
   var f=days[0],tip='블랭크 '+b.parent+' 생산 로트 (최근순)\n'+days.slice(0,5).map(function(x){return fd(x.d)+'  '+x.lots.join(', ')}).join('\n')
-    +'\n※ 실제 투입 로트는 블랭크 박스 라벨로 확인';
-  return'<span title="'+tip.replace(/"/g,'&quot;')+'" style="color:#7dd3fc;cursor:help">\u21b0 BK '+fd(f.d)+' '+f.lots[0]+(f.lots.length>1?' 외 '+(f.lots.length-1):'')+'</span>';
+    +'\n※ 후보 로트 — 공정이동표 QR 투입 시 확정';
+  return'<span title="'+tip.replace(/"/g,'&quot;')+'" style="color:#7dd3fc;cursor:help">\u21b0 후보 '+fd(f.d)+' '+f.lots[0]+(f.lots.length>1?' 외 '+(f.lots.length-1):'')+'</span>';
 }
 
 async function loadMonitor(){
