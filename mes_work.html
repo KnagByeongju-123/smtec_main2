@@ -4,7 +4,7 @@
 <script src="audit.js?v=7"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>MES 가동설비 모니터링 v7.5</title>
+<title>MES 가동설비 모니터링 v7.6</title>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -398,7 +398,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 </style>
 </head>
 <body>
-<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v7.5</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">5분 갱신</span></div></div></div>
+<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v7.6</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">5분 갱신</span></div></div></div>
 <div class="tabs"><div class="tab active" data-tab="monitor" onclick="switchTab('monitor')">📊 모니터링</div><div class="tab" data-tab="settings" onclick="switchTab('settings')">📋 이력/설정</div></div>
 <div class="panel active" id="panel-monitor">
   <div class="stats"><div class="st"><div class="st-label">전체</div><div class="st-val" id="sTotal">-</div></div><div class="st run"><div class="st-label">가동</div><div class="st-val" id="sRun">-</div></div><div class="st stop"><div class="st-label">비가동</div><div class="st-val" id="sStop">-</div></div><div class="st warn"><div class="st-label">⏰30분이내</div><div class="st-val" id="sSoon">-</div></div><div class="st ng"><div class="st-label">NG</div><div class="st-val" id="sNg">-</div></div></div>
@@ -1035,6 +1035,46 @@ function rlotHtml(d){
 }
 loadRestartLots(); setInterval(loadRestartLots,60*1000);
 
+/* [v7.6] 블랭킹 → 프레스 연결: 블랭킹(28호기 등)을 따로 찍고, 후공정 프레스(43호기 등)는 찍어 둔 블랭크로 따로 생산한다.
+   후공정 로트는 '선행설비가 지금 무엇을 찍는가'가 아니라 선행품번(블랭크)을 생산한 코일 로트로 연결한다.
+   process_link(자품번→블랭크품번) + raw_use(블랭크 생산 로트, MES 소재사용 최근 60일) — 10분마다 갱신 */
+var BLANK={},blankAt=0;
+async function loadBlankLots(){
+  if(Date.now()-blankAt<600000)return;
+  try{
+    var links=await sbGet('process_link','select=child_item_code,parent_item_code,from_machine_code,to_machine_code&active=eq.true');
+    if(!links)return;
+    var par=[...new Set(links.map(function(l){return l.parent_item_code}).filter(Boolean))];
+    var since=new Date(Date.now()-60*864e5).toISOString().slice(0,10);
+    var use=par.length?await sbGet('raw_use','select=use_date,machine_code,item_code,heat_no,shot_qty,start_time&item_code=in.('
+      +par.map(function(x){return encodeURIComponent('"'+x.replace(/"/g,'')+'"')}).join(',')+')&use_date=gte.'+since+'&order=use_date.desc,start_time.desc&limit=500'):[];
+    if(!use)return;
+    var B={};
+    links.forEach(function(l){
+      var days={};
+      use.forEach(function(u){if(u.item_code!==l.parent_item_code||!(+u.shot_qty>0)||!u.heat_no)return;
+        var a=days[u.use_date]=days[u.use_date]||[];if(a.indexOf(u.heat_no)<0)a.push(u.heat_no)});
+      B[l.child_item_code]={parent:l.parent_item_code,from:l.from_machine_code,
+        days:Object.keys(days).sort().reverse().map(function(k){return{d:k,lots:days[k]}})};
+    });
+    BLANK=B;blankAt=Date.now();
+    if(cachedData)renderMonitor(cachedData);
+  }catch(e){}
+}
+function blankCell(d,all){
+  var b=d&&BLANK[d.current_item_code];if(!b)return null;
+  var days=b.days.map(function(x){return{d:x.d,lots:x.lots.slice()}});
+  // 선행설비가 지금 같은 블랭크를 찍고 있으면 오늘 로트도 넣는다 (raw_use 는 마감 후 들어옴)
+  var up=(all||[]).filter(function(x){return x.machine_code===b.from&&x.current_item_code===b.parent&&x.lot_no})[0];
+  var td=new Date(Date.now()+9*3600e3).toISOString().slice(0,10);
+  if(up){if(days[0]&&days[0].d===td){if(days[0].lots.indexOf(up.lot_no)<0)days[0].lots.unshift(up.lot_no)}else days.unshift({d:td,lots:[up.lot_no]})}
+  var fd=function(x){return +x.slice(5,7)+'/'+(+x.slice(8))};
+  if(!days.length)return'<span title="블랭크 '+b.parent+' 최근 60일 생산 기록 없음" style="color:#fbbf24">\u21b0 블랭크 기록없음</span>';
+  var f=days[0],tip='블랭크 '+b.parent+' 생산 로트 (최근순)\n'+days.slice(0,5).map(function(x){return fd(x.d)+'  '+x.lots.join(', ')}).join('\n')
+    +'\n※ 실제 투입 로트는 블랭크 박스 라벨로 확인';
+  return'<span title="'+tip.replace(/"/g,'&quot;')+'" style="color:#7dd3fc;cursor:help">\u21b0 BK '+fd(f.d)+' '+f.lots[0]+(f.lots.length>1?' 외 '+(f.lots.length-1):'')+'</span>';
+}
+
 async function loadMonitor(){
   if(monBusy)return;
   monBusy=true;
@@ -1050,6 +1090,7 @@ async function loadMonitor(){
     monFail=0;
     setDot(true);
     cachedData=data;
+    loadBlankLots();
     renderMonitor(data);
     checkAlerts(data);
     /* v5.0: 로트 미등록 자동알림은 mes_monitor.py(서버, 10분 간격)로 이관 — 브라우저 발송 중단 */
@@ -1121,6 +1162,7 @@ function shotAgoTxt(d){
 }
 function lotCell(d){
   var lot=(d&&d.lot_no)?d.lot_no:'';
+  var bk=blankCell(d,cachedData);if(bk)return bk;   // [v7.6] 블랭킹 → 프레스 연결 (블랭크 생산 로트)
   if(d&&d.lot_source==='inherit'){
     return'<span title="선행공정 '+(d.linked_from_machine||'')+' ('+(d.linked_from_item||'')+') 로트 상속" '
       +'style="color:#7dd3fc">\u21b0 '+(lot||'-')+'</span>';
