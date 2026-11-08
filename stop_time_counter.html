@@ -4,7 +4,7 @@
 <script src="audit.js?v=7"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>생산 카운터 v3.17</title>
+<title>생산 카운터 v3.18</title>
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body {
@@ -1126,7 +1126,7 @@
 </head>
 <body>
 
-<h1>🕒 생산 카운터 v3.17</h1>
+<h1>🕒 생산 카운터 v3.18</h1>
 
 <!-- ★ Supabase 연동: 호기/작업자 + 작업시작/종료 -->
 <div class="work-header">
@@ -1256,7 +1256,7 @@
 
 <div id="lotBox" style="margin:8px 0;padding:9px 11px;border:1px solid #fcd34d;background:#fffbeb;border-radius:10px;font-size:12.5px;color:#78350f">
   <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:baseline"><b>🏷️ 재가동 LOT 구분</b>
-    <span style="color:#92400e">같은 품번의 생산계획(작업지시)이 끝나고 다시 가동할 때만 새 LOT (생산일-순번) · 정지로는 나누지 않음</span>
+    <span style="color:#92400e">설비 재가동시(가동중단후) 업무처리 절차 · SQ 1_2 — ① 비계획 가동중단(설비이상·금형수리·금형세팅/교환·불량처리·치수조정·연마·랩핑) 5분 이상 ② 같은 품번 계획종료 후 재가동 → 재가동 LOT · 직전품·초품·폐기수량 기록 · 계획종료품/재가동품 식별표</span>
     <span style="margin-left:auto">현재 LOT <b id="lotNow" style="font-size:16px;color:#b45309">-</b></span></div>
   <div id="lotList" style="margin-top:5px"></div>
 </div>
@@ -1342,6 +1342,24 @@
 
 
 
+
+<div class="modal-bg" id="rstModal">
+  <div class="modal" style="max-width:440px">
+    <h2 id="rstTtl">재가동 기록 <button class="modal-x" onclick="document.getElementById('rstModal').classList.remove('show')" title="닫기">✕</button></h2>
+    <div id="rstInfo" style="font-size:12.5px;color:#475569;margin-bottom:8px"></div>
+    <div style="font-size:12.5px;font-weight:700;margin:6px 0 3px">① 직전 생산품 이상유무 (정지 직전 생산품 검사)</div>
+    <div class="rst-ok" data-k="prev"><button type="button" data-v="OK">OK</button> <button type="button" data-v="NG">NG</button></div>
+    <div style="font-size:12.5px;font-weight:700;margin:8px 0 3px">② 조치 후 초품 이상유무 (재가동 초품 검사)</div>
+    <div class="rst-ok" data-k="first"><button type="button" data-v="OK">OK</button> <button type="button" data-v="NG">NG</button></div>
+    <div style="font-size:12.5px;font-weight:700;margin:8px 0 3px">③ 이상·조치 중 불량 폐기 수량 (EA)</div>
+    <input type="number" id="rstScrap" min="0" inputmode="numeric" value="0" style="width:100%;font-size:15px;padding:6px;border:1px solid #cbd5e1;border-radius:6px">
+    <div style="font-size:12.5px;font-weight:700;margin:8px 0 3px">설비 점검·조치 내용 (필수)</div>
+    <textarea id="rstAction" rows="2" style="width:100%;font-size:13px;padding:6px;border:1px solid #cbd5e1;border-radius:6px" placeholder="예: 피더 센서 위치 조정, 금형 펀치 교체 후 시타발 확인"></textarea>
+    <div id="rstBy" style="font-size:12px;color:#64748b;margin-top:6px"></div>
+    <button class="modal-close" onclick="rstSave()" style="background:#b45309;color:#fff">저장</button>
+  </div>
+</div>
+<style>.rst-ok button{font-size:14px;padding:6px 18px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;margin-right:4px}.rst-ok button.on[data-v=OK]{background:#15803d;color:#fff;border-color:#15803d}.rst-ok button.on[data-v=NG]{background:#b91c1c;color:#fff;border-color:#b91c1c}</style>
 
 <div class="modal-bg" id="mesDailyModal">
   <div class="modal" style="max-width:760px">
@@ -2872,37 +2890,91 @@ async function lotFetchMes(k){
       .map(e=>({start:e.start,end:e.end,name:e.name,min:+e.min||0,src:'MES'})).sort((a,b)=>String(a.start).localeCompare(String(b.start))):[];
   }catch(e){ lotMes[k]=[]; }
 }
-async function lotRefresh(){ const k=lotKey(); if(!k){ lotRender(); return; } await lotLoad(); await lotFetchMes(k); lotRender(); }
+/* LOT 구간 = 스마트팩토리 v_restart_lot (MES 작업지시·정지 기준, 공정검사·MES 모니터링과 같은 값) */
+let lotRows={};
+async function lotRefresh(){
+  const k=lotKey(); if(!k){ lotRender(); return; }
+  await lotLoad();
+  const [ymd,ho]=k.split('|');
+  try{ lotRows[k]=await sbReq('GET','v_restart_lot?select=lot_no,seq,boundary,from_t,to_t,item_code,work_order_no,stop_name,stop_min,stop_start,stop_end,prev_wo,prev_shot,prev_et,first_res,first_by,first_at,prev_check,scrap_qty,action_note&ymd=eq.'+ymd+'&ho=eq.'+ho+'&order=item_code.asc,seq.asc')||[]; }
+  catch(e){ lotRows[k]=[]; console.warn('재가동 LOT',e); }
+  lotRender();
+}
 function lotRender(){
-  /* 같은 품번의 생산계획(작업지시)이 끝나고 다시 가동할 때만 새 LOT — 품번별 순번 (정지로는 나누지 않음) */
   const L=document.getElementById('lotList'), N=document.getElementById('lotNow'); if(!L) return;
   const k=lotKey(); if(!k){ N.textContent='-'; L.innerHTML='<span style="color:#92400e">호기를 고르면 LOT 구간이 나옵니다.</span>'; return; }
-  const [ymd]=k.split('|'), base=ymd.replace(/-/g,''), F=(LOTD[k]||{}).first||{}, W=(lotWo[k]||[]).slice().sort((a,b)=>hm2min(a.start)-hm2min(b.start));
-  if(!W.length){ N.textContent=base+'-1'; L.innerHTML='<span style="color:#92400e">MES 작업지시 자료가 아직 없습니다 — 하루 한 LOT ('+base+'-1)</span>'; return; }
-  const cnt={}, last={};
-  const rows=W.map(w=>{ cnt[w.item]=(cnt[w.item]||0)+1; const r={...w,seq:cnt[w.item],prev:last[w.item]||null}; last[w.item]=w; return r; });
-  let h='<table style="width:100%;border-collapse:collapse;font-size:12px"><tr style="background:#fef3c7"><th style="padding:3px;border:1px solid #fde68a">LOT</th><th style="padding:3px;border:1px solid #fde68a">품번 · 작업지시 · 구간</th><th style="padding:3px;border:1px solid #fde68a">재가동 초품</th></tr>';
-  rows.forEach(r=>{ const lot=base+'-'+r.seq, fk=r.item+'#'+r.seq, f=F[fk];
-    if(r.prev) h+='<tr><td colspan="3" style="padding:3px 6px;border:1px solid #fde68a;background:#eef2ff;color:#3730a3">⏹ '+esc2(r.item)+' 생산계획 종료 '+esc2(r.prev.end)+' ('+esc2(r.prev.wo)+' · '+r.prev.shot.toLocaleString()+'타) → 같은 품번 재가동 '+esc2(r.start)+'</td></tr>';
-    h+='<tr><td style="padding:3px 6px;border:1px solid #fde68a;font-weight:800;color:#b45309;white-space:nowrap">'+lot+'</td><td style="padding:3px 6px;border:1px solid #fde68a">'+esc2(r.item)+' <span style="color:#78716c">'+esc2(r.wo)+'</span><div style="font-size:11px;color:#57534e">'+esc2(r.start)+' ~ '+esc2(r.end||'')+'</div></td><td style="padding:3px 6px;border:1px solid #fde68a">'
-      +(r.seq===1?'<span style="color:#a8a29e">시업 초품(기존 절차)</span>'
-        :f?'<b style="color:'+(f.res==='OK'?'#15803d':'#b91c1c')+'">'+esc2(f.res)+'</b> '+esc2(f.by)+' '+esc2(String(f.at).slice(11,16))+(f.memo?' · '+esc2(f.memo):'')
-        :'<button type="button" onclick="lotFirst('+esc2(JSON.stringify(r.item))+','+r.seq+')" style="font-size:11.5px;padding:2px 8px;border:1px solid #d97706;background:#fff;color:#b45309;border-radius:6px">초품 확인</button>')+'</td></tr>'; });
-  h+='</table>'+(rows.some(r=>r.seq>1)?'':'<div style="color:#92400e;margin-top:3px">같은 품번 재가동 없음 — 품번마다 한 LOT</div>');
-  L.innerHTML=h; const cur=rows[rows.length-1]; N.textContent=base+'-'+cur.seq;
+  const base=k.split('|')[0].replace(/-/g,''), rows=lotRows[k]||[];
+  if(!rows.length){ N.textContent=base+'-1'; L.innerHTML='<span style="color:#92400e">MES 생산·정지 자료가 아직 없습니다 — 비계획 가동중단이 없으면 하루 한 LOT ('+base+'-1)</span>'; return; }
+  const cell='padding:3px 6px;border:1px solid #fde68a';
+  let h='<table style="width:100%;border-collapse:collapse;font-size:12px"><tr style="background:#fef3c7"><th style="'+cell+'">LOT</th><th style="'+cell+'">품번 · 구간</th><th style="'+cell+'">재가동 기록 (직전품·초품·폐기)</th></tr>';
+  rows.forEach(r=>{
+    const tagBtn=(kind,txt,bg)=>'<button type="button" onclick="lotTag(\''+kind+'\','+esc2(JSON.stringify(r.item_code||''))+','+r.seq+')" style="font-size:11px;padding:1px 7px;margin-left:6px;border:1px solid #a16207;background:'+bg+';border-radius:5px">'+txt+'</button>';
+    if(r.boundary==='stop') h+='<tr><td colspan="3" style="'+cell+';background:#fff7ed;color:#9a3412">⏸ 비계획 가동중단 '+esc2(r.stop_start)+'~'+esc2(r.stop_end)+' '+esc2(r.stop_name)+' '+Math.round(+r.stop_min||0)+'분 → 재가동 '+esc2(r.from_t)+tagBtn('end','🟨 중단 전 식별표','#fef08a')+'</td></tr>';
+    if(r.boundary==='wo') h+='<tr><td colspan="3" style="'+cell+';background:#eef2ff;color:#3730a3">⏹ 계획종료 '+esc2(r.prev_et||'')+' ('+esc2(r.prev_wo||'')+(r.prev_shot!=null?' · '+(+r.prev_shot).toLocaleString()+'타':'')+') → 같은 품번 재가동 '+esc2(r.from_t)+tagBtn('end','🟨 계획종료품 식별표','#fef08a')+'</td></tr>';
+    const rec=r.first_res?'직전품 <b style="color:'+(r.prev_check==='OK'?'#15803d':'#b91c1c')+'">'+esc2(r.prev_check||'-')+'</b> · 초품 <b style="color:'+(r.first_res==='OK'?'#15803d':'#b91c1c')+'">'+esc2(r.first_res)+'</b> · 폐기 '+(+r.scrap_qty||0)+'EA<div style="font-size:11px;color:#57534e">'+esc2(r.action_note||'')+' — '+esc2(r.first_by||'')+' '+esc2(String(r.first_at||'').slice(5,16).replace('T',' '))+'</div>'
+      :'<button type="button" onclick="rstOpen('+esc2(JSON.stringify(r.item_code||''))+','+r.seq+')" style="font-size:11.5px;padding:2px 8px;border:1px solid #d97706;background:#fff;color:#b45309;border-radius:6px">재가동 기록</button>';
+    h+='<tr><td style="'+cell+';font-weight:800;color:#b45309;white-space:nowrap">'+esc2(r.lot_no)+(r.seq>1?'<div>'+tagBtn('restart','🟩 재가동품 식별표','#bbf7d0').replace('margin-left:6px','margin:2px 0 0')+'</div>':'')+'</td><td style="'+cell+'">'+esc2(r.item_code||'-')+'<div style="font-size:11px;color:#57534e">'+esc2(r.from_t)+' ~ '+esc2(r.to_t||'')+'</div></td><td style="'+cell+'">'
+      +(r.seq===1?'<span style="color:#a8a29e">시업 초품(기존 절차)</span>':rec)+'</td></tr>'; });
+  const pend=rows.filter(r=>r.seq>1&&!r.first_res).length;
+  h+='</table>'+(pend?'<div style="color:#b91c1c;font-weight:700;margin-top:3px">재가동 기록 미작성 '+pend+'건</div>':'')
+    +(rows.some(r=>r.seq>1)?'':'<div style="color:#92400e;margin-top:3px">5분 이상 비계획 가동중단 없음 — 품번마다 한 LOT</div>');
+  L.innerHTML=h;
+  const last=rows.slice().sort((a,b)=>hm2min(a.from_t==='시업'?'00:00':a.from_t)-hm2min(b.from_t==='시업'?'00:00':b.from_t)).pop();
+  N.textContent=last.lot_no;
 }
-async function lotFirst(item,seq){
+/* 계획종료품(노랑)·재가동품(초록) 식별표 — 사내 '설비 재가동시(가동중단후) 업무처리 절차' 양식 (80×110mm)
+   kind 'end' = 재가동 LOT seq 바로 앞 LOT (계획종료·중단 전 생산품), 'restart' = 재가동 LOT */
+function lotTag(kind,item,seq){
   const k=lotKey(); if(!k) return;
-  const lot=k.split('|')[0].replace(/-/g,'')+'-'+seq;
-  const res=prompt(item+' '+lot+' 재가동 초품 확인 결과\nOK 또는 NG','OK'); if(res==null) return;
-  const rv=String(res).trim().toUpperCase(); if(!/^(OK|NG)$/.test(rv)){ alert('OK 또는 NG 로 입력하세요'); return; }
-  const memo=rv==='NG'?(prompt('NG 내용·조치 (필수)','')||'').trim():'';
-  if(rv==='NG'&&!memo){ alert('NG 이면 내용·조치를 적어 주세요'); return; }
-  /* 확인자 = 로그인(PIN) 사용자 → 작업 시작한 작업자(게스트 제외) */
-  const au=(()=>{try{return JSON.parse(localStorage.getItem('tj_audit_user')||'{}').name||'';}catch(e){return '';}})();
-  const ww=workSession.worker||{}, by=au||(ww.id!=='GUEST'&&ww.name!=='게스트'?ww.name:'');
-  if(!by){ alert('확인자 이름이 있어야 기록합니다'); return; }
-  try{ await lotSave(D=>{ const x=D[k]||(D[k]={}); (x.first=x.first||{})[item+'#'+seq]={res:rv,by,memo,at:new Date().toISOString()}; }); lotRender(); }
+  const rows=lotRows[k]||[], r=rows.find(x=>(x.item_code||'')===item&&x.seq===seq); if(!r) return;
+  const prev=rows.find(x=>(x.item_code||'')===item&&x.seq===seq-1)||{};
+  const isEnd=kind==='end', ymd=k.split('|')[0], mc=mesMachine(), who=rstWho();
+  const reason=r.boundary==='wo'?'계획종료 '+(r.prev_et||'')+' 후 같은 품번 재가동':'비계획 가동중단 '+(r.stop_start||'')+'~'+(r.stop_end||'')+' '+(r.stop_name||'')+' '+Math.round(+r.stop_min||0)+'분';
+  const title=isEnd?(r.boundary==='wo'?'계획종료품 식별표':'가동중단 전 생산품 식별표'):'재가동품 식별표';
+  const bg=isEnd?'#fde047':'#86efac';
+  const res=isEnd?(r.prev_check||''):(r.first_res||'');
+  const rowsHtml=[
+    ['품 번', item||'-'],['생산일자', ymd],
+    [isEnd?'생산종료시각':'생산재개시각', isEnd?(r.boundary==='wo'?(r.prev_et||''):(r.stop_start||'')):r.from_t],
+    ['생산 LOT', isEnd?(prev.lot_no||''):r.lot_no],['설비/라인명', mc],['작업자', who],
+    ['검사결과', '<span style="font-size:15px">'+(res==='OK'?'☑':'☐')+'</span> 양품 &nbsp; <span style="font-size:15px">'+(res==='NG'?'☑':'☐')+'</span> 불량'],
+    ['특이사항', reason]
+  ].map(([a,b])=>'<tr><th>'+a+'</th><td>'+b+'</td></tr>').join('');
+  const w=window.open('','_blank','width=420,height=620'); if(!w){ alert('팝업이 막혔습니다 — 팝업 허용 후 다시 누르세요'); return; }
+  w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>'+title+'</title><style>@page{size:80mm 110mm;margin:3mm}body{margin:0;font-family:"맑은 고딕",sans-serif}'
+    +'.t{width:74mm;border:1.5px solid #000;background:'+bg+';padding:2mm;box-sizing:border-box}h1{font-size:15pt;text-align:center;margin:1mm 0 2mm;border:1.5px solid #000;background:#fff;padding:1mm}'
+    +'table{width:100%;border-collapse:collapse;background:#fff}th,td{border:1px solid #000;font-size:9pt;padding:1.2mm 1mm;text-align:left}th{width:22mm;background:'+bg+';text-align:center}'
+    +'.n{font-size:8pt;margin-top:2mm}.c{text-align:center;font-weight:700;margin-top:2mm}@media screen{body{padding:8px}}</style></head><body><div class="t"><h1>'+title+'</h1><table>'+rowsHtml+'</table>'
+    +'<div class="n">기타내용<br>'+(isEnd?'※ 재가동품과 섞지 말 것 (LOT 구분 보관)':'※ 가동재개 후 초기생산품 — 초품 확인 후 출하')+'</div><div class="c">㈜ 태 진 다 이 텍</div></div>'
+    +'<scr'+'ipt>setTimeout(()=>print(),300)</scr'+'ipt></body></html>');
+  w.document.close();
+}
+let RST=null;
+function rstOpen(item,seq){
+  const k=lotKey(); if(!k) return;
+  const r=(lotRows[k]||[]).find(x=>(x.item_code||'')===item&&x.seq===seq); if(!r) return;
+  RST={k,item,seq,prev:'',first:''};
+  document.getElementById('rstTtl').firstChild.nodeValue='재가동 기록 — '+r.lot_no+' ';
+  document.getElementById('rstInfo').innerHTML=esc2(item||'-')+' · '+(r.boundary==='wo'?'계획종료 '+esc2(r.prev_et||'')+' → 같은 품번 재가동 '+esc2(r.from_t):'비계획 가동중단 '+esc2(r.stop_start)+'~'+esc2(r.stop_end)+' '+esc2(r.stop_name)+' '+Math.round(+r.stop_min||0)+'분 → 재가동 '+esc2(r.from_t));
+  document.querySelectorAll('#rstModal .rst-ok button').forEach(b=>b.classList.remove('on'));
+  document.getElementById('rstScrap').value=0; document.getElementById('rstAction').value='';
+  document.getElementById('rstBy').textContent='확인자 : '+(rstWho()||'(로그인 필요)');
+  document.getElementById('rstModal').classList.add('show');
+}
+document.querySelectorAll('#rstModal .rst-ok').forEach(g=>g.addEventListener('click',e=>{ const b=e.target.closest('button'); if(!b||!RST) return;
+  g.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b)); RST[g.dataset.k]=b.dataset.v; }));
+function rstWho(){ const au=(()=>{try{return JSON.parse(localStorage.getItem('tj_audit_user')||'{}').name||'';}catch(e){return '';}})();
+  const ww=workSession.worker||{}; return au||(ww.id!=='GUEST'&&ww.name!=='게스트'?ww.name:''); }
+async function rstSave(){
+  if(!RST) return;
+  if(!RST.prev||!RST.first){ alert('① 직전 생산품, ② 조치 후 초품 판정을 모두 고르세요'); return; }
+  const scrap=Math.max(0,Math.round(+document.getElementById('rstScrap').value||0)), action=document.getElementById('rstAction').value.trim();
+  if(!action){ alert('설비 점검·조치 내용을 적어 주세요'); return; }
+  const by=rstWho(); if(!by){ alert('로그인(PIN) 후 기록하세요'); return; }
+  const {k,item,seq,prev,first}=RST;
+  try{ await lotSave(D=>{ const x=D[k]||(D[k]={}); (x.first=x.first||{})[item+'#'+seq]={prev_res:prev,res:first,scrap,action,by,at:new Date().toISOString()}; });
+    document.getElementById('rstModal').classList.remove('show'); await lotRefresh();
+    if(prev==='NG'||first==='NG') alert('NG 가 있습니다 — 해당 LOT 격리·선별 후 부적합 처리하세요'); }
   catch(e){ alert('저장 실패: '+e.message); }
 }
 document.getElementById('machineSelect').addEventListener('change',()=>lotRefresh());
