@@ -4,7 +4,7 @@
 <script src="audit.js?v=7"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>MES 가동설비 모니터링 v7.2</title>
+<title>MES 가동설비 모니터링 v7.3</title>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -398,7 +398,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 </style>
 </head>
 <body>
-<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v7.2</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">5분 갱신</span></div></div></div>
+<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v7.3</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">5분 갱신</span></div></div></div>
 <div class="tabs"><div class="tab active" data-tab="monitor" onclick="switchTab('monitor')">📊 모니터링</div><div class="tab" data-tab="settings" onclick="switchTab('settings')">📋 이력/설정</div></div>
 <div class="panel active" id="panel-monitor">
   <div class="stats"><div class="st"><div class="st-label">전체</div><div class="st-val" id="sTotal">-</div></div><div class="st run"><div class="st-label">가동</div><div class="st-val" id="sRun">-</div></div><div class="st stop"><div class="st-label">비가동</div><div class="st-val" id="sStop">-</div></div><div class="st warn"><div class="st-label">⏰30분이내</div><div class="st-val" id="sSoon">-</div></div><div class="st ng"><div class="st-label">NG</div><div class="st-val" id="sNg">-</div></div></div>
@@ -1007,6 +1007,36 @@ function switchTab(name){document.querySelectorAll('.tab').forEach(function(t){t
          DB 지연이 요청 폭주를 부르고 폭주가 다시 DB 를 마비시키는 악순환.
    수정: 진입 즉시 timer 리셋 + 중복 진입 차단 + 실패 시 지수 백오프. */
 var monBusy=false, monFail=0;
+/* ===== 재가동 생산LOT (SQ 1_2) — 스마트팩토리 v_restart_lot (수동생산일보·공정검사와 같은 규칙) =====
+   생산계획(작업지시) 종료 후 재가동 · 비계획 정지 5분 이상 후 재가동 → 새 LOT = 생산일-순번 (예: 20261109-2)
+   MES daily_production·daily_downtime(5분 주기) 기준 · 1분마다 갱신 · 품번 칸 아래에 지금 LOT 표시 */
+var RLOT={}, rlotDay='', rlotAt=0;
+var RLOT_UNPLAN=['금형세팅 및 교환','금형셋팅 및 교체','설비이상','부품가공대기','금형점검','소재입고대기'];
+function rlotToday(){var d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
+async function loadRestartLots(){
+  try{
+    var day=rlotToday();
+    var rows=await sbGet('v_restart_lot','select=machine_code,seq,lot_no,from_t,boundary,item_code&ymd=eq.'+day+'&order=machine_code.asc,seq.asc');
+    if(!rows)return;
+    var m={};rows.forEach(function(r){(m[r.machine_code]=m[r.machine_code]||[]).push(r);});
+    RLOT=m;rlotDay=day;rlotAt=Date.now();
+    if(cachedData)renderMonitor(cachedData);
+  }catch(e){console.log('재가동 LOT 조회 실패:',e);}
+}
+function rlotHtml(d){
+  var rows=RLOT[d.machine_code]||[], base=rlotDay.replace(/-/g,'');
+  if(!base)return'';
+  var last=rows[rows.length-1];
+  if(!last&&!isRunning(d))return'';                               // 오늘 생산·정지 기록 없는 비가동 설비는 표시 안 함
+  var lot=last?last.lot_no:base+'-1';
+  var tag=last&&last.boundary==='wo'?'생산계획 재가동 '+last.from_t:last&&last.boundary==='stop'?'정지 후 재가동 '+last.from_t:'';
+  var nm=stopName(d.machine_status), pend=d.machine_status&&d.machine_status!=='N'&&RLOT_UNPLAN.indexOf(nm)>=0;
+  return '<div style="font-size:11px;font-weight:700;color:#fbbf24;margin-top:2px" title="재가동 생산LOT (생산계획 종료·비계획 정지 후 재가동 시 순번 증가)">LOT '+lot
+    +(tag?' <span style="font-weight:400;color:#cbd5e1">· '+tag+'</span>':'')
+    +(pend?' <span style="font-weight:400;color:#fca5a5">· '+nm+' 중 → 재가동 시 새 LOT</span>':'')+'</div>';
+}
+loadRestartLots(); setInterval(loadRestartLots,60*1000);
+
 async function loadMonitor(){
   if(monBusy)return;
   monBusy=true;
@@ -1172,7 +1202,7 @@ function renderMonitor(data){
       var rm=remStr(d.remaining_minutes);
       var tr=document.createElement('tr');
       if(!isR)tr.className='dim';
-      tr.innerHTML='<td class="c-nm">'+parsePressLabel(d)+'</td><td class="c-st">'+st+'</td><td class="c-mold">'+(d.current_mold||'-')+'</td><td class="c-item">'+(d.current_item_code||'-')+'</td><td class="c-pname">'+(d.item_name||'-')+'</td><td class="c-num">'+fmt(d.target_qty)+'</td><td class="c-num">'+fmt(d.actual_qty)+qtyMark(d)+'</td><td class="c-prog">'+prog+'</td><td class="c-num">'+fmt(d.remaining_qty)+'</td><td class="c-rem"><span class="'+rm.c+'">'+rm.t+'</span></td><td class="c-lot" style="color:var(--sub)">'+lotCell(d)+'</td><td class="c-coil" style="color:var(--accent)">'+(d.coil_weight>0?d.coil_weight.toFixed(0):'-')+'</td><td class="c-unit" style="color:var(--sub)">'+(d.unit_per_qty>0?d.unit_per_qty.toFixed(1):'-')+'</td><td class="c-ct">'+(d.actual_ct>0?d.actual_ct.toFixed(1):'-')+'/'+(d.target_ct>0?d.target_ct.toFixed(1):'-')+'</td><td class="c-ng">'+(d.ng_qty>0?'<span style="color:var(--red);font-weight:600">'+d.ng_qty+'</span>':'0')+'</td><td class="c-insp">'+inspH(d.inspect_top)+inspH(d.inspect_mid)+inspH(d.inspect_bottom)+'</td><td class="c-wk">'+(d.worker||'-')+'</td>';
+      tr.innerHTML='<td class="c-nm">'+parsePressLabel(d)+'</td><td class="c-st">'+st+'</td><td class="c-mold">'+(d.current_mold||'-')+'</td><td class="c-item">'+(d.current_item_code||'-')+rlotHtml(d)+'</td><td class="c-pname">'+(d.item_name||'-')+'</td><td class="c-num">'+fmt(d.target_qty)+'</td><td class="c-num">'+fmt(d.actual_qty)+qtyMark(d)+'</td><td class="c-prog">'+prog+'</td><td class="c-num">'+fmt(d.remaining_qty)+'</td><td class="c-rem"><span class="'+rm.c+'">'+rm.t+'</span></td><td class="c-lot" style="color:var(--sub)">'+lotCell(d)+'</td><td class="c-coil" style="color:var(--accent)">'+(d.coil_weight>0?d.coil_weight.toFixed(0):'-')+'</td><td class="c-unit" style="color:var(--sub)">'+(d.unit_per_qty>0?d.unit_per_qty.toFixed(1):'-')+'</td><td class="c-ct">'+(d.actual_ct>0?d.actual_ct.toFixed(1):'-')+'/'+(d.target_ct>0?d.target_ct.toFixed(1):'-')+'</td><td class="c-ng">'+(d.ng_qty>0?'<span style="color:var(--red);font-weight:600">'+d.ng_qty+'</span>':'0')+'</td><td class="c-insp">'+inspH(d.inspect_top)+inspH(d.inspect_mid)+inspH(d.inspect_bottom)+'</td><td class="c-wk">'+(d.worker||'-')+'</td>';
       (function(row){tr.onclick=function(){openChkModal(row)}})(d);
       tb.appendChild(tr);
     });
