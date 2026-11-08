@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<script src="audit.js?v=7"></script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>정지 실시간 현황 v1.0</title>
+<!-- 수동생산일보(정지시간 카운터) 작업 세션(work_log)을 10초마다 읽어 호기별 지금 상태(가동/정지·사유·경과)를 보여준다.
+     카운터가 30초마다 work_log 에 current_code·current_started_at·stop_times 를 올리고, 이 화면은 경과 시간을 1초마다 계산한다. -->
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Noto Sans KR','맑은 고딕',sans-serif;background:#f1f5f9;color:#0f172a;font-size:13px;padding-bottom:30px}
+.hdr{background:linear-gradient(135deg,#1565c0,#0d47a1);color:#fff;padding:12px 16px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.hdr h1{font-size:18px;font-weight:800}
+.hdr .sub{font-size:12px;opacity:.85}
+.hdr a{color:#fff;font-size:12px;margin-left:auto;text-decoration:none;border:1px solid rgba(255,255,255,.5);border-radius:6px;padding:4px 9px}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 16px}
+.bar input{font-size:13px;padding:4px 6px;border:1px solid #cbd5e1;border-radius:6px}
+.sum{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;padding:0 16px}
+.sum div{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:8px 10px}
+.sum b{display:block;font-size:22px;font-variant-numeric:tabular-nums}
+.sum span{font-size:11.5px;color:#64748b}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px;padding:12px 16px}
+.card{background:#fff;border:1px solid #e2e8f0;border-left:6px solid #22c55e;border-radius:10px;padding:10px 12px}
+.card.stop{border-left-color:#ef4444;background:#fff7f7}
+.card.plan{border-left-color:#f59e0b;background:#fffbeb}
+.card.done{border-left-color:#94a3b8;opacity:.75}
+.card.stale{border-left-color:#94a3b8}
+.mc{font-size:15px;font-weight:800}
+.who{font-size:11.5px;color:#64748b}
+.st{margin-top:6px;font-size:14px;font-weight:800}
+.st.run{color:#15803d}.st.stop{color:#b91c1c}.st.plan{color:#b45309}.st.done{color:#475569}
+.el{font-size:24px;font-weight:800;font-variant-numeric:tabular-nums}
+.row{display:flex;justify-content:space-between;font-size:12px;margin-top:4px;color:#334155}
+.top{font-size:11.5px;color:#64748b;margin-top:4px}
+.warn{font-size:11px;color:#b45309;margin-top:4px}
+.empty{padding:30px 16px;text-align:center;color:#64748b}
+@media (max-width:600px){.sum{grid-template-columns:repeat(2,minmax(0,1fr))}}
+</style>
+</head>
+<body>
+<div class="hdr">
+  <div><h1>⏱️ 정지 실시간 현황</h1><div class="sub">수동생산일보 작업 중인 호기 · 10초마다 갱신</div></div>
+  <a href="stop_time_counter.html">수동생산일보 열기</a>
+</div>
+<div class="bar">
+  <label>작업일 <input type="date" id="d" onchange="load()"></label>
+  <label><input type="checkbox" id="showDone" checked onchange="paint()"> 종료한 작업 포함</label>
+  <span id="upd" style="margin-left:auto;color:#64748b;font-size:12px"></span>
+</div>
+<div class="sum" id="sum"></div>
+<div class="grid" id="grid"></div>
+
+<script>
+const SB_URL='https://omngtyewdaqpphnzeate.supabase.co';
+const SB_KEY='sb_publishable_9j2YkkL-7ul1TrhH-NjVdQ_vWDG2-1D';
+/* 정지코드 — 수동생산일보(stop_time_counter.html) STOP_CODES 와 같게 */
+const STOP_CODES=[
+  ['CL-M001','소재교환','breakdown'],['CL-M002','불량발생 및 처리','breakdown'],['CL-M003','부품랩핑','breakdown'],['CL-M005','부품연마','breakdown'],
+  ['CL-M006','치수조정','breakdown'],['CL-M008','금형수리','breakdown'],
+  ['UL-A001','금형셋팅 및 교체','unplanned'],['UL-A003','설비이상','unplanned'],['UL-A004','부품가공대기','unplanned'],['UL-M007','금형점검','unplanned'],['UL-M009','소재입고대기','unplanned'],
+  ['UL-Z001','계획정지(물동)','planned'],['UL-Z002','3정 5행','planned'],['UL-Z004','Try-Out','planned'],['UL-Z005','측정대기','planned'],
+  ['UL-Z006','타공정처리','planned'],['UL-Z007','휴식 / 식사','planned'],['UL-Z010','기타-통제불가능','planned'],['UL-Z011','조회 / 교육','planned']];
+const NM=Object.fromEntries(STOP_CODES.map(s=>[s[0],s[1]])), TY=Object.fromEntries(STOP_CODES.map(s=>[s[0],s[2]]));
+const TYNM={breakdown:'고장정지',unplanned:'비계획정지',planned:'계획정지'};
+const esc=v=>String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const ymd=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+const hms=s=>{s=Math.max(0,Math.floor(s));const h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60;return (h?h+':':'')+String(m).padStart(h?2:1,'0')+':'+String(x).padStart(2,'0');};
+const hm=s=>{s=Math.max(0,Math.round(s/60));return Math.floor(s/60)+'시간 '+(s%60)+'분';};
+const hoNum=m=>{const x=/^(\d+)/.exec(String(m||''));return x?+x[1]:999;};
+let ROWS=[], lastLoad=0, reqNo=0;
+async function load(){
+  const d=document.getElementById('d').value||ymd(new Date()), my=++reqNo;
+  try{
+    const r=await fetch(SB_URL+'/rest/v1/work_log?select=id,work_date,machine_code,worker_name,status,start_time,end_time,planned_min,stop_times,total_stop_sec,planned_stop_sec,workable_stop_sec,op_rate,current_code,current_started_at,mold_number,pass_qty,bad_qty,updated_at&work_date=eq.'+d+'&order=machine_code.asc',
+      {headers:{apikey:SB_KEY,Authorization:'Bearer '+SB_KEY},cache:'no-store'});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const data=await r.json(); if(my!==reqNo) return;      /* 날짜를 바꾼 뒤 늦게 온 이전 응답은 버림 */
+    ROWS=data; lastLoad=Date.now(); paint();
+  }catch(e){ document.getElementById('upd').textContent='불러오기 실패: '+e.message; }
+}
+function paint(){
+  const now=Date.now(), showDone=document.getElementById('showDone').checked;
+  const rows=ROWS.filter(r=>showDone||r.status!=='completed').map(r=>{
+    const up=r.updated_at?new Date(r.updated_at).getTime():0, stale=r.status!=='completed'&&now-up>3*60*1000;
+    const curStart=r.current_started_at?new Date(r.current_started_at).getTime():null;
+    /* stop_times 는 마지막 동기화 시점까지(진행 중 포함) — 진행 중 정지는 동기화 이후 경과만 더함 */
+    const liveAdd=curStart&&r.status!=='completed'&&!stale?Math.max(0,(now-Math.max(up,curStart))/1000):0;
+    const cur=r.status!=='completed'&&r.current_code?r.current_code:null;
+    return {r,stale,cur,curStart,total:(+r.total_stop_sec||0)+liveAdd,
+      cls:r.status==='completed'?'done':stale?'stale':cur?(TY[cur]==='planned'?'plan':'stop'):'run'};
+  }).sort((a,b)=>({stop:0,plan:1,run:2,stale:3,done:4}[a.cls]-{stop:0,plan:1,run:2,stale:3,done:4}[b.cls])||hoNum(a.r.machine_code)-hoNum(b.r.machine_code));
+  const act=rows.filter(x=>x.cls!=='done');
+  document.getElementById('sum').innerHTML=[
+    [act.length,'작업 중 호기'],[act.filter(x=>x.cls==='run').length,'가동 중'],
+    [act.filter(x=>x.cls==='stop').length,'정지 중 (고장·비계획)'],[act.filter(x=>x.cls==='plan').length,'계획정지 중']
+  ].map(([b,s],i)=>`<div><b style="color:${['#0f172a','#15803d','#b91c1c','#b45309'][i]}">${b}</b><span>${s}</span></div>`).join('');
+  document.getElementById('grid').innerHTML=rows.length?rows.map(x=>{ const r=x.r;
+    const top=Object.entries(r.stop_times||{}).filter(([,v])=>+v>0).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([c,v])=>esc(NM[c]||c)+' '+Math.round(v/60)+'분').join(' · ');
+    const st=x.cls==='done'?'<div class="st done">작업 종료</div>'
+      :x.stale?'<div class="st done">신호 없음</div>'
+      :x.cur?`<div class="st ${x.cls}">⏸ ${esc(NM[x.cur]||x.cur)} <span style="font-size:11px;font-weight:600">(${TYNM[TY[x.cur]]||''})</span></div><div class="el">${hms((now-x.curStart)/1000)}</div>`
+      :'<div class="st run">▶ 가동 중</div>';
+    return `<div class="card ${x.cls}"><div class="mc">${esc(r.machine_code)}</div><div class="who">${esc(r.worker_name||'-')} · ${esc(r.start_time||'')}~${esc(r.end_time||'')}${r.mold_number?' · 금형 '+esc(r.mold_number):''}</div>
+      ${st}
+      <div class="row"><span>오늘 정지 합계</span><b>${hm(x.total)}</b></div>
+      <div class="row"><span>가동률</span><b>${r.op_rate!=null?(+r.op_rate).toFixed(1)+'%':'-'}</b></div>
+      ${r.pass_qty!=null||r.bad_qty!=null?`<div class="row"><span>양품 / 불량</span><b>${(+r.pass_qty||0).toLocaleString()} / ${(+r.bad_qty||0).toLocaleString()}</b></div>`:''}
+      ${top?`<div class="top">주요 정지: ${top}</div>`:''}
+      ${x.stale?`<div class="warn">마지막 신호 ${new Date(r.updated_at).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})} — 카운터 화면이 닫혔거나 연결이 끊겼을 수 있습니다</div>`:''}</div>`; }).join('')
+    :'<div class="empty">이 날 수동생산일보로 작업 시작한 호기가 없습니다.</div>';
+  document.getElementById('upd').textContent=lastLoad?'갱신 '+new Date(lastLoad).toLocaleTimeString('ko-KR'):'';
+}
+document.getElementById('d').value=ymd(new Date());
+load(); setInterval(load,10000); setInterval(paint,1000);
+</script>
+</body>
+</html>
