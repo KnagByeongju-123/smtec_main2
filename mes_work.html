@@ -4,7 +4,7 @@
 <script src="audit.js?v=7"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>MES 가동설비 모니터링 v7.3</title>
+<title>MES 가동설비 모니터링 v7.5</title>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -398,7 +398,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 </style>
 </head>
 <body>
-<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v7.3</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">5분 갱신</span></div></div></div>
+<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v7.5</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">5분 갱신</span></div></div></div>
 <div class="tabs"><div class="tab active" data-tab="monitor" onclick="switchTab('monitor')">📊 모니터링</div><div class="tab" data-tab="settings" onclick="switchTab('settings')">📋 이력/설정</div></div>
 <div class="panel active" id="panel-monitor">
   <div class="stats"><div class="st"><div class="st-label">전체</div><div class="st-val" id="sTotal">-</div></div><div class="st run"><div class="st-label">가동</div><div class="st-val" id="sRun">-</div></div><div class="st stop"><div class="st-label">비가동</div><div class="st-val" id="sStop">-</div></div><div class="st warn"><div class="st-label">⏰30분이내</div><div class="st-val" id="sSoon">-</div></div><div class="st ng"><div class="st-label">NG</div><div class="st-val" id="sNg">-</div></div></div>
@@ -1008,15 +1008,14 @@ function switchTab(name){document.querySelectorAll('.tab').forEach(function(t){t
    수정: 진입 즉시 timer 리셋 + 중복 진입 차단 + 실패 시 지수 백오프. */
 var monBusy=false, monFail=0;
 /* ===== 재가동 생산LOT (SQ 1_2) — 스마트팩토리 v_restart_lot (수동생산일보·공정검사와 같은 규칙) =====
-   생산계획(작업지시) 종료 후 재가동 · 비계획 정지 5분 이상 후 재가동 → 새 LOT = 생산일-순번 (예: 20261109-2)
-   MES daily_production·daily_downtime(5분 주기) 기준 · 1분마다 갱신 · 품번 칸 아래에 지금 LOT 표시 */
+   같은 품번의 생산계획(작업지시)이 끝나고 다시 가동할 때만 새 LOT = 생산일-순번 (품번별, 예: 20261109-2)
+   정지(고장·소재교환·계획정지 등)로는 나누지 않음 · MES daily_production(5분 주기) 기준 · 1분마다 갱신 */
 var RLOT={}, rlotDay='', rlotAt=0;
-var RLOT_UNPLAN=['금형세팅 및 교환','금형셋팅 및 교체','설비이상','부품가공대기','금형점검','소재입고대기'];
 function rlotToday(){var d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
 async function loadRestartLots(){
   try{
     var day=rlotToday();
-    var rows=await sbGet('v_restart_lot','select=machine_code,seq,lot_no,from_t,boundary,item_code&ymd=eq.'+day+'&order=machine_code.asc,seq.asc');
+    var rows=await sbGet('v_restart_lot','select=machine_code,seq,lot_no,from_t,prev_et,boundary,item_code&ymd=eq.'+day+'&order=machine_code.asc,from_t.asc');
     if(!rows)return;
     var m={};rows.forEach(function(r){(m[r.machine_code]=m[r.machine_code]||[]).push(r);});
     RLOT=m;rlotDay=day;rlotAt=Date.now();
@@ -1024,16 +1023,15 @@ async function loadRestartLots(){
   }catch(e){console.log('재가동 LOT 조회 실패:',e);}
 }
 function rlotHtml(d){
-  var rows=RLOT[d.machine_code]||[], base=rlotDay.replace(/-/g,'');
+  var base=rlotDay.replace(/-/g,'');
   if(!base)return'';
+  var rows=(RLOT[d.machine_code]||[]).filter(function(r){return r.item_code===d.current_item_code;});
   var last=rows[rows.length-1];
-  if(!last&&!isRunning(d))return'';                               // 오늘 생산·정지 기록 없는 비가동 설비는 표시 안 함
+  if(!last&&!isRunning(d))return'';                               // 오늘 이 품번 생산 기록 없는 비가동 설비는 표시 안 함
   var lot=last?last.lot_no:base+'-1';
-  var tag=last&&last.boundary==='wo'?'생산계획 재가동 '+last.from_t:last&&last.boundary==='stop'?'정지 후 재가동 '+last.from_t:'';
-  var nm=stopName(d.machine_status), pend=d.machine_status&&d.machine_status!=='N'&&RLOT_UNPLAN.indexOf(nm)>=0;
-  return '<div style="font-size:11px;font-weight:700;color:#fbbf24;margin-top:2px" title="재가동 생산LOT (생산계획 종료·비계획 정지 후 재가동 시 순번 증가)">LOT '+lot
-    +(tag?' <span style="font-weight:400;color:#cbd5e1">· '+tag+'</span>':'')
-    +(pend?' <span style="font-weight:400;color:#fca5a5">· '+nm+' 중 → 재가동 시 새 LOT</span>':'')+'</div>';
+  var tag=last&&last.seq>1?'같은 품번 재가동 '+last.from_t+(last.prev_et?' (앞 계획 종료 '+last.prev_et+')':''):'';
+  return '<div style="font-size:11px;font-weight:700;color:#fbbf24;margin-top:2px" title="재가동 생산LOT (같은 품번의 생산계획 종료 후 다시 가동하면 순번 증가)">LOT '+lot
+    +(tag?' <span style="font-weight:400;color:#cbd5e1">· '+tag+'</span>':'')+'</div>';
 }
 loadRestartLots(); setInterval(loadRestartLots,60*1000);
 
