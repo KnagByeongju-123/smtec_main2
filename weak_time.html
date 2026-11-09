@@ -4,7 +4,7 @@
 <script src="audit.js?v=7"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>취약시간대 생산 점검 v1.2</title>
+<title>취약시간대 생산 점검 v1.3</title>
 <!-- SQ 1_4 품질관리 취약 시간대 관리 — 야간 근무 없음 · 취약시간대 = 주말·공휴일 특근
      MES 실적으로 특근일을 찾아 투입 호기별 공정검사(qc_shipping_inspection : 검사원·초품/순회) · 설비 일상점검(p_machine_check) 실시 여부를 대조 (읽기 전용)
      야간(06시 전·22시 후) 생산이 생기면 별도 표시 -->
@@ -69,11 +69,11 @@ th{background:#ede9fe;white-space:nowrap}td.c{text-align:center}
     <label>검사원 출근 <select id="cInsp"><option value="출근">출근 — 당일 공정검사</option><option value="미출근">미출근 — 생산품 보류</option></select></label>
   </div>
   <div id="cMach" style="font-size:12px;color:#475569;margin-bottom:8px"></div>
-  <div class="bar" style="padding:0 0 8px"><button class="btn w" onclick="csAll()">전체 OK</button><span style="font-size:12px;color:#64748b">NG는 비고에 조치내용 필수 · 생산 특근 책임자가 작성(PIN) → 검토 → 품질 특근 책임자 확인 → 승인</span></div>
+  <div class="bar" style="padding:0 0 8px"><button class="btn w" onclick="csAll()">전체 OK</button><span style="font-size:12px;color:#64748b">NG는 비고에 조치내용 필수 · 로그인한 사람 이름으로 서명 — 생산 특근 책임자 작성 → 검토 → 품질 특근 책임자 확인 → 승인</span></div>
   <table id="cT"></table>
   <label style="margin-top:8px">특근 품질정보 (이상 유무 · 전달 사항) <textarea id="cMemo" rows="2" placeholder="예) 이상 없음 / 47호기 버 발생 3EA 격리"></textarea></label>
   <div class="signs" id="cSign"></div>
-  <div class="bar" style="padding:10px 0 0"><button class="btn" onclick="csSave()">작성 저장 (PIN)</button><span id="cMsg" style="font-size:12px;color:#64748b"></span></div>
+  <div class="bar" style="padding:10px 0 0"><button class="btn" onclick="csSave()">작성 저장</button><span id="cMsg" style="font-size:12px;color:#64748b"></span></div>
 </div></div>
 <div class="pane on" id="p-list">
 <div class="bar">
@@ -185,7 +185,7 @@ function csPaint(){
   const lock=!!(CUR.sign&&CUR.sign.confirm);
   document.getElementById('cT').innerHTML='<tr><th>No</th><th>점검 항목</th><th>기준</th><th>결과</th><th>비고 (NG 조치내용)</th></tr>'+CS_ITEMS.map((it,i)=>`<tr><td class="c">${i+1}</td><td>${esc(it[0])}</td><td style="font-size:11.5px;color:#475569">${esc(it[1])}</td><td class="c"><span class="seg">${['OK','NG','해당없음'].map(v=>`<button data-v="${v}" class="${CUR.items[i].v===v?'on':''}" ${lock?'disabled':''} onclick="CUR.items[${i}].v='${v}';csPaint()">${v}</button>`).join('')}</span></td><td><input style="width:100%" value="${esc(CUR.items[i].n)}" ${lock?'disabled':''} oninput="CUR.items[${i}].n=this.value" placeholder="${CUR.items[i].v==='NG'?'조치내용 필수':''}"></td></tr>`).join('');
   const s=CUR.sign||{};
-  document.getElementById('cSign').innerHTML=SIGNS.map(([k,t,who],i)=>`<div><b>${t}</b><div class="who">${s[k]?esc(s[k].by):''}</div><small>${s[k]?esc(s[k].at.slice(5,16).replace('T',' ')):who}</small><br>${!s[k]&&i>0&&s.write&&(i===1||s[SIGNS[i-1][0]])?`<button class="btn w" style="padding:3px 9px;font-size:12px;margin-top:4px" onclick="csSign('${k}')">${t} (PIN)</button>`:''}</div>`).join('');
+  document.getElementById('cSign').innerHTML=SIGNS.map(([k,t,who],i)=>`<div><b>${t}</b><div class="who">${s[k]?esc(s[k].by):''}</div><small>${s[k]?esc(s[k].at.slice(5,16).replace('T',' ')):who}</small><br>${!s[k]&&i>0&&s.write&&(i===1||s[SIGNS[i-1][0]])?`<button class="btn w" style="padding:3px 9px;font-size:12px;margin-top:4px" onclick="csSign('${k}')">${t}</button>`:''}</div>`).join('');
 }
 function csAll(){CUR.items.forEach(i=>{if(!i.v)i.v='OK';});csPaint();}
 async function csSave(){
@@ -193,14 +193,23 @@ async function csSave(){
   if(CUR.sign&&CUR.sign.confirm)return alert('품질 확인이 끝난 점검표는 고칠 수 없습니다');
   if(CUR.items.some(i=>!i.v))return alert('결과를 모두 고르세요 (전체 OK 버튼 사용 가능)');
   if(CUR.items.some(i=>i.v==='NG'&&!i.n.trim()))return alert('NG 항목은 비고에 조치내용을 적어 주세요');
-  const u=await pin('작성 — 생산 특근 책임자 PIN',d);if(!u)return;if(!SIGNS[0][3](u))return alert('작성은 생산 특근 책임자(유성환·왕석주)만 할 수 있습니다');
+  const u=await me('작성 — 생산 특근 책임자',d);if(!u)return;if(!SIGNS[0][3](u))return alert('작성은 생산 특근 책임자(유성환·왕석주)만 할 수 있습니다');
   const v={kind:document.getElementById('cKind').value,owner:document.getElementById('cOwner').value,insp:document.getElementById('cInsp').value,items:CUR.items,memo:document.getElementById('cMemo').value.trim(),sign:{write:{by:u.name,at:new Date().toISOString()}}};
   try{await csPut(D=>{D[d]=v;});CUR=JSON.parse(JSON.stringify(v));document.getElementById('cMsg').textContent='저장 — '+u.name+' (검토·확인·승인은 서명 버튼)';csPaint();paint();}catch(e){alert('저장 실패: '+e.message);}
 }
 async function csSign(k){
   const d=document.getElementById('cDate').value,S=SIGNS.find(x=>x[0]===k);
-  const u=await pin(S[1]+' — '+S[2]+' PIN',d);if(!u)return;if(!S[3](u))return alert(S[1]+'은(는) '+S[2]+'만 할 수 있습니다');
+  const u=await me(S[1]+' — '+S[2],d);if(!u)return;if(!S[3](u))return alert(S[1]+'은(는) '+S[2]+'만 할 수 있습니다');
   try{await csPut(D=>{if(!D[d])throw new Error('작성된 점검표 없음');(D[d].sign=D[d].sign||{})[k]={by:u.name,at:new Date().toISOString()};});CUR=JSON.parse(JSON.stringify(CSD[d]));csPaint();paint();}catch(e){alert('서명 실패: '+e.message);}
+}
+/* PIN 대신 로그인 사용자(audit.js 포털 로그인)로 서명 — 직위는 user_pin 에서 이름으로 조회 */
+async function me(t,d){
+  let a=null,u=null;try{a=JSON.parse(localStorage.getItem('esg_pin_auth')||'null');u=JSON.parse(localStorage.getItem('tj_audit_user')||'null');}catch(e){}
+  const name=(u&&u.name)||(a&&a.name);
+  if(!name||(a&&a.exp&&a.exp<Date.now())){alert('로그인이 필요합니다 — 화면을 새로고침해 로그인하세요');return null;}
+  if(!confirm(`${t}\n${d}\n\n${name} 이름으로 서명합니다.`))return null;
+  let pos='';try{const r=await fetch(SB_URL+'/rest/v1/user_pin?select=position&name=eq.'+encodeURIComponent(name)+'&limit=1',{headers:H});const j=r.ok?await r.json():[];pos=(j[0]&&j[0].position)||'';}catch(e){}
+  return {name,position:pos};
 }
 let pinCb=null;
 function pin(t,d){return new Promise(res=>{pinCb=res;document.getElementById('pinT').textContent=t;document.getElementById('pinD').textContent=d||'';const i=document.getElementById('pinI');i.value='';document.getElementById('pinM').classList.add('show');setTimeout(()=>i.focus(),50);});}
