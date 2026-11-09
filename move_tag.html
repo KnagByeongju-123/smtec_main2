@@ -63,6 +63,11 @@ h3{margin:16px 0 8px;font-size:17px}
     <div class="f"><label>작업자</label><input id="i_wk"></div>
   </div>
   <button class="big" id="i_go">이동표 발행 · 출력</button>
+  <div class="info" style="margin-top:16px"><b>현장에 프린터가 없을 때</b> — 사무실에서 빈 <b>재공품 식별표</b>(수기용)를 출력해 28호기에 비치하고, 파렛트마다 작업자가 적어서 붙입니다.
+    43호기는 식별표의 코일 로트를 보고 생산현황(MES 가동설비 모니터링) 로트 칸을 클릭해 장착합니다.<br>
+    <span style="display:inline-flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">A4 1장에 <select id="b_per" style="font-size:15px;padding:4px"><option value="2">2매 (A5)</option><option value="1">1매 (A4)</option></select>
+    × <input id="b_pages" type="number" value="10" min="1" max="100" style="width:70px;font-size:15px;padding:4px"> 장
+    <button class="sm" id="b_go" style="font-size:15px;padding:8px 14px;background:var(--blue2);color:#fff;border:0">빈 식별표 출력 (수기용)</button></span></div>
   <p class="muted">발행하면 QR이 들어간 이동표가 출력됩니다. 파렛트에 부착하세요. 같은 날 같은 설비 순번(-01, -02 …)이 자동으로 붙습니다.</p>
 </div>
 
@@ -176,6 +181,37 @@ function printTags(rows){
     +'</style></head><body>'+pages+'<script>setTimeout(function(){print()},300)<\/script></body></html>');
   w.document.close();
 }
+
+/* 빈 재공품 식별표 (수기용) — 블랭크 품번은 공정연결(process_link)에서 체크박스로 */
+function printBlank(){
+  const per=+$('b_per').value||2,pages=Math.max(1,Math.min(100,+$('b_pages').value||1));
+  const links=LINKS.length?LINKS:[];
+  const items=[...new Map(links.map(l=>[l.parent_item_code,l])).values()];
+  const box='<span class="cb"></span>';
+  const itemRows=items.length?items.map(l=>'<div class="it">'+box+' <b>'+esc(l.parent_item_code)+'</b> <span class="nx">→ '+esc(l.child_item_code)+' ('+esc(mcLabel(l.to_machine_code))+')</span></div>').join('')+'<div class="it">'+box+' 기타 : ______________________</div>':'<div class="ln"></div>';
+  const lotBoxes='<div class="lot">'+Array.from({length:12},()=>'<span></span>').join('')+'</div>';
+  const one='<div class="tg"><div class="hd"><div class="t">재공품 식별표</div><div class="s">블랭킹 → 후공정 · 파렛트 단위</div></div>'
+    +'<table><tr><th>블랭크 품번<br><small>(다음 공정)</small></th><td>'+itemRows+'</td></tr>'
+    +'<tr><th>코일 로트<br><small>(또박또박 크게)</small></th><td>'+lotBoxes+'</td></tr>'
+    +'<tr><th>수량</th><td class="w">&nbsp;</td></tr>'
+    +'<tr><th>생산일</th><td class="w"><span class="dt">20&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;. &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;. &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;.</span></td></tr>'
+    +'<tr><th>설비 · 작업자</th><td class="w"><span class="dt">'+esc(items.length?mcLabel(items[0].from_machine_code):'')+' &nbsp;/&nbsp;</span></td></tr>'
+    +'<tr class="u"><th>후공정 장착<br><small>(생산현황 클릭)</small></th><td>'+box+' 장착 완료 &nbsp;&nbsp; 일시 : ____/____ ____:____ &nbsp;&nbsp; 확인 : ________</td></tr></table>'
+    +'<div class="ft">※ 코일(로트)이 바뀌면 파렛트를 나누고 식별표를 새로 붙인다 · 한 파렛트에 두 로트 혼입 금지 · 후공정 투입 후 식별표는 파렛트에서 떼어 보관</div></div>';
+  const sheet='<section class="p'+per+'">'+Array.from({length:per},()=>one).join(per===2?'<div class="cut">✂ - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -</div>':'')+'</section>';
+  const w=window.open('','_blank','width=900,height=900');if(!w)return alert('팝업이 차단되었습니다. 팝업을 허용해 주세요.');
+  w.document.write('<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><title>재공품 식별표 (수기용) '+pages+'장</title><style>'
+    +'@page{size:A4 portrait;margin:8mm}body{margin:0;font-family:"Malgun Gothic",sans-serif;color:#000}section{page-break-after:always;height:281mm;display:flex;flex-direction:column;justify-content:space-between}section:last-child{page-break-after:auto}'
+    +'.tg{border:2.5px solid #000;padding:4mm 5mm;box-sizing:border-box;display:flex;flex-direction:column}.p2 .tg{height:134mm}.p1 .tg{height:281mm}'
+    +'.hd{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2.5px solid #000;padding-bottom:2mm;margin-bottom:2.5mm}.t{font-size:24pt;font-weight:900}.s{font-size:10pt}'
+    +'table{border-collapse:collapse;width:100%;flex:1}th,td{border:1.3px solid #000;padding:1.6mm 2.5mm;text-align:left;font-size:11pt}th{width:34mm;background:#eee;font-size:11pt}th small{font-weight:400;font-size:8pt}'
+    +'td.w{height:9mm}.p1 td.w{height:20mm}.it{margin:.6mm 0;font-size:11pt}.it .nx{font-size:9pt;color:#333}.cb{display:inline-block;width:4mm;height:4mm;border:1.3px solid #000;vertical-align:-0.6mm;margin-right:1mm}'
+    +'.lot{display:flex;gap:1.2mm}.lot span{flex:1;height:11mm;border:1.3px solid #000}.p1 .lot span{height:20mm}.dt{color:#555}tr.u td{font-size:10pt}'
+    +'.ft{font-size:8.5pt;margin-top:1.8mm}.cut{text-align:center;color:#888;font-size:9pt;letter-spacing:1px}'
+    +'</style></head><body>'+Array.from({length:pages},()=>sheet).join('')+'<script>setTimeout(function(){print()},300)<\/script></body></html>');
+  w.document.close();
+}
+$('b_go').onclick=printBlank;
 
 /* ② 투입 */
 function parseTag(s){s=String(s||'').trim();const m=/#t=([^&\s]+)/.exec(s);if(m)s=decodeURIComponent(m[1]);return s.toUpperCase()}
