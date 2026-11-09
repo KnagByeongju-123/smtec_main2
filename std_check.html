@@ -4,7 +4,7 @@
 <script src="audit.js?v=7"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>5대표준류 일치성 점검 v2.1</title>
+<title>5대표준류 일치성 점검 v2.2</title>
 <!-- SQ 1_1 표준류 작성 및 준수상태 — 「5대표준류 일치성 점검 지침서」에 따른 년간 점검계획 · 품번별 평가시트 · 시정조치 · 결과 보고
      저장 : 스마트팩토리 kv_store 'std_check_v1' = { years:{ 'YYYY':{ items:[{no,cust,car,name,pn}], marks:{품번:[12]}, evals:{품번:{...}} } } }
      ● 는 평가 저장 시 자동 (평가월) · ○ 계획 / ◎ 연기 는 계획 탭에서 칸을 눌러 지정 · 평가자·검증자는 PIN 확인 -->
@@ -85,6 +85,7 @@ th{background:#e0ecff;white-space:nowrap}
   <button data-p="e">③ 평가 입력</button>
   <button data-p="c">④ 시정조치<span class="cnt" id="carCnt" style="display:none"></span></button>
   <button data-p="i">⑤ 품번 관리</button>
+  <button data-p="b">⑥ 백업</button>
 </div>
 
 <div class="pane" id="p-g">
@@ -129,7 +130,7 @@ th{background:#e0ecff;white-space:nowrap}
   <div id="eInfo" class="note" style="margin:0 0 8px"></div>
   <div class="bar"><button class="btn w" onclick="allO()">전체 O</button><span class="note" style="margin:0">O 양호 · △ 개선 · X 미흡 · 해당없음 — △/X 가 있으면 그 표준류는 NG, 시정조치 요구로 넘어갑니다</span></div>
   <table class="ev" id="evT"></table>
-  <div class="bar" style="margin-top:10px"><button class="btn g" onclick="saveEval()">평가 저장 (PIN)</button><span id="eMsg" class="note" style="margin:0"></span></div>
+  <div class="bar" style="margin-top:10px"><button class="btn g" onclick="saveEval()">평가 저장 (PIN)</button><button class="btn r" id="eDel" style="display:none" onclick="delEval()">평가 삭제</button><span id="eMsg" class="note" style="margin:0"></span></div>
 </div>
 
 <div class="pane" id="p-c">
@@ -144,12 +145,17 @@ th{background:#e0ecff;white-space:nowrap}
     <label>품명 <input id="iName"></label>
     <label>품번 <input id="iPn"></label>
   </div>
-  <div class="bar"><button class="btn" onclick="addItem()">품번 추가</button><button class="btn w" onclick="newYear()">다음 해 계획 만들기 (품번 복사)</button></div>
+  <div class="bar"><button class="btn" id="iBtn" onclick="addItem()">품번 추가</button><button class="btn w" id="iCancel" style="display:none" onclick="editItem(null)">수정 취소</button><button class="btn w" onclick="newYear()">다음 해 계획 만들기 (품번 복사)</button></div>
   <table class="plan" id="itT"></table>
 </div>
 
 <div class="zoom" id="zoom" onclick="this.classList.remove('show')"><img id="zoomI"></div>
 <input type="file" id="fileI" accept="image/*" multiple style="display:none" onchange="upImgs(this.files)">
+<div class="pane" id="p-b">
+  <div class="note" style="margin:0 0 8px">매주 월요일 00:20 자동 백업 (스마트팩토리 비공개 저장공간 · 엑셀 + 원본 JSON) — 계획·결과 / 평가상세 / 시정조치 시트 · 다운로드 링크는 7일 유효 (목록을 다시 열면 새 링크)</div>
+  <div class="bar"><button class="btn" onclick="bkNow()">지금 백업</button><button class="btn w" onclick="bkList()">목록 새로고침</button><span id="bkSt" class="note" style="margin:0"></span></div>
+  <table class="plan" id="bkT"></table>
+</div>
 <div class="modal" id="pinM"><div class="box"><h3 id="pinT">PIN 확인</h3><div class="note" id="pinD" style="margin:0"></div>
   <input type="password" id="pinI" inputmode="numeric" maxlength="8" autocomplete="off" onkeydown="if(event.key==='Enter')pinOk()">
   <div style="display:flex;gap:6px;justify-content:flex-end"><button class="btn w" onclick="pinClose(null)">취소</button><button class="btn" onclick="pinOk()">확인</button></div></div></div>
@@ -208,7 +214,7 @@ async function pinOk(){
 
 /* ---------- 공통 ---------- */
 document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>tab(b.dataset.p));
-function tab(p){document.querySelectorAll('.tabs button').forEach(x=>x.classList.toggle('on',x.dataset.p===p));document.querySelectorAll('.pane').forEach(x=>x.classList.toggle('on',x.id==='p-'+p));}
+function tab(p){if(p==='b')bkList();document.querySelectorAll('.tabs button').forEach(x=>x.classList.toggle('on',x.dataset.p===p));document.querySelectorAll('.pane').forEach(x=>x.classList.toggle('on',x.id==='p-'+p));}
 function setYear(v){Y=v;paintAll();}
 const mk=(pn)=>YD().marks[pn]||(YD().marks[pn]=Array(12).fill(''));
 const isDone=pn=>(YD().marks[pn]||[]).includes('●');
@@ -294,6 +300,7 @@ function loadEval(){
   document.getElementById('eKind').value=e?e.kind||'정기':'정기';
   document.getElementById('eBy').value=e?e.by:'';
   document.getElementById('eInfo').innerHTML=!pn?'품번을 고르세요':e?`저장된 평가 : ${esc(e.date||((e.m+1)+'월'))} · ${esc(e.by)}${e.src?' · '+esc(e.src):''} — 고쳐서 다시 저장하면 바뀝니다`:`신규 평가 · 계획 ${planM(pn)>=0?(planM(pn)+1)+'월':'없음'}`;
+  document.getElementById('eDel').style.display=e?'':'none';
   paintEv();
 }
 const docRes=d=>d.r.some(v=>v==='X'||v==='△')?'NG':d.r.every(v=>v)?'OK':'';
@@ -344,13 +351,15 @@ async function saveEval(){
 }
 
 /* ---------- ④ 시정조치 ---------- */
+let CAR_ED='';
 function paintCar(){
   const yd=YD(), list=yd.items.filter(i=>yd.evals[i.pn]&&yd.evals[i.pn].judge==='NG'), T=today();
   let h='<tr><th>품번</th><th>평가일</th><th>문제점 (시정조치 요구)</th><th>요구처</th><th>회신기한</th><th>개선대책 (회신)</th><th>상태</th><th>검증</th></tr>';
   if(!list.length) h+='<tr><td colspan="8" class="c" style="text-align:center;color:#64748b;padding:18px">NG 평가 없음</td></tr>';
   for(const it of list){const e=yd.evals[it.pn],c=e.car||{};const done=!!c.verAt,over=!done&&!c.repAt&&c.due<T;
     const stt=done?'<span class="tag t-done">완료</span>':c.repAt?'<span class="tag t-rep">회신 · 검증대기</span>':'<span class="tag t-req">요구</span>';
-    h+=`<tr><td><b>${esc(it.pn)}</b><br>${esc(it.name)}</td><td class="c">${esc(e.date)}</td><td>${esc(c.req)}</td>
+    if(CAR_ED===it.pn){h+=`<tr><td><b>${esc(it.pn)}</b><br>${esc(it.name)}</td><td class="c">${esc(e.date)}</td><td><textarea rows="3" id="ce_req" style="width:100%;min-width:200px;font-size:12px">${esc(c.req)}</textarea></td><td><select id="ce_to">${['생산팀(C.F.T)','공급업체','설계팀','품질관리팀'].map(o=>`<option ${o===c.to?'selected':''}>${o}</option>`).join('')}</select></td><td><input type="date" id="ce_due" value="${esc(c.due)}"></td><td><textarea rows="3" id="ce_plan" style="width:100%;min-width:200px;font-size:12px">${esc(c.plan)}</textarea></td><td class="c" colspan="2"><button class="btn g" style="padding:4px 9px;font-size:12px" onclick="carEdSave('${esc(it.pn)}')">수정 저장</button> <button class="btn w" style="padding:4px 9px;font-size:12px" onclick="CAR_ED='';paintCar()">취소</button>${c.verAt?'<br><small>저장하면 검증이 풀려 다시 검증해야 합니다</small>':''}</td></tr>`;continue;}
+    h+=`<tr><td><b>${esc(it.pn)}</b><br>${esc(it.name)}<br><button class="btn w" style="padding:1px 7px;font-size:11px;margin-top:3px" onclick="CAR_ED='${esc(it.pn)}';paintCar()">수정</button></td><td class="c">${esc(e.date)}</td><td>${esc(c.req)}</td>
     <td>${done?esc(c.to):`<select onchange="carSet('${esc(it.pn)}','to',this.value)">${['생산팀(C.F.T)','공급업체','설계팀','품질관리팀'].map(o=>`<option ${o===c.to?'selected':''}>${o}</option>`).join('')}</select>`}</td>
     <td class="c ${over?'ng':''}">${esc(c.due)}${over?'<br>기한 경과':''}</td>
     <td>${done?esc(c.plan)+`<br><small>${esc(c.repAt)}</small>`:`<textarea rows="2" style="width:100%;min-width:200px;font-size:12px" id="pl_${esc(it.pn)}" placeholder="개선안 (표준류 개정 내용 · Rev.)">${esc(c.plan)}</textarea><button class="btn w" style="padding:3px 9px;font-size:12px" onclick="carRep('${esc(it.pn)}')">회신 저장</button>${c.repAt?` <small>${esc(c.repAt)}</small>`:''}`}</td>
@@ -358,21 +367,68 @@ function paintCar(){
     <td class="c">${done?`${esc(c.verBy)}<br><small>${esc(c.verAt.slice(0,10))}</small>`:c.repAt?`<button class="btn g" style="padding:4px 9px;font-size:12px" onclick="carVer('${esc(it.pn)}')">검증 (PIN)</button>`:'-'}</td></tr>`;}
   document.getElementById('carT').innerHTML=h;
 }
+async function carEdSave(pn){
+  const g=id=>document.getElementById(id).value.trim(),req=g('ce_req'),to=g('ce_to'),due=g('ce_due'),plan=g('ce_plan');
+  if(!req||!due) return alert('문제점과 회신기한은 비울 수 없습니다');
+  const c0=YD().evals[pn].car||{}, reopen=!!c0.verAt&&(plan!==c0.plan||req!==c0.req);
+  const u=await pin('시정조치 수정 PIN',pn+(reopen?' — 검증 완료 건 : 저장하면 다시 검증해야 합니다':'')); if(!u) return;
+  await save(D=>{const c=D.years[Y].evals[pn].car;Object.assign(c,{req,to,due,plan});if(plan&&!c.repAt)c.repAt=today();if(reopen){c.verBy='';c.verAt='';}(c.log=c.log||[]).push({by:u.name,at:new Date().toISOString(),what:'수정'});});
+  CAR_ED='';paintCar();
+}
 function carSet(pn,k,v){save(D=>{const c=D.years[Y].evals[pn].car;c[k]=v;}).catch(e=>alert(e.message));}
 function carRep(pn){const v=document.getElementById('pl_'+pn).value.trim();if(!v)return alert('개선대책을 적어 주세요');save(D=>{const c=D.years[Y].evals[pn].car;c.plan=v;c.repAt=today();}).catch(e=>alert(e.message));}
 async function carVer(pn){const u=await pin('검증자 PIN','개선안 검증 — '+pn);if(!u)return;save(D=>{const c=D.years[Y].evals[pn].car;c.verBy=u.name;c.verAt=new Date().toISOString();}).catch(e=>alert(e.message));}
 
 /* ---------- ⑤ 품번 ---------- */
+let IT_ED=null;
 function paintItems(){
   let h='<tr><th>NO</th><th>고객명</th><th>차종</th><th>품명</th><th>품번</th><th>평가</th><th></th></tr>';
-  for(const it of YD().items) h+=`<tr><td>${esc(it.no)}</td><td>${esc(it.cust)}</td><td>${esc(it.car)}</td><td class="l">${esc(it.name)}</td><td class="l">${esc(it.pn)}</td><td>${YD().evals[it.pn]?'있음':''}</td><td><button class="btn r" style="padding:2px 8px;font-size:12px" onclick="delItem('${esc(it.pn)}')">삭제</button></td></tr>`;
+  for(const it of YD().items) h+=`<tr><td>${esc(it.no)}</td><td>${esc(it.cust)}</td><td>${esc(it.car)}</td><td class="l">${esc(it.name)}</td><td class="l">${esc(it.pn)}</td><td>${YD().evals[it.pn]?'있음':''}</td><td><button class="btn w" style="padding:2px 8px;font-size:12px" onclick="editItem('${esc(it.pn)}')">수정</button> <button class="btn r" style="padding:2px 8px;font-size:12px" onclick="delItem('${esc(it.pn)}')">삭제</button></td></tr>`;
   document.getElementById('itT').innerHTML=h;
 }
+function editItem(pn){
+  IT_ED=pn;const it=pn&&YD().items.find(i=>i.pn===pn),f={iCust:'cust',iCar:'car',iName:'name',iPn:'pn'};
+  for(const id in f) document.getElementById(id).value=it?it[f[id]]:(id==='iCust'?'SKF Seal':'');
+  document.getElementById('iBtn').textContent=it?'수정 저장':'품번 추가';document.getElementById('iCancel').style.display=it?'':'none';
+  if(it) document.getElementById('iName').focus();
+}
 function addItem(){
+  if(IT_ED) return saveItemEdit();
   const g=id=>document.getElementById(id).value.trim(), pn=g('iPn');
   if(!pn||!g('iName')) return alert('품명과 품번을 넣으세요'); if(YD().items.some(i=>i.pn===pn)) return alert('이미 있는 품번입니다');
   save(D=>{const yd=D.years[Y]||(D.years[Y]={items:[],marks:{},evals:{}});if(yd.items.some(i=>i.pn===pn))return;yd.items.push({no:String(yd.items.length+1),cust:g('iCust'),car:g('iCar'),name:g('iName'),pn});yd.marks[pn]=Array(12).fill('');})
    .then(()=>{['iCar','iName','iPn'].forEach(i=>document.getElementById(i).value='');}).catch(e=>alert(e.message));
+}
+function saveItemEdit(){
+  const old=IT_ED,g=id=>document.getElementById(id).value.trim(),pn=g('iPn');
+  if(!pn||!g('iName')) return alert('품명과 품번을 넣으세요');
+  if(pn!==old&&YD().items.some(i=>i.pn===pn)) return alert('이미 있는 품번입니다');
+  save(D=>{const yd=D.years[Y];const it=yd.items.find(i=>i.pn===old);if(!it)return;Object.assign(it,{cust:g('iCust'),car:g('iCar'),name:g('iName'),pn});
+    if(pn!==old){for(const k of ['marks','evals'])if(yd[k][old]!==undefined){yd[k][pn]=yd[k][old];delete yd[k][old];}}})
+   .then(()=>editItem(null)).catch(e=>alert(e.message));
+}
+async function delEval(){
+  const pn=document.getElementById('ePn').value;if(!pn||!YD().evals[pn])return;
+  if(prompt(`${pn} 평가 기록(시정조치 포함)을 삭제합니다. ● 표시도 지워집니다.\n확인하려면 "삭제" 라고 입력하세요`)!=='삭제')return;
+  const u=await pin('평가 삭제 PIN',pn);if(!u)return;
+  await save(D=>{const yd=D.years[Y];delete yd.evals[pn];const m=yd.marks[pn];if(m)for(let i=0;i<12;i++)if(m[i]==='●')m[i]='';(yd.dellog=yd.dellog||[]).push({pn,by:u.name,at:new Date().toISOString()});});
+  document.getElementById('eMsg').textContent=pn+' 평가 삭제 — '+u.name;loadEval();
+}
+/* ---------- ⑥ 백업 ---------- */
+const FN=SB_URL+'/functions/v1/std-check-backup';
+const ANON='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tbmd0eWV3ZGFxcHBobnplYXRlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4ODk4ODksImV4cCI6MjA5MDQ2NTg4OX0.Zxur3t02JHtOcXforCMSwO3i2mMaf5sViE0tXXUC0-s';
+async function fnCall(q,body){const r=await fetch(FN+(q||''),{method:'POST',headers:{Authorization:'Bearer '+ANON,'Content-Type':'application/json'},body:JSON.stringify(body||{})});const j=await r.json().catch(()=>({}));if(!r.ok||!j.ok)throw new Error(j.error||('HTTP '+r.status));return j;}
+async function bkList(){
+  const t=document.getElementById('bkT'),s=document.getElementById('bkSt');s.textContent='불러오는 중…';
+  try{const j=await fnCall('?list=1');
+    t.innerHTML='<tr><th>백업 파일</th><th>크기</th><th>만든 시각</th><th></th></tr>'+(j.files.length?j.files.map(f=>`<tr><td class="l">${esc(f.name)}</td><td>${Math.round(f.size/1024)} KB</td><td>${esc(new Date(f.at).toLocaleString('ko-KR'))}</td><td>${f.url?`<a class="btn w" style="padding:2px 9px;font-size:12px;text-decoration:none" href="${esc(f.url)}">다운로드</a>`:''} <button class="btn r" style="padding:2px 8px;font-size:12px" onclick="bkDel('${esc(f.name)}')">삭제</button></td></tr>`).join(''):'<tr><td colspan="4">백업 없음</td></tr>');
+    s.textContent=j.files.length+'개';}catch(e){s.textContent='목록 실패 — '+e.message;}
+}
+async function bkNow(){const s=document.getElementById('bkSt');s.textContent='백업 중…';try{await fnCall('',{});await bkList();s.textContent='백업 완료 · '+s.textContent;}catch(e){s.textContent='백업 실패 — '+e.message;}}
+async function bkDel(name){
+  if(prompt(name+' 백업을 삭제합니다.\n확인하려면 "삭제" 라고 입력하세요')!=='삭제')return;
+  const u=await pin('백업 삭제 PIN',name);if(!u)return;
+  try{await fnCall('',{del:name,by:u.name});bkList();}catch(e){alert('삭제 실패: '+e.message);}
 }
 function delItem(pn){
   const e=YD().evals[pn];
