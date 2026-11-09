@@ -84,7 +84,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
     <div class="fg"><label>가동 여부</label><div style="display:flex;gap:6px"><button type="button" class="run-btn" data-run="가동" onclick="setRun('가동')">⚙ 가동</button><button type="button" class="run-btn" data-run="비가동" onclick="setRun('비가동')">⏸ 비가동</button></div></div>
     <div id="idleBox" style="display:none"><div class="fg-row"><div class="fg"><label>비가동 사유</label><select id="idleReason"><option value="">선택</option><option>휴무</option><option>생산계획 없음</option><option>설비 고장·수리</option><option>기타</option></select></div><div class="fg"><label>상세 (선택)</label><input type="text" id="idleDetail" placeholder="예: 협력사 휴무"></div></div>
       <div style="font-size:11px;color:var(--text3)">비가동이면 점검항목 없이 비가동 기록만 남깁니다.</div></div></div>
-  <div class="progress-wrap wash-run"><div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"></div></div><div class="progress-text" id="progressText">0 / 25 항목 체크</div></div>
+  <div class="progress-wrap wash-run"><div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"></div></div><div class="progress-text" id="progressText">0 / 15 항목 체크</div></div>
   <div id="washItemsBox" class="wash-run"></div>
   <div class="card"><div class="card-title">메모</div><div class="fg"><textarea id="memo" rows="2" placeholder="특이사항 입력" style="width:100%;padding:10px;font-size:13px;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit;resize:vertical"></textarea></div></div>
   <button type="button" class="submit-btn" onclick="submitForm()">✅ 점검 제출</button>
@@ -345,36 +345,27 @@ function kstTimeStr(d){d=d||nowKST();return String(d.getHours()).padStart(2,'0')
 function setDateTimeNow(){const n=nowKST();document.getElementById('checkDate').value=kstDateStr(n);document.getElementById('checkTime').value=kstTimeStr(n)}
 /* ===== 점검 항목 = 작업표준서-세척기 (진공 초음파 세척 · 1호기 · 품명 공용 · 2025.05.20) 내용만 =====
    k: 저장 키(items jsonb), t: 항목, p: 포인트/기준, tool: 치공구, val: 실측(입력 id·단위·판정) — 실측값은 기존 칸(val_b5·b6·b8·b9)에 저장 */
-const WASH_FORM_REV='작업표준서-세척기 2025.05.20';
+const WASH_FORM_REV='세척기 일상점검 (작업표준서-세척기 2025.05.20 기준)';
 const WASH_GROUPS=[
- {g:'A',title:'🔧 작업 순서',note:'공정: 입구 CONV. → 1차 초음파세척 → 2차 진공초음파세척 → 3차 진공초음파세척 → 4차 진공건조1 → 5차 진공건조2 → 출구 CONV. → RETURN CONV.'},
+ {g:'A',title:'🔧 설비 작동상태',note:'공정: 입구 CONV. → 1차 초음파세척 → 2차 진공초음파세척 → 3차 진공초음파세척 → 4차 진공건조1 → 5차 진공건조2 → 출구 CONV. → RETURN CONV.'},
  {g:'B',title:'📏 관리기준'},
- {g:'C',title:'📌 관리포인트',note:'각 소모품 교환 주기(세척액·필터 1회/월, 열매체유·진공펌프 오일 2회/년)는 위 세척조 카드에서 기록합니다.'},
- {g:'D',title:'🦺 안전 및 환경',note:'· 작업 중 이상 발생 시 즉시 기계를 정지하고 현장책임자에게 보고 → 현장책임자는 담당 실무자에게 보고, 담당 실무자는 관련부서와 협의<br>· 장비 가동 중 회전체 및 이송부에 손이나 머리 등을 접촉하지 않도록 주의<br>· 작업장 가까운 곳에 눈 세척시설 및 비상세척설비 설치'}];
+ {g:'C',title:'🛢 세척액 · 오일',note:'소모품 교환 주기(세척액·필터 1회/월, 열매체유·진공펌프 오일 2회/년)는 위 세척조 카드에서 기록합니다.'},
+ {g:'D',title:'🦺 안전 및 환경',note:'· 작업 중 이상 발생 시 즉시 기계를 정지하고 현장책임자에게 보고<br>· 장비 가동 중 회전체 및 이송부에 손이나 머리 등을 접촉하지 않도록 주의<br>· 작업장 가까운 곳에 눈 세척시설 및 비상세척설비 비치'}];
+/* 세척기 일상점검 (작업 조작순서는 작업표준서로 관리 — 점검표에서 제외) — 키(k)는 이전 25항목 양식과 같은 번호 유지 */
 const WASH_ITEMS=[
- {k:'s1',g:'A',t:'냉각기 칠러 PUMP 셀렉터 ON',p:'펌프 작동 상태',tool:'육안'},
- {k:'s2',g:'A',t:'판넬 M/C LIGHT ON',p:'작동상태',tool:'육안'},
- {k:'s3',g:'A',t:'제어 전원 셀렉터 ON',p:'작동상태',tool:'셀렉터'},
- {k:'s4',g:'A',t:'이상해제 및 부저정지 버튼 누름',p:'작동상태',tool:'스위치'},
- {k:'s5',g:'A',t:'반입·반출 캐리어 정위치 (정위치 기동)',p:'위치상태',tool:'육안'},
- {k:'s6',g:'A',t:'증발기(재생) 자동',p:'작동상태',tool:'스위치'},
- {k:'s7',g:'A',t:'운전준비 버튼 누름',p:'작동상태',tool:'스위치'},
- {k:'s8',g:'A',t:'집진기 & 환풍기 ON',p:'작동상태',tool:'육안'},
- {k:'s9',g:'A',t:'오일히터 & 재생기 온도 확인',p:'온도',tool:'온도계'},
- {k:'s10',g:'A',t:'자동 셀렉터 ON',p:'작동상태',tool:'셀렉터'},
- {k:'s11',g:'A',t:'자동시작 버튼 누름',p:'작동상태',tool:'스위치'},
- {k:'s12',g:'A',t:'반입·반출 컨베어 구동상태 확인',p:'이탈 및 구동상태',tool:'육안'},
- {k:'s13',g:'A',t:'10분간 워밍업 후 세척제품 투입',p:'워밍업 10분',tool:'타이머'},
+ {k:'s1',g:'A',t:'냉각기 칠러 펌프',p:'펌프 작동 상태',tool:'육안'},
+ {k:'s8',g:'A',t:'집진기 & 환풍기',p:'작동상태',tool:'육안'},
+ {k:'s9',g:'A',t:'오일히터 & 재생기 온도',p:'온도',tool:'온도계'},
+ {k:'s12',g:'A',t:'반입·반출 컨베어',p:'이탈 및 구동상태',tool:'육안'},
+ {k:'s23',g:'A',t:'순환펌프',p:'작동상태',tool:'육안'},
  {k:'s14',g:'B',t:'세정온도',p:'50~55℃',tool:'온도계',val:{id:'val_b5',u:'℃',ph:'온도 기록 (예: 52)',ok:v=>v>=50&&v<=55}},
  {k:'s15',g:'B',t:'세정시간',p:'50초 이상',tool:'타이머',val:{id:'val_b6',u:'초',ph:'시간 기록 (초, 예: 60)',ok:v=>v>=50}},
  {k:'s16',g:'B',t:'건조온도',p:'90~100℃',tool:'온도계',val:{id:'val_b8',u:'℃',ph:'온도 기록 (예: 95)',ok:v=>v>=90&&v<=100}},
  {k:'s17',g:'B',t:'건조시간',p:'150초 이상',tool:'타이머',val:{id:'val_b9',u:'초',ph:'시간 기록 (초, 예: 150)',ok:v=>v>=150}},
- {k:'s18',g:'B',t:'세척액',p:'WJ 1010'},
- {k:'s19',g:'B',t:'청정도 — 세척 후 제품표면 유분 확인',p:'제품표면 유분 없을 것'},
- {k:'s20',g:'C',t:'현재기종 세척완료 배출 후 타기종 작업시작'},
- {k:'s21',g:'C',t:'세척액 수위 & 진공펌프 오일량 확인'},
- {k:'s22',g:'C',t:'열매체유 수위 확인'},
- {k:'s23',g:'C',t:'순환펌프 작동상태 확인'},
+ {k:'s19',g:'B',t:'제품 청정도 — 세척 후 제품표면 유분 확인',p:'제품표면 유분 없을 것',tool:'육안'},
+ {k:'s18',g:'C',t:'세척액',p:'WJ 1010'},
+ {k:'s21',g:'C',t:'세척액 수위 & 진공펌프 오일량',p:'수위·오일량'},
+ {k:'s22',g:'C',t:'열매체유 수위',p:'수위'},
  {k:'s24',g:'D',t:'세척장비 주변 가연성·조연성 물질 제거 및 충분한 환기',p:'국소배기장치 · 노출기준 적합'},
  {k:'s25',g:'D',t:'개인 보호구 착용',p:'보안경 · 내화학성 장갑 · 호흡용 보호구(검정마크)',req:true}];
 WASH_ITEMS.forEach((x,i)=>{x.no=i+1;x.label=(i+1)+'. '+x.t});
