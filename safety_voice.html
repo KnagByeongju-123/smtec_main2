@@ -405,10 +405,38 @@ body.pf .prnform{display:block;padding:10mm 0}
 .toast.on{opacity:1}
 #lightbox{position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:300;display:none;align-items:center;justify-content:center;cursor:zoom-out}
 #lightbox.on{display:flex}#lightbox img{max-width:96vw;max-height:94vh;border-radius:6px}
+
+/* ===== PIN 잠금화면 ===== */
+#pinLock{position:fixed;inset:0;z-index:9999;background:linear-gradient(160deg,#0F5F3D 0%,#162033 70%);color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px 16px calc(24px + env(safe-area-inset-bottom));user-select:none;-webkit-user-select:none}
+#pinLock.off{display:none}
+#pinLock .lk-time{font-size:64px;font-weight:300;letter-spacing:-1px;line-height:1}
+#pinLock .lk-date{font-size:15px;opacity:.8;margin:6px 0 26px}
+#pinLock .lk-ic{width:46px;height:46px;border-radius:14px;background:rgba(255,255,255,.14);display:grid;place-items:center;font-size:22px;margin-bottom:10px}
+#pinLock .lk-t{font-size:16px;font-weight:700}
+#pinLock .lk-hint{font-size:13px;opacity:.75;min-height:20px;margin:6px 0 16px}
+#pinLock .lk-hint.err{color:#FF9B8F;opacity:1}#pinLock .lk-hint.ok{color:#7CE3AE;opacity:1}
+#pinLock .lk-dots{display:flex;gap:18px;margin-bottom:28px}
+#pinLock .lk-dots i{width:14px;height:14px;border-radius:50%;border:2px solid rgba(255,255,255,.8);transition:.12s}
+#pinLock .lk-dots i.on{background:#fff}
+#pinLock .lk-dots.err{animation:lkShake .35s}#pinLock .lk-dots.err i{border-color:#FF9B8F;background:#FF9B8F}
+@keyframes lkShake{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-10px)}40%,80%{transform:translateX(10px)}}
+#pinLock .lk-pad{display:grid;grid-template-columns:repeat(3,76px);gap:16px 26px}
+#pinLock .lk-pad button{width:76px;height:76px;border-radius:50%;border:0;background:rgba(255,255,255,.14);color:#fff;font-size:30px;font-weight:400;cursor:pointer;-webkit-tap-highlight-color:transparent;font-family:inherit}
+#pinLock .lk-pad button:active{background:rgba(255,255,255,.35)}
+#pinLock .lk-pad button.fn{background:none;font-size:15px;font-weight:600}
+#pinLock .lk-pad button.hid{visibility:hidden}
+@media (max-height:640px){#pinLock .lk-time{font-size:44px}#pinLock .lk-date{margin-bottom:14px}#pinLock .lk-pad{gap:10px 22px}#pinLock .lk-pad button{width:66px;height:66px;font-size:26px}}
 </style>
 </head>
 <body>
 <!-- ===== Top bar ===== -->
+<div id="pinLock" role="dialog" aria-label="PIN 잠금">
+  <div class="lk-time" id="lkTime"></div><div class="lk-date" id="lkDate"></div>
+  <div class="lk-ic">🦺</div><div class="lk-t">안전보건 통합관리</div>
+  <div class="lk-hint" id="lkHint">PIN 번호 4자리를 입력하세요</div>
+  <div class="lk-dots" id="lkDots"><i></i><i></i><i></i><i></i></div>
+  <div class="lk-pad" id="lkPad"></div>
+</div>
 <div id="top">
   <button id="ham" onclick="mnav(true)">☰</button>
   <div class="brand"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 13l5 5L20 7"/></svg></span>TJ 세이프 <small>개인의견청취 · AI 위험성평가</small></div>
@@ -1716,6 +1744,38 @@ function printForm(id){
 
 document.addEventListener('DOMContentLoaded',init);
 
+
+/* ===== PIN 잠금화면 — 앱에 들어올 때마다 무조건 입력 (ESG 스마트팩토리 직원 PIN과 동일) ===== */
+(function(){
+  const PIN_URL='https://omngtyewdaqpphnzeate.supabase.co',PIN_KEY='sb_publishable_9j2YkkL-7ul1TrhH-NjVdQ_vWDG2-1D';
+  const MAX_FAIL=5,LOCK_SEC=60,FK='tj_safe_pin_fail';
+  let pin='',busy=false;const el=id=>document.getElementById(id);
+  document.documentElement.style.overflow='hidden';
+  const getF=()=>{try{return JSON.parse(localStorage.getItem(FK))||{c:0,u:0};}catch(e){return{c:0,u:0};}};
+  const setF=f=>{try{localStorage.setItem(FK,JSON.stringify(f));}catch(e){}};
+  function clock(){const d=new Date();el('lkTime').textContent=String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');el('lkDate').textContent=(d.getMonth()+1)+'월 '+d.getDate()+'일 '+'일월화수목금토'[d.getDay()]+'요일';}
+  function hint(m,c){const h=el('lkHint');h.textContent=m;h.className='lk-hint'+(c?' '+c:'');}
+  function dots(err){const D=el('lkDots');D.classList.toggle('err',!!err);D.querySelectorAll('i').forEach((x,i)=>x.classList.toggle('on',i<pin.length));}
+  function locked(){const f=getF();if(f.u>Date.now()){hint(Math.ceil((f.u-Date.now())/1000)+'초 후 다시 시도하세요','err');setTimeout(locked,1000);return true;}return false;}
+  async function sha(s){const h=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s));return Array.from(new Uint8Array(h)).map(x=>x.toString(16).padStart(2,'0')).join('');}
+  function fail(msg){const f=getF();f.c=(f.c||0)+1;if(f.c>=MAX_FAIL){f.u=Date.now()+LOCK_SEC*1000;f.c=0;}setF(f);dots(true);if(navigator.vibrate)navigator.vibrate(200);
+    setTimeout(()=>{pin='';dots();if(!locked())hint(msg||('PIN이 일치하지 않습니다 ('+f.c+'/'+MAX_FAIL+')'),'err');},400);}
+  async function check(){busy=true;hint('확인 중…');
+    try{
+      if(pin==='0000'){busy=false;return fail('Guest PIN으로는 들어갈 수 없습니다');}
+      const r=await fetch(PIN_URL+'/rest/v1/user_pin?select=name&pin_hash=eq.'+await sha(pin),{headers:{apikey:PIN_KEY,Authorization:'Bearer '+PIN_KEY}});
+      if(!r.ok)throw new Error(r.status);const d=await r.json();
+      if(d&&d.length){setF({c:0,u:0});hint('인증 완료 · '+d[0].name,'ok');ADMIN.name=d[0].name;
+        setTimeout(()=>{el('pinLock').classList.add('off');document.documentElement.style.overflow='';clearInterval(T);},250);}
+      else fail();
+    }catch(e){pin='';dots();hint('서버 연결 실패 — 네트워크 확인 후 다시 입력하세요','err');}
+    busy=false;}
+  function press(k){if(busy||locked())return;if(k==='del'){pin=pin.slice(0,-1);dots();return;}if(pin.length>=4)return;pin+=k;dots();if(pin.length===4)setTimeout(check,120);}
+  el('lkPad').innerHTML=['1','2','3','4','5','6','7','8','9','','0','del'].map(k=>k===''?'<button class="hid" tabindex="-1"></button>':k==='del'?'<button class="fn" data-k="del">지우기</button>':`<button data-k="${k}">${k}</button>`).join('');
+  el('lkPad').addEventListener('click',e=>{const b=e.target.closest('button[data-k]');if(b)press(b.dataset.k);});
+  document.addEventListener('keydown',e=>{if(el('pinLock').classList.contains('off'))return;if(/^[0-9]$/.test(e.key))press(e.key);else if(e.key==='Backspace')press('del');});
+  clock();const T=setInterval(clock,1000);locked();
+})();
 </script>
 </body>
 </html>
