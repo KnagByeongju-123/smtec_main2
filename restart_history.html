@@ -52,7 +52,7 @@ td.c{text-align:center}td.r{text-align:right}
 </div>
 <div class="sum" id="sum"></div>
 <div class="wrap"><table id="tbl"></table></div>
-<div class="note">재가동 = ① 비계획 가동중단(설비이상·금형수리·금형세팅/교환·불량처리·치수조정·연마·랩핑) 5분 이상(치수조정은 30분 이상) 후 재가동 ② 같은 품번 계획종료 후 재가동 · LOT = 생산일-순번(품번별) · MES 작업지시·정지 자료 기준 · 기록은 수동생산일보 「재가동 기록」에서 작성</div>
+<div class="note">재가동 기록은 2026-11-09 부터 작성 (이전 재가동은 '시행 전') · 재가동 = ① 비계획 가동중단(설비이상·금형수리·금형세팅/교환·불량처리·치수조정·연마·랩핑) 5분 이상(치수조정은 30분 이상) 후 재가동 ② 같은 품번 계획종료 후 재가동 · LOT = 생산일-순번(품번별) · MES 작업지시·정지 자료 기준 · 기록은 수동생산일보 「재가동 기록」에서 작성</div>
 
 <script>
 const SB_URL='https://omngtyewdaqpphnzeate.supabase.co';
@@ -60,6 +60,8 @@ const SB_KEY='sb_publishable_9j2YkkL-7ul1TrhH-NjVdQ_vWDG2-1D';
 const esc=v=>String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const ymd=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 let ROWS=[], VIEW=[];
+const EFFECTIVE='2026-11-09';   /* 재가동 기록 시행일 — 이전 재가동은 '시행 전'(기록 대상 아님) */
+const target=r=>r.ymd>=EFFECTIVE;
 async function get(path){
   const out=[]; let from=0;
   for(;;){ const r=await fetch(SB_URL+'/rest/v1/'+path+'&limit=1000&offset='+from,{headers:{apikey:SB_KEY,Authorization:'Bearer '+SB_KEY},cache:'no-store'});
@@ -81,24 +83,24 @@ async function load(){
 }
 function paint(){
   const h=document.getElementById('fh').value, p=document.getElementById('fp').value.trim().toUpperCase(), k=document.getElementById('fk').value, m=document.getElementById('fm').checked;
-  VIEW=ROWS.filter(r=>(!h||r.ho===h)&&(!p||String(r.item_code||'').toUpperCase().includes(p))&&(!k||r.boundary===k)&&(!m||!r.first_res));
-  const done=VIEW.filter(r=>r.first_res), ng=VIEW.filter(r=>r.first_res==='NG'||r.prev_check==='NG');
+  VIEW=ROWS.filter(r=>(!h||r.ho===h)&&(!p||String(r.item_code||'').toUpperCase().includes(p))&&(!k||r.boundary===k)&&(!m||(target(r)&&!r.first_res)));
+  const tg=VIEW.filter(target), done=tg.filter(r=>r.first_res), ng=VIEW.filter(r=>r.first_res==='NG'||r.prev_check==='NG');
   document.getElementById('sum').innerHTML=[
     [VIEW.length+'건','재가동 (가동중단 '+VIEW.filter(r=>r.boundary==='stop').length+' · 계획종료 '+VIEW.filter(r=>r.boundary==='wo').length+')','#0f172a'],
-    [done.length+' / '+VIEW.length,'재가동 기록 작성','#15803d'],
-    [(VIEW.length-done.length)+'건','기록 미작성','#b91c1c'],
+    [done.length+' / '+tg.length,'재가동 기록 작성 ('+EFFECTIVE+' 시행부터)','#15803d'],
+    [(tg.length-done.length)+'건','기록 미작성'+(VIEW.length>tg.length?' · 시행 전 '+(VIEW.length-tg.length)+'건 제외':''),'#b91c1c'],
     [ng.length+'건','직전품·초품 NG','#b91c1c'],
     [VIEW.reduce((a,r)=>a+(+r.scrap_qty||0),0).toLocaleString()+' EA','불량 폐기 합계','#b45309']
   ].map(([b,s,c])=>`<div><b style="color:${c}">${b}</b><span>${s}</span></div>`).join('');
   const T=document.getElementById('tbl');
   if(!VIEW.length){ T.innerHTML='<tr><td class="empty">조건에 맞는 재가동이 없습니다.</td></tr>'; return; }
-  const okng=v=>v?`<span class="${v==='OK'?'ok':'ng'}">${esc(v)}</span>`:'<span class="miss">미작성</span>';
+  const okng=(v,r)=>v?`<span class="${v==='OK'?'ok':'ng'}">${esc(v)}</span>`:target(r)?'<span class="miss">미작성</span>':'<span style="color:#94a3b8">시행 전</span>';
   T.innerHTML='<tr><th>일자</th><th>호기</th><th>품번 · 작업지시</th><th>재가동 LOT</th><th>구분 · 사유</th><th>재가동</th><th>① 직전품</th><th>② 초품</th><th>③ 폐기</th><th>설비 점검·조치</th><th>확인자</th></tr>'
     +VIEW.map(r=>`<tr><td>${esc(r.ymd)}</td><td class="c">${+r.ho}호기</td><td>${esc(r.item_code||'-')}<div style="color:#64748b;font-size:11px">${esc(r.work_order_no||'')}</div></td>
       <td style="font-weight:800;color:#b45309;white-space:nowrap">${esc(r.lot_no)}</td>
       <td>${r.boundary==='wo'?`<span class="k-wo">계획종료 후 재가동</span><div style="font-size:11px;color:#64748b">앞 계획 ${esc(r.prev_wo||'')} 종료 ${esc(r.prev_et||'')}${r.prev_shot!=null?' · '+(+r.prev_shot).toLocaleString()+'타':''}</div>`
         :`<span class="k-stop">가동중단 후 재가동</span><div style="font-size:11px;color:#64748b">${esc(r.stop_name||'')} ${esc(r.stop_start||'')}~${esc(r.stop_end||'')} · ${Math.round(+r.stop_min||0)}분</div>`}</td>
-      <td class="c">${esc(r.from_t)}</td><td class="c">${okng(r.prev_check)}</td><td class="c">${okng(r.first_res)}</td>
+      <td class="c">${esc(r.from_t)}</td><td class="c">${okng(r.prev_check,r)}</td><td class="c">${okng(r.first_res,r)}</td>
       <td class="r">${r.first_res?(+r.scrap_qty||0).toLocaleString():''}</td><td>${esc(r.action_note||'')}</td>
       <td>${esc(r.first_by||'')}<div style="font-size:11px;color:#64748b">${esc(String(r.first_at||'').slice(0,16).replace('T',' '))}</div></td></tr>`).join('');
 }
@@ -108,7 +110,7 @@ function xls(){
   const head=['일자','호기','품번','작업지시','재가동 LOT','구분','사유/앞 계획','정지 시작','정지 종료','정지(분)','재가동 시각','① 직전품','② 초품','③ 폐기(EA)','설비 점검·조치','확인자','기록 시각'];
   const data=VIEW.map(r=>[r.ymd,(+r.ho)+'호기',r.item_code||'',r.work_order_no||'',r.lot_no,r.boundary==='wo'?'계획종료 후 재가동':'가동중단 후 재가동',
     r.boundary==='wo'?(r.prev_wo||'')+' 종료 '+(r.prev_et||''):(r.stop_name||''),r.stop_start||'',r.stop_end||'',r.stop_min!=null?Math.round(+r.stop_min):'',
-    r.from_t,r.prev_check||'미작성',r.first_res||'미작성',r.first_res?(+r.scrap_qty||0):'',r.action_note||'',r.first_by||'',String(r.first_at||'').slice(0,16).replace('T',' ')]);
+    r.from_t,r.prev_check||(target(r)?'미작성':'시행 전'),r.first_res||(target(r)?'미작성':'시행 전'),r.first_res?(+r.scrap_qty||0):'',r.action_note||'',r.first_by||'',String(r.first_at||'').slice(0,16).replace('T',' ')]);
   const ws=XLSX.utils.aoa_to_sheet([['설비 재가동 이력 (설비 재가동시(가동중단후) 업무처리 절차 · SQ 1_2)'],['기간 '+a+' ~ '+b+' · 출력 '+ymd(new Date())+' · ㈜태진다이텍'],[],head,...data]);
   ws['!cols']=[10,7,18,14,12,16,22,8,8,7,9,8,8,8,30,10,16].map(w=>({wch:w}));
   ws['!merges']=[{s:{r:0,c:0},e:{r:0,c:16}},{s:{r:1,c:0},e:{r:1,c:16}}];
@@ -117,7 +119,7 @@ function xls(){
 }
 ['fh','fk','fm'].forEach(id=>document.getElementById(id).addEventListener('change',paint));
 document.getElementById('fp').addEventListener('input',paint);
-(()=>{ const t=new Date(), f=new Date(); f.setDate(f.getDate()-30); document.getElementById('f1').value=ymd(f); document.getElementById('f2').value=ymd(t); load(); })();
+(()=>{ const t=new Date(), f=new Date(EFFECTIVE+'T00:00:00'); document.getElementById('f1').value=ymd(f); document.getElementById('f2').value=ymd(t); load(); })();
 </script>
 </body>
 </html>
