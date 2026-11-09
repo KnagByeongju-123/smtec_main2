@@ -4,9 +4,10 @@
 <script src="audit.js?v=7"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>취약시간대 생산 점검 v1.0</title>
-<!-- SQ 1_4 품질관리 취약 시간대 관리 — 주말·공휴일 특근 / 야간(22시 이후·06시 이전) / 연장(19시 이후) 생산을 MES 실적으로 찾아
-     그날 투입 호기의 설비 일상점검(p_machine_check) · 검사기 작업일보(qc_daily_report) 실시 여부를 대조 (읽기 전용) -->
+<title>취약시간대 생산 점검 v1.1</title>
+<!-- SQ 1_4 품질관리 취약 시간대 관리 — 야간 근무 없음 · 취약시간대 = 주말·공휴일 특근
+     MES 실적으로 특근일을 찾아 투입 호기별 공정검사(qc_shipping_inspection : 검사원·초품/순회) · 설비 일상점검(p_machine_check) 실시 여부를 대조 (읽기 전용)
+     야간(06시 전·22시 후) 생산이 생기면 별도 표시 -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -33,18 +34,18 @@ th{background:#ede9fe;white-space:nowrap}td.c{text-align:center}
 </style>
 </head>
 <body>
-<div class="hdr"><h1>🌙 취약시간대 생산 점검</h1><div class="sub">SQ 1_4 · 주말·공휴일 특근 · 야간 · 연장 생산 → 투입 호기 설비 일상점검 · 검사기 작업일보 대조 (MES 실적 기준)</div></div>
+<div class="hdr"><h1>🌙 취약시간대 생산 점검</h1><div class="sub">SQ 1_4 · 주말·공휴일 특근 → 투입 호기별 검사원 공정검사(초품·순회) · 설비 일상점검 대조 (MES 실적 기준, 야간 근무 없음)</div></div>
 <div class="bar">
   <label>기간 <input type="date" id="d1"> ~ <input type="date" id="d2"></label>
-  <select id="fk" onchange="paint()"><option value="">취약 구분 전체</option><option value="wk">주말 특근</option><option value="hol">공휴일 특근</option><option value="ngt">야간 (22~06시)</option><option value="ot">연장 (19시 이후)</option></select>
-  <label style="font-size:12px"><input type="checkbox" id="fm" onchange="paint()"> 미점검 호기 있는 날만</label>
+  <select id="fk" onchange="paint()"><option value="">특근 전체</option><option value="wk">주말 특근</option><option value="hol">공휴일 특근</option></select>
+  <label style="font-size:12px"><input type="checkbox" id="fm" onchange="paint()"> 공정검사·일상점검 빠진 날만</label>
   <button onclick="load()">조회</button><button class="w" onclick="xls()">엑셀</button><span id="st" style="font-size:12px;color:#64748b"></span>
 </div>
 <div class="sum" id="sum"></div>
 <div class="wrap"><table id="tbl"></table></div>
-<div class="note">· 기준 : 야간 = 작업 시작 06시 이전 또는 종료 22시 이후 · 연장 = 종료 19시 초과 · 주말 = 토·일 · 공휴일 = 스마트팩토리 공휴일 표<br>
-· 일상점검 = 설비 일상점검(생산설비) 기록의 호기 번호 대조 · 검사기 작업일보 = 그날 검사기 작업일보 건수 · 공정검사(초·중·종품)는 공정검사 성적서에서 확인<br>
-· 관리기준 : 주말·공휴일 특근 시 자격인증 인원만 투입, 평일과 같은 일상점검·자주검사(1회/1HR)·공정검사 기준 적용 · 야간 생산 시 익일 주간 검사원이 야간 생산품 검증</div>
+<div class="note">· 관리기준 : 야간 근무 없음 → 품질 취약 시간대 = 주말·공휴일 특근 · 특근 시 <b>자격인증 검사원 출근</b>, 평일과 같은 공정검사(초품·순회) · 자주검사(1회/1HR) · 일상점검 적용<br>
+· 검사원 미출근 특근 시 : 특근 생산품 식별·보류 → 다음 근무일 검사원이 초·중·종품 검증 후 출하 · 특근 투입 작업자는 자격인증자<br>
+· 공정검사 = 공정검사 성적서(qc_process_input) 기록의 호기·검사원 · 일상점검 = 설비 일상점검(생산설비) 기록의 호기 · 공휴일 = 스마트팩토리 공휴일 표</div>
 <script>
 const SB_URL='https://omngtyewdaqpphnzeate.supabase.co',SB_KEY='sb_publishable_9j2YkkL-7ul1TrhH-NjVdQ_vWDG2-1D',H={apikey:SB_KEY,Authorization:'Bearer '+SB_KEY};
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -56,12 +57,14 @@ const hoOf=s=>{const m=String(s||'').match(/^(\d{1,3})/);return m?String(Number(
 async function load(){
   const a=document.getElementById('d1').value,b=document.getElementById('d2').value;document.getElementById('st').textContent='불러오는 중…';
   try{
-    const [prod,ms,chk,qc,hol]=await Promise.all([
+    const [prod,ms,chk,qc,hol,ins]=await Promise.all([
       get(`daily_production?select=ymd,machine_code,item_code,start_time,end_time,shot_qty&ymd=gte.${a}&ymd=lte.${b}`),
       get('machine_status?select=machine_code,machine_name'),
       get(`p_machine_check?select=check_date,machine,inspector&check_date=gte.${a}&check_date=lte.${b}`),
       get(`qc_daily_report?select=report_date,inspector&report_date=gte.${a}&report_date=lte.${b}`),
-      get(`kr_holiday?select=d,name&d=gte.${a}&d=lte.${b}`)]);
+      get(`kr_holiday?select=d,name&d=gte.${a}&d=lte.${b}`),
+      get(`qc_shipping_inspection?select=inspection_date,ho,inspector,reason&inspection_date=gte.${a}&inspection_date=lte.${b}`)]);
+    const INS={};for(const r of ins){const k=r.inspection_date,h=String(Number(r.ho)||r.ho||'');if(!h)continue;const x=(INS[k]=INS[k]||{})[h]||(INS[k][h]={by:new Set(),kind:new Set()});if(r.inspector)x.by.add(r.inspector);x.kind.add(r.reason||'정기');}
     const HO=Object.fromEntries(ms.map(m=>[m.machine_code,hoOf(m.machine_name)])),HOL=Object.fromEntries(hol.map(h=>[h.d,h.name]));
     const byDay={};
     for(const p of prod){const d=p.ymd,x=byDay[d]||(byDay[d]={d,m:{},ngt:false,ot:false});const ho=HO[p.machine_code]||p.machine_code;
@@ -73,33 +76,33 @@ async function load(){
     for(const r of qc){(QC[r.report_date]=QC[r.report_date]||new Set()).add(r.inspector||'');}
     ROWS=[];
     for(const x of Object.values(byDay)){const dt=new Date(x.d+'T00:00:00'),dw=dt.getDay(),wk=dw===0||dw===6,hl=HOL[x.d];
-      if(!wk&&!hl&&!x.ngt&&!x.ot)continue;
+      if(!wk&&!hl&&!x.ngt)continue;
       const ms=Object.values(x.m).sort((p,q)=>Number(p.ho)-Number(q.ho)),c=CH[x.d]||{};
-      const miss=ms.filter(m=>!(m.ho in c)).map(m=>m.ho);
-      ROWS.push({d:x.d,dow:DOW[dw],kinds:[wk?'wk':'',hl?'hol':'',x.ngt?'ngt':'',x.ot?'ot':''].filter(Boolean),hol:hl||'',ms,chk:c,miss,qc:QC[x.d]?[...QC[x.d]].filter(Boolean):[]});}
+      const miss=ms.filter(m=>!(m.ho in c)).map(m=>m.ho),ins=INS[x.d]||{},imiss=ms.filter(m=>!ins[m.ho]).map(m=>m.ho);
+      const insp=[...new Set(Object.values(ins).flatMap(v=>[...v.by]))];
+      ROWS.push({d:x.d,dow:DOW[dw],kinds:[wk?'wk':'',hl?'hol':'',x.ngt?'ngt':''].filter(Boolean),hol:hl||'',ms,chk:c,miss,ins,imiss,insp});}
     ROWS.sort((p,q)=>q.d.localeCompare(p.d));
     document.getElementById('st').textContent=`MES ${new Set(prod.map(p=>p.ymd)).size}일 중 취약시간대 ${ROWS.length}일`;paint();
   }catch(e){document.getElementById('st').textContent='불러오기 실패 — '+e.message;}
 }
-const KN={wk:['k-wk','주말'],hol:['k-hol','공휴일'],ngt:['k-ngt','야간'],ot:['k-ot','연장']};
+const KN={wk:['k-wk','주말 특근'],hol:['k-hol','공휴일 특근'],ngt:['k-ngt','야간']};
 function paint(){
   const fk=document.getElementById('fk').value,fm=document.getElementById('fm').checked;
-  VIEW=ROWS.filter(r=>(!fk||r.kinds.includes(fk))&&(!fm||r.miss.length));
-  const all=ROWS,cnt=k=>all.filter(r=>r.kinds.includes(k)).length,mi=all.reduce((s,r)=>s+r.miss.length,0);
-  document.getElementById('sum').innerHTML=`<div><b>${cnt('wk')}</b><span>주말 특근일</span></div><div><b>${cnt('hol')}</b><span>공휴일 특근일</span></div><div><b>${cnt('ngt')}</b><span>야간 생산일</span></div><div><b>${cnt('ot')}</b><span>연장(19시↑) 생산일</span></div><div><b class="${mi?'ng':'ok'}">${mi}</b><span>일상점검 미실시 호기·일</span></div>`;
-  let h='<tr><th>일자</th><th>구분</th><th>생산 호기 (작업시간 · 품번)</th><th>설비 일상점검</th><th>검사기 작업일보</th></tr>';
+  VIEW=ROWS.filter(r=>(!fk||r.kinds.includes(fk))&&(!fm||r.miss.length||r.imiss.length));
+  const all=ROWS,cnt=k=>all.filter(r=>r.kinds.includes(k)).length,mi=all.reduce((s,r)=>s+r.miss.length,0),ii=all.reduce((s,r)=>s+r.imiss.length,0),noI=all.filter(r=>!r.insp.length).length;
+  document.getElementById('sum').innerHTML=`<div><b>${cnt('wk')}</b><span>주말 특근일</span></div><div><b>${cnt('hol')}</b><span>공휴일 특근일</span></div><div><b class="${noI?'ng':'ok'}">${all.length-noI}/${all.length}</b><span>검사원 출근 특근일</span></div><div><b class="${ii?'ng':'ok'}">${ii}</b><span>공정검사 없는 호기·일</span></div><div><b class="${mi?'ng':'ok'}">${mi}</b><span>일상점검 없는 호기·일</span></div>`;
+  let h='<tr><th>일자</th><th>구분</th><th>검사원</th><th>생산 호기 (작업시간 · 품번 · 공정검사 · 일상점검)</th></tr>';
   for(const r of VIEW){
     h+=`<tr><td class="c"><b>${esc(r.d)}</b> (${r.dow})${r.hol?'<br><small>'+esc(r.hol)+'</small>':''}</td><td>${r.kinds.map(k=>`<span class="k ${KN[k][0]}">${KN[k][1]}</span>`).join('')}</td>
-    <td>${r.ms.map(m=>`<div>${m.ho in r.chk?'':'<span class="miss">미점검</span> '}<b>${esc(m.ho)}호기</b> ${esc(m.st)}~${esc(m.et)}${m.ngt?' <span class="k k-ngt">야간</span>':m.ot?' <span class="k k-ot">연장</span>':''} · ${esc([...m.items].join(', '))} · ${m.shot.toLocaleString()}타</div>`).join('')}</td>
-    <td>${r.miss.length?`<span class="ng">${r.ms.length-r.miss.length}/${r.ms.length} 호기</span><br>미점검 : ${r.miss.map(x=>x+'호기').join(', ')}`:`<span class="ok">${r.ms.length}/${r.ms.length} 호기 실시</span>`}<br><small>${esc([...new Set(Object.values(r.chk))].filter(Boolean).join(', '))}</small></td>
-    <td>${r.qc.length?`<span class="ok">${r.qc.length}명</span> ${esc(r.qc.join(', '))}`:'<span style="color:#64748b">기록 없음</span>'}</td></tr>`;}
-  if(!VIEW.length)h+='<tr><td colspan="5" class="c" style="padding:24px;color:#64748b">해당 기간 취약시간대 생산 없음</td></tr>';
+    <td>${r.insp.length?`<span class="ok">${esc(r.insp.join(', '))}</span>`:'<span class="ng">검사원 기록 없음</span><br><small>다음 근무일 검증 필요</small>'}<br><small>공정검사 ${r.ms.length-r.imiss.length}/${r.ms.length}호기 · 일상점검 ${r.ms.length-r.miss.length}/${r.ms.length}호기</small></td>
+    <td>${r.ms.map(m=>{const i=r.ins[m.ho];return `<div><b>${esc(m.ho)}호기</b> ${esc(m.st)}~${esc(m.et)}${m.ngt?' <span class="k k-ngt">야간</span>':''} · ${esc([...m.items].join(', '))} · ${m.shot.toLocaleString()}타 · ${i?`<span class="ok">공정검사</span> <small>${esc([...i.kind].join('·'))} · ${esc([...i.by].join(','))}</small>`:'<span class="miss">공정검사 없음</span>'} · ${m.ho in r.chk?`<span class="ok">일상점검</span> <small>${esc(r.chk[m.ho])}</small>`:'<span class="miss">일상점검 없음</span>'}</div>`;}).join('')}</td></tr>`;}
+  if(!VIEW.length)h+='<tr><td colspan="4" class="c" style="padding:24px;color:#64748b">해당 기간 특근 생산 없음</td></tr>';
   document.getElementById('tbl').innerHTML=h;
 }
 function xls(){
-  const rows=[['일자','요일','구분','공휴일','호기','작업시작','작업종료','품번','타수','일상점검','점검자','검사기 작업일보']];
-  for(const r of VIEW)for(const m of r.ms)rows.push([r.d,r.dow,r.kinds.map(k=>KN[k][1]).join('·'),r.hol,m.ho+'호기',m.st,m.et,[...m.items].join(', '),m.shot,m.ho in r.chk?'실시':'미실시',r.chk[m.ho]||'',r.qc.join(', ')]);
-  const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(rows),'취약시간대');XLSX.writeFile(wb,`취약시간대_생산점검_${document.getElementById('d1').value}_${document.getElementById('d2').value}.xlsx`);
+  const rows=[['일자','요일','구분','공휴일','호기','작업시작','작업종료','품번','타수','공정검사','검사 구분','검사원','일상점검','점검자']];
+  for(const r of VIEW)for(const m of r.ms){const i=r.ins[m.ho];rows.push([r.d,r.dow,r.kinds.map(k=>KN[k][1]).join('·'),r.hol,m.ho+'호기',m.st,m.et,[...m.items].join(', '),m.shot,i?'실시':'없음',i?[...i.kind].join('·'):'',i?[...i.by].join(','):'',m.ho in r.chk?'실시':'없음',r.chk[m.ho]||'']);}
+  const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(rows),'특근 점검');XLSX.writeFile(wb,`취약시간대_생산점검_${document.getElementById('d1').value}_${document.getElementById('d2').value}.xlsx`);
 }
 (()=>{const t=new Date();document.getElementById('d2').value=ymd(t);document.getElementById('d1').value=t.getFullYear()+'-01-01';load();})();
 </script>
