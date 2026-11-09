@@ -4,7 +4,7 @@
 <script src="audit.js?v=7"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>MES 가동설비 모니터링 v7.6</title>
+<title>MES 가동설비 모니터링 v7.7</title>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -398,7 +398,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 </style>
 </head>
 <body>
-<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v7.6</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">5분 갱신</span></div></div></div>
+<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v7.7</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">5분 갱신</span></div></div></div>
 <div class="tabs"><div class="tab active" data-tab="monitor" onclick="switchTab('monitor')">📊 모니터링</div><div class="tab" data-tab="settings" onclick="switchTab('settings')">📋 이력/설정</div></div>
 <div class="panel active" id="panel-monitor">
   <div class="stats"><div class="st"><div class="st-label">전체</div><div class="st-val" id="sTotal">-</div></div><div class="st run"><div class="st-label">가동</div><div class="st-val" id="sRun">-</div></div><div class="st stop"><div class="st-label">비가동</div><div class="st-val" id="sStop">-</div></div><div class="st warn"><div class="st-label">⏰30분이내</div><div class="st-val" id="sSoon">-</div></div><div class="st ng"><div class="st-label">NG</div><div class="st-val" id="sNg">-</div></div></div>
@@ -597,7 +597,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
     <div class="hi-filter">
       <div class="fld"><label>시작일</label><input type="date" id="hiStart"></div>
       <div class="fld"><label>종료일</label><input type="date" id="hiEnd"></div>
-      <div class="fld"><label>카테고리</label><select id="hiCat"><option value="">전체</option><option value="mat">🔩 소재불량</option><option value="prod">🏭 생산실적</option><option value="mold">🔧 금형수리</option><option value="dispose">⛔ 금형폐기</option></select></div>
+      <div class="fld"><label>카테고리</label><select id="hiCat"><option value="">전체</option><option value="mat">🔩 소재불량</option><option value="prod">🏭 생산실적</option><option value="mold">🔧 금형수리</option><option value="dispose">⛔ 금형폐기</option><option value="ng">❌ 불량등록 (키오스크)</option><option value="ng11">🟧 초도품 폐기 (P11)</option></select></div>
       <div class="fld"><label>설비호기(선택)</label><select id="hiHo"><option value="">전체 호기</option></select></div>
       <div class="fld"><label>품번/품명(선택)</label><input type="text" id="hiItem" list="hiItemList" placeholder="일부만 입력해도 검색" onkeydown="if(event.key==='Enter')hiSearch()"><datalist id="hiItemList"></datalist></div>
       <div class="fld"><label>고객사(선택)</label><input type="text" id="hiCustomer" list="hiCustomerList" placeholder="일부만 입력해도 검색" onkeydown="if(event.key==='Enter')hiSearch()"><datalist id="hiCustomerList"></datalist></div>
@@ -2859,6 +2859,7 @@ async function hiSearch(){
   var itemQ=document.getElementById('hiItem').value.trim().toLowerCase(),custQ=document.getElementById('hiCustomer').value.trim().toLowerCase();
   var lotQ=document.getElementById('hiLot').value.trim().toLowerCase();
   if(!s||!e){showToast('기간 선택');return}
+  if(cat==='ng'||cat==='ng11'){ hiData=[]; await hiNgSearch(s,e,ho,itemQ,cat==='ng11'); return; }
   if(cat==='mold'){
     if(itemQ||custQ||lotQ)showToast('금형수리 이력은 품번/고객사/로트 필터가 적용되지 않습니다');
     document.getElementById('hiResult').innerHTML='<div class="hi-empty">⏳ 조회중...</div>';
@@ -2960,6 +2961,51 @@ async function hiMoldFetch(s,e,ho){
       return true;
     }).sort(function(a,b){return (b['수리일자']||'').localeCompare(a['수리일자']||'')||(b._updatedAt||'').localeCompare(a._updatedAt||'')});
   }catch(err){showToast('금형수리 이력 조회 실패: '+err.message);return [];}
+}
+/* v7.7 MES 불량등록 이력 — 키오스크 불량입력이 MES 원장(stock_ledger kind='불량폐기', note '불량사유 P11:20 / P12:3')으로 매일 품번별 집계되어 들어옴
+   P11 시타발초물폐기 = 초도품(셋업·시타발) 폐기 · P12 초중종검사품 · 호기는 같은 날 MES 생산실적(daily_production)의 품번으로 찾음 */
+var NG_CODE={'P01':'형상불량','P02':'크랙(터짐)','P03':'기즈','P04':'치수','P05':'Burr','P06':'원자재','P07':'찍힘','P08':'발청','P09':'수리중불량','P10':'기타','P11':'시타발초물폐기','P12':'초중종검사품'};
+var hiNgRows=[];
+async function hiNgSearch(s,e,ho,itemQ,onlyP11){
+  var box=document.getElementById('hiResult');box.innerHTML='<div class="hi-empty">⏳ 조회중...</div>';
+  var led=[],dp=[];
+  for(var off=0;off<20000;off+=1000){var j=await sbGet('stock_ledger','select=led_date,pn,qty,note,updated_at&kind=eq.'+encodeURIComponent('불량폐기')+'&led_date=gte.'+s+'&led_date=lte.'+e+'&order=led_date.desc,pn.asc&limit=1000&offset='+off);if(!j){box.innerHTML='<div class="hi-empty" style="color:var(--red)">조회실패</div>';return}led=led.concat(j);if(j.length<1000)break;}
+  for(var off2=0;off2<20000;off2+=1000){var k=await sbGet('daily_production','select=ymd,machine_code,item_code,shot_qty&ymd=gte.'+s+'&ymd=lte.'+e+'&order=ymd.asc,machine_code.asc,item_code.asc&limit=1000&offset='+off2);if(!k)break;dp=dp.concat(k);if(k.length<1000)break;}
+  var HOm={};
+  var ms=await sbGet('machine_status','select=machine_code,machine_name')||[];ms.forEach(function(m){var x=String(m.machine_name||'').match(/^(\d{1,3})/);HOm[m.machine_code]=x?parseInt(x[1],10):null});
+  var where={};dp.forEach(function(r){var k=r.ymd+'|'+r.item_code;(where[k]=where[k]||[]);var h=HOm[r.machine_code];if(h!=null&&where[k].indexOf(h)<0)where[k].push(h)});
+  var rows=led.map(function(x){var codes=[];String(x.note||'').replace(/(P\d{2})\s*:\s*(\d+)/g,function(m,c,v){codes.push({c:c,n:+v});return m});
+    if(!codes.length&&x.qty)codes.push({c:'P10',n:+x.qty});
+    var p11=codes.filter(function(c){return c.c==='P11'}).reduce(function(a,c){return a+c.n},0);
+    return {d:x.led_date,pn:x.pn,qty:+x.qty||0,codes:codes,p11:p11,hos:where[x.led_date+'|'+x.pn]||[],at:x.updated_at}});
+  if(ho!=null)rows=rows.filter(function(r){return r.hos.indexOf(ho)>=0});
+  if(itemQ)rows=rows.filter(function(r){return String(r.pn).toLowerCase().indexOf(itemQ)>=0});
+  if(onlyP11)rows=rows.filter(function(r){return r.p11>0});
+  hiNgRows=rows;
+  var tot=rows.reduce(function(a,r){return a+r.qty},0),t11=rows.reduce(function(a,r){return a+r.p11},0),days={};rows.forEach(function(r){if(r.p11>0)days[r.d]=1});
+  var byCode={};rows.forEach(function(r){r.codes.forEach(function(c){byCode[c.c]=(byCode[c.c]||0)+c.n})});
+  var h='<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:8px 0">'+
+    '<div class="hi-card" style="padding:8px"><div style="font-size:11px;color:var(--sub)">불량등록 건(일·품번)</div><b style="font-size:18px">'+rows.length+'</b></div>'+
+    '<div class="hi-card" style="padding:8px"><div style="font-size:11px;color:var(--sub)">불량 수량 합계</div><b style="font-size:18px">'+tot.toLocaleString()+'</b></div>'+
+    '<div class="hi-card" style="padding:8px"><div style="font-size:11px;color:#fb923c">초도품 폐기 (P11)</div><b style="font-size:18px;color:#fb923c">'+t11.toLocaleString()+'</b></div>'+
+    '<div class="hi-card" style="padding:8px"><div style="font-size:11px;color:var(--sub)">초도품 폐기 등록일</div><b style="font-size:18px">'+Object.keys(days).length+'일</b></div></div>'+
+    '<div style="font-size:11px;color:var(--sub);margin-bottom:6px">사유별 : '+Object.keys(byCode).sort().map(function(c){return '<b style="color:'+(c==='P11'?'#fb923c':'var(--txt)')+'">'+_esc(NG_CODE[c]||c)+'</b> '+byCode[c].toLocaleString()}).join(' · ')+
+    ' &nbsp;<button class="btn btn-green btn-sm" style="padding:2px 9px" onclick="hiNgXls()">📥 엑셀</button></div>';
+  h+='<div class="hi-list">'+(rows.length?rows.map(function(r){
+    return '<div class="hi-card"><div class="hc-top"><span class="hc-time">'+_esc(r.d.slice(5))+'</span>'+(r.hos.length?r.hos.map(function(x){return '<span class="hc-eq">'+x+'호기</span>'}).join(''):'<span class="hc-eq" style="opacity:.6">호기 ?</span>')+
+      '<b style="margin-left:6px">'+_esc(r.pn)+'</b><span style="margin-left:auto;font-weight:800;color:var(--red)">불량 '+r.qty.toLocaleString()+'</span></div>'+
+      '<div style="font-size:12px;margin-top:4px">'+r.codes.map(function(c){return '<span style="display:inline-block;margin:2px 4px 0 0;padding:1px 7px;border-radius:9px;background:'+(c.c==='P11'?'rgba(251,146,60,.18);color:#fb923c':c.c==='P12'?'rgba(56,189,248,.15);color:#38bdf8':'rgba(239,68,68,.15);color:#f87171')+'">'+_esc(c.c)+' '+_esc(NG_CODE[c.c]||'')+' '+c.n+'</span>'}).join('')+'</div></div>'}).join(''):'<div class="hi-empty">결과 없음</div>')+'</div>';
+  box.innerHTML='<div style="font-size:11px;color:var(--sub)">❌ MES 불량등록 (키오스크 불량입력 · 일·품번별 집계) — 기간 '+_esc(s)+' ~ '+_esc(e)+'</div>'+h;
+}
+function hiNgXls(){
+  if(!hiNgRows.length){showToast('결과 없음');return}
+  if(typeof ExcelJS==='undefined'||typeof saveAs==='undefined'){showToast('엑셀 라이브러리 로딩중 · 잠시후 재시도');return}
+  var wb=new ExcelJS.Workbook(),ws=wb.addWorksheet('MES 불량등록');
+  ws.addRow(['일자','호기','품번','불량수량','초도품 폐기(P11)','초중종검사품(P12)','사유 내역']);
+  hiNgRows.forEach(function(r){var p12=r.codes.filter(function(c){return c.c==='P12'}).reduce(function(a,c){return a+c.n},0);
+    ws.addRow([r.d,r.hos.map(function(x){return x+'호기'}).join(','),r.pn,r.qty,r.p11,p12,r.codes.map(function(c){return (NG_CODE[c.c]||c.c)+' '+c.n}).join(' / ')])});
+  ws.getRow(1).font={bold:true};ws.columns.forEach(function(c){c.width=16});ws.getColumn(7).width=50;
+  wb.xlsx.writeBuffer().then(function(b){saveAs(new Blob([b]),'MES_불량등록_'+document.getElementById('hiStart').value+'_'+document.getElementById('hiEnd').value+'.xlsx')});
 }
 function hiMoldRender(c,md){
   var info=document.createElement('div');info.style.cssText='font-size:11px;color:#fb923c;margin:10px 0 6px';info.textContent='🔧 금형수리 이력 '+md.length+'건';
