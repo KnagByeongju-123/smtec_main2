@@ -14,7 +14,7 @@
   if (window.__TJ_AUDIT__) return;
   window.__TJ_AUDIT__ = true;
 
-  const AUDIT_URL = 'https://ebthltdmxpzlkfwvdloz.supabase.co/functions/v1/audit-log';
+  const AUDIT_URL = 'https://omngtyewdaqpphnzeate.supabase.co/functions/v1/audit-log';
   const MAIN_URL = 'https://omngtyewdaqpphnzeate.supabase.co';
   const MAIN_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tbmd0eWV3ZGFxcHBobnplYXRlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4ODk4ODksImV4cCI6MjA5MDQ2NTg4OX0.Zxur3t02JHtOcXforCMSwO3i2mMaf5sViE0tXXUC0-s';
   const LK_AUTH = 'esg_pin_auth';      // 포털과 같은 로그인 키 (7일)
