@@ -4,7 +4,7 @@
 <script src="audit.js?v=7"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>MES 가동설비 모니터링 v7.6</title>
+<title>MES 가동설비 모니터링 v7.7</title>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -398,7 +398,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 </style>
 </head>
 <body>
-<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v7.6</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">5분 갱신</span></div></div></div>
+<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v7.7</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">5분 갱신</span></div></div></div>
 <div class="tabs"><div class="tab active" data-tab="monitor" onclick="switchTab('monitor')">📊 모니터링</div><div class="tab" data-tab="settings" onclick="switchTab('settings')">📋 이력/설정</div></div>
 <div class="panel active" id="panel-monitor">
   <div class="stats"><div class="st"><div class="st-label">전체</div><div class="st-val" id="sTotal">-</div></div><div class="st run"><div class="st-label">가동</div><div class="st-val" id="sRun">-</div></div><div class="st stop"><div class="st-label">비가동</div><div class="st-val" id="sStop">-</div></div><div class="st warn"><div class="st-label">⏰30분이내</div><div class="st-val" id="sSoon">-</div></div><div class="st ng"><div class="st-label">NG</div><div class="st-val" id="sNg">-</div></div></div>
@@ -408,6 +408,15 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 </div>
 
 <!-- === 점검등록 모달 === -->
+<div class="chk-modal" id="bkModal">
+  <div class="chk-box">
+    <div class="chk-hdr">
+      <div><h3 id="bkTitle">블랭크 로트 장착</h3><div class="sub2" id="bkSub">-</div></div>
+      <button class="lp-close" onclick="closeBkModal()">✕</button>
+    </div>
+    <div class="chk-body" id="bkBody" style="padding:14px"></div>
+  </div>
+</div>
 <div class="chk-modal" id="chkModal">
   <div class="chk-box">
     <div class="chk-hdr">
@@ -1058,11 +1067,73 @@ async function loadBlankLots(){
         days:Object.keys(days).sort().reverse().map(function(k){return{d:k,lots:days[k]}})};
     });
     // 공정이동표 투입 기록 (확정 로트) — 최근 3일
-    var mt=await sbGet('move_tag','select=tag_no,lot_no,qty,used_machine_code,used_item_code,used_wo,used_at&status=eq.%ED%88%AC%EC%9E%85&used_at=gte.'+new Date(Date.now()-3*864e5).toISOString()+'&order=used_at.desc&limit=200');
+    var mt=await sbGet('move_tag','select=tag_no,lot_no,qty,source,used_by,used_machine_code,used_item_code,used_wo,used_at&status=eq.%ED%88%AC%EC%9E%85&used_at=gte.'+new Date(Date.now()-3*864e5).toISOString()+'&order=used_at.desc&limit=200');
     MTAG=mt||[];
     BLANK=B;blankAt=Date.now();
     if(cachedData)renderMonitor(cachedData);
   }catch(e){}
+}
+/* [v7.7] 생산현황에서 블랭크 로트 클릭 장착 (QR 없이) — 선행설비(28호기) 블랭크 로트를 확인 후 클릭하면 후공정(43호기)에 장착.
+   move_tag 에 source='클릭', status='투입' 으로 남긴다 (공정이동표 QR 투입과 같은 기록 → 로트 칸 ✔ 확정) */
+function bkEsc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
+function bkDays(d){
+  var b=BLANK[d.current_item_code];if(!b)return[];
+  var days=b.days.map(function(x){return{d:x.d,lots:x.lots.slice()}});
+  var up=(cachedData||[]).filter(function(x){return x.machine_code===b.from&&x.current_item_code===b.parent&&x.lot_no})[0];
+  var td=new Date(Date.now()+9*3600e3).toISOString().slice(0,10);
+  if(up){if(days[0]&&days[0].d===td){if(days[0].lots.indexOf(up.lot_no)<0)days[0].lots.unshift(up.lot_no)}else days.unshift({d:td,lots:[up.lot_no]})}
+  return days;
+}
+function openBkModal(mc){
+  var d=(cachedData||[]).filter(function(x){return x.machine_code===mc})[0];if(!d)return;
+  var b=BLANK[d.current_item_code];if(!b)return;
+  var up=(cachedData||[]).filter(function(x){return x.machine_code===b.from})[0]||{};
+  var lab=function(x){var m=/^(\d+)_/.exec(x&&x.machine_name||'');return m?m[1]+'호기':(x&&x.machine_name||'')};
+  document.getElementById('bkTitle').textContent=lab(d)+' 블랭크 로트 장착';
+  document.getElementById('bkSub').textContent=d.current_item_code+(d.current_wo?' · '+d.current_wo:'')+' ← 블랭크 '+b.parent+' ('+lab(up)+')';
+  var cur=MTAG.filter(function(t){return t.used_machine_code===mc&&t.used_item_code===d.current_item_code});
+  var fd=function(x){return +x.slice(5,7)+'/'+(+x.slice(8))};
+  var h='';
+  if(cur.length)h+='<div style="background:rgba(74,222,128,.12);border:1px solid #4ade80;border-radius:8px;padding:8px 10px;margin-bottom:10px;font-size:13px">현재 장착: '+cur.slice(0,4).map(function(t){
+    return'<b style="color:#4ade80">'+bkEsc(t.lot_no)+'</b> <span style="color:var(--sub)">('+bkEsc(t.source==='클릭'?'클릭':'QR')+' '+bkEsc((t.used_by||''))+')</span> <button style="font-size:11px;padding:2px 8px;border-radius:6px;border:1px solid #f87171;background:transparent;color:#f87171;cursor:pointer;white-space:nowrap" onclick="bkRelease(\''+bkEsc(t.tag_no)+'\',\''+mc+'\')">해제</button>'}).join(' · ')+'</div>';
+  h+='<div style="font-size:13px;color:var(--sub);margin-bottom:6px">'+bkEsc(lab(up))+'에서 생산한 블랭크 로트 — 실제 투입하는 파렛트 라벨의 로트를 확인하고 누르세요</div>';
+  var days=bkDays(d);
+  h+=days.length?days.slice(0,6).map(function(x){return'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 0;border-bottom:1px solid var(--border)"><span style="width:44px;color:var(--sub);font-size:13px">'+fd(x.d)+'</span>'
+    +x.lots.map(function(l){var on=cur.some(function(t){return t.lot_no===l});return'<button onclick="bkMount(\''+mc+'\',\''+bkEsc(l)+'\')" style="padding:10px 14px;font-size:15px;font-weight:700;border-radius:8px;border:1px solid '+(on?'#4ade80':'var(--accent)')+';background:'+(on?'rgba(74,222,128,.15)':'transparent')+';color:'+(on?'#4ade80':'var(--accent)')+';cursor:pointer">'+bkEsc(l)+(on?' ✔':'')+'</button>'}).join('')+'</div>'}).join('')
+    :'<div style="color:#fbbf24">최근 60일 블랭크 생산 기록이 없습니다.</div>';
+  h+='<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;align-items:center"><input id="bkLot" placeholder="목록에 없으면 로트 직접 입력" style="flex:1;min-width:160px;padding:9px;border-radius:8px;border:1px solid var(--border);background:transparent;color:inherit;font-size:14px">'
+    +'<button onclick="bkMount(\''+mc+'\',document.getElementById(\'bkLot\').value.trim())" style="padding:9px 14px;border-radius:8px;border:0;background:var(--accent);color:#fff;font-weight:700;cursor:pointer">장착</button></div>'
+    +'<div style="font-size:12px;color:var(--sub);margin-top:8px">장착하면 로트 칸에 ✔ 로 확정 표시되고, 공정이동표 이력(재공·이력)에도 남습니다.</div>';
+  document.getElementById('bkBody').innerHTML=h;
+  document.getElementById('bkModal').classList.add('show');
+}
+function closeBkModal(){document.getElementById('bkModal').classList.remove('show')}
+async function bkMount(mc,lot){
+  if(!lot){alert('로트를 입력하세요');return}
+  var d=(cachedData||[]).filter(function(x){return x.machine_code===mc})[0];var b=d&&BLANK[d.current_item_code];if(!b)return;
+  var who='';try{var u=window.tjAudit&&tjAudit.user();who=u&&u.name||''}catch(e){}
+  if(!who)who=(prompt('장착 확인자 이름을 입력하세요')||'').trim();
+  if(!who)return;
+  if(!confirm(d.current_item_code+' 에 블랭크 로트 '+lot+' 을(를) 장착합니다.'))return;
+  var up=(cachedData||[]).filter(function(x){return x.machine_code===b.from})[0]||{};
+  var k=new Date(Date.now()+9*3600e3),ymd=String(k.getUTCFullYear()).slice(2)+String(k.getUTCMonth()+1).padStart(2,'0')+String(k.getUTCDate()).padStart(2,'0');
+  var pre='BK-'+ymd+'-'+mc+'-',ex=await sbGet('move_tag','select=tag_no&tag_no=like.'+encodeURIComponent(pre+'*'))||[];
+  var seq=ex.reduce(function(a,x){return Math.max(a,+x.tag_no.slice(pre.length)||0)},0)+1,now=new Date().toISOString(),ok=false;
+  for(var i=0;i<5&&!ok;i++,seq++){
+    var r=await fetch(SB_URL+'/rest/v1/move_tag',{method:'POST',headers:Object.assign({},sbH,{'Prefer':'return=minimal'}),body:JSON.stringify({
+      tag_no:pre+String(seq).padStart(2,'0'),item_code:b.parent,next_item_code:d.current_item_code,lot_no:lot,qty:null,machine_code:b.from,machine_name:up.machine_name||null,
+      status:'투입',source:'클릭',used_machine_code:mc,used_machine_name:d.machine_name,used_item_code:d.current_item_code,used_wo:d.current_wo||null,used_at:now,used_by:who,memo:'생산현황 클릭 장착',updated_at:now})});
+    if(r.ok)ok=true;else if(r.status!==409){alert('장착 실패 '+r.status);return}
+  }
+  if(!ok){alert('장착 번호 생성 실패');return}
+  blankAt=0;await loadBlankLots();if(cachedData)renderMonitor(cachedData);openBkModal(mc);
+}
+async function bkRelease(tag,mc){
+  if(!confirm(tag+' 장착을 해제(취소)할까요?'))return;
+  var r=await fetch(SB_URL+'/rest/v1/move_tag?tag_no=eq.'+encodeURIComponent(tag),{method:'PATCH',headers:Object.assign({},sbH,{'Prefer':'return=minimal'}),
+    body:JSON.stringify({status:'취소',memo:'생산현황에서 장착 해제',updated_at:new Date().toISOString()})});
+  if(!r.ok){alert('해제 실패 '+r.status);return}
+  blankAt=0;await loadBlankLots();if(cachedData)renderMonitor(cachedData);openBkModal(mc);
 }
 function blankCell(d,all){
   var b=d&&BLANK[d.current_item_code];if(!b)return null;
@@ -1070,7 +1141,7 @@ function blankCell(d,all){
   var tg=MTAG.filter(function(t){return t.used_machine_code===d.machine_code&&t.used_item_code===d.current_item_code});
   var tw=tg.filter(function(t){return d.current_wo&&t.used_wo===d.current_wo});if(tw.length)tg=tw;
   if(tg.length){var ls=[];tg.forEach(function(t){if(ls.indexOf(t.lot_no)<0)ls.push(t.lot_no)});
-    var tt='공정이동표 투입 (확정)\n'+tg.slice(0,6).map(function(t){var x=new Date(new Date(t.used_at).getTime()+9*3600e3);return t.tag_no+'  '+t.lot_no+'  '+t.qty+'EA  '+(x.getUTCMonth()+1)+'/'+x.getUTCDate()+' '+String(x.getUTCHours()).padStart(2,'0')+':'+String(x.getUTCMinutes()).padStart(2,'0')}).join('\n');
+    var tt='블랭크 로트 장착 (확정)\n'+tg.slice(0,6).map(function(t){var x=new Date(new Date(t.used_at).getTime()+9*3600e3);return (t.source==='클릭'?'클릭 장착':t.tag_no)+'  '+t.lot_no+(t.qty?'  '+t.qty+'EA':'')+'  '+(x.getUTCMonth()+1)+'/'+x.getUTCDate()+' '+String(x.getUTCHours()).padStart(2,'0')+':'+String(x.getUTCMinutes()).padStart(2,'0')}).join('\n');
     return'<span title="'+tt.replace(/"/g,'&quot;')+'" style="color:#4ade80;cursor:help">\u2714 '+ls[0]+(ls.length>1?' 외 '+(ls.length-1):'')+'</span>'}
   // ② 이동표 미투입 → 블랭크 생산 로트 후보
   var days=b.days.map(function(x){return{d:x.d,lots:x.lots.slice()}});
@@ -1172,7 +1243,7 @@ function shotAgoTxt(d){
 }
 function lotCell(d){
   var lot=(d&&d.lot_no)?d.lot_no:'';
-  var bk=blankCell(d,cachedData);if(bk)return bk;   // [v7.6] 블랭킹 → 프레스 연결 (블랭크 생산 로트)
+  var bk=blankCell(d,cachedData);if(bk)return'<span onclick="event.stopPropagation();openBkModal(\''+d.machine_code+'\')" style="cursor:pointer;text-decoration:underline dotted" title="클릭: 블랭크 로트 장착">'+bk+'</span>';   // [v7.6] 블랭킹 → 프레스 연결 (블랭크 생산 로트)
   if(d&&d.lot_source==='inherit'){
     return'<span title="선행공정 '+(d.linked_from_machine||'')+' ('+(d.linked_from_item||'')+') 로트 상속" '
       +'style="color:#7dd3fc">\u21b0 '+(lot||'-')+'</span>';
