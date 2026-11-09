@@ -21,7 +21,8 @@
   const LK_USER = 'tj_audit_user';     // {id, name, dept}
   const AUTH_DAYS = 7;
   const EDIT_FLUSH_MS = 30000;
-  const PAGE = (location.pathname.split('/').pop() || 'index.html');
+  // 다른 주소에서 불러 쓰는 화면은 window.__TJ_AUDIT_PAGE__ 로 화면 이름을 지정 (예: worker_voice.html)
+  const PAGE = window.__TJ_AUDIT_PAGE__ || (location.pathname.split('/').pop() || 'index.html');
   // 무인 표시 화면: 로그인 창을 띄우지 않는다 (인쇄는 로그인 필요)
   const DISPLAY_PAGES = ['mes_kiosk.html', 'QC_mes.html', 'counter_dashboard.html', 'env_dashboard.html', 'twin_factory.html', 'twin_factory_3d_QC.html', 'mes_work_virtual.html', 'camera.html', 'mon.html'];
   // 협력사(소재업체)가 쓰는 화면: 사내 PIN 이 없으므로 로그인 필수에서 제외
@@ -31,7 +32,7 @@
   const OWN_LOGIN_PAGES = ['index.html', ''];
   // 자체 PIN 잠금 + 자체 기록을 하는 화면: 들어올 때마다 PIN 을 받고, 접속·로그인·항목별 수정 내용을 화면이 직접 보낸다
   //   (사용자는 window.__TJ_AUDIT_USER__ 로 지정 · 원본 저장 요청(kv_store)은 내용 파악이 안 되므로 따로 기록하지 않음)
-  const SELF_AUDIT_PAGES = ['safety_voice.html'];
+  const SELF_AUDIT_PAGES = ['safety_voice.html', 'worker_voice.html'];
   const SELF = SELF_AUDIT_PAGES.indexOf(PAGE) >= 0;
   // 포털 탭(내장 창)으로 열린 화면: 입력 창은 바깥 포털에서만 띄운다
   const IN_FRAME = (() => { try { return window.top !== window && !!window.top.__TJ_AUDIT__; } catch (_) { return false; } })();

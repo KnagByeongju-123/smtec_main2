@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-<script src="audit.js?v=8"></script>
+<script src="audit.js?v=9"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 <title>TJ 청취조사표 · 근로자 의견청취-위험성평가 연계</title>
@@ -1544,10 +1544,12 @@ async function audLoad(){
   const pin=$('au_pin').value.trim();if(!pin)return toast('관리자 PIN을 입력하세요');$('au_msg').textContent='조회 중…';
   const to=$('au_to').value?fmtD(new Date($('au_to').value).getTime()+864e5):'';
   try{const r=await fetch(AU_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'list',pin,from:$('au_from').value,to,kind:$('au_kind').value,user:$('au_user').value.trim(),client:'',page:'safety_voice',limit:1000})});
-    const j=await r.json().catch(()=>({}));if(!j.ok){$('au_msg').textContent=j.error||'조회 실패';AU_ROWS=[];}else{AU_ROWS=(j.rows||[]).filter(x=>(x.page||'').includes('safety_voice'));$('au_msg').textContent=AU_ROWS.length+'건 · 조회자 '+(j.admin||'');}
+    const j=await r.json().catch(()=>({}));if(!j.ok){$('au_msg').textContent=j.error||'조회 실패';AU_ROWS=[];}else{
+      const r2=await fetch(AU_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'list',pin,from:$('au_from').value,to,kind:$('au_kind').value,user:$('au_user').value.trim(),client:'',page:'worker_voice',limit:1000})});const j2=await r2.json().catch(()=>({}));
+      AU_ROWS=[...(j.rows||[]),...(j2.ok?j2.rows||[]:[])].filter(x=>/safety_voice|worker_voice/.test(x.page||'')).sort((a,b)=>String(b.at).localeCompare(String(a.at)));$('au_msg').textContent=AU_ROWS.length+'건 · 포털·원래 주소 합산 · 조회자 '+(j.admin||'');}
   }catch(e){$('au_msg').textContent='서버 연결 실패';AU_ROWS=[];}
   const R=AU_ROWS.map(x=>{const[k,c]=auKind(x),t=auText(x);return{x,k,c,t};});
-  $('auTbl').querySelector('tbody').innerHTML=R.map(({x,k,c,t})=>`<tr><td class="nw">${esc(fmtDT(new Date(x.at).getTime()))}</td><td><span class="au-k ${c}">${esc(k)}</span></td><td class="nw"><b>${esc(x.user_name||'')}</b>${x.user_id?' <span class="hint">'+esc(x.user_id)+'</span>':''}</td><td class="nw">${esc(x.dept||'')}</td><td class="nw">${esc(x.device||x.client||'')}</td><td class="nw hint">${esc(x.ip||'')}</td><td>${esc(t.t)}</td><td style="white-space:pre-wrap;min-width:260px">${esc(t.b)}</td></tr>`).join('')||'<tr><td colspan="8" class="hint" style="padding:18px">기록 없음</td></tr>';
+  $('auTbl').querySelector('tbody').innerHTML=R.map(({x,k,c,t})=>`<tr><td class="nw">${esc(fmtDT(new Date(x.at).getTime()))}</td><td><span class="au-k ${c}">${esc(k)}</span></td><td class="nw"><b>${esc(x.user_name||'')}</b>${x.user_id?' <span class="hint">'+esc(x.user_id)+'</span>':''}</td><td class="nw">${esc(x.dept||'')}</td><td class="nw">${esc(x.device||x.client||'')}${/worker_voice/.test(x.page||'')?' <span class="tag">원래 주소</span>':''}</td><td class="nw hint">${esc(x.ip||'')}</td><td>${esc(t.t)}</td><td style="white-space:pre-wrap;min-width:260px">${esc(t.b)}</td></tr>`).join('')||'<tr><td colspan="8" class="hint" style="padding:18px">기록 없음</td></tr>';
   $('auCards').innerHTML=R.map(({x,k,c,t})=>`<div class="card" style="cursor:default"><div class="tw"><span class="au-k ${c}">${esc(k)}</span><b>${esc(x.user_name||'')}</b><span class="hint" style="margin-left:auto">${esc(fmtDT(new Date(x.at).getTime()))}</span></div>${t.t?`<div class="t">${esc(t.t)}</div>`:''}<div class="m" style="white-space:pre-wrap">${esc(t.b)}</div><div class="m">${esc([x.dept,x.device||x.client,x.ip].filter(Boolean).join(' · '))}</div></div>`).join('')||'<div class="hint">기록 없음</div>';
 }
 function audCsv(){if(!AU_ROWS.length)return toast('먼저 조회하세요');const q=v=>'"'+String(v??'').replace(/"/g,'""')+'"';
@@ -1835,6 +1837,9 @@ document.addEventListener('DOMContentLoaded',init);
   const PIN_URL='https://omngtyewdaqpphnzeate.supabase.co',PIN_KEY='sb_publishable_9j2YkkL-7ul1TrhH-NjVdQ_vWDG2-1D';
   const MAX_FAIL=5,LOCK_SEC=60,FK='tj_safe_pin_fail';
   let pin='',busy=false;const el=id=>document.getElementById(id);
+  if(new URLSearchParams(location.search).get('m')==='w'){ // 근로자 제안 모드(QR): 잠금 없이 제안 등록·처리현황만 — 접속은 기록
+    el('pinLock').classList.add('off');window.__TJ_AUDIT_USER__={id:'',name:'근로자(제안 모드)',dept:''};AUD.in=Date.now();
+    setTimeout(()=>audSend('open',{detail:{via:'근로자 제안 모드'}}),0);return;}
   document.documentElement.style.overflow='hidden';
   const getF=()=>{try{return JSON.parse(localStorage.getItem(FK))||{c:0,u:0};}catch(e){return{c:0,u:0};}};
   const setF=f=>{try{localStorage.setItem(FK,JSON.stringify(f));}catch(e){}};
