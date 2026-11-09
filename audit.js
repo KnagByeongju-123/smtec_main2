@@ -29,6 +29,10 @@
   const VENDOR_PAGES = ['material_upload.html'];
   // 자체 잠금 화면이 있는 포털: 포털 로그인이 끝나면 그 사용자로 기록
   const OWN_LOGIN_PAGES = ['index.html', ''];
+  // 자체 PIN 잠금 + 자체 기록을 하는 화면: 들어올 때마다 PIN 을 받고, 접속·로그인·항목별 수정 내용을 화면이 직접 보낸다
+  //   (사용자는 window.__TJ_AUDIT_USER__ 로 지정 · 원본 저장 요청(kv_store)은 내용 파악이 안 되므로 따로 기록하지 않음)
+  const SELF_AUDIT_PAGES = ['safety_voice.html'];
+  const SELF = SELF_AUDIT_PAGES.indexOf(PAGE) >= 0;
   // 포털 탭(내장 창)으로 열린 화면: 입력 창은 바깥 포털에서만 띄운다
   const IN_FRAME = (() => { try { return window.top !== window && !!window.top.__TJ_AUDIT__; } catch (_) { return false; } })();
 
@@ -48,6 +52,7 @@
     return [u.dept, u.name, KIND].filter(Boolean).join('-');
   }
   function user() {
+    if (SELF) return window.__TJ_AUDIT_USER__ || null;
     const a = ls.get(LK_AUTH);
     if (!a || !a.name || (a.exp && a.exp < Date.now())) {
       if (VENDOR_PAGES.indexOf(PAGE) < 0) return null;
@@ -94,7 +99,7 @@
     const url = typeof input === 'string' ? input : (input && input.url) || '';
     const method = String((init && init.method) || (input && input.method) || 'GET').toUpperCase();
     const p = origFetch(input, init);
-    if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS' && url.indexOf('/rest/v1/') >= 0 && url.indexOf(AUDIT_URL) < 0) {
+    if (!SELF && method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS' && url.indexOf('/rest/v1/') >= 0 && url.indexOf(AUDIT_URL) < 0) {
       let table = '', query = '';
       try { const U = new URL(url, location.href); table = U.pathname.split('/rest/v1/')[1] || ''; query = U.search.slice(0, 300); } catch (_) {}
       const key = method + ' ' + table;
@@ -329,6 +334,7 @@
   }
   function start() {
     decorate(document);
+    if (SELF) return;   // 접속·로그인 기록은 화면의 PIN 잠금에서 보낸다
     const u = user();
     if (OWN_LOGIN_PAGES.includes(PAGE)) {
       // 포털: 잠금 화면에서 로그인할 때까지 기다렸다가 그 사용자로 접속 기록
