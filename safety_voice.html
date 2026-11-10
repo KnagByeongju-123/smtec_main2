@@ -1796,6 +1796,12 @@ function svPendRole(r){const i=svPend(r);return i<0?'':r.appr[i].role+' '+r.appr
 function svMine(r){const me=ADMIN.name;const i=svPend(r);return (r.st==='결재대기'&&i>0&&r.appr[i].name===me)||((r.refs||'').split(/[,\s]+/).includes(me));}
 function svOpenCorr(){return svAll().reduce((a,r)=>a+(r.corr||[]).filter(c=>c.ins&&!c.ok).length,0);}
 
+const SV_PROCS={'생산팀':['프레스성형','금형조립','부품가공'],'품질관리팀':['수입검사','공정검사','출하검사','측정실'],'영업관리팀':['출하·물류','자재관리'],'개발팀':['시제품 제작','신규 개발'],'설계팀':['금형 설계','제품 설계']}; // 기본값 — 체크리스트 설정에서 수정
+function svProcs(d){const P=S.cfg.supProcs||SV_PROCS;return (P[d]||[]).slice();}
+function svProcSel(dis){const L=svProcs(SV.dept),cur=SV.proc||'',custom=cur&&!L.includes(cur);
+  return `<select id="sv_procsel" ${dis} onchange="svProcPick(this.value)"><option value="">— 공정 선택 —</option>${L.map(x=>`<option ${x===cur?'selected':''}>${esc(x)}</option>`).join('')}<option value="__c" ${custom?'selected':''}>직접 입력…</option></select><input type="text" id="sv_proc" value="${esc(cur)}" placeholder="공정 직접 입력" ${dis} class="${custom?'':'hide'}" style="margin-top:6px">`;}
+function svProcPick(v){const t=$('sv_proc');if(v==='__c'){t.classList.remove('hide');t.value='';t.focus();}else{t.classList.add('hide');t.value=v;}SV.proc=t.value;}
+function svProcOpen(){const e=$('sv_procsel');if(!e||e.disabled)return;e.focus();try{e.showPicker();}catch(x){}}
 const SV_DEPTS=['생산팀','품질관리팀','영업관리팀','개발팀','설계팀']; // 회사 부서 (포털 직원 PIN 부서 기준)
 function svDepts(){const L=(S.cfg.supDepts&&S.cfg.supDepts.length?S.cfg.supDepts:SV_DEPTS).slice();return L;}
 function svMyDept(){const u=window.__TJ_AUDIT_USER__,d=u&&u.dept;const L=svDepts();return d&&L.includes(d)?d:(L.find(x=>d&&(x.includes(d)||d.includes(x)))||L[0]);}
@@ -1847,11 +1853,11 @@ function renderSupForm(){
   if(ro)h+=`<div class="note" style="margin-bottom:10px">${SV.st==='결재완료'?'결재가 끝난 일지입니다. 수정할 수 없습니다.':'결재 진행 중입니다 ('+esc(svPendRole(SV))+' 차례). 반려되면 다시 수정할 수 있습니다.'}</div>`;
   if(SV.st==='반려'&&SV.rej)h+=`<div class="note warn" style="margin-bottom:10px"><b>반려 사유</b> ${esc(SV.rej)}</div>`;
   if(SVSTEP===0){
-    h+=`<div class="f"><div class="row"><div><label>일자 <span class="req">*</span></label><input type="date" id="sv_date" value="${esc(SV.date)}" ${dis}></div><div><label>부서 <span class="req">*</span></label><select id="sv_fdept" ${dis} onchange="svDept()">${(svDepts().includes(SV.dept)?svDepts():[SV.dept,...svDepts()]).map(d=>`<option ${d===SV.dept?'selected':''}>${esc(d)}</option>`).join('')}</select></div></div>
-    <div class="row"><div><label>공정</label><input type="text" id="sv_proc" value="${esc(SV.proc||'')}" placeholder="예) 프레스성형, 금형조립, 출하검사" list="svProcs" ${dis}><datalist id="svProcs">${[...new Set(svAll().map(r=>r.proc).filter(Boolean))].map(x=>`<option>${esc(x)}</option>`).join('')}</datalist></div><div><label>관리감독자 <span class="req">*</span></label><input type="text" id="sv_sup" value="${esc(SV.sup)}" ${dis}></div></div>
+    h+=`<div class="f"><div class="row3"><div><label>일자 <span class="req">*</span></label><input type="date" id="sv_date" value="${esc(SV.date)}" ${dis}></div><div><label>부서 <span class="req">*</span></label><select id="sv_fdept" ${dis} onchange="svDept()">${(svDepts().includes(SV.dept)?svDepts():[SV.dept,...svDepts()]).map(d=>`<option ${d===SV.dept?'selected':''}>${esc(d)}</option>`).join('')}</select></div><div><label>공정</label>${svProcSel(dis)}</div></div>
+    <div><label>관리감독자 <span class="req">*</span></label><input type="text" id="sv_sup" value="${esc(SV.sup)}" ${dis}></div>
     <div class="row"><div><label>점검 시간 1회</label><div class="row" style="gap:6px;grid-template-columns:1fr auto 1fr;align-items:center"><input type="time" id="sv_t1f" value="${esc(SV.t1f)}" ${dis}><span>~</span><input type="time" id="sv_t1t" value="${esc(SV.t1t)}" ${dis}></div></div>
     <div><label>점검 시간 2회</label><div class="row" style="gap:6px;grid-template-columns:1fr auto 1fr;align-items:center"><input type="time" id="sv_t2f" value="${esc(SV.t2f)}" ${dis}><span>~</span><input type="time" id="sv_t2t" value="${esc(SV.t2t)}" ${dis}></div></div></div>
-    <div class="hint">점검 항목 ${SV.items.length}개 · 부서를 바꾸면 그 부서의 체크리스트로 바뀝니다 (설정: ⚙ 체크리스트 설정)</div></div>`;
+    <div class="hint">점검 항목 ${SV.items.length}개 · 부서를 고르면 그 부서의 공정 목록이 열리고 체크리스트도 바뀝니다 (설정: ⚙ 체크리스트 설정)</div></div>`;
   }else if(SVSTEP===1){
     const it=SV.items[SVI]||{};
     if(SVLIST||ro){
@@ -1885,7 +1891,7 @@ function renderSupForm(){
 function svPhotos(){const box=$('a_photos');if(!box)return;const arr=window._actPhotos,ro=svRO();
   box.innerHTML=arr.map((d,i)=>`<div class="ph1"><img src="${d}" onclick="lbShow(window._actPhotos[${i}])">${ro?'':`<button onclick="window._actPhotos.splice(${i},1);svPhotos()">×</button>`}</div>`).join('')+(!ro&&arr.length<4?`<label class="add">📷<br>사진 추가<input type="file" accept="image/*" capture="environment" multiple class="hide" onchange="svAddPh(this)"></label>`:'')||'<span class="hint">사진 없음</span>';}
 async function svAddPh(inp){const arr=window._actPhotos;for(const f of inp.files){if(arr.length>=4){toast('최대 4장');break;}const d=await compress(f);if(d)arr.push(d);}inp.value='';svPhotos();}
-function svDept(){const d=$('sv_fdept').value;if(SV.items.some(i=>i.r)&&!confirm('점검 결과가 있습니다. 부서 체크리스트로 바꾸면 결과가 지워집니다. 계속할까요?')){$('sv_fdept').value=SV.dept;return;}SV.dept=d;SV.items=svTpl(d).map(q=>({q,r:'',note:''}));svSnap();renderSupForm();}
+function svDept(){const d=$('sv_fdept').value;if(SV.items.some(i=>i.r)&&!confirm('점검 결과가 있습니다. 부서 체크리스트로 바꾸면 결과가 지워집니다. 계속할까요?')){$('sv_fdept').value=SV.dept;return;}SV.dept=d;SV.proc='';SV.items=svTpl(d).map(q=>({q,r:'',note:''}));svSnap();SV.proc='';renderSupForm();setTimeout(svProcOpen,60);}
 function svSet(i,k,list){svSnap();SV.items[i].r=k;if(k==='O')SV.items[i].note='';if(list){renderSupForm();return;}SVI=i;if(k==='O'&&i<SV.items.length-1){SVI=i+1;}renderSupForm();if(k!=='O')setTimeout(()=>{const n=$('sv_note');if(n)n.focus();},50);}
 function svMove(d){svSnap();const it=SV.items[SVI];if(d>0&&(it.r==='D'||it.r==='X')&&!it.note)return toast('개선요망사항을 입력하세요');if(d>0&&!it.r)return toast('점검 결과를 선택하세요');if(d>0&&SVI>=SV.items.length-1){SVSTEP=2;renderSupForm();return;}SVI=Math.max(0,Math.min(SV.items.length-1,SVI+d));renderSupForm();}
 function svAllO(){svSnap();SV.items.forEach(i=>{if(!i.r)i.r='O';});SVLIST=true;renderSupForm();toast('남은 항목을 양호로 처리했습니다');}
@@ -1930,12 +1936,12 @@ const SV_DKW=[[/프레스/,['끼임·협착','베임·찔림','소음·진동','
 function svCfg(){const d=S.cfg.supTpl||{};const ln=svLine();
   $('mSvCfgBody').innerHTML=`<div class="f"><div class="row"><div><label>대상</label><select id="svc_d" onchange="svCfgLoad()"><option value="기본">기본 (모든 부서)</option>${svDepts().map(x=>`<option>${esc(x)}</option>`).join('')}</select></div><div style="display:flex;align-items:flex-end;gap:6px"><button class="btn" onclick="svAi()">🤖 AI 체크리스트 생성</button><button class="btn sm" onclick="$('svc_items').value=SV_DEF.join('\\n')">회사 양식 7항목</button></div></div>
   <div><label>점검 항목 <span class="hint">(한 줄에 하나 · 비우면 ‘기본’ 사용)</span></label><textarea id="svc_items" style="min-height:220px"></textarea></div><div id="svc_ai" class="hint"></div>
-  <h4 class="svh">업무일지 부서 목록 <span class="hint">(한 줄에 하나)</span></h4><textarea id="svc_depts" style="min-height:90px">${esc(svDepts().join('\n'))}</textarea>
+  <h4 class="svh">업무일지 부서 · 공정 <span class="hint">(한 줄에 ‘부서: 공정, 공정’)</span></h4><textarea id="svc_depts" style="min-height:110px">${esc(svDepts().map(d=>d+': '+svProcs(d).join(', ')).join('\n'))}</textarea>
   <h4 class="svh">기본 결재선 · 참조</h4><div class="row3"><div><label>검토</label><input type="text" id="svc_rev" value="${esc(ln.rev)}" placeholder="예) 안전관리자 이름"></div><div><label>승인</label><input type="text" id="svc_apv" value="${esc(ln.apv)}" placeholder="예) 공장장 이름"></div><div><label>참조</label><input type="text" id="svc_refs" value="${esc(ln.refs)}" placeholder="쉼표 구분"></div></div></div>`;
   window._svT=JSON.parse(JSON.stringify(d));window._svD='기본';svCfgLoad(true);openM('mSvCfg');}
 function svCfgKeep(){const it=$('svc_items').value.split('\n').map(s=>s.trim()).filter(Boolean);if(it.length)window._svT[window._svD]=it;else delete window._svT[window._svD];}
 function svCfgLoad(first){if(!first)svCfgKeep();const d=$('svc_d').value;window._svD=d;const T=window._svT;$('svc_items').value=(T[d]||(d==='기본'?SV_DEF:[])).join('\n');$('svc_ai').textContent=d!=='기본'&&!T[d]?'비어 있으면 ‘기본’ 항목으로 점검합니다.':'';}
-function svCfgSave(){svCfgKeep();S.cfg.supTpl=window._svT;{const L=$('svc_depts').value.split('\n').map(x=>x.trim()).filter(Boolean);S.cfg.supDepts=L.length?L:null;}S.cfg.supLine={rev:$('svc_rev').value.trim(),apv:$('svc_apv').value.trim(),refs:$('svc_refs').value.trim()};S.cfgAt=now();save();closeM('mSvCfg');toast('체크리스트 설정 저장 · 전 기기 반영');}
+function svCfgSave(){svCfgKeep();S.cfg.supTpl=window._svT;{const L=$('svc_depts').value.split('\n').map(x=>x.trim()).filter(Boolean);const D=[],P={};L.forEach(l=>{const i=l.indexOf(':');const d=(i<0?l:l.slice(0,i)).trim();if(!d)return;D.push(d);P[d]=i<0?[]:l.slice(i+1).split(/[,、]/).map(x=>x.trim()).filter(Boolean);});S.cfg.supDepts=D.length?D:null;S.cfg.supProcs=D.length?P:null;}S.cfg.supLine={rev:$('svc_rev').value.trim(),apv:$('svc_apv').value.trim(),refs:$('svc_refs').value.trim()};S.cfgAt=now();save();closeM('mSvCfg');toast('체크리스트 설정 저장 · 전 기기 반영');}
 function svAi(){
   const d=$('svc_d').value,cnt={};
   const ops=S.ops.filter(o=>d==='기본'||o.dept===d),ras=S.ras.filter(r=>d==='기본'||(r.op_ids||[]).some(id=>(S.ops.find(o=>o.id===id)||{}).dept===d));
