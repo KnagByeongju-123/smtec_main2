@@ -1895,7 +1895,7 @@ function renderSupForm(){
   $('mSupTitle').textContent=(SV.no?SV.no+' · ':'')+'관리감독자 업무일지';
   const steps=['① 기본','② 안전점검 '+(c.N?`<b style="color:var(--bad)">${c.N}</b>`:'✔'),'③ 아차사고·재해','④ 시정지시','⑤ 사진·결재'];
   let h=`<div class="svsteps">${steps.map((s,i)=>`<button class="${i===SVSTEP?'on':''}" onclick="svGo(${i})">${s}</button>`).join('')}</div>`;
-  if(ro)h+=`<div class="note" style="margin-bottom:10px">${SV.st==='결재완료'?'결재가 끝난 일지입니다. 수정할 수 없습니다.':'결재 진행 중입니다 ('+esc(svPendRole(SV))+' 차례). 반려되면 다시 수정할 수 있습니다.'}</div>`;
+  if(ro)h+=`<div class="note" style="margin-bottom:10px">${SV.st==='결재완료'?'결재가 끝난 일지입니다. 수정할 수 없습니다.'+(!(SV.items||[]).some(it=>it.r2)?' <b>2회(오후) 점검 기록이 없습니다</b> — 아래 <b>결재 취소 후 수정</b>을 누르면 2회 기록을 넣고 다시 결재를 올릴 수 있습니다.':''):'결재 진행 중입니다 ('+esc(svPendRole(SV))+' 차례). 반려되면 다시 수정할 수 있습니다.'}</div>`;
   if(SV.st==='반려'&&SV.rej)h+=`<div class="note warn" style="margin-bottom:10px"><b>반려 사유</b> ${esc(SV.rej)}</div>`;
   if(SVSTEP===0){
     h+=`<div class="f"><div class="row3"><div><label>일자 <span class="req">*</span></label><input type="date" id="sv_date" value="${esc(SV.date)}" ${dis}></div><div><label>부서 <span class="req">*</span></label><select id="sv_fdept" ${dis} onchange="svDept()">${(svDepts().includes(SV.dept)?svDepts():[SV.dept,...svDepts()]).map(d=>`<option ${d===SV.dept?'selected':''}>${esc(d)}</option>`).join('')}</select></div><div><label>공정</label>${svProcSel(dis)}</div></div>
@@ -1936,7 +1936,7 @@ function renderSupForm(){
   if(SVSTEP===4){window._actPhotos=SV.photos;svPhotos();}
   if(SVSTEP===1&&!SVLIST&&!ro)svSwipe();
   const canSubmit=!ro;
-  $('mSupFt').innerHTML=`${SV.id&&!ro?`<button class="btn sm" style="color:var(--bad);margin-right:auto" onclick="svDelRec()">삭제</button>`:'<span style="margin-right:auto"></span>'}${SV.id&&ro?'<button class="btn sm" onclick="svReDept()">부서·공정 정정</button>':''}${SV.id?`<button class="btn" onclick="printSup('${SV.id}')">🖨 출력</button>`:''}<button class="btn" onclick="closeM('mSup')">닫기</button>${canSubmit?`<button class="btn" onclick="svSave(false)">임시저장</button><button class="btn p" onclick="svSubmit()" title="1회·2회 점검을 모두 기록해야 결재 요청할 수 있습니다">✍ 작성 서명 · 결재 요청</button>`:SV.st!=='작성중'&&(SV.corr||[]).length?`<button class="btn p" onclick="svSave(true)">시정조치 저장</button>`:''}`;
+  $('mSupFt').innerHTML=`${SV.id&&!ro?`<button class="btn sm" style="color:var(--bad);margin-right:auto" onclick="svDelRec()">삭제</button>`:'<span style="margin-right:auto"></span>'}${SV.id&&ro?'<button class="btn sm" onclick="svReDept()">부서·공정 정정</button>':''}${svCanReopen()?'<button class="btn sm" onclick="svReopen()">결재 취소 후 수정</button>':''}${SV.id?`<button class="btn" onclick="printSup('${SV.id}')">🖨 출력</button>`:''}<button class="btn" onclick="closeM('mSup')">닫기</button>${canSubmit?`<button class="btn" onclick="svSave(false)">임시저장</button><button class="btn p" onclick="svSubmit()" title="1회·2회 점검을 모두 기록해야 결재 요청할 수 있습니다">✍ 작성 서명 · 결재 요청</button>`:SV.st!=='작성중'&&(SV.corr||[]).length?`<button class="btn p" onclick="svSave(true)">시정조치 저장</button>`:''}`;
 }
 function svPhotos(){const box=$('a_photos');if(!box)return;const arr=window._actPhotos,ro=svRO();
   box.innerHTML=arr.map((d,i)=>`<div class="ph1"><img src="${d}" onclick="lbShow(window._actPhotos[${i}])">${ro?'':`<button onclick="window._actPhotos.splice(${i},1);svPhotos()">×</button>`}</div>`).join('')+(!ro&&arr.length<4?`<label class="add">📷<br>사진 추가<input type="file" accept="image/*" capture="environment" multiple class="hide" onchange="svAddPh(this)"></label>`:'')||'<span class="hint">사진 없음</span>';}
@@ -1984,6 +1984,12 @@ function svApprove(){const i=svPend(SV);SIG.arr=SV.appr;SIG.i=i;SIG.cb=()=>{cons
     const r=S.recs.find(x=>x.id===SV.id);Object.assign(r,{appr:SV.appr,st:SV.st,corr:SV.corr});r.ua=now();save();toast(SV.appr[i].role+' 결재 완료');
     if(nx>0)notify('관리감독자 업무일지 결재 요청',`${r.no} ${r.dept} → ${svPendRole(r)}`,'default');renderSupForm();renderSup();};
   $('mSignTitle').textContent=SV.appr[i].role+' '+SV.appr[i].name+' 서명';openM('mSign');setTimeout(sigInit,30);}
+/* 결재 취소 후 수정 — 작성자·관리자. 서명은 지워지고 '반려(수정)' 상태가 되어 다시 결재를 올립니다 (기록 남음) */
+function svCanReopen(){return SV.id&&svRO()&&(TJ_ADMIN||(SV.appr&&SV.appr[0]&&SV.appr[0].name===ADMIN.name));}
+function svReopen(){if(!svCanReopen())return toast('작성자 또는 관리자만 결재를 취소할 수 있습니다');
+  const no2=!(SV.items||[]).some(it=>it.r2);const why=prompt('결재를 취소하고 수정합니다.\n서명이 지워지고, 수정 후 다시 결재를 올려야 합니다.\n\n사유를 입력하세요',no2?'2회(오후) 점검 기록 추가':'');if(!why)return;
+  const r=S.recs.find(x=>x.id===SV.id);SV.appr.forEach(a=>{a.sig='';a.at=0;});SV.st='반려';SV.rej='결재 취소(수정): '+why+' — '+ADMIN.name+' '+fmtDT(now());
+  Object.assign(r,{appr:SV.appr,st:SV.st,rej:SV.rej});r.ua=now();save();notify('관리감독자 업무일지 결재 취소',`${r.no} ${r.dept} · ${why}`,'default');toast('결재를 취소했습니다 — 수정 후 다시 결재를 올리세요');renderSupForm();renderSup();}
 function svReject(){const why=prompt('반려 사유를 입력하세요');if(!why)return;const r=S.recs.find(x=>x.id===SV.id);
   SV.appr.forEach(a=>{a.sig='';a.at=0;});SV.st='반려';SV.rej=why+' — '+ADMIN.name+' '+fmtDT(now());Object.assign(r,{appr:SV.appr,st:SV.st,rej:SV.rej});r.ua=now();save();
   notify('관리감독자 업무일지 반려',`${r.no} ${r.dept} · ${why}`,'default');toast('반려했습니다');renderSupForm();renderSup();}
