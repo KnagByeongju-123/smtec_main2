@@ -1797,7 +1797,8 @@ function svPendRole(r){const i=svPend(r);return i<0?'':r.appr[i].role+' '+r.appr
 function svMine(r){const me=ADMIN.name;const i=svPend(r);return (r.st==='결재대기'&&i>0&&r.appr[i].name===me)||((r.refs||'').split(/[,\s]+/).includes(me));}
 function svOpenCorr(){return svAll().reduce((a,r)=>a+(r.corr||[]).filter(c=>c.ins&&!c.ok).length,0);}
 
-const SV_PROCS={'생산팀':['B동','C동'],'품질관리팀':['수입검사','공정검사','출하검사','측정실'],'영업관리팀':['출하·물류','자재관리']}; // 기본값 — 체크리스트 설정에서 수정
+const SV_PROCS={'생산팀':['가공실','B동','C동'],'품질관리팀':['수입검사','공정검사','출하검사','측정실'],'영업관리팀':['출하·물류','자재관리']}; // 기본값 — 체크리스트 설정에서 수정
+function svOwner(n){const O=S.cfg.supOwner||{};return O[n]||null;}
 function svProcs(d){const P=S.cfg.supProcs||SV_PROCS;return (P[d]||[]).slice();}
 function svProcSel(dis){const L=svProcs(SV.dept),cur=SV.proc||'',custom=cur&&!L.includes(cur);
   return `<select id="sv_procsel" ${dis} onchange="svProcPick(this.value)"><option value="">— 공정 선택 —</option>${L.map(x=>`<option ${x===cur?'selected':''}>${esc(x)}</option>`).join('')}<option value="__c" ${custom?'selected':''}>직접 입력…</option></select><input type="text" id="sv_proc" value="${esc(cur)}" placeholder="공정·담당 구역 직접 입력" ${dis} class="${custom?'':'hide'}" style="margin-top:6px">`;}
@@ -1805,7 +1806,7 @@ function svProcPick(v){const t=$('sv_proc');if(v==='__c'){t.classList.remove('hi
 function svProcOpen(){const e=$('sv_procsel');if(!e||e.disabled)return;e.focus();try{e.showPicker();}catch(x){}}
 const SV_DEPTS=['생산팀','품질관리팀','영업관리팀']; // 회사 부서 (포털 직원 PIN 부서 기준)
 function svDepts(){const L=(S.cfg.supDepts&&S.cfg.supDepts.length?S.cfg.supDepts:SV_DEPTS).slice();return L;}
-function svMyDept(){const u=window.__TJ_AUDIT_USER__,d=u&&u.dept;const L=svDepts();return d&&L.includes(d)?d:(L.find(x=>d&&(x.includes(d)||d.includes(x)))||L[0]);}
+function svMyDept(){const o=svOwner(ADMIN.name);if(o&&svDepts().includes(o.dept))return o.dept;const u=window.__TJ_AUDIT_USER__,d=u&&u.dept;const L=svDepts();return d&&L.includes(d)?d:(L.find(x=>d&&(x.includes(d)||d.includes(x)))||L[0]);}
 function svFix(){const r=mrecs('sup').find(x=>x.no==='SV-2026-001'&&x.dept==='프레스 B동'&&x.date==='2026-11-10');if(r){r.dept='품질관리팀';r.ua=now();save();}} // 요청: 2026-11-10 작성분 품질관리팀으로 정정
 function svReDept(){const L=svDepts();const cur=SV.dept;const v=prompt('부서·공정을 정정합니다 (결재 내용·서명은 유지, 변경 기록이 남습니다)\n\n'+L.map((d,i)=>(i+1)+'. '+d).join('\n')+'\n\n번호 또는 부서명을 입력하세요',L.indexOf(cur)>=0?String(L.indexOf(cur)+1):'');if(v==null)return;const d=/^\d+$/.test(v.trim())?L[+v.trim()-1]:v.trim();if(!d)return toast('부서를 확인하세요');
   const pr=prompt('공정을 입력하세요 (비우면 없음)',SV.proc||'');if(pr==null)return;
@@ -1830,7 +1831,7 @@ function renderSup(){
 function openSup(id,dept){
   const r=id?S.recs.find(x=>x.id===id):null;
   if(r)SV=JSON.parse(JSON.stringify(r));
-  else{const d=dept||svMyDept(),ln=svLine(),pv=(()=>{const L=svAll().filter(r=>r.dept===d&&r.proc).sort((a,b)=>(b.date||'').localeCompare(a.date||'')||b.ts-a.ts);return L.find(r=>r.sup===ADMIN.name)||L[0];})();
+  else{const d=dept||svMyDept(),ln=svLine(),pv=(()=>{const L=svAll().filter(r=>r.dept===d&&r.proc).sort((a,b)=>(b.date||'').localeCompare(a.date||'')||b.ts-a.ts);const o=svOwner(ADMIN.name);return L.find(r=>r.sup===ADMIN.name)||(o&&o.dept===d?{proc:o.proc}:null)||L[0];})();
     SV={id:'',k:'sup',date:fmtD(now()),dept:d,proc:pv?pv.proc:'',sup:ADMIN.name,t1f:'08:30',t1t:'09:00',t2f:'',t2t:'',items:svTpl(d).map(q=>({q,r:'',note:''})),near:[],inj:[],corr:[],photos:[],
       appr:[{role:'작성',name:ADMIN.name,sig:'',at:0},{role:'검토',name:ln.rev,sig:'',at:0},{role:'승인',name:ln.apv,sig:'',at:0}],refs:ln.refs,st:'작성중'};}
   SVSTEP=r?(r.st==='작성중'||r.st==='반려'?0:4):0;SVI=0;SVLIST=false;window._actPhotos=SV.photos;renderSupForm();openM('mSup');
@@ -1937,12 +1938,12 @@ const SV_DKW=[[/프레스/,['끼임·협착','베임·찔림','소음·진동','
 function svCfg(){const d=S.cfg.supTpl||{};const ln=svLine();
   $('mSvCfgBody').innerHTML=`<div class="f"><div class="row"><div><label>대상</label><select id="svc_d" onchange="svCfgLoad()"><option value="기본">기본 (모든 부서)</option>${svDepts().map(x=>`<option>${esc(x)}</option>`).join('')}</select></div><div style="display:flex;align-items:flex-end;gap:6px"><button class="btn" onclick="svAi()">🤖 AI 체크리스트 생성</button><button class="btn sm" onclick="$('svc_items').value=SV_DEF.join('\\n')">회사 양식 7항목</button></div></div>
   <div><label>점검 항목 <span class="hint">(한 줄에 하나 · 비우면 ‘기본’ 사용)</span></label><textarea id="svc_items" style="min-height:220px"></textarea></div><div id="svc_ai" class="hint"></div>
-  <h4 class="svh">업무일지 부서 · 공정 <span class="hint">(한 줄에 ‘부서: 공정, 공정’)</span></h4><textarea id="svc_depts" style="min-height:110px">${esc(svDepts().map(d=>d+': '+svProcs(d).join(', ')).join('\n'))}</textarea>
+  <h4 class="svh">업무일지 부서 · 공정(담당) <span class="hint">(한 줄에 ‘부서: 공정(담당자), 공정(담당자)’ — 담당자를 적으면 그 사람의 일지에 자동 선택)</span></h4><textarea id="svc_depts" style="min-height:110px">${esc(svDepts().map(d=>d+': '+svProcs(d).map(p=>{const n=Object.entries(S.cfg.supOwner||{}).filter(([k,v])=>v.dept===d&&v.proc===p).map(([k])=>k);return p+(n.length?'('+n.join('·')+')':'');}).join(', ')).join('\n'))}</textarea>
   <h4 class="svh">기본 결재선 · 참조</h4><div class="row3"><div><label>검토</label><input type="text" id="svc_rev" value="${esc(ln.rev)}" placeholder="예) 안전관리자 이름"></div><div><label>승인</label><input type="text" id="svc_apv" value="${esc(ln.apv)}" placeholder="예) 공장장 이름"></div><div><label>참조</label><input type="text" id="svc_refs" value="${esc(ln.refs)}" placeholder="쉼표 구분"></div></div></div>`;
   window._svT=JSON.parse(JSON.stringify(d));window._svD='기본';svCfgLoad(true);openM('mSvCfg');}
 function svCfgKeep(){const it=$('svc_items').value.split('\n').map(s=>s.trim()).filter(Boolean);if(it.length)window._svT[window._svD]=it;else delete window._svT[window._svD];}
 function svCfgLoad(first){if(!first)svCfgKeep();const d=$('svc_d').value;window._svD=d;const T=window._svT;$('svc_items').value=(T[d]||(d==='기본'?SV_DEF:[])).join('\n');$('svc_ai').textContent=d!=='기본'&&!T[d]?'비어 있으면 ‘기본’ 항목으로 점검합니다.':'';}
-function svCfgSave(){svCfgKeep();S.cfg.supTpl=window._svT;{const L=$('svc_depts').value.split('\n').map(x=>x.trim()).filter(Boolean);const D=[],P={};L.forEach(l=>{const i=l.indexOf(':');const d=(i<0?l:l.slice(0,i)).trim();if(!d)return;D.push(d);P[d]=i<0?[]:l.slice(i+1).split(/[,、]/).map(x=>x.trim()).filter(Boolean);});S.cfg.supDepts=D.length?D:null;S.cfg.supProcs=D.length?P:null;}S.cfg.supLine={rev:$('svc_rev').value.trim(),apv:$('svc_apv').value.trim(),refs:$('svc_refs').value.trim()};S.cfgAt=now();save();closeM('mSvCfg');toast('체크리스트 설정 저장 · 전 기기 반영');}
+function svCfgSave(){svCfgKeep();S.cfg.supTpl=window._svT;{const L=$('svc_depts').value.split('\n').map(x=>x.trim()).filter(Boolean);const D=[],P={},O={};L.forEach(l=>{const i=l.indexOf(':');const d=(i<0?l:l.slice(0,i)).trim();if(!d)return;D.push(d);P[d]=(i<0?[]:l.slice(i+1).split(/[,、]/)).map(x=>x.trim()).filter(Boolean).map(x=>{const m=x.match(/^(.*?)\s*\(([^)]*)\)\s*$/);if(!m)return x;const pr=m[1].trim();m[2].split(/[·\/\s]+/).map(n=>n.trim()).filter(Boolean).forEach(n=>O[n]={dept:d,proc:pr});return pr;});});S.cfg.supDepts=D.length?D:null;S.cfg.supProcs=D.length?P:null;S.cfg.supOwner=Object.keys(O).length?O:null;}S.cfg.supLine={rev:$('svc_rev').value.trim(),apv:$('svc_apv').value.trim(),refs:$('svc_refs').value.trim()};S.cfgAt=now();save();closeM('mSvCfg');toast('체크리스트 설정 저장 · 전 기기 반영');}
 function svAi(){
   const d=$('svc_d').value,cnt={};
   const ops=S.ops.filter(o=>d==='기본'||o.dept===d),ras=S.ras.filter(r=>d==='기본'||(r.op_ids||[]).some(id=>(S.ops.find(o=>o.id===id)||{}).dept===d));
