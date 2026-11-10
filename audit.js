@@ -353,3 +353,20 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
   else start();
 })();
+
+// ---------- [2026-11-10] iPhone: 입력칸을 누를 때 화면이 확대되는 것 방지 ----------
+//  iOS Safari 는 글자 16px 미만 입력칸에 초점이 가면 화면을 확대한다. viewport 에 maximum-scale=1 을 더하면 막히고,
+//  iOS 는 손가락 확대(핀치)는 그대로 허용한다. 안드로이드·PC 는 손대지 않는다 (화면 배치·글자 크기 변경 없음)
+(function () {
+  try {
+    var ua = navigator.userAgent || '';
+    var ios = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    if (!ios) return;
+    var fix = function () {
+      var m = document.querySelector('meta[name=viewport]');
+      if (!m) { m = document.createElement('meta'); m.name = 'viewport'; m.content = 'width=device-width, initial-scale=1'; document.head.appendChild(m); }
+      if (!/maximum-scale/i.test(m.content)) m.content = m.content.replace(/\s*$/, '') + ', maximum-scale=1';
+    };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fix); else fix();
+  } catch (e) {}
+})();
