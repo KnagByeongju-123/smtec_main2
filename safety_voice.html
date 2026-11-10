@@ -805,7 +805,7 @@ body.pf .prnform{display:block;padding:10mm 0}
   <div class="ph"><div><h2>화학물질 관리 (MSDS · 경고표지)</h2><div class="sub">화학물질 등록(물질명·유사명·CAS 검색) → 참고용 MSDS 자동 생성 → 경고표지 출력 · 산안법 제110·111·114·115조</div></div><div class="tw noprint"><button class="btn p" onclick="openChem(null)">＋ 화학물질 등록</button><button class="btn" onclick="chPick2()">📄 참고용 MSDS · 경고표지</button><button class="btn" onclick="drvCfg()">📁 공유폴더</button><button class="btn" onclick="chCsv()">⬇ 목록 CSV</button></div></div>
   <div class="grid g4 noprint" id="chKpi" style="margin-bottom:12px"></div>
   <div class="panel"><div class="filters noprint svf"><select id="ch_dept" onchange="renderChem()"><option value="">전체 부서</option></select><input type="text" id="ch_q" placeholder="제품명 · 성분 · CAS · 장소 검색" oninput="renderChem()"><span class="sp"></span><span class="hint" id="ch_cnt"></span></div>
-    <div class="scroll"><table class="tbl resp" id="chTbl"><thead><tr><th>번호</th><th>제품명</th><th>구성성분 (CAS)</th><th>그림문자</th><th>신호어</th><th>사용부서 · 보관</th><th>사용량</th><th class="c">MSDS 원본</th><th>출력</th></tr></thead><tbody></tbody></table></div><div class="cards" id="chCards"></div></div>
+    <div class="scroll"><table class="tbl resp" id="chTbl"><thead><tr><th>번호</th><th>제품명</th><th>구성성분 (CAS)</th><th>그림문자</th><th>신호어</th><th>사용부서 · 보관</th><th>인화점 · 노출기준</th><th>사용량</th><th class="c">MSDS 원본</th><th>출력</th></tr></thead><tbody></tbody></table></div><div class="cards" id="chCards"></div></div>
 </section>
 
 <!-- ===== 접속·수정 기록 ===== -->
@@ -1138,7 +1138,7 @@ function fillSelects(){
   $('r_dept').innerHTML=opt(S.cfg.depts,'선택');$('r_place').innerHTML=opt(S.cfg.places,'선택');$('r_cat').innerHTML=opt(S.cfg.cats,'미정 (AI 추천)');
   $('i_st').innerHTML='<option value="">전체 상태</option>'+STATUS.map(s=>`<option>${s}</option>`).join('');
   $('b_st').innerHTML='<option value="">전체 상태</option>'+STATUS.map(s=>`<option>${s}</option>`).join('');
-  $('i_cat').innerHTML=opt(S.cfg.cats,'전체 유형');$('i_dept').innerHTML=opt(S.cfg.depts,'전체 소속');$('t_dept').innerHTML=opt(S.cfg.depts,'전체 라인');$('d_cat').innerHTML=opt(DOC_CATS);$('d_fcat').innerHTML=opt(DOC_CATS,'전체 분류');
+  $('i_cat').innerHTML=opt(S.cfg.cats,'전체 유형');$('i_dept').innerHTML=opt(S.cfg.depts,'전체 소속');$('t_dept').innerHTML=opt(tbDepts(),'전체 라인');$('d_cat').innerHTML=opt(DOC_CATS);$('d_fcat').innerHTML=opt(DOC_CATS,'전체 분류');
   $('wco').textContent=S.cfg.company+' · 안전보건';
 }
 function whoBar(){$('who').textContent=S.cfg.company;$('mwho').textContent=S.cfg.company;}
@@ -1445,13 +1445,19 @@ function renderAction(){
 
 /* ---------- TBM ---------- */
 var TB=null; // 편집 중 TBM
-function filterTbm(){const d=$('t_dept').value,m=$('t_mon').value,q=($('t_q').value||'').toLowerCase();return S.tbms.filter(x=>(!d||x.dept===d)&&(!m||(x.date||'').startsWith(m))&&(!q||(x.work+(x.share||'')+(x.hazards||'')+x.leader+x.place+(x.att||[]).map(a=>a.name).join('')).toLowerCase().includes(q))).sort((a,b)=>(b.date+b.from).localeCompare(a.date+a.from));}
+function filterTbm(){const d=$('t_dept').value,m=$('t_mon').value,q=($('t_q').value||'').toLowerCase();return S.tbms.filter(x=>(!d||tbKey(x.dept)===d)&&(!m||(x.date||'').startsWith(m))&&(!q||(x.work+(x.share||'')+(x.hazards||'')+x.leader+x.place+(x.att||[]).map(a=>a.name).join('')).toLowerCase().includes(q))).sort((a,b)=>(b.date+b.from).localeCompare(a.date+a.from));}
+const TB_MERGE=/^\s*(프레스|생산)\s*[BC]\s*동\s*$/;   // TBM: 프레스 B동·C동 → 생산팀 (B·C동) 통합
+const tbKey=d=>TB_MERGE.test(d||'')?'생산팀':(d||'');
+function tbDepts(){const L=[];S.cfg.depts.map(tbKey).forEach(d=>{if(d&&!L.includes(d))L.push(d);});if(!L.includes('생산팀'))L.unshift('생산팀');return L;}
+function tbRoster(d){const W=S.cfg.workers||{},L=[];Object.keys(W).filter(k=>tbKey(k)===d).forEach(k=>(W[k]||[]).forEach(n=>{if(!L.includes(n))L.push(n);}));return L;}
+function tbMigrate(){let n=0;(S.tbms||[]).forEach(x=>{if(TB_MERGE.test(x.dept||'')){if(!x.place)x.place=x.dept.replace(/^(프레스|생산)\s*/,'')+' 현장';x.dept='생산팀';(x.att||[]).forEach(a=>{if(TB_MERGE.test(a.dept||''))a.dept='생산팀';});x.ua=now();n++;}});if(n){save();toast('TBM '+n+'건을 생산팀(B·C동)으로 통합했습니다');}}
 const TB_PRE=['작업내용·작업절차와 위험요인 공유','필요한 보호구 착용 상태 확인','작업장 정리정돈 및 안전통로 확보','기계 정비 시 정지·에너지원 차단 및 LOTO','중량물 취급 시 인양·적재 안전조치'];
 const TB_HL=['발열·두통·어지럼증 등 건강 이상 여부','피로·수면 부족·집중력 저하 여부','근골격계 통증 및 기타 작업 지장 여부','음주 영향, 약물 복용 작업 지장 여부'];
 var TBV='list';
 const tbSigned=a=>!!(a.sig||a.paper);
 const tbPresent=x=>(x.att||[]).filter(a=>!a.leave);
 function renderTbm(){
+  tbMigrate();
   const mon=fmtD(now()).slice(0,7);const tm=S.tbms.filter(x=>(x.date||'').startsWith(mon));const att=tm.reduce((a,x)=>a+tbPresent(x).length,0),sg=tm.reduce((a,x)=>a+tbPresent(x).filter(tbSigned).length,0);
   const today=S.tbms.filter(x=>x.date===fmtD(now())).length;
   $('tbmKpi').innerHTML=`<div class="kpi"><div class="l">오늘 TBM</div><div class="v">${today}<small>건</small></div></div><div class="kpi blue"><div class="l">이번 달 실시</div><div class="v">${tm.length}<small>회</small></div></div><div class="kpi green"><div class="l">이번 달 서명율</div><div class="v">${att?Math.round(sg/att*100):0}<small>% (${sg}/${att})</small></div></div><div class="kpi amber"><div class="l">관리감독자 확인 대기</div><div class="v">${S.tbms.filter(x=>!x.conf).length}<small>건</small></div></div>`;
@@ -1479,16 +1485,17 @@ function tbmLinks(dept,place){
 function openTbm(id){
   const x=id?S.tbms.find(t=>t.id===id):null;
   const prev=S.tbms.slice().sort((a,b)=>(b.date||'').localeCompare(a.date||''))[0];
-  TB=x?JSON.parse(JSON.stringify(x)):{id:uid(),date:fmtD(now()),from:'08:00',to:'08:20',dept:prev?prev.dept:(S.cfg.depts[0]||''),proc:prev?prev.proc||'':'',place:prev?prev.place||'':'',leader:ADMIN.name,work:prev?prev.work||'':'',share:'',hz:[],pre:TB_PRE.map(()=>false),hl:TB_HL.map(()=>false),sick:[],att:[],links:[],photos:[],scans:[],note:'',ts:now()};
+  TB=x?JSON.parse(JSON.stringify(x)):{id:uid(),date:fmtD(now()),from:'08:00',to:'08:20',dept:prev?tbKey(prev.dept):tbDepts()[0],proc:prev?prev.proc||'':'',place:prev?prev.place||'':'',leader:ADMIN.name,work:prev?prev.work||'':'',share:'',hz:[],pre:TB_PRE.map(()=>false),hl:TB_HL.map(()=>false),sick:[],att:[],links:[],photos:[],scans:[],note:'',ts:now()};
   TB.hz=TB.hz||[];TB.pre=TB.pre||TB_PRE.map(()=>false);TB.hl=TB.hl||TB_HL.map(()=>false);TB.sick=TB.sick||[];TB.scans=TB.scans||[];
   if(!x&&prev&&!TB.att.length)TB.att=(prev.att||[]).map(a=>({name:a.name,dept:a.dept||'',sig:''}));
-  if(!x&&!TB.att.length)TB.att=((S.cfg.workers||{})[TB.dept]||[]).map(n=>({name:n,dept:TB.dept,sig:''}));
+  TB.dept=tbKey(TB.dept);
+  if(!x&&!TB.att.length)TB.att=tbRoster(TB.dept).map(n=>({name:n,dept:TB.dept,sig:''}));
   $('mTbmTitle').textContent=x?'TBM 일지 · '+x.date+' '+x.dept:'작업 전 안전회의(TBM) 일지 작성';
   renderTbmForm();openM('mTbm');
 }
 function renderTbmForm(){
-  const x=TB;const roster=(S.cfg.workers&&S.cfg.workers[x.dept])||[];const links=tbmLinks(x.dept,x.place);
-  const depts=S.cfg.depts.includes(x.dept)?S.cfg.depts:[x.dept,...S.cfg.depts];
+  const x=TB;const roster=tbRoster(x.dept);const links=tbmLinks(x.dept,x.place);
+  const depts=tbDepts().includes(x.dept)?tbDepts():[x.dept,...tbDepts()];
   const ck=(k,i,l)=>`<label class="tbck ${x[k][i]?'on':''}"><input type="checkbox" ${x[k][i]?'checked':''} onchange="tbSnap();TB.${k}[${i}]=this.checked;renderTbmForm()"><span>● ${l}</span><b>${x[k][i]?'✓':''}</b></label>`;
   $('mTbmBody').innerHTML=`<div class="f">
     <div class="row3"><div><label>작업일자 <span class="req">*</span></label><input type="date" id="tb_date" value="${x.date}"></div><div><label>회의시간</label><div class="row" style="gap:6px"><input type="time" id="tb_from" value="${x.from||''}"><input type="time" id="tb_to" value="${x.to||''}"></div></div><div><label>진행자 <span class="req">*</span></label><input type="text" id="tb_leader" value="${esc(x.leader||'')}"></div></div>
@@ -1523,13 +1530,13 @@ function tbSnap(){const g=i=>$(i)?$(i).value:undefined;Object.assign(TB,{date:g(
 function tbSet(k,v){tbSnap();TB[k]=v;}
 function tbAttSt(i,v){tbSnap();const a=TB.att[i];if(v){a.leave=v;a.sig='';a.paper=false;}else delete a.leave;renderTbmForm();}
 function tbToggleAtt(n){tbSnap();const i=TB.att.findIndex(a=>a.name===n);if(i>=0)TB.att.splice(i,1);else TB.att.push({name:n,dept:TB.dept,sig:''});renderTbmForm();}
-function tbAllAtt(){tbSnap();((S.cfg.workers||{})[TB.dept]||[]).forEach(n=>{if(!TB.att.some(a=>a.name===n))TB.att.push({name:n,dept:TB.dept,sig:''});});renderTbmForm();}
+function tbAllAtt(){tbSnap();tbRoster(TB.dept).forEach(n=>{if(!TB.att.some(a=>a.name===n))TB.att.push({name:n,dept:TB.dept,sig:''});});renderTbmForm();}
 function tbAddAtt(){const n=$('tb_newatt').value.trim();if(!n)return;tbSnap();if(!TB.att.some(a=>a.name===n))TB.att.push({name:n,dept:TB.dept,sig:''});renderTbmForm();}
 function tbDelAtt(i){tbSnap();TB.att.splice(i,1);renderTbmForm();}
 function tbLink(i){tbSnap();const l=tbmLinks(TB.dept,TB.place)[i];if(!l)return;const k=TB.links.findIndex(x=>x.id===l.id);
   if(k>=0){TB.links.splice(k,1);TB.share=TB.share.split('\n').filter(s=>s.trim()!==('• '+l.txt).trim()).join('\n');TB.hz=TB.hz.filter(r=>r.ra!==l.id);}
   else{TB.links.push({id:l.id,t:l.t});TB.share=(TB.share?TB.share+'\n':'')+'• '+l.txt;if(l.r)TB.hz.push({ra:l.id,work:l.r.work||'',risk:l.r.hz,acc:'',ms:(l.r.ms||'').split('\n')[0],owner:l.r.owner||'',done:''});}renderTbmForm();}
-function tbLoadPrev(){tbSnap();const prev=S.tbms.filter(t=>t.dept===TB.dept&&t.id!==TB.id).sort((a,b)=>(b.date+b.from).localeCompare(a.date+a.from))[0];if(!prev)return toast('같은 부서의 이전 TBM이 없습니다');
+function tbLoadPrev(){tbSnap();const prev=S.tbms.filter(t=>tbKey(t.dept)===TB.dept&&t.id!==TB.id).sort((a,b)=>(b.date+b.from).localeCompare(a.date+a.from))[0];if(!prev)return toast('같은 부서의 이전 TBM이 없습니다');
   Object.assign(TB,{work:prev.work,proc:TB.proc||prev.proc||'',place:TB.place||prev.place,leader:TB.leader||prev.leader,share:prev.share||'',hz:(prev.hz||[]).map(r=>Object.assign({},r,{ok:false,done:''}))});if(!TB.att.length)TB.att=(prev.att||[]).map(a=>({name:a.name,dept:a.dept||'',sig:''}));renderTbmForm();toast(prev.date+' TBM 내용을 불러왔습니다 (서명 제외)');}
 function tbAi(){tbSnap();const txt=[TB.work,TB.share,TB.proc].join(' ');if(txt.trim().length<4)return toast('작업내용이나 전달사항을 먼저 입력하세요');
   const t=txt.toLowerCase();const hits=KB.filter(k=>k.k.some(w=>t.includes(w.toLowerCase()))).slice(0,3);const use=hits.length?hits:[KB[0],KB[2]];
@@ -1538,14 +1545,14 @@ function tbConfirm(){tbSnap();SIG.arr=[{name:ADMIN.name,sig:''}];SIG.i=0;SIG.cb=
 function saveTbm(){tbSnap();const x=TB;if(!x.date||!x.dept)return toast('작업일자·부서를 확인하세요');if(!x.leader)return toast('진행자를 입력하세요');if(!x.share&&!x.work)return toast('오늘의 주요 작업 및 전달사항을 입력하세요');if(!tbPresent(x).length)return toast('참석자를 1명 이상 추가하세요');
   const miss=[...x.pre.map((v,i)=>v?null:'3-'+(i+1)),...x.hl.map((v,i)=>v?null:'4-'+(i+1))].filter(Boolean);
   if(miss.length&&!confirm(`필수 확인사항 미체크: ${miss.join(', ')}\n\n부적합 사항은 즉시 개선 또는 안전조치 확정 전 작업을 시작하지 않습니다. 그대로 저장할까요?`))return;
-  if(S.tbms.some(t=>t.id!==x.id&&t.date===x.date&&t.dept===x.dept)&&!confirm(`${x.date} ${x.dept} TBM 일지가 이미 있습니다. 하나 더 저장할까요?`))return;
+  if(S.tbms.some(t=>t.id!==x.id&&t.date===x.date&&tbKey(t.dept)===tbKey(x.dept))&&!confirm(`${x.date} ${x.dept} TBM 일지가 이미 있습니다. 하나 더 저장할까요?`))return;
   x.hz=x.hz.filter(r=>r.work||r.risk||r.ms);x.sick=x.sick.filter(s=>s.name||s.act);
   x.ua=now();const i=S.tbms.findIndex(t=>t.id===x.id);if(i>=0)S.tbms[i]=x;else S.tbms.push(x);save();closeM('mTbm');renderAll();toast('TBM 저장 · 서명 '+tbPresent(x).filter(tbSigned).length+'/'+tbPresent(x).length);}
 function delTbm(id){if(!confirm('이 TBM 일지를 삭제할까요?'))return;S.del.push(id);save();closeM('mTbm');renderAll();}
 function tbImport(inp){const f=inp.files[0];inp.value='';if(!f)return;const r=new FileReader();r.onload=()=>{try{const j=JSON.parse(r.result);const L=j.tbms||[];if(!L.length)throw 0;
-  const dup=L.filter(t=>S.tbms.some(x=>x.date===t.date&&x.dept===t.dept)).length;
+  const dup=L.filter(t=>S.tbms.some(x=>x.date===t.date&&tbKey(x.dept)===tbKey(t.dept))).length;
   if(!confirm(`TBM 일지 ${L.length}건을 가져옵니다.${dup?`\n같은 날짜·부서 기록이 이미 ${dup}건 있습니다 (그 건은 건너뜀).`:''}${j.roster?`\n작업자 명단(${Object.keys(j.roster).join(', ')})도 설정에 추가합니다.`:''}`))return;
-  let n=0;L.forEach(t=>{if(S.tbms.some(x=>x.date===t.date&&x.dept===t.dept)||S.tbms.some(x=>x.id===t.id))return;t.ua=now();S.tbms.push(t);n++;});
+  let n=0;L.forEach(t=>{t.dept=tbKey(t.dept);if(S.tbms.some(x=>x.date===t.date&&tbKey(x.dept)===t.dept)||S.tbms.some(x=>x.id===t.id))return;t.ua=now();S.tbms.push(t);n++;});
   if(j.roster){S.cfg.workers=Object.assign({},S.cfg.workers||{});Object.entries(j.roster).forEach(([d,a])=>{const cur=S.cfg.workers[d]||[];S.cfg.workers[d]=cur.concat(a.filter(x=>!cur.includes(x)));if(!S.cfg.depts.includes(d))S.cfg.depts=S.cfg.depts.concat(d);});S.cfgAt=now();}
   save();fillSelects();renderAll();toast(n+'건 가져오기 완료');}catch(e){toast('파일 형식 오류');}};r.readAsText(f);}
 function printTbm(id){
@@ -1671,7 +1678,7 @@ var AUD={snap:null,in:0};
 function audSend(kind,extra){try{if(window.tjAudit)window.tjAudit.send(kind,Object.assign({title:'안전보건 통합관리'},extra||{}));}catch(e){}}
 const AUD_COL={ops:'의견청취',ras:'위험성평가',tbms:'TBM 일지',docs:'문서함',recs:'관리체계'};
 const AUD_SKIP=new Set(['scans','reads','ph','ua','ts','log','id','k','by','photos','scans','after_photos','a_photos','sig','url','data','path','fid']);
-const AUD_LBL={no:'번호',status:'상태',st:'상태',review:'검토의견',cat:'유형',title:'제목',desc:'내용',plan:'제안 안',dept:'소속',place:'장소',who:'제안자',anon:'익명',urg:'긴급',method:'청취방법',rec:'접수자',owner:'담당',due:'기한',ms:'감소대책',hz:'유해·위험요인',cause:'원인',law:'관련법규',work:'작업',f:'빈도',s:'강도',risk:'위험성',after_f:'개선후 빈도',after_s:'개선후 강도',after_risk:'개선후 위험성',done_at:'완료일',ra_id:'평가 연계',op_ids:'연계 의견',date:'일자',leader:'진행자',drv:'MSDS원본(공유폴더)',comp:'구성성분',pics:'그림문자',sw:'신호어',H:'유해위험문구',ppe:'보호구',rev:'MSDS개정일',doc:'MSDS원본',meas:'작업환경측정',hc:'특수건강진단',edu:'MSDS교육',syn:'유사명',use:'용도',qty:'사용량',proc:'공정',pre:'필수확인',hl:'건강상태',sick:'건강이상자',conf:'관리감독자 확인',grps:'전파그룹',to:'조치담당',after:'조치완료',kinds:'작업종류',chk:'안전조치',gas:'가스측정',wp_id:'연계 계획서',post:'사후등록',end:'작업종료',boss:'현장책임자',co:'소속',tel:'연락처',loc:'상세위치',n:'작업인원',workers:'작업자',tf:'시작시간',tt:'종료시간',sup:'관리감독자',items:'점검결과',near:'아차사고·응급조치',inj:'재해현황',corr:'시정지시',appr:'결재',refs:'참조',rej:'반려사유',t1f:'1회 시작',t1t:'1회 종료',t2f:'2회 시작',t2t:'2회 종료',hazards:'위험요인',share:'공유사항',att:'참석자',links:'연계',note:'비고',from:'시작',to:'종료'};
+const AUD_LBL={no:'번호',status:'상태',st:'상태',review:'검토의견',cat:'유형',title:'제목',desc:'내용',plan:'제안 안',dept:'소속',place:'장소',who:'제안자',anon:'익명',urg:'긴급',method:'청취방법',rec:'접수자',owner:'담당',due:'기한',ms:'감소대책',hz:'유해·위험요인',cause:'원인',law:'관련법규',work:'작업',f:'빈도',s:'강도',risk:'위험성',after_f:'개선후 빈도',after_s:'개선후 강도',after_risk:'개선후 위험성',done_at:'완료일',ra_id:'평가 연계',op_ids:'연계 의견',date:'일자',leader:'진행자',app:'외관',fp:'인화점',bp:'끓는점',sgr:'비중',twa:'노출기준TWA',stel:'노출기준STEL',un:'UN번호',drv:'MSDS원본(공유폴더)',comp:'구성성분',pics:'그림문자',sw:'신호어',H:'유해위험문구',ppe:'보호구',rev:'MSDS개정일',doc:'MSDS원본',meas:'작업환경측정',hc:'특수건강진단',edu:'MSDS교육',syn:'유사명',use:'용도',qty:'사용량',proc:'공정',pre:'필수확인',hl:'건강상태',sick:'건강이상자',conf:'관리감독자 확인',grps:'전파그룹',to:'조치담당',after:'조치완료',kinds:'작업종류',chk:'안전조치',gas:'가스측정',wp_id:'연계 계획서',post:'사후등록',end:'작업종료',boss:'현장책임자',co:'소속',tel:'연락처',loc:'상세위치',n:'작업인원',workers:'작업자',tf:'시작시간',tt:'종료시간',sup:'관리감독자',items:'점검결과',near:'아차사고·응급조치',inj:'재해현황',corr:'시정지시',appr:'결재',refs:'참조',rej:'반려사유',t1f:'1회 시작',t1t:'1회 종료',t2f:'2회 시작',t2t:'2회 종료',hazards:'위험요인',share:'공유사항',att:'참석자',links:'연계',note:'비고',from:'시작',to:'종료'};
 function audName(c,x){
   if(c==='ops')return (x.no||'')+' '+(x.title||'');
   if(c==='ras')return (x.no||'')+' '+(x.hz||'');
@@ -2215,39 +2222,42 @@ const PTXT={ // 그림문자별 기본 예방조치문구
 const PPE=['보안경','안면보호구','내화학 보호장갑','방독마스크','방진마스크','송기마스크','보호의(앞치마)','안전화'];
 // 내장 참고 DB — 순수물질 대표 분류(참고용). 실제 제품은 공급사 MSDS가 우선
 const CDB=[
- ['아세톤','디메틸케톤, 프로판온, Acetone','67-64-1',['02','07'],'위험',['H225','H319','H336']],
- ['이소프로필알코올','IPA, 2-프로판올, 이소프로판올','67-63-0',['02','07'],'위험',['H225','H319','H336']],
- ['메탄올','메틸알코올, 목정, Methanol','67-56-1',['02','06','08'],'위험',['H225','H301','H311','H331','H370']],
- ['에탄올','에틸알코올, 주정, Ethanol','64-17-5',['02','07'],'위험',['H225','H319']],
- ['톨루엔','메틸벤젠, Toluene','108-88-3',['02','07','08'],'위험',['H225','H304','H315','H336','H361','H373']],
- ['크실렌','자일렌, 디메틸벤젠, Xylene','1330-20-7',['02','07'],'경고',['H226','H312','H332','H315']],
- ['노말헥산','n-헥산, Hexane','110-54-3',['02','07','08','09'],'위험',['H225','H304','H315','H336','H361','H373','H411']],
- ['트리클로로에틸렌','TCE, 삼염화에틸렌, Trichloroethylene','79-01-6',['07','08'],'위험',['H315','H317','H319','H336','H341','H350','H412']],
- ['디클로로메탄','염화메틸렌, 메틸렌클로라이드, DCM','75-09-2',['08'],'경고',['H351']],
- ['테트라클로로에틸렌','퍼클로로에틸렌, PCE, Perchloroethylene','127-18-4',['08','09'],'경고',['H351','H411']],
- ['메틸에틸케톤','MEK, 2-부타논','78-93-3',['02','07'],'위험',['H225','H319','H336']],
- ['초산에틸','아세트산에틸, 에틸아세테이트, Ethyl acetate','141-78-6',['02','07'],'위험',['H225','H319','H336']],
- ['벤젠','Benzene','71-43-2',['02','07','08'],'위험',['H225','H304','H315','H319','H340','H350','H372']],
- ['등유','케로신, Kerosene','8008-20-6',['02','07','08','09'],'위험',['H226','H304','H315','H336','H411']],
- ['에틸렌글리콜','부동액 원료, Ethylene glycol','107-21-1',['07','08'],'경고',['H302','H373']],
- ['황산','Sulfuric acid','7664-93-9',['05'],'위험',['H290','H314']],
- ['염산','염화수소 수용액, Hydrochloric acid','7647-01-0',['05','07'],'위험',['H290','H314','H335']],
- ['인산','Phosphoric acid','7664-38-2',['05'],'위험',['H290','H314']],
- ['수산화나트륨','가성소다, 양잿물, Sodium hydroxide','1310-73-2',['05'],'위험',['H290','H314']],
- ['아세틸렌','Acetylene (용해가스)','74-86-2',['02','04'],'위험',['H220','H280']],
- ['산소','압축산소, Oxygen','7782-44-7',['03','04'],'위험',['H270','H280']],
- ['프로판','LPG(프로판), Propane','74-98-6',['02','04'],'위험',['H220','H280']],
- ['질소','압축질소, Nitrogen','7727-37-9',['04'],'경고',['H280']],
- ['아르곤','용접 보호가스, Argon','7440-37-1',['04'],'경고',['H280']],
- ['이산화탄소','탄산가스, CO2','124-38-9',['04'],'경고',['H280']],
- ['방청유 (혼합물)','녹방지유, 방청제','',[],'',[]],
- ['절삭유 · 프레스 가공유 (혼합물)','수용성/불수용성 가공유, 드로잉 오일','',[],'',[]],
- ['작동유 (유압유, 혼합물)','유압작동유, Hydraulic oil','',[],'',[]],
- ['그리스 (혼합물)','윤활 그리스','',[],'',[]],
- ['탈지·세척제 (혼합물)','부품 세척제, 탈지제','',[],'',[]]];
+ ['아세톤','디메틸케톤, 프로판온, Acetone','67-64-1',['02','07'],'위험',['H225','H319','H336'],'-20','1090'],
+ ['이소프로필알코올','IPA, 2-프로판올, 이소프로판올','67-63-0',['02','07'],'위험',['H225','H319','H336'],'12','1219'],
+ ['메탄올','메틸알코올, 목정, Methanol','67-56-1',['02','06','08'],'위험',['H225','H301','H311','H331','H370'],'11','1230'],
+ ['에탄올','에틸알코올, 주정, Ethanol','64-17-5',['02','07'],'위험',['H225','H319'],'13','1170'],
+ ['톨루엔','메틸벤젠, Toluene','108-88-3',['02','07','08'],'위험',['H225','H304','H315','H336','H361','H373'],'4','1294'],
+ ['크실렌','자일렌, 디메틸벤젠, Xylene','1330-20-7',['02','07'],'경고',['H226','H312','H332','H315'],'27','1307'],
+ ['노말헥산','n-헥산, Hexane','110-54-3',['02','07','08','09'],'위험',['H225','H304','H315','H336','H361','H373','H411'],'-22','1208'],
+ ['트리클로로에틸렌','TCE, 삼염화에틸렌, Trichloroethylene','79-01-6',['07','08'],'위험',['H315','H317','H319','H336','H341','H350','H412'],'해당없음(불연성)','1710'],
+ ['디클로로메탄','염화메틸렌, 메틸렌클로라이드, DCM','75-09-2',['08'],'경고',['H351'],'해당없음(불연성)','1593'],
+ ['테트라클로로에틸렌','퍼클로로에틸렌, PCE, Perchloroethylene','127-18-4',['08','09'],'경고',['H351','H411'],'해당없음(불연성)','1897'],
+ ['메틸에틸케톤','MEK, 2-부타논','78-93-3',['02','07'],'위험',['H225','H319','H336'],'-9','1193'],
+ ['초산에틸','아세트산에틸, 에틸아세테이트, Ethyl acetate','141-78-6',['02','07'],'위험',['H225','H319','H336'],'-4','1173'],
+ ['벤젠','Benzene','71-43-2',['02','07','08'],'위험',['H225','H304','H315','H319','H340','H350','H372'],'-11','1114'],
+ ['등유','케로신, Kerosene','8008-20-6',['02','07','08','09'],'위험',['H226','H304','H315','H336','H411'],'38 이상','1223'],
+ ['에틸렌글리콜','부동액 원료, Ethylene glycol','107-21-1',['07','08'],'경고',['H302','H373'],'111',''],
+ ['황산','Sulfuric acid','7664-93-9',['05'],'위험',['H290','H314'],'해당없음','1830'],
+ ['염산','염화수소 수용액, Hydrochloric acid','7647-01-0',['05','07'],'위험',['H290','H314','H335'],'해당없음','1789'],
+ ['인산','Phosphoric acid','7664-38-2',['05'],'위험',['H290','H314'],'해당없음','1805'],
+ ['수산화나트륨','가성소다, 양잿물, Sodium hydroxide','1310-73-2',['05'],'위험',['H290','H314'],'해당없음','1823(고체)/1824(용액)'],
+ ['아세틸렌','Acetylene (용해가스)','74-86-2',['02','04'],'위험',['H220','H280'],'가스','1001'],
+ ['산소','압축산소, Oxygen','7782-44-7',['03','04'],'위험',['H270','H280'],'가스(산화성)','1072'],
+ ['프로판','LPG(프로판), Propane','74-98-6',['02','04'],'위험',['H220','H280'],'가스','1978'],
+ ['질소','압축질소, Nitrogen','7727-37-9',['04'],'경고',['H280'],'가스(불연성)','1066'],
+ ['아르곤','용접 보호가스, Argon','7440-37-1',['04'],'경고',['H280'],'가스(불연성)','1006'],
+ ['이산화탄소','탄산가스, CO2','124-38-9',['04'],'경고',['H280'],'가스(불연성)','1013'],
+ ['방청유 (혼합물)','녹방지유, 방청제','',[],'',[],'',''],
+ ['절삭유 · 프레스 가공유 (혼합물)','수용성/불수용성 가공유, 드로잉 오일','',[],'',[],'',''],
+ ['작동유 (유압유, 혼합물)','유압작동유, Hydraulic oil','',[],'',[],'',''],
+ ['그리스 (혼합물)','윤활 그리스','',[],'',[],'',''],
+ ['탈지·세척제 (혼합물)','부품 세척제, 탈지제','',[],'',[]],'',''];
 const CMR=['H340','H341','H350','H351','H360','H361'];
 var CH=null;
 const chAll=()=>mrecs('chem');
+
+function chFpN(v){const m=String(v||'').match(/-?\d+(\.\d+)?/);return m&&!/해당없음|가스/.test(v)?+m[0]:null;}
+function chFpTag(v){const n=chFpN(v);return n===null?'':n<23?'<span class="tag s4">인화점 23℃ 미만</span>':n<=60?'<span class="tag s1">인화성 (23~60℃)</span>':'';}
 function chP(r){const ps=[];(r.pics||[]).forEach(p=>(PTXT[p]||[]).forEach(t=>{if(!ps.includes(t))ps.push(t);}));PTXT._.forEach(t=>ps.push(t));return ps;}
 function renderChem(){
   const all=chAll(),q=($('ch_q').value||'').toLowerCase(),dp=$('ch_dept').value;
@@ -2256,10 +2266,10 @@ function renderChem(){
   $('chKpi').innerHTML=`<div class="kpi blue"><div class="l">등록 화학물질 (사용중)</div><div class="v">${all.filter(r=>r.st!=='사용중지').length}<small>종</small></div></div><div class="kpi red"><div class="l">CMR 물질 (발암·변이·생식)</div><div class="v">${all.filter(r=>(r.H||[]).some(h=>CMR.includes(h))).length}<small>종</small></div></div><div class="kpi amber"><div class="l">MSDS 원본 미연결</div><div class="v">${all.filter(r=>!r.drv&&(!r.doc||!docs.has(r.doc))).length}<small>종</small></div></div><div class="kpi green"><div class="l">MSDS 교육 기록 없음</div><div class="v">${all.filter(r=>!r.edu).length}<small>종</small></div></div>`;
   const L=all.filter(r=>(!dp||r.dept===dp)&&(!q||JSON.stringify([r.name,r.syn,r.comp,r.place,r.sup]).toLowerCase().includes(q))).sort((a,b)=>(a.st==='사용중지')-(b.st==='사용중지')||a.name.localeCompare(b.name));
   $('ch_cnt').textContent=L.length+'종';
-  $('chTbl').querySelector('tbody').innerHTML=L.map(r=>`<tr class="rw" onclick="openChem('${r.id}')" style="${r.st==='사용중지'?'opacity:.5':''}"><td class="nw readout">${esc(r.no)}</td><td><b>${esc(r.name)}</b>${r.syn?`<div class="hint">${esc(r.syn)}</div>`:''}</td><td class="hint">${(r.comp||[]).map(c=>esc(c.name)+(c.cas?' ('+esc(c.cas)+')':'')+(c.pct?' '+esc(c.pct)+'%':'')).join('<br>')}</td><td class="nw">${(r.pics||[]).map(p=>ghsSvg(p,30)).join('')||'<span class="hint">-</span>'}</td><td class="nw">${r.sw?`<span class="tag ${r.sw==='위험'?'s4':'s1'}">${r.sw}</span>`:'-'}</td><td>${esc(r.dept||'')}<div class="hint">${esc(r.place||'')}</div></td><td class="nw">${esc(r.qty||'')} ${esc(r.unit||'')}</td><td class="c">${r.drv?`<a href="${esc(r.drv.url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="${esc(r.drv.name)}">📁 열기</a>`:r.doc&&docs.has(r.doc)?'✔':'<span style="color:var(--bad)">✘</span>'}</td><td class="nw"><button class="btn sm" onclick="event.stopPropagation();printMsds('${r.id}')">MSDS</button> <button class="btn sm" onclick="event.stopPropagation();printLabel('${r.id}')">경고표지</button></td></tr>`).join('')||`<tr><td colspan="9" style="padding:22px"><div class="chguide"><b>참고용 MSDS · 경고표지 만드는 방법</b><ol><li><b>＋ 화학물질 등록</b> → 물질명·CAS 검색(예: IPA, 67-64-1)으로 자동 입력 → 공급사 MSDS 보고 확인·수정</li><li>저장하면 이 목록 오른쪽 <b>출력</b> 칸에 <span class="tag">MSDS</span> <span class="tag">경고표지</span> 버튼이 생깁니다 (등록 화면에서 ‘저장 후 MSDS 출력’도 가능)</li><li>공급사 MSDS 원본 PDF는 문서함에 ‘MSDS·경고표지’로 올려 연결하세요 — 법정 MSDS는 원본이 우선입니다</li></ol><button class="btn p" onclick="openChem(null)">＋ 첫 화학물질 등록</button></div></td></tr>`;
+  $('chTbl').querySelector('tbody').innerHTML=L.map(r=>`<tr class="rw" onclick="openChem('${r.id}')" style="${r.st==='사용중지'?'opacity:.5':''}"><td class="nw readout">${esc(r.no)}</td><td><b>${esc(r.name)}</b>${r.syn?`<div class="hint">${esc(r.syn)}</div>`:''}</td><td class="hint">${(r.comp||[]).map(c=>esc(c.name)+(c.cas?' ('+esc(c.cas)+')':'')+(c.pct?' '+esc(c.pct)+'%':'')).join('<br>')}</td><td class="nw">${(r.pics||[]).map(p=>ghsSvg(p,30)).join('')||'<span class="hint">-</span>'}</td><td class="nw">${r.sw?`<span class="tag ${r.sw==='위험'?'s4':'s1'}">${r.sw}</span>`:'-'}</td><td>${esc(r.dept||'')}<div class="hint">${esc(r.place||'')}</div></td><td class="nw">${r.fp?`인화점 ${esc(r.fp)}${chFpN(r.fp)!==null?'℃':''} ${chFpTag(r.fp)}`:'<span class="hint">인화점 -</span>'}<div class="hint">${r.twa||r.stel?'TWA '+esc(r.twa||'-')+' · STEL '+esc(r.stel||'-'):'노출기준 -'}</div></td><td class="nw">${esc(r.qty||'')} ${esc(r.unit||'')}</td><td class="c">${r.drv?`<a href="${esc(r.drv.url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="${esc(r.drv.name)}">📁 열기</a>`:r.doc&&docs.has(r.doc)?'✔':'<span style="color:var(--bad)">✘</span>'}</td><td class="nw"><button class="btn sm" onclick="event.stopPropagation();printMsds('${r.id}')">MSDS</button> <button class="btn sm" onclick="event.stopPropagation();printLabel('${r.id}')">경고표지</button></td></tr>`).join('')||`<tr><td colspan="10" style="padding:22px"><div class="chguide"><b>참고용 MSDS · 경고표지 만드는 방법</b><ol><li><b>＋ 화학물질 등록</b> → 물질명·CAS 검색(예: IPA, 67-64-1)으로 자동 입력 → 공급사 MSDS 보고 확인·수정</li><li>저장하면 이 목록 오른쪽 <b>출력</b> 칸에 <span class="tag">MSDS</span> <span class="tag">경고표지</span> 버튼이 생깁니다 (등록 화면에서 ‘저장 후 MSDS 출력’도 가능)</li><li>공급사 MSDS 원본 PDF는 문서함에 ‘MSDS·경고표지’로 올려 연결하세요 — 법정 MSDS는 원본이 우선입니다</li></ol><button class="btn p" onclick="openChem(null)">＋ 첫 화학물질 등록</button></div></td></tr>`;
   $('chCards').innerHTML=L.map(r=>`<div class="card" onclick="openChem('${r.id}')"><div class="tw">${(r.pics||[]).map(p=>ghsSvg(p,28)).join('')}${r.sw?`<span class="tag ${r.sw==='위험'?'s4':'s1'}">${r.sw}</span>`:''}<span class="hint" style="margin-left:auto">${esc(r.no)}</span></div><div class="t">${esc(r.name)}</div><div class="m">${(r.comp||[]).map(c=>esc(c.cas||c.name)).join(', ')} · ${esc(r.dept||'')} ${esc(r.place||'')}</div><div class="tw" style="margin-top:6px"><button class="btn sm" onclick="event.stopPropagation();printMsds('${r.id}')">MSDS</button><button class="btn sm" onclick="event.stopPropagation();printLabel('${r.id}')">경고표지</button></div></div>`).join('');
 }
-function openChem(id){const r=id?S.recs.find(x=>x.id===id):null;CH=r?JSON.parse(JSON.stringify(r)):{id:'',k:'chem',name:'',syn:'',comp:[{name:'',cas:'',pct:''}],use:'',sup:'',tel:'',dept:'',place:'',qty:'',unit:'L/월',pics:[],sw:'',H:[],ppe:['보안경','내화학 보호장갑'],rev:'',doc:'',meas:false,hc:false,edu:'',note:'',st:'사용중'};renderChemForm();openM('mChem');}
+function openChem(id){const r=id?S.recs.find(x=>x.id===id):null;CH=r?JSON.parse(JSON.stringify(r)):{id:'',k:'chem',name:'',syn:'',comp:[{name:'',cas:'',pct:''}],use:'',sup:'',tel:'',dept:'',place:'',qty:'',unit:'L/월',pics:[],sw:'',H:[],ppe:['보안경','내화학 보호장갑'],rev:'',doc:'',app:'',fp:'',bp:'',sgr:'',twa:'',stel:'',un:'',meas:false,hc:false,edu:'',note:'',st:'사용중'};renderChemForm();openM('mChem');}
 function chSnap(){document.querySelectorAll('[data-ch]').forEach(e=>{CH[e.dataset.ch]=e.type==='checkbox'?e.checked:e.value.trim();});document.querySelectorAll('[data-chc]').forEach(e=>{const[i,k]=e.dataset.chc.split('.');if(CH.comp[i])CH.comp[i][k]=e.value.trim();});}
 function renderChemForm(){
   const r=CH,docs=(S.docs||[]).filter(d=>/MSDS/.test(d.cat||'')||d.id===r.doc);
@@ -2276,6 +2286,10 @@ function renderChemForm(){
   <h4 class="svh">유해·위험 문구 (H) <span class="hint">눌러서 추가/삭제</span></h4><div class="chips">${r.H.map(h=>`<span class="chip on" onclick="chSnap();CH.H=CH.H.filter(x=>x!=='${h}');renderChemForm()">${h} ${esc(HTXT[h]||'')} ×</span>`).join('')}</div><select onchange="if(this.value){chSnap();if(!CH.H.includes(this.value))CH.H.push(this.value);CH.H.sort();renderChemForm();}" style="margin-top:6px"><option value="">＋ 유해·위험 문구 추가</option>${Object.entries(HTXT).filter(([h])=>!r.H.includes(h)).map(([h,t])=>`<option value="${h}">${h} ${t}</option>`).join('')}</select>
   <div class="hint" style="margin-top:6px">예방조치 문구(P)는 그림문자에 맞춰 자동 생성됩니다: ${chP(r).length}개</div>
   <h4 class="svh">개인보호구</h4><div class="wkk">${PPE.map(p=>`<label class="chk"><input type="checkbox" ${r.ppe.includes(p)?'checked':''} onchange="chSnap();CH.ppe=this.checked?CH.ppe.concat('${p}'):CH.ppe.filter(x=>x!=='${p}')"> ${p}</label>`).join('')}</div>
+  <h4 class="svh">물리화학적 특성 · 노출기준 <span class="hint">(공급사 MSDS 8·9·14번 항목 보고 입력)</span></h4>
+  <div class="row3">${inp('app','외관 (성상·색)','예) 무색 투명 액체')}<div><label>인화점 (℃) ${chFpTag(r.fp)}</label><input data-ch="fp" value="${esc(r.fp||'')}" placeholder="예) 12 / 해당없음"></div>${inp('bp','끓는점 (℃)','예) 82')}</div>
+  <div class="row3">${inp('sgr','비중 (물=1)','예) 0.79')}${inp('twa','노출기준 TWA (8시간)','예) 200 ppm')}${inp('stel','노출기준 STEL (단시간)','예) 400 ppm')}</div>
+  <div class="row3">${inp('un','UN 번호','예) 1219')}<div style="grid-column:span 2;align-self:end" class="hint">노출기준은 고용노동부 고시 「화학물질 및 물리적 인자의 노출기준」 또는 공급사 MSDS 8번 항목의 값을 그대로 적으세요. 인화점·UN 번호는 검색 시 순수물질 참고값이 채워지며, 제품 값으로 확인·수정하세요.</div></div>
   <h4 class="svh">MSDS 원본 · 관리</h4><div class="row3"><div><label>MSDS 원본</label>${r.drv?`<div class="drvf"><a href="${esc(r.drv.url)}" target="_blank" rel="noopener">📄 ${esc(r.drv.name)}</a><button class="btn sm" onclick="chSnap();CH.drv=null;renderChemForm()">×</button></div><div class="hint">공유폴더 파일${r.drv.date?' · 수정 '+esc(String(r.drv.date).slice(0,10)):''}</div>`:`<select data-ch="doc"><option value="">— 문서함에서 선택 —</option>${docs.map(d=>`<option value="${d.id}" ${d.id===r.doc?'selected':''}>${esc(d.title||d.name)}</option>`).join('')}</select><button class="btn sm" style="margin-top:6px" onclick="chSnap();drvPick()">📁 공유폴더에서 선택</button>`}</div>${inp('rev','공급사 MSDS 개정일','','date')}${inp('edu','MSDS 교육 실시일','','date')}</div>
   <div class="tw"><label class="chk"><input type="checkbox" data-ch="meas" ${r.meas?'checked':''}> 작업환경측정 대상</label><label class="chk"><input type="checkbox" data-ch="hc" ${r.hc?'checked':''}> 특수건강진단 대상</label><select data-ch="st" style="width:auto"><option ${r.st!=='사용중지'?'selected':''}>사용중</option><option ${r.st==='사용중지'?'selected':''}>사용중지</option></select></div>
   ${inp('note','비고')}
@@ -2288,7 +2302,7 @@ function chFind(){const q=$('ch_find').value.trim().toLowerCase();const box=$('c
 function chPick(i){chSnap();const d=CDB[i];const mix=!d[2];
   if(!CH.name)CH.name=d[0];if(!CH.syn)CH.syn=d[1];
   const empty=CH.comp.findIndex(c=>!c.name&&!c.cas);const c={name:d[0].replace(/\s*\(.*\)$/,''),cas:d[2],pct:mix?'':'100'};if(empty>=0)CH.comp[empty]=c;else CH.comp.push(c);
-  CH.pics=[...new Set([...CH.pics,...d[3]])].sort();CH.H=[...new Set([...CH.H,...d[5]])].sort();if(d[4]==='위험'||!CH.sw)CH.sw=d[4]||CH.sw;
+  CH.pics=[...new Set([...CH.pics,...d[3]])].sort();if(!CH.fp&&d[6])CH.fp=d[6];if(!CH.un&&d[7])CH.un=d[7];CH.H=[...new Set([...CH.H,...d[5]])].sort();if(d[4]==='위험'||!CH.sw)CH.sw=d[4]||CH.sw;
   if(CH.pics.includes('05')&&!CH.ppe.includes('안면보호구'))CH.ppe.push('안면보호구');if((CH.pics.includes('06')||CH.pics.includes('08'))&&!CH.ppe.includes('방독마스크'))CH.ppe.push('방독마스크');
   renderChemForm();toast(mix?'혼합물은 공급사 MSDS에서 성분·분류를 입력하세요':d[0]+' 정보를 채웠습니다 (참고용)');}
 function chSave(then){chSnap();if(!CH.name)return toast('제품명을 입력하세요');CH.comp=CH.comp.filter(c=>c.name||c.cas);if(!CH.comp.length)CH.comp=[{name:CH.name,cas:'',pct:''}];
@@ -2345,7 +2359,7 @@ function printLabel(id){const r=S.recs.find(x=>x.id===id);if(!r)return;
   <div class="h"><b>유해·위험 문구</b>${(r.H||[]).map(h=>`<div>· ${esc(HTXT[h]||h)}</div>`).join('')||'<div>· 해당 없음 / 공급사 MSDS 참조</div>'}</div>
   <div class="h"><b>예방조치 문구</b>${chP(r).map(p=>`<div>· ${esc(p.replace(/^(P\d+\+?)+\s*/,''))}</div>`).join('')}</div>
   ${(r.ppe||[]).length?`<div class="h"><b>착용 보호구</b><div>${r.ppe.map(esc).join(' · ')}</div></div>`:''}
-  <div class="ft"><div>공급자: ${esc(r.sup||'-')} ${r.tel?'· 긴급 '+esc(r.tel):''}</div><div>보관: ${esc(r.place||'-')} · 기타 자세한 사항은 물질안전보건자료(MSDS)를 참조</div><div>${esc(S.cfg.company)} · ${esc(r.no)}</div></div></div>`);}
+  <div class="ft"><div>공급자: ${esc(r.sup||'-')} ${r.tel?'· 긴급 '+esc(r.tel):''}</div><div>보관: ${esc(r.place||'-')}${r.fp&&chFpN(r.fp)!==null?' · 인화점 '+esc(r.fp)+'℃':''} · 기타 자세한 사항은 물질안전보건자료(MSDS)를 참조</div><div>${esc(S.cfg.company)} · ${esc(r.no)}</div></div></div>`);}
 function printMsds(id){const r=S.recs.find(x=>x.id===id);if(!r)return;const P=r.pics||[],has=c=>P.includes(c);const H=r.H||[];
   const sec=(n,t,b)=>`<div class="ms"><div class="mh">${n}. ${t}</div><div class="msb">${b}</div></div>`;
   const kv=a=>`<table>${a.map(([k,v])=>`<tr><th>${k}</th><td>${v}</td></tr>`).join('')}</table>`;
@@ -2358,16 +2372,16 @@ function printMsds(id){const r=S.recs.find(x=>x.id===id);if(!r)return;const P=r.
   ${sec(5,'폭발·화재 시 대처방법',has('02')||has('03')?'· 적절한 소화제: 분말, 이산화탄소, 알코올 포말 — 직사 주수 금지<br>· 용기를 물분무로 냉각, 화재 지역에서 용기 이동<br>· 연소 시 유해가스 발생 — 공기호흡기 착용':has('04')?'· 화재 시 용기 파열 위험 — 안전 거리에서 물분무로 냉각<br>· 가스 누출 차단이 가능하면 밸브 차단':'· 주변 화재에 적합한 소화제 사용<br>· 소방관은 보호구·공기호흡기 착용')}
   ${sec(6,'누출 사고 시 대처방법','· 점화원 제거, 환기 확보, 관계자 외 출입 통제<br>· 흡착재(흡착포·모래)로 회수하여 밀폐 용기에 보관<br>· 하수구·토양으로 유입 방지')}
   ${sec(7,'취급 및 저장방법',['· 환기가 잘 되는 곳에서 취급, 증기·미스트 흡입 회피',has('02')?'· 열·스파크·화염 금지, 접지·정전기 방지':'',has('04')?'· 용기 전도 방지(체인·거치대), 직사광선·40℃ 이상 고온 회피':'','· 용기를 단단히 밀폐하여 서늘하고 건조한 곳에 보관',has('05')?'· 금속·알칼리/산과 분리 보관':''].filter(Boolean).join('<br>'))}
-  ${sec(8,'노출방지 및 개인보호구',kv([['공학적 관리','국소배기장치 또는 전체환기 — 노출기준 이하 유지'],['개인보호구',(r.ppe||[]).map(esc).join(', ')||'-'],['노출기준','공급사 MSDS 및 고용노동부 고시(화학물질 및 물리적 인자의 노출기준) 참조']]))}
-  ${sec(9,'물리화학적 특성','공급사 MSDS 원본 참조 (외관·인화점·증기압·비중 등)')}
+  ${sec(8,'노출방지 및 개인보호구',kv([['공학적 관리','국소배기장치 또는 전체환기 — 노출기준 이하 유지'],['개인보호구',(r.ppe||[]).map(esc).join(', ')||'-'],['노출기준',(r.twa||r.stel)?'TWA '+esc(r.twa||'-')+' · STEL '+esc(r.stel||'-'):'공급사 MSDS 및 고용노동부 고시(화학물질 및 물리적 인자의 노출기준) 참조']]))}
+  ${sec(9,'물리화학적 특성',kv([['외관',esc(r.app||'공급사 MSDS 참조')],['인화점',r.fp?esc(r.fp)+(chFpN(r.fp)!==null?' ℃':''):'공급사 MSDS 참조'],['끓는점',r.bp?esc(r.bp)+' ℃':'공급사 MSDS 참조'],['비중',esc(r.sgr||'공급사 MSDS 참조')],['그 밖의 특성','증기압·용해도·pH 등은 공급사 MSDS 원본 참조']]))}
   ${sec(10,'안정성 및 반응성',['· 권장 저장 조건에서 안정',has('02')?'· 피해야 할 조건: 열, 스파크, 화염':'',has('03')?'· 가연성 물질과 접촉 금지':'',has('05')?'· 금속과 반응하여 가연성 수소 가스 발생 가능':''].filter(Boolean).join('<br>'))}
   ${sec(11,'독성에 관한 정보',H.filter(h=>/^H3/.test(h)).map(h=>'· '+esc(HTXT[h])).join('<br>')||'공급사 MSDS 참조')}
   ${sec(12,'환경에 미치는 영향',H.filter(h=>/^H4/.test(h)).map(h=>'· '+esc(HTXT[h])).join('<br>')||'공급사 MSDS 참조')}
   ${sec(13,'폐기 시 주의사항','· 폐기물관리법에 따라 지정폐기물 위탁업체를 통해 처리<br>· 빈 용기도 잔류물이 있으므로 동일하게 관리')}
-  ${sec(14,'운송에 필요한 정보','공급사 MSDS 원본 참조 (UN 번호·운송 분류)')}
+  ${sec(14,'운송에 필요한 정보',kv([['UN 번호',esc(r.un||'공급사 MSDS 참조')],['운송 분류·포장등급','공급사 MSDS 원본 참조']]))}
   ${sec(15,'법적 규제현황',kv([['산업안전보건법','제110조(MSDS 작성·제출) · 제111조(제공) · 제114조(게시 및 교육) · 제115조(용기 경고표시)'],['작업환경측정 대상',r.meas?'해당':'비해당(또는 미확인)'],['특수건강진단 대상',r.hc?'해당':'비해당(또는 미확인)'],['CMR 물질',H.some(h=>CMR.includes(h))?'해당 — 발암성·생식세포 변이원성·생식독성 관리':'비해당']]))}
   ${sec(16,'그 밖의 참고사항',kv([['공급사 MSDS 개정일',esc(r.rev||'-')],['MSDS 교육 실시일',esc(r.edu||'-')],['작성',esc(S.cfg.company)+' · '+fmtD(now())+' · '+esc(r.no)]]))}</div>`);}
-function chCsv(){const q=v=>'"'+String(v??'').replace(/"/g,'""')+'"';const L=[['번호','제품명','유사명','구성성분','CAS','함유량','그림문자','신호어','유해위험문구','용도','공급사','사용부서','보관장소','사용량','개인보호구','MSDS개정일','교육일','작업환경측정','특수건강진단','상태'].join(',')].concat(chAll().map(r=>[r.no,r.name,r.syn,(r.comp||[]).map(c=>c.name).join(' / '),(r.comp||[]).map(c=>c.cas).join(' / '),(r.comp||[]).map(c=>c.pct).join(' / '),(r.pics||[]).map(p=>GHS[p][0]).join(' '),r.sw,(r.H||[]).join(' '),r.use,r.sup,r.dept,r.place,(r.qty||'')+' '+(r.unit||''),(r.ppe||[]).join(' '),r.rev,r.edu,r.meas?'Y':'',r.hc?'Y':'',r.st].map(q).join(',')));
+function chCsv(){const q=v=>'"'+String(v??'').replace(/"/g,'""')+'"';const L=[['번호','제품명','유사명','구성성분','CAS','함유량','그림문자','신호어','유해위험문구','용도','공급사','사용부서','보관장소','사용량','개인보호구','외관','인화점','끓는점','비중','TWA','STEL','UN번호','MSDS개정일','교육일','작업환경측정','특수건강진단','상태'].join(',')].concat(chAll().map(r=>[r.no,r.name,r.syn,(r.comp||[]).map(c=>c.name).join(' / '),(r.comp||[]).map(c=>c.cas).join(' / '),(r.comp||[]).map(c=>c.pct).join(' / '),(r.pics||[]).map(p=>GHS[p][0]).join(' '),r.sw,(r.H||[]).join(' '),r.use,r.sup,r.dept,r.place,(r.qty||'')+' '+(r.unit||''),(r.ppe||[]).join(' '),r.app,r.fp,r.bp,r.sgr,r.twa,r.stel,r.un,r.rev,r.edu,r.meas?'Y':'',r.hc?'Y':'',r.st].map(q).join(',')));
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\ufeff'+L.join('\r\n')],{type:'text/csv'}));a.download='화학물질_목록_'+fmtD(now())+'.csv';a.click();}
 
 /* ---------- 관리자 통합 대시보드 ---------- */
@@ -2394,7 +2408,7 @@ function renderIdash(){
   const ops=S.ops.filter(o=>inT(o.ts)),tbms=S.tbms.filter(x=>inD(x.date)),ras=S.ras;
   const days=[];for(let d=new Date(R.f);fmtD(d.getTime())<=R.t&&days.length<400;d.setDate(d.getDate()+1))days.push(fmtD(d.getTime()));
   const work=days.filter(x=>{const w=new Date(x).getDay();return w&&w<6;}).filter(x=>x<=td).length;
-  const depts=S.cfg.depts.filter(x=>!/사무|협력/.test(x));
+  const depts=tbDepts().filter(x=>!/사무|협력/.test(x));
   const openRa=ras.filter(r=>r.status!=='완료'),lateRa=openRa.filter(r=>r.due&&r.due<td);
   const accs=mrecs('acc').filter(r=>inD(r.date)),edus=mrecs('edu').filter(r=>inD(r.date));
   $('idSub').textContent=`${S.cfg.company} · 조회기간 ${R.f} ~ ${R.t} · 기준일 ${td}`;
@@ -2409,7 +2423,7 @@ function renderIdash(){
   const st=S.cfg.staff||[];
   $('idStaff').innerHTML=['관리책임자','관리감독자','안전관리자','보건관리자'].map((l,i)=>`<div><span>${l}</span><b>👤 ${st[i]===''||st[i]==null?'-':st[i]}명</b></div>`).join('')+(st.some(x=>x!==''&&x!=null)?'':`<span class="hint" style="font-size:11.5px">설정에서 인원 입력</span>`);
   // 팀별
-  const sups=mrecs('sup').filter(x=>inD(x.date));const tRows=depts.map(d=>{const sv=sups.filter(x=>x.dept===d).length,n=tbms.filter(x=>x.dept===d).length,o=ops.filter(x=>x.dept===d).length,op=S.ops.filter(x=>x.dept===d&&['접수','검토중','평가반영'].includes(x.status)).length;return{d,n,o,op,sv,r:work?n/work:0};});
+  const sups=mrecs('sup').filter(x=>inD(x.date));const tRows=depts.map(d=>{const sv=sups.filter(x=>tbKey(x.dept)===d).length,n=tbms.filter(x=>tbKey(x.dept)===d).length,o=ops.filter(x=>tbKey(x.dept)===d).length,op=S.ops.filter(x=>tbKey(x.dept)===d&&['접수','검토중','평가반영'].includes(x.status)).length;return{d,n,o,op,sv,r:work?n/work:0};});
   $('idTeam').innerHTML=`<div class="idrow h"><span>소속 · 라인</span><span>TBM 실시 (실시 / 평일 ${work}일)</span><span class="n">일지</span><span class="n">의견</span><span class="n">미결</span></div>`+tRows.map(x=>`<div class="idrow"><span style="font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.d)}</span><span style="display:flex;align-items:center;gap:6px"><span class="bar" style="flex:1"><i style="width:${Math.min(100,Math.round(x.r*100))}%;background:${x.r>=.9?'#1DA462':x.r>=.5?'#4FC3C8':'#F08A24'}"></i></span><span class="hint" style="min-width:52px;text-align:right">${x.n}회 / ${work}</span></span><span class="n">${x.sv}건</span><span class="n">${x.o}건</span><span class="n" style="color:${x.op?'var(--bad)':'inherit'}">${x.op}건</span></div>`).join('');
   // TBM 게이지 + 집중관리 TOP3
   const tgt=work*depts.length,done=tRows.reduce((a,x)=>a+Math.min(x.n,work),0);
