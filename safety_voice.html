@@ -2619,12 +2619,17 @@ async function chUpOne(inp){const f=inp.files&&inp.files[0];try{inp.value='';}ca
   catch(e){alert('업로드 실패: '+e.message);}}
 async function chUpload(inp){if(!TJ_ADMIN)return alert('MSDS 등록은 관리자(김정위·김상기·강창구·강병주)만 할 수 있습니다.');const all=Array.isArray(inp)?inp:[...(inp.files||[])];try{if(!Array.isArray(inp))inp.value='';}catch(e){}
   const files=all.filter(f=>/\.pdf$/i.test(f.name)&&!/제외대상|목록|대장/.test(f.name));if(!files.length)return toast('PDF 파일이 없습니다');
-  const byName=new Map(chAll().map(r=>[r.name,r])),plan=[],seen=new Set();
-  files.sort((a,b)=>b.lastModified-a.lastModified).forEach(f=>{const n=netClean(f.name);if(seen.has(n))return;seen.add(n);const ex=byName.get(n);const docs=new Set((S.docs||[]).map(d=>d.id));if(ex&&ex.doc&&docs.has(ex.doc))return;plan.push({f,n,ex,dev:/개발팀/.test(f.webkitRelativePath||'')});});
-  if(!plan.length)return toast('새로 올릴 MSDS가 없습니다 (이미 등록·연결됨)');
-  if(!confirm(`MSDS ${plan.length}개를 올립니다.\n\n${plan.slice(0,20).map(p=>'· '+p.n+(p.ex?' (기존 물질에 연결)':'')).join('\n')}${plan.length>20?`\n… 외 ${plan.length-20}개`:''}\n\n같은 제품의 사본은 최신 파일 1개만 올립니다.`))return;
+  /* 중복 판별: ① 같은 파일(이름+크기)이 이미 있으면 건너뜀 ② 같은 파일명·제품명의 물질이 있으면 그 물질에 연결(크기가 다르면 새 개정본으로 교체) */
+  const docs=S.docs||[],chs=chAll(),key=x=>chNorm(netClean(x)),owner=d=>chs.find(r=>r.doc===d.id||(r.alt||[]).includes(d.id));
+  const sameFile=f=>docs.some(d=>d.name===f.name&&(!d.size||!f.size||d.size===f.size)&&owner(d));
+  const findRec=f=>{const k=key(f.name);const d=docs.find(d=>key(d.name)===k&&owner(d));if(d)return owner(d);return chs.find(r=>chNorm(r.name)===k||String(r.syn||'').split(/\s*,\s*/).some(s=>s&&chNorm(s)===k)||String(r.note||'').includes(f.name));};
+  const plan=[],seen=new Set();let skip=0;
+  files.sort((a,b)=>b.lastModified-a.lastModified).forEach(f=>{const n=netClean(f.name),k=chNorm(n);if(seen.has(k)){skip++;return;}seen.add(k);if(sameFile(f)){skip++;return;}const ex=findRec(f);const has=ex&&ex.doc&&docs.some(d=>d.id===ex.doc);plan.push({f,n,ex,rep:!!has,dev:/개발팀/.test(f.webkitRelativePath||'')});});
+  if(!plan.length)return toast(`새로 올릴 MSDS가 없습니다 — ${skip}개 모두 이미 등록됨`);
+  const nNew=plan.filter(p=>!p.ex).length,nRep=plan.filter(p=>p.rep).length;
+  if(!confirm(`MSDS ${plan.length}개를 올립니다. (신규 ${nNew} · 개정본 교체 ${nRep}${skip?` · 이미 등록되어 건너뜀 ${skip}`:''})\n\n${plan.slice(0,20).map(p=>'· '+p.n+(p.rep?' → 기존 '+p.ex.no+' 새 개정본으로 교체':p.ex?' → 기존 '+p.ex.no+'에 연결':' (신규)')).join('\n')}${plan.length>20?`\n… 외 ${plan.length-20}개`:''}\n\n같은 제품의 사본은 최신 파일 1개만 올립니다.`))return;
   const box=$('chProg');box.classList.remove('hide');let ok=0,fail=[];
-  for(let i=0;i<plan.length;i++){const {f,n,ex,dev}=plan[i];box.innerHTML=`<b>업로드 중 ${i+1} / ${plan.length}</b> · ${esc(f.name)}<div class="bar"><i style="width:${Math.round(i/plan.length*100)}%"></i></div>`;
+  for(let i=0;i<plan.length;i++){const {f,n,ex,rep:isRep,dev}=plan[i];box.innerHTML=`<b>업로드 중 ${i+1} / ${plan.length}</b> · ${esc(f.name)}<div class="bar"><i style="width:${Math.round(i/plan.length*100)}%"></i></div>`;
     if(f.size>25*1048576){fail.push(f.name+' (25MB 초과)');continue;}
     const id=uid();let path=`${ST_DIR}/msds/${id}_${safeName(f.name)}`;let url;
     try{url=await stUpload(f,path);path=stUpload.last;}catch(e){fail.push(f.name+' — '+e.message);if(i===0&&/관리자|40[13]/.test(e.message))break;continue;}
@@ -2633,7 +2638,7 @@ async function chUpload(inp){if(!TJ_ADMIN)return alert('MSDS 등록은 관리자
       const t=n.toLowerCase(),d=CDB.find(d=>d[2]&&[d[0],...d[1].split(',')].map(x=>x.trim().toLowerCase()).filter(x=>x.length>=3||/[가-힣]{2,}/.test(x)).some(x=>t.includes(x)));
       if(d)Object.assign(r,{syn:d[1],comp:[{name:d[0].replace(/\s*\(.*\)$/,''),cas:d[2],pct:''}],pics:d[3].slice(),sw:d[4],H:d[5].slice(),fp:d[6]||'',un:d[7]||'',note:r.note+' · 내장 DB 참고값 자동 입력(확인 필요)'});
       S.recs.push(r);}
-    r.doc=id;r.ua=now();ok++;try{box.innerHTML=`<b>🤖 MSDS 읽는 중 ${i+1} / ${plan.length}</b> · ${esc(f.name)}<div class="bar"><i style="width:${Math.round((i+.5)/plan.length*100)}%"></i></div>`;if(!(r.pics||[]).length)await msdsReadRec(r,await f.arrayBuffer(),(pp,pn)=>{box.innerHTML=`<b>🔎 스캔본 문자인식(OCR)</b> · ${esc(f.name)} ${pp}/${pn}쪽 (1쪽에 10~20초)`;});}catch(e){}if(ok%5===0)save();}
+    if(isRep&&r.doc&&r.doc!==id){r.alt=[...new Set([...(r.alt||[]),r.doc])];r.chk=fmtD(now());}r.doc=id;r.ua=now();ok++;try{box.innerHTML=`<b>🤖 MSDS 읽는 중 ${i+1} / ${plan.length}</b> · ${esc(f.name)}<div class="bar"><i style="width:${Math.round((i+.5)/plan.length*100)}%"></i></div>`;if(isRep||!(r.pics||[]).length)await msdsReadRec(r,await f.arrayBuffer(),(pp,pn)=>{box.innerHTML=`<b>🔎 스캔본 문자인식(OCR)</b> · ${esc(f.name)} ${pp}/${pn}쪽 (1쪽에 10~20초)`;});}catch(e){}if(ok%5===0)save();}
   save();renderChem();box.classList.add('hide');
   if(fail.length)alert(`올림 ${ok}개 · 실패 ${fail.length}개\n\n${fail.slice(0,12).join('\n')}`);
   else toast(`MSDS ${ok}개 업로드·등록 완료`);if(ok)msdsReview();}
