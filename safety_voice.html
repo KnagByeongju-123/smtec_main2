@@ -846,8 +846,9 @@ body.pf .prnform{display:block;padding:10mm 0}
 
 <!-- ===== 관리체계 공통 모듈 ===== -->
 <section class="page" id="pg-mod">
-  <div class="ph"><div><h2 id="modTitle"></h2><div class="sub" id="modSub"></div></div><div class="tw noprint"><button class="btn p" onclick="openMod(null)">＋ 등록</button><button class="btn" onclick="modCsv()">⬇ CSV</button></div></div>
+  <div class="ph"><div><h2 id="modTitle"></h2><div class="sub" id="modSub"></div></div><div class="tw noprint"><button class="btn p" onclick="openMod(null)">＋ 등록</button><button class="btn" id="edRevBtn" style="display:none" onclick="edReview()">✅ 스캔 등록 확인</button><button class="btn" onclick="modCsv()">⬇ CSV</button></div></div>
   <div class="note noprint" id="modLaw" style="margin-bottom:12px;font-size:12.5px"></div>
+  <div id="edWrap" class="noprint" style="display:none"><div class="note adm-no" style="margin-bottom:12px;font-size:12.5px">교육 스캔본 일괄 등록은 관리자만 할 수 있습니다. 각 기록 화면에서 내용·참석자는 누구나 입력할 수 있습니다.</div><label class="chdrop adm-only" id="edDrop"><input type="file" accept=".pdf,application/pdf,image/*" multiple class="hide" onchange="edUpload(this)"><b>📥 교육 스캔본을 여기에 끌어다 놓으세요</b><span>PDF·사진 여러 개 또는 폴더 통째로 — 파일마다 교육 기록이 만들어지고 스캔 원본이 첨부됩니다 · 파일명의 날짜(예: 2026-03-15, 20260315)와 교육 구분(정기·채용·특별·관리감독자·MSDS·소방훈련)을 자동으로 읽습니다 · 같은 교육의 여러 장(…_1, …_2)은 한 기록으로 묶습니다 · 눌러서 파일 선택</span></label></div>
   <div class="grid g4 noprint" id="modKpi"></div>
   <div class="panel">
     <div class="filters noprint"><select id="md_y" onchange="renderMod()"><option value="">전체 연도</option></select><input type="text" id="md_q" placeholder="검색" oninput="renderMod()"><span class="sp"></span><span class="hint" id="md_cnt"></span></div>
@@ -2617,9 +2618,9 @@ function msdsOkAll(){const L=chAll().filter(r=>!r.verified&&!(!(r.pics||[]).leng
 async function chDropFiles(dt){const out=[];const walk=(en,pre)=>new Promise(res=>{if(!en)return res();if(en.isFile)en.file(f=>{try{Object.defineProperty(f,'webkitRelativePath',{value:pre+f.name});}catch(e){}out.push(f);res();},()=>res());else if(en.isDirectory){const rd=en.createReader(),all=[];const rd1=()=>rd.readEntries(es=>{if(!es.length)return Promise.all(all.map(e=>walk(e,pre+en.name+'/'))).then(res);all.push(...es);rd1();},()=>res());rd1();}else res();});
   const items=[...(dt.items||[])].map(i=>i.webkitGetAsEntry&&i.webkitGetAsEntry()).filter(Boolean);
   if(items.length){await Promise.all(items.map(e=>walk(e,'')));}else out.push(...(dt.files||[]));return out;}
-(function(){document.addEventListener('dragover',e=>{if(CUR==='chem'&&e.dataTransfer&&[...e.dataTransfer.types].includes('Files')){e.preventDefault();const d=$('chDrop');if(d)d.classList.add('on');}});
-  document.addEventListener('dragleave',e=>{if(!e.relatedTarget){const d=$('chDrop');if(d)d.classList.remove('on');}});
-  document.addEventListener('drop',async e=>{if(CUR!=='chem'||!e.dataTransfer)return;e.preventDefault();if(!TJ_ADMIN){toast('MSDS 등록은 관리자만 할 수 있습니다');return;}const d=$('chDrop');if(d)d.classList.remove('on');const fs=await chDropFiles(e.dataTransfer);if(fs.length)chUpload(fs);});})();
+(function(){document.addEventListener('dragover',e=>{if(CUR==='m_edu'&&e.dataTransfer&&[...e.dataTransfer.types].includes('Files')){e.preventDefault();const d=$('edDrop');if(d)d.classList.add('on');return;}if(CUR==='chem'&&e.dataTransfer&&[...e.dataTransfer.types].includes('Files')){e.preventDefault();const d=$('chDrop');if(d)d.classList.add('on');}});
+  document.addEventListener('dragleave',e=>{if(!e.relatedTarget){['chDrop','edDrop'].forEach(i=>{const d=$(i);if(d)d.classList.remove('on');});}});
+  document.addEventListener('drop',async e=>{if(CUR==='m_edu'&&e.dataTransfer){e.preventDefault();const d=$('edDrop');if(d)d.classList.remove('on');if(!TJ_ADMIN){toast('교육 스캔본 등록은 관리자만 할 수 있습니다');return;}const fs=await chDropFiles(e.dataTransfer);if(fs.length)edUpload(fs);return;}if(CUR!=='chem'||!e.dataTransfer)return;e.preventDefault();if(!TJ_ADMIN){toast('MSDS 등록은 관리자만 할 수 있습니다');return;}const d=$('chDrop');if(d)d.classList.remove('on');const fs=await chDropFiles(e.dataTransfer);if(fs.length)chUpload(fs);});})();
 async function chReadOne(btn){chSnap();if(btn){btn.disabled=true;btn.textContent='🤖 읽는 중… (스캔본은 1쪽에 10~20초)';}
   const res=await msdsReadRec(CH,null,(p,n)=>{if(btn)btn.textContent=`🔎 문자인식(OCR) ${p}/${n}쪽…`;});renderChemForm();
   toast(res==='ok'?`자동 입력 ${CH.auto.n}항목 — 확인 후 저장하세요`:res==='none'?'읽었지만 채울 항목을 찾지 못했습니다 (이미 입력됐거나 양식이 다름)':res==='scan'?'글자를 인식하지 못했습니다: '+(CH.auto.why||''):'읽기 실패: '+(CH.auto&&CH.auto.why||''));}
@@ -2843,7 +2844,7 @@ const MODS={
     title:r=>(r.agenda||'').split('\n')[0],meta:r=>`${r.type||''} · 참석 ${(r.att||[]).length}명`},
   edu:{t:'안전보건 교육·훈련',ic:'🎓',no:'ED',law:'산안법 제29조(근로자 교육) · 시행규칙 별표4 · 중대재해처벌법 시행령 제5조 제2항 제3호(교육 실시 반기 점검) · 제4조 제8호(비상대응 훈련)',sub:'교육 실시·참석자 서명·사진 증빙 기록 — 정기교육 기준: 생산직 반기 12시간, 사무직 반기 6시간',att:1,ph:1,
     f:[['date','실시일','date',1],['type','교육 구분','sel',1,['정기교육(근로자)','채용 시 교육','작업내용 변경 시 교육','특별교육','관리감독자 교육','MSDS 교육','비상대응 훈련(대피·구호)','기타']],['title','교육명','text',1,'예) 4분기 정기 안전보건교육 — 프레스 끼임 예방'],['hours','교육 시간(h)','num'],['teacher','강사','text'],['dept','대상','text',0,'예) 프레스 B동 전원'],['target','대상 인원','num'],['content','교육 내용','area']],
-    title:r=>r.title,meta:r=>`${r.type||''} · ${r.hours||0}h · 참석 ${(r.att||[]).length}${r.target?'/'+r.target:''}명`},
+    title:r=>r.title,meta:r=>r.scan&&!(r.att||[]).length?`${r.type||''} · ${r.hours||0}h · 참석 ${r.target||'-'}명 · 📄 스캔본`:`${r.type||''} · ${r.hours||0}h · 참석 ${(r.att||[]).length}${r.target?'/'+r.target:''}명`},
   sub:{t:'도급·용역·위탁 관리',ic:'👷',no:'SC',law:'중대재해처벌법 시행령 제4조 제9호(수급인 평가기준·절차, 반기 점검) · 산안법 제61조(적격 수급인)·제63조·제64조',sub:'협력업체 안전보건 수준 평가, 적격 판정, 제출 서류·순회점검 기록',
     f:[['name','업체명','text',1],['work','도급·용역·위탁 내용','text',1,'예) 금형 수리, 설비 보전, 지게차 정비, 청소'],['from','계약 시작','date'],['to','계약 종료','date'],['date','평가일','date',1],['score','안전보건 평가 점수','num'],['judge','판정','sel',0,['평가 전','적격','조건부 적격','부적격']],['chk','확인 서류','area',0,'안전보건관리계획서 · 위험성평가서 · 교육 실시 기록 · 산재보험 · 자격/면허'],['patrol','순회점검·협의체 실시 내역','area'],['note','비고','area']],
     title:r=>`${r.name} — ${r.work||''}`,meta:r=>`계약 ${r.from||'-'} ~ ${r.to||'-'}${r.score?' · '+r.score+'점':''}`,tag:r=>r.judge},
@@ -2873,17 +2874,57 @@ function renderMod(){
   const ys=[...new Set(all.map(r=>(r.date||'').slice(0,4)).filter(Boolean))].sort().reverse();const cy=$('md_y').value;
   $('md_y').innerHTML='<option value="">전체 연도</option>'+ys.map(y=>`<option${y===cy?' selected':''}>${y}</option>`).join('');
   const hf=all.filter(r=>(r.date||'')>=hStart());let k=[['전체',all.length,''],['이번 반기',hf.length,'blue']];
-  if(MODK==='edu')k.push(['반기 교육시간 합계',hf.reduce((a,r)=>a+(+r.hours||0),0)+'<small>h</small>','green'],['반기 참석 연인원',hf.reduce((a,r)=>a+(r.att||[]).length,0)+'<small>명</small>','amber']);
+  if(MODK==='edu')k.push(['반기 교육시간 합계',hf.reduce((a,r)=>a+(+r.hours||0),0)+'<small>h</small>','green'],['반기 참석 연인원',hf.reduce((a,r)=>a+((r.att||[]).length||(r.scan?+r.target||0:0)),0)+'<small>명</small>','amber']);
   else if(MODK==='acc'){const op=all.filter(r=>r.st!=='완료');k.push(['대책 미완료',op.length,'red'],['기한 초과',op.filter(r=>r.due&&r.due<td).length,'amber']);}
   else if(MODK==='com')k.push(['이번 분기',all.filter(r=>(r.date||'')>=qStart()).length,'green'],['후속조치 진행',all.filter(r=>r.st==='진행').length,'amber']);
   else if(MODK==='sub')k.push(['적격',all.filter(r=>r.judge==='적격').length,'green'],['부적격·조건부',all.filter(r=>/부적격|조건부/.test(r.judge||'')).length,'red']);
   else if(MODK==='hlth')k.push(['사후관리 필요',all.filter(r=>(r.date||'')>=yStart()).reduce((a,r)=>a+(+r.fu||0),0)+'<small>명</small>','amber'],['차기 예정 경과',all.filter(r=>r.next&&r.next<td&&!all.some(x=>x.type===r.type&&(x.date||'')>=r.next)).length,'red']);
   else k.push(['올해 수립',all.filter(r=>(r.date||'')>=yStart()||r.year==new Date().getFullYear()).length,'green'],['전파 기록',all.filter(r=>r.pub).length,'amber']);
   $('modKpi').innerHTML=k.map(x=>`<div class="kpi ${x[2]}"><div class="l">${x[0]}</div><div class="v">${x[1]}</div></div>`).join('');
+  {const w=$('edWrap');if(w)w.style.display=MODK==='edu'?'':'none';const b=$('edRevBtn');if(b){const n=MODK==='edu'?all.filter(r=>r.scan&&(!r.date||!r.hours)).length:0;b.style.display=n?'':'none';b.textContent='✅ 스캔 등록 확인 ('+n+')';}}
   const L=modList();$('md_cnt').textContent=L.length+'건';
   $('modTbl').querySelector('tbody').innerHTML=L.map(r=>`<tr class="rw" onclick="openMod('${r.id}')"><td class="nw readout">${esc(r.no)}</td><td class="nw">${esc(r.date||'')}</td><td style="min-width:240px"><b>${esc(M.title(r)||'-')}</b></td><td>${esc(M.meta(r))}</td><td class="nw">${modStTag(MODK,r)}</td></tr>`).join('')||'<tr><td colspan="5" class="hint" style="padding:18px">등록된 기록이 없습니다. ‘＋ 등록’으로 추가하세요.</td></tr>';
   $('modCards').innerHTML=L.map(r=>`<div class="card" onclick="openMod('${r.id}')"><div class="tw"><span class="tag">${esc(r.date||'')}</span>${modStTag(MODK,r)}<span class="hint" style="margin-left:auto">${esc(r.no)}</span></div><div class="t">${esc(M.title(r)||'-')}</div><div class="m">${esc(M.meta(r))}</div></div>`).join('')||'<div class="hint">등록된 기록이 없습니다. ‘＋ 등록’으로 추가하세요.</div>';
 }
+/* ---------- 교육 스캔본 일괄 등록 ---------- */
+function edGuess(fn){const b=fn.replace(/\.[a-z0-9]{2,5}$/i,'').replace(/_/g,' ');let date='';
+  let m=b.match(/(20\d{2})\s*[-.년]?\s*(\d{1,2})\s*[-.월]?\s*(\d{1,2})\s*일?/);if(m&&+m[2]>=1&&+m[2]<=12&&+m[3]>=1&&+m[3]<=31)date=m[1]+'-'+m[2].padStart(2,'0')+'-'+m[3].padStart(2,'0');
+  if(!date){m=b.match(/\b(\d{2})(\d{2})(\d{2})\b/);if(m&&+m[2]>=1&&+m[2]<=12&&+m[3]>=1&&+m[3]<=31)date='20'+m[1]+'-'+m[2]+'-'+m[3];}
+  if(!date){m=b.match(/(20\d{2})\s*[-.년]\s*(\d{1,2})\s*월?/);if(m&&+m[2]>=1&&+m[2]<=12)date=m[1]+'-'+m[2].padStart(2,'0')+'-01';}
+  const T=[[/채용|신규\s*입사|신입/,'채용 시 교육'],[/작업\s*(내용)?\s*변경|전환\s*배치/,'작업내용 변경 시 교육'],[/특별/,'특별교육'],[/관리\s*감독자/,'관리감독자 교육'],[/MSDS|물질\s*안전|화학\s*물질|경고\s*표지/i,'MSDS 교육'],[/소방|대피|비상|훈련|소화|구호|심폐|CPR/i,'비상대응 훈련(대피·구호)'],[/정기|분기|월\s*교육|안전\s*교육|보건\s*교육/,'정기교육(근로자)']];
+  const t=(T.find(([re])=>re.test(b))||[0,'정기교육(근로자)'])[1];
+  let title=b.replace(/(20\d{2})\s*[-.년]?\s*\d{1,2}\s*[-.월]?\s*\d{1,2}\s*일?/,'').replace(/\b\d{6}\b/,'').replace(/(20\d{2})\s*년\s*\d{1,2}\s*월/,'').replace(/^\s*\d{1,3}\s*[.)-]\s*/,'').replace(/(스캔|scan|사본|복사본)\s*\d*/ig,'').replace(/\s*[-(]?\s*\d{1,2}\s*\)?\s*$/,'').replace(/\s{2,}/g,' ').replace(/^[\s\-·.,]+|[\s\-·.,]+$/g,'');
+  return{date,type:t,title:title||t};}
+function edKey(fn){return fn.replace(/\.[a-z0-9]{2,5}$/i,'').replace(/[\s_\-(]*(p|page|쪽|장)?\s*\d{1,2}\)?$/i,'').replace(/[\s_]+/g,' ').trim().toLowerCase();}
+async function edUpload(inp){if(!TJ_ADMIN)return alert('교육 스캔본 일괄 등록은 관리자(김정위·김상기·강창구·강병주)만 할 수 있습니다.');const all=Array.isArray(inp)?inp:[...(inp.files||[])];try{if(!Array.isArray(inp))inp.value='';}catch(e){}
+  const files=all.filter(f=>/\.(pdf|jpe?g|png|heic|webp|gif|bmp|tiff?)$/i.test(f.name)||/^image\//.test(f.type||''));if(!files.length)return toast('PDF·사진 파일이 없습니다');
+  const have=new Set((S.docs||[]).filter(d=>d.cat==='안전보건교육 자료').map(d=>d.name+'|'+(d.size||'')));
+  const G=new Map();let skip=0;files.sort((a,b)=>a.name.localeCompare(b.name,'ko',{numeric:true})).forEach(f=>{if(have.has(f.name+'|'+(f.size||''))){skip++;return;}const k=edKey(f.name);if(!G.has(k))G.set(k,[]);G.get(k).push(f);});
+  const plan=[...G.values()].map(fs=>Object.assign({fs},edGuess(fs[0].name))).sort((a,b)=>(a.date||'9999').localeCompare(b.date||'9999'));if(!plan.length)return toast(`새로 올릴 파일이 없습니다 — ${skip}개 모두 이미 등록됨`);
+  if(!confirm(`교육 스캔본 ${files.length-skip}개 → 교육 기록 ${plan.length}건을 만듭니다.${skip?` (이미 올린 ${skip}개 건너뜀)`:''}\n\n${plan.slice(0,20).map(p=>'· '+(p.date||'날짜 미확인')+' · '+p.type+' · '+p.title+(p.fs.length>1?` (${p.fs.length}장)`:'')).join('\n')}${plan.length>20?`\n… 외 ${plan.length-20}건`:''}\n\n등록 후 확인 표에서 날짜·시간·인원을 고칠 수 있습니다.`))return;
+  let prog=$('edProg');if(!prog){prog=document.createElement('div');prog.id='edProg';prog.className='note';prog.style.marginBottom='10px';$('edWrap').appendChild(prog);}prog.classList.remove('hide');
+  const made=[],fail=[];let n=0,tot=files.length-skip;
+  for(const p of plan){const no=modNo('edu');const r={id:uid(),k:'edu',no,ts:now(),ua:now(),by:ADMIN.name,date:p.date||'',type:p.type,title:p.title,hours:'',teacher:'',dept:'',target:'',content:'',att:[],photos:[],scan:1};let ok=0;
+    for(const f of p.fs){n++;prog.innerHTML=`<b>업로드 중 ${n} / ${tot}</b> · ${esc(f.name)}<div class="bar"><i style="width:${Math.round(n/tot*100)}%"></i></div>`;
+      if(f.size>25*1048576){fail.push(f.name+' (25MB 초과)');continue;}
+      const id=uid();let path=`${ST_DIR}/edu/${id}_${safeName(f.name)}`,url;
+      try{url=await stUpload(f,path);path=stUpload.last;}catch(e){fail.push(f.name+' — '+e.message);continue;}
+      S.docs.unshift({id,ua:now(),ts:now(),cat:'안전보건교육 자료',date:p.date||fmtD(f.lastModified||now()),by:ADMIN.name,title:p.title+' (스캔'+(p.fs.length>1?' '+(p.fs.indexOf(f)+1)+'/'+p.fs.length:'')+')',ref:no,note:'교육 스캔본 일괄 등록',name:f.name,size:f.size,type:f.type||'',path,url,data:''});ok++;}
+    if(ok){S.recs.push(r);made.push(r);}save();}
+  prog.classList.add('hide');renderMod();
+  if(fail.length)alert(`등록 ${made.length}건 · 실패 ${fail.length}개\n\n${fail.slice(0,12).join('\n')}`);
+  if(made.length)edReview(made.map(r=>r.id));}
+async function edAttach(inp){const fs=[...(inp.files||[])];inp.value='';if(!fs.length||!MR||!MR.no)return;mdSnap();let ok=0;
+  for(const f of fs){const id=uid();let path=`${ST_DIR}/edu/${id}_${safeName(f.name)}`,url;toast('업로드 중… '+f.name);try{url=await stUpload(f,path);path=stUpload.last;}catch(e){toast('업로드 실패: '+e.message);continue;}
+    S.docs.unshift({id,ua:now(),ts:now(),cat:'안전보건교육 자료',date:MR.date||fmtD(now()),by:ADMIN.name,title:(MR.title||'교육')+' (스캔)',ref:MR.no,note:'교육 기록 첨부',name:f.name,size:f.size,type:f.type||'',path,url,data:''});ok++;}
+  if(ok){save();toast('스캔본 '+ok+'개 첨부했습니다');renderModForm();}}
+function edReview(ids){const L=(ids||mrecs('edu').filter(r=>r.scan&&(!r.date||!r.hours)).map(r=>r.id)).map(id=>S.recs.find(r=>r.id===id)).filter(Boolean);if(!L.length)return toast('확인할 스캔 등록 기록이 없습니다');
+  const T=MODS.edu.f.find(f=>f[0]==='type')[4];
+  MR=null;$('mModTitle').textContent='교육 스캔본 등록 확인 — 날짜·구분·시간·인원 입력';
+  $('mModBody').innerHTML=`<div class="note" style="font-size:12.5px;margin-bottom:8px">스캔본을 열어 보고 빈칸을 채운 뒤 <b>모두 저장</b>을 누르세요. 참석자 서명은 스캔본으로 갈음되며, 참석 인원 수만 적으면 됩니다.</div><div class="scroll"><table class="tbl"><thead><tr><th>번호</th><th>스캔</th><th>실시일</th><th>교육 구분</th><th>교육명</th><th>시간(h)</th><th>참석 인원</th></tr></thead><tbody>${L.map(r=>`<tr data-ed="${r.id}"><td class="nw">${esc(r.no)}</td><td class="nw">${docsFor(r.no).map((d,i)=>`<a href="#" onclick="event.preventDefault();openDoc('${d.id}')">📄${docsFor(r.no).length>1?i+1:''}</a>`).join(' ')}</td><td><input type="date" data-k="date" value="${esc(r.date||'')}"></td><td><select data-k="type" style="min-width:150px">${T.map(o=>`<option${o===r.type?' selected':''}>${esc(o)}</option>`).join('')}</select></td><td><input type="text" data-k="title" value="${esc(r.title||'')}" style="min-width:170px"></td><td><input type="number" data-k="hours" min="0" step="0.5" value="${esc(r.hours||'')}" style="width:70px"></td><td><input type="number" data-k="target" min="0" value="${esc(r.target||'')}" style="width:70px"></td></tr>`).join('')}</tbody></table></div>`;
+  $('mModFt').innerHTML=`<button class="btn" onclick="closeM('mMod')">닫기</button><button class="btn p" onclick="edReviewSave()">모두 저장</button>`;openM('mMod');}
+function edReviewSave(){let n=0;document.querySelectorAll('[data-ed]').forEach(tr=>{const r=S.recs.find(x=>x.id===tr.dataset.ed);if(!r)return;let c=0;tr.querySelectorAll('[data-k]').forEach(e=>{const v=e.value.trim();if((r[e.dataset.k]||'')!==v){r[e.dataset.k]=v;c=1;}});if(c){r.ua=now();n++;}});
+  save();closeM('mMod');renderMod();toast(n?`${n}건 저장했습니다`:'바뀐 내용이 없습니다');}
 function openMod(id){
   const M=MODS[MODK];const r=id?S.recs.find(x=>x.id===id):null;
   MR=r?JSON.parse(JSON.stringify(r)):{id:'',k:MODK,date:fmtD(now()),att:[],photos:[]};if(!r&&MODK==='pol')MR.year=String(new Date().getFullYear());
@@ -2902,7 +2943,7 @@ function renderModForm(){
       <div class="tw" style="margin-top:6px"><input type="text" id="md_newatt" placeholder="이름 직접 입력" style="flex:1;min-width:120px"><button class="btn sm" onclick="mdAdd()">추가</button></div>
       <div class="att" style="margin-top:8px">${r.att.map((a,i)=>`<span class="a"><b>${esc(a.name)}</b>${a.sig?`<img src="${a.sig}" onclick="mdSign(${i})">`:`<button class="btn sm" onclick="mdSign(${i})">✍ 서명</button>`}<button class="x" onclick="mdDel(${i})">×</button></span>`).join('')||'<span class="hint">참석자를 추가하세요</span>'}</div></div>`:''}
     ${M.ph?`<div><label>사진 증빙</label><div class="photos" id="a_photos"></div></div>`:''}
-    ${r.no?docChips(r.no)+`<div class="hint">관련 파일은 문서함에서 연계번호에 <b>${esc(r.no)}</b>를 넣어 업로드하면 여기에 표시됩니다.</div>`:''}
+    ${r.no?docChips(r.no)+(MODK==='edu'?`<label class="btn sm adm-only" style="margin-top:6px;width:max-content">📎 스캔본·사진 추가<input type="file" accept=".pdf,application/pdf,image/*" multiple class="hide" onchange="edAttach(this)"></label>`:'')+`<div class="hint">관련 파일은 문서함에서 연계번호에 <b>${esc(r.no)}</b>를 넣어 업로드하면 여기에 표시됩니다.</div>`:''}
   </div>`;
   if(M.ph){window._actPhotos=r.photos;renderPhotos('act');}
   $('mModFt').innerHTML=`${r.id?`<button class="btn sm" style="color:var(--bad);margin-right:auto" onclick="delMod('${r.id}')">삭제</button><button class="btn" onclick="printMod('${r.id}')">🖨 출력</button>`:''}${MODK==='acc'&&r.id?`<button class="btn" onclick="accToRa('${r.id}')">⚠️ 위험성평가 반영</button>`:''}<button class="btn" onclick="closeM('mMod')">취소</button><button class="btn p" onclick="saveMod()">저장</button>`;
