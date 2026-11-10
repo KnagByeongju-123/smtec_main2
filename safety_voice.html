@@ -1476,22 +1476,22 @@ async function raImport(inp){const fs=[...(inp.files||[])];inp.value='';if(!fs.l
   if(!jf&&xf)return raXlsxDoc(xf);
   let J;try{J=JSON.parse(await jf.text());}catch(e){return alert('가져오기 파일(JSON)을 읽지 못했습니다');}
   if(!J||J.kind!=='tj_ra_import'||!Array.isArray(J.items))return alert('위험성평가 가져오기 파일이 아닙니다');
-  const media=J.media||{},nMedia=Object.keys(media).length;
-  if(nMedia&&!TJ_ADMIN)return alert('사진이 들어 있는 가져오기 파일은 관리자(김정위·김상기·강창구·강병주)만 넣을 수 있습니다.\n(사진을 서버 저장소에 올려야 합니다)');
+  const media=J.media||{},nMedia=Object.keys(media).length,pre=J.urls||{};
+  if(nMedia&&Object.keys(media).some(h=>!pre[h])&&!TJ_ADMIN)return alert('사진이 들어 있는 가져오기 파일은 관리자(김정위·김상기·강창구·강병주)만 넣을 수 있습니다.\n(사진을 서버 저장소에 올려야 합니다)');
   const bySrc=new Map(S.ras.filter(r=>r.src).map(r=>[r.src,r]));const L=J.items.filter(x=>!bySrc.has(x.src)),U=J.items.filter(x=>bySrc.has(x.src));
-  const needPh=U.filter(x=>((x.ph_b||[]).length||(x.ph_a||[]).length)&&!((bySrc.get(x.src).ph_b||[]).length||(bySrc.get(x.src).ph_a||[]).length)).length;
+  const needPh=U.filter(x=>((x.ph_b||[]).length||(x.ph_a||[]).length)&&!((bySrc.get(x.src).ph_b||[]).length||(bySrc.get(x.src).ph_a||[]).length)).length,nUp=Object.keys(media).filter(h=>!pre[h]).length;
   const nf=L.filter(x=>(x.flags||[]).length).length;
   if(!L.length&&!needPh&&!J.plan)return toast('새로 가져올 항목이 없습니다 — '+J.items.length+'건 모두 이미 있음');
-  if(!confirm(`${J.title||'위험성평가'}\n\n· 새 항목 ${L.length}건${L.length?` (완료 ${L.filter(x=>x.status==='완료').length} · 진행 ${L.filter(x=>x.status==='진행').length} · 계획 ${L.filter(x=>x.status==='계획').length} · 검토 필요 ${nf})`:''}${U.length?`\n· 이미 있는 ${U.length}건은 빠진 내용(사진·점검일 등)만 보완`:''}${nMedia?`\n· 개선 전·후 사진 ${nMedia}장 업로드 (몇 분 걸립니다)`:''}${J.plan?'\n· 평가 개요(표지·부서별 공정·위험정보·유해위험요인 파악·회의) 저장':''}`))return;
+  if(!confirm(`${J.title||'위험성평가'}\n\n· 새 항목 ${L.length}건${L.length?` (완료 ${L.filter(x=>x.status==='완료').length} · 진행 ${L.filter(x=>x.status==='진행').length} · 계획 ${L.filter(x=>x.status==='계획').length} · 검토 필요 ${nf})`:''}${U.length?`\n· 이미 있는 ${U.length}건은 빠진 내용(사진·점검일 등)만 보완`:''}${nUp?`\n· 개선 전·후 사진 ${nUp}장 업로드 (몇 분 걸립니다)`:''}${Object.keys(pre).length?`\n· 서버에 이미 있는 사진 ${Object.keys(pre).length}장 연결`:''}${J.plan?'\n· 평가 개요(표지·부서별 공정·위험정보·유해위험요인 파악·회의) 저장':''}`))return;
   let box=$('raProg');if(!box){box=document.createElement('div');box.id='raProg';box.className='note';box.style.marginBottom='10px';$('raKpi').before(box);}box.classList.remove('hide');
-  const url={},need=new Set();[...L,...U].forEach(x=>[...(x.ph_b||[]),...(x.ph_a||[])].forEach(h=>{if(media[h])need.add(h);}));let k=0,fail=0,lastErr='';
+  const url=Object.assign({},pre),need=new Set();[...L,...U].forEach(x=>[...(x.ph_b||[]),...(x.ph_a||[])].forEach(h=>{if(media[h]&&!url[h])need.add(h);}));let k=0,fail=0,lastErr='';
   for(const h of need){k++;box.innerHTML=`<b>📷 개선 전·후 사진 올리는 중 ${k} / ${need.size}</b><div class="bar"><i style="width:${Math.round(k/need.size*100)}%"></i></div>`;
     try{const b=await (await fetch(media[h])).blob();const u=await stUpload(new File([b],h+'.jpg',{type:'image/jpeg'}),`${ST_DIR}/ra/${J.year||''}_${h}.jpg`);url[h]=u;}catch(e){fail++;lastErr=e.message;if(fail>=5&&!Object.keys(url).length){box.classList.add('hide');return alert('사진 업로드가 계속 실패합니다 — 가져오기를 멈췄습니다.\n'+lastErr);}}}
   box.classList.add('hide');
   const ph=a=>(a||[]).map(h=>url[h]).filter(Boolean);
   const y=J.year||new Date().getFullYear(),used=new Set(S.ras.map(r=>r.no));let n=1;const nextNo=()=>{let no;do{no='RA-'+y+'-'+String(n++).padStart(3,'0');}while(used.has(no));used.add(no);return no;};
-  L.forEach(x=>{const af=x.after_f||null,as=x.after_s||null;S.ras.push({id:uid(),no:nextNo(),ts:now(),ua:now(),op_ids:[],by:ADMIN?ADMIN.name:'',src:x.src,dept:x.dept,place:x.place,work:x.work,shift:'주간',hz:x.hz,cause:x.cause||'',law:x.law||'',f:x.f,s:x.s,risk:x.f*x.s,ms:x.ms||'',owner:x.owner||'',due:x.due||'',status:x.status||'계획',after_f:af,after_s:as,after_risk:af&&as?af*as:null,done_at:x.status==='완료'?(x.done?new Date(x.done).getTime():now()):null,xno:x.xno||'',conf:x.conf||'',keep:x.keep||'',chk:x.chk||'',ttl:x.ttl||'',ph_b:ph(x.ph_b),ph_a:ph(x.ph_a),flags:x.flags||[]});});
-  let up=0;U.forEach(x=>{const r=bySrc.get(x.src);let c=0;[['ph_b',ph(x.ph_b)],['ph_a',ph(x.ph_a)]].forEach(([k2,v])=>{if(v.length&&!(r[k2]||[]).length){r[k2]=v;c=1;}});['chk','ttl','keep','conf','xno'].forEach(k2=>{if(x[k2]&&!r[k2]){r[k2]=x[k2];c=1;}});if(c){r.ua=now();up++;}});
+  const have2=new Set(S.ras.map(r=>r.src).filter(Boolean));L.filter(x=>!have2.has(x.src)).forEach(x=>{const af=x.after_f||null,as=x.after_s||null;S.ras.push({id:uid(),no:nextNo(),ts:now(),ua:now(),op_ids:[],by:ADMIN?ADMIN.name:'',src:x.src,dept:x.dept,place:x.place,work:x.work,shift:'주간',hz:x.hz,cause:x.cause||'',law:x.law||'',f:x.f,s:x.s,risk:x.f*x.s,ms:x.ms||'',owner:x.owner||'',due:x.due||'',status:x.status||'계획',after_f:af,after_s:as,after_risk:af&&as?af*as:null,done_at:x.status==='완료'?(x.done?new Date(x.done).getTime():now()):null,xno:x.xno||'',conf:x.conf||'',keep:x.keep||'',chk:x.chk||'',ttl:x.ttl||'',ph_b:ph(x.ph_b),ph_a:ph(x.ph_a),flags:x.flags||[]});});
+  const cur=new Map(S.ras.filter(r=>r.src).map(r=>[r.src,r]));let up=0;U.forEach(x=>{const r=cur.get(x.src);if(!r)return;let c=0;[['ph_b',ph(x.ph_b)],['ph_a',ph(x.ph_a)]].forEach(([k2,v])=>{if(v.length&&!(r[k2]||[]).length){r[k2]=v;c=1;}});['chk','ttl','keep','conf','xno'].forEach(k2=>{if(x[k2]&&!r[k2]){r[k2]=x[k2];c=1;}});if(c){r.ua=now();up++;}});
   if(J.plan){let P=S.recs.find(r=>r.k==='raplan'&&String(r.year)===String(y));if(!P){P={id:uid(),k:'raplan',ts:now(),year:y};S.recs.push(P);}Object.assign(P,{title:J.title,data:J.plan,ua:now(),by:ADMIN?ADMIN.name:''});}
   save();renderRa();toast(`가져오기 완료 — 새 ${L.length}건${up?` · 보완 ${up}건`:''}${need.size?` · 사진 ${Object.keys(url).length}장`:''}${fail?` (사진 실패 ${fail})`:''}`);
   if(xf)raXlsxDoc(xf);}
