@@ -510,7 +510,7 @@ body.pf .prnform{display:block;padding:10mm 0}
 </div>
 <div id="top">
   <button id="ham" onclick="mnav(true)">☰</button>
-  <div class="brand"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 13l5 5L20 7"/></svg></span>TJ 세이프 <small>개인의견청취 · AI 위험성평가 · <span title="화면 버전 — 이 날짜가 아니면 Ctrl+Shift+R">v11.10-16:10</span></small></div>
+  <div class="brand"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 13l5 5L20 7"/></svg></span>TJ 세이프 <small>개인의견청취 · AI 위험성평가 · <span title="화면 버전 — 이 날짜가 아니면 Ctrl+Shift+R">v11.10-16:40</span></small></div>
   <div id="topR"><span id="who" class="hint"></span><span id="syncDot" title="동기화 상태" onclick="syncNow(true)"></span></div>
 </div>
 <nav id="side">
@@ -653,7 +653,7 @@ body.pf .prnform{display:block;padding:10mm 0}
 <!-- ===== 위험성평가표 ===== -->
 <section class="page" id="pg-ra">
   <div class="ph"><div><h2>위험성평가표 (근로자 의견 반영)</h2><div class="sub">빈도(1~5) × 강도(1~4) = 위험성(1~20) · 8 이상 개선 필요 · 15 이상 즉시 조치</div></div>
-    <div class="tw noprint"><button class="btn" onclick="openRa(null)">＋ 직접 추가</button><label class="btn p">📥 부서별 엑셀 올리기<input type="file" accept=".xlsx,.xls,.json,application/json" multiple class="hide" onchange="raImport(this)"></label><button class="btn" id="raPlanBtn" onclick="raPlanOpen()">📋 평가 개요</button><button class="btn" id="raDupBtn" style="display:none" onclick="raDupClean()">🧹 중복 정리</button><button class="btn" onclick="exportCsv('ra')">⬇ CSV</button><button class="btn" onclick="printPage('ra')">🖨 평가표 출력</button></div></div>
+    <div class="tw noprint"><button class="btn" onclick="openRa(null)">＋ 직접 추가</button><label class="btn p">📥 부서별 엑셀 올리기<input type="file" accept=".xlsx,.xls,.json,application/json" multiple class="hide" onchange="raImport(this)"></label><button class="btn" id="raPlanBtn" onclick="raPlanOpen()">📋 평가 개요</button><button class="btn" id="raDupBtn" style="display:none" onclick="raDupClean()">🧹 중복 정리</button><button class="btn" id="raFixBtn" style="display:none" onclick="raFixOpen()">🛠 검토 일괄 수정</button><button class="btn" onclick="exportCsv('ra')">⬇ CSV</button><button class="btn" onclick="printPage('ra')">🖨 평가표 출력</button></div></div>
   <div class="grid g4 noprint" id="raKpi"></div>
   <div class="grid g2 noprint" style="grid-template-columns:1fr 1.4fr">
     <div class="panel"><h3>위험성 매트릭스 <span class="tag" id="mxMode">개선 전</span><button class="btn sm" style="margin-left:auto" onclick="toggleMx()">전/후 전환</button></h3><div id="mxBox"></div><div class="hint" style="margin-top:8px">칸의 숫자 = 해당 위험성 평가 건수</div></div>
@@ -1551,7 +1551,7 @@ async function raParseXlsx(file,onp){const X=await loadJs(XLSX_SRC,'XLSX');const
   for(const n of names.filter(n=>/^위험성평가표/.test(n))){const proc=(n.match(/\(([^)]+)\)/)||[0,n])[1].trim();const dept=RA_TEAM[proc]||only||'';const g=G(n),R=rowsOf(n).length;
     for(let r=5;r<=R;r++){const hz=xflat(xc(g(r,5)));let f=g(r,8),s=g(r,9);const rk=g(r,10);if(!hz||typeof f!=='number'||typeof s!=='number')continue;f=Math.round(f);s=Math.round(s);const flags=[];
       if(typeof rk==='number'&&Math.round(rk)!==f*s)flags.push(`위험성 계산 수정 (엑셀 ${Math.round(rk)} → ${f}×${s}=${f*s})`);if(s>4){flags.push(`강도 ${s} → 척도(1~4)에 맞춰 4로 조정`);s=4;}f=Math.min(f,5);const risk=f*s;
-      const law=xflat(xc(g(r,6)));const lf=RA_LAWFIX.find(([re])=>re.test(law));if(lf)flags.push('근거 조문: '+lf[1]);
+      const law=raLawFix(xflat(xc(g(r,6))),hz);
       const cur=xlines(g(r,7)),no=g(r,11),det=xlines(g(r,12));
       const x={src:`${file.name} · ${n} ${r}행`,dept,place:dept,work:proc,hz,cause:xflat(xc(g(r,4)))+(cur?'\n[현재 안전보건조치] '+cur.replace(/\n/g,' / '):''),law,f,s,owner:'',due:'',status:'계획',after_f:null,after_s:null,ms:''};
       const k=xnum(no);
@@ -1623,8 +1623,84 @@ function raDupClean(){const G=raDups();if(!G.length)return toast('중복 항목�
   const n=G.reduce((a,g)=>a+g.length-1,0);if(!confirm(`같은 부서·공정·유해위험요인 항목이 ${G.length}묶음 (${n}건 중복) 있습니다.\n\n${G.slice(0,8).map(g=>'· '+g.map(r=>r.no).join(', ')+' — '+g[0].hz.slice(0,40)).join('\n')}\n\n각 묶음에서 내용이 가장 많은 1건을 남기고 나머지 ${n}건을 삭제할까요? (빠진 사진·담당자는 남는 쪽에 합칩니다)`))return;
   G.forEach(g=>{g.sort((a,b)=>sc(b)-sc(a));const k=g[0];g.slice(1).forEach(r=>{['ph_b','ph_a'].forEach(f=>{if(!(k[f]||[]).length&&(r[f]||[]).length)k[f]=r[f];});['owner','due','chk','ttl','conf','keep','xno'].forEach(f=>{if(!k[f]&&r[f])k[f]=r[f];});(r.op_ids||[]).forEach(o=>{if(!(k.op_ids||[]).includes(o))(k.op_ids=k.op_ids||[]).push(o);});S.del.push(r.id);});k.hist=(k.hist||[]).concat({at:now(),by:ADMIN?ADMIN.name:'',t:'중복 정리: '+g.slice(1).map(r=>r.no).join(', ')+' 통합'});k.ua=now();});
   save();renderRa();toast(n+'건 중복을 정리했습니다');}
+/* ---------- 검토 필요 일괄 수정 — 근거 조문 바로잡기 + 8점 이상 항목 추가대책(제안) ---------- */
+function raLawFix(law,hz){const R='산업안전보건기준에 관한 규칙 ',A='산업안전보건법 제38조 [안전조치]';const L=String(law||'');hz=String(hz||'');
+  const T=[[/669\s*조/,R+'제663조 [중량물의 제한]'],[/제\s*3\s*조\s*\[통행로/,R+'제3조 [전도의 방지] · 제22조 [통로의 설치]'],[/125\s*조\s*\[귀마개/,R+'제516조 [청력보호구의 지급 등]'],
+   [/656\s*조\s*~/,R+'제656조~제662조 [근골격계부담작업으로 인한 건강장해의 예방]'],[/656\s*조|657\s*조\s*\[작업자/,R+'제657조 [유해요인 조사] · 제661조 [유해성 등의 주지]'],
+   [/제\s*32\s*조\s*\[소모품/,R+'제32조 [보호구의 지급 등]'],[/제\s*32\s*조\s*\[부품보관/,A+' · '+R+'제22조 [통로의 설치]'],
+   [/제\s*36\s*조\s*\[원자재/,/베임/.test(hz)?A+' · '+R+'제32조 [보호구의 지급 등]':A+' · '+R+'제393조 [화물의 적재]'],[/98\s*조\s*\[소재/,A+' · '+R+'제32조 [보호구의 지급 등]'],
+   [/제3호\s*\[금형의 보관/,R+'제3조 [전도의 방지] · 제22조 [통로의 설치]'],[/제3호\s*\[금형의 정비/,A+' · '+R+'제104조 [금형조정작업의 위험 방지]'],[/제3호\s*\[작업장/,R+'제3조 [전도의 방지]'],
+   [/393\s*조/,R+'제393조 [화물의 적재] 제3호·제4호'],[/38\s*조[\s\S]*103\s*조/,A+' · '+R+'제103조 [프레스 등의 위험 방지]'],[/제?\s*38\s*조\s*\[안전조치/,A]];
+  const h=T.find(([re])=>re.test(L));return h?h[1]:L;}
+const RA_ADD={
+'008':['지게차후진시','1. 후진 경보음·경광등 작동 여부를 작업 전 일일점검표에 추가\n2. 후방카메라 또는 후방 경고등(블루스팟) 설치\n3. 지게차 작업반경 내 보행자 출입금지 표시'],
+'010':['지게차제한속도','1. 제한속도(5km/h) 표지 및 바닥 표시\n2. 속도제한장치 설정\n3. 교차로·출입구 반사경 설치'],
+'011':['원자재이동시낙하','1. 운반 전 적재물 결속(밴딩) 상태 확인\n2. 포크 높이를 지면 20cm 이하로 낮추고 주행\n3. 운반 경로 보행자 통제'],
+'012':['원자재이동시진동','1. 운행 경로 바닥 요철·단차 보수\n2. 백레스트 높이 이내 적재 및 결속\n3. 급제동·급선회 금지 교육'],
+'013':['중량물취급시근로','1. 유자격 운전자 지정(명단 게시), 무자격자 운전 금지\n2. 정격하중 초과·편하중 적재 금지\n3. 좌석안전띠 착용\n4. 신규·대체 운전자 실습교육'],
+'023':['중량물취급시작업','1. 크레인·지게차 등 운반기계 우선 사용\n2. 달기구(슬링·샤클) 작업 전 점검\n3. 인양물 하부 출입금지, 신호수 지정'],
+'043':['설비누전또는절연','1. 누전차단기 월 1회 작동시험 및 기록\n2. 접지·절연저항 정기 측정(연 1회)\n3. 손상 케이블 즉시 교체, 배선 보호덮개 설치'],
+'045':['세척제방청제등인','1. 인화성 물질 전용 보관함(환기·시건) 사용\n2. 사용 장소 접지·정전기 제거, 화기작업 허가제 운영\n3. MSDS 게시 및 취급자 교육\n4. 소화기 월 1회 점검'],
+'046':['프레스작업시발생','1. 작업환경측정 결과 85dB 이상 공정은 청력보존프로그램 운영\n2. 저소음 에어노즐·소음기 설치\n3. 귀마개 착용 지도·점검, 특수건강진단(청력) 실시'],
+'047':['프레스작업에어임','1. 저진동 공구로 교체 검토\n2. 연속 사용시간 제한 및 작업 교대\n3. 방진장갑 지급·착용 점검\n4. 특수건강진단 대상 여부 확인'],
+'051':['프레스반복작업시','1. 근골격계 유해요인조사(3년 주기) 결과 반영\n2. 작업대 높이·소재 투입 위치 조정\n3. 작업 순환 및 휴식시간 부여'],
+'054':['에어건사용시분진','1. 에어건 대신 진공청소·브러시 우선 사용\n2. 저압·비산방지형 에어건으로 교체\n3. 보안경·방진마스크 착용 점검'],
+'055':['작업장조도부족으','1. 조도 측정(정밀작업 300lux, 보통작업 150lux 이상) 후 미달 구역 LED 조명 증설\n2. 조명기구 정기 청소·교체'],
+'056':['안전검사미실시로','1. 프레스·크레인 등 안전검사 대상 목록과 검사주기 관리대장 작성\n2. 검사 만료 1개월 전 일정 등록·신청\n3. 합격표시 부착 확인'],
+'065':['금형분해조립또는','1. 정비 시 전원 차단·잠금장치·꼬리표(LOTO) 실시\n2. 안전블록 사용\n3. 2인 작업 시 신호 확인 후 조작'],
+'066':['금형의날카로운모','1. 내절단(절단방지) 장갑 지급·착용\n2. 버(burr) 제거 후 작업, 모서리 보호캡 사용\n3. 운반 시 손잡이·전용 지그 사용'],
+'069':['회전체나척에작업','1. 회전부 방호덮개·인터록 설치\n2. 소매 단추 채움, 헐렁한 복장·장갑 착용 금지\n3. 비상정지 스위치 위치·작동 확인'],
+'072':['선반작업시면장갑','1. 회전체 작업 장갑 착용 금지 표지 부착\n2. 칩 제거는 정지 후 브러시·갈고리 사용\n3. 척 가드 설치'],
+'073':['가공중발생한칩이','1. 칩 제거 전용 브러시·갈고리 비치\n2. 칩 비산방지 커버 설치\n3. 정지 상태에서만 내절단 장갑 사용'],
+'080':['금형세척및정비중','1. 폐유 받이·흡착포 비치, 누유 즉시 제거\n2. 미끄럼방지 바닥재·매트 설치\n3. 폐유 전용 용기·보관구역 지정'],
+'086':['크레인팬던트고장','1. 팬던트 스위치·케이블 월 1회 점검, 손상 시 사용금지 표시 후 즉시 교체\n2. 누전차단기 접속 확인\n3. 크레인 작업 전 점검표 운영'],
+'087':['금속가공시발생하','1. 국소배기장치 제어풍속 정기 점검\n2. 작업환경측정 결과 반영\n3. 방진마스크(1급 이상) 지급·착용 점검\n4. 습식 청소 또는 집진 청소'],
+'088':['금형보수및연마작','1. 국소배기장치 제어풍속 정기 점검\n2. 작업환경측정 결과 반영\n3. 방진마스크(1급 이상) 지급·착용 점검'],
+'091':['성형연삭기꽂음접','1. 꽂음접속기를 고정형(잠금형)으로 교체\n2. 주 1회 분진·기름때 청소\n3. 주변 가연물 제거, 소화기 비치'],
+'101':['동일작업반복으로','1. 근골격계 유해요인조사 결과 반영\n2. 작업 순환·휴식시간 부여\n3. 보조공구·지그 사용\n4. 증상 호소자 조기 상담'],
+'103':['허리굽힘및비틀림','1. 작업대 높이 조절, 리프트 테이블 사용\n2. 중량물 취급 자세 교육\n3. 운반 보조기구 사용'],
+'112':['밀링벨트회전부에','1. 방호덮개 설치 상태 일일점검\n2. 덮개 개방 시 정지되는 인터록 설치\n3. 정비 시 전원 차단'],
+'114':['가공중발생한칩이','1. 칩 제거 전용 브러시·갈고리 비치\n2. 칩 비산방지 커버 유지 상태 점검\n3. 정지 상태에서만 내절단 장갑 사용'],
+'131':['금속가공시발생하','1. 국소배기장치 제어풍속 정기 점검\n2. 작업환경측정 결과 반영\n3. 방진마스크(1급 이상) 지급·착용 점검'],
+'132':['성형연삭기꽂음접','1. 꽂음접속기를 고정형(잠금형)으로 교체\n2. 주 1회 분진·기름때 청소\n3. 주변 가연물 제거, 소화기 비치'],
+'135':['동일작업반복으로','1. 근골격계 유해요인조사 결과 반영\n2. 작업 순환·휴식시간 부여\n3. 보조공구·지그 사용'],
+'136':['허리굽힘및비틀림','1. 작업대 높이 조절, 리프트 테이블 사용\n2. 중량물 취급 자세 교육\n3. 운반 보조기구 사용'],
+'153':['지게차를이용한고','[임시조치 — 전용 장비 구매 전까지]\n1. 지게차 포크·팔레트를 이용한 고소작업 즉시 금지 (산업안전보건기준에 관한 규칙 제86조 탑승의 제한)\n2. 고소작업은 이동식 비계 또는 고소작업대(임차) 사용\n3. 고소작업 시 작업허가서(PTW) 발행, 안전대 착용\n4. 금지 표지 부착 및 운전자·작업자 교육'],
+'213':['검사시제품의방청','1. 국소배기장치 또는 환기팬 설치\n2. MSDS 확인 후 저취·저휘발 방청유로 대체 검토\n3. 작업환경측정 대상 여부 확인\n4. 필요 시 유기화합물용 방독마스크 지급'],
+'214':['검사실환기를위해','1. 창문 추락방지 안전바(난간) 설치\n2. 창문 개방 폭 제한 스토퍼 설치\n3. 기계식 환기로 창문 개방 최소화'],
+'221':['세척작업중물또는','1. 방수형 콘센트·플러그 사용\n2. 전선을 바닥에서 띄우고 보호관 설치\n3. 누전차단기 월 1회 작동시험\n4. 젖은 손 조작 금지 표지'],
+'225':['세척작업중인화성','1. 환기설비 상시 가동(증기 체류 방지)\n2. 세척실 전기기구 방폭형 여부 점검\n3. 화기작업 허가제 운영\n4. 소화기 비치·월 1회 점검'],
+'226':['세척액취급및제품','1. 설비·용기 접지 및 본딩, 제전 조치\n2. 제전복·제전화 착용\n3. 임시 배선 금지, 손상 전선 즉시 교체'],
+'230':['세척실내부체감온','1. 냉방·환기설비 증설(스폿쿨러·배기팬)\n2. 체감온도 33℃ 이상 시 2시간 이내 20분 이상 휴식 부여\n3. 온습도계 비치·기록\n4. 고온 시간대 작업시간 조정'],
+'239':['멀티탭문어발식배','1. 전열기 등 고용량 기기는 벽 콘센트 단독 사용\n2. 과부하 차단형 멀티탭으로 교체, 멀티탭 연결 사용 금지\n3. 분기 1회 점검'],
+'245':['키보드마우스반복','1. 영상표시단말기 작업 중 주기적 휴식(1시간에 10분)\n2. 손목 받침대·버티컬 마우스 지급\n3. 모니터·의자 높이 조정'],
+'249':['사무실콘센트내부','1. 분기 1회 콘센트·멀티탭 먼지 청소\n2. 미사용 콘센트 안전커버 설치\n3. 노후·변색 콘센트 교체'],
+'250':['사무실바닥전선보','1. 바닥 전선 보호덮개(몰딩) 설치\n2. 배선을 벽면으로 정리\n3. 피복 손상 전선 교체'],
+'252':['지게차운행구역과','1. 보행자 전용통로를 안전펜스·가드레일로 물리적 분리\n2. 교차 지점 정지선·반사경·경광등 설치\n3. 상하차 시간대 보행 통제(유도자 배치)'],
+'253':['지게차후진시후방','1. 후방카메라·후방감지센서 설치\n2. 후방 경고등(블루스팟) 설치\n3. 사각지대 후진 시 유도자 배치'],
+'254':['화물차상차중차량','1. 고임목 설치·주차브레이크 확인, 시동 끄고 열쇠 분리\n2. 상하차 중 화물차 운전자 대기 장소 지정\n3. 작업지휘자(유도자) 배치\n4. 지게차와 차량 사이 출입금지'],
+'257':['지게차포크를상승','1. 포크 높이 지면 15~20cm 주행 원칙 교육·표지 부착\n2. 운전 중 위반 시 운전자격 정지 등 내부 기준 마련\n3. 일일 운전 점검'],
+'258':['지게차에과적또는','1. 정격하중표 부착, 화물 중량 표시\n2. 정격하중 초과·편하중 금지\n3. 적재 높이 제한 및 결속'],
+'262':['지게차후진전또는','1. 후진 경보음 임의 해제 금지(봉인)\n2. 후방카메라 설치\n3. 작업 전 일일점검에 경보장치 항목 추가'],
+'263':['지게차포크위치팔','1. 포크 완전 삽입 후 인양, 포크 간격 조정\n2. 파손 팔레트 사용 금지·폐기\n3. 운전자 교육'],
+'270':['식당분전반콘센트','1. 원청과 전기설비 점검 책임 구분 및 연 1회 전기안전점검\n2. 누전차단기 월 1회 작동시험\n3. 주방 방수형 콘센트 사용']};
+function raFixPlan(){return S.ras.filter(r=>(r.flags||[]).length).map(r=>{const ch=[];const nl=raLawFix(r.law,r.hz);if(nl!==r.law&&r.flags.some(f=>/^근거 조문/.test(f)))ch.push(['law','근거 조문',r.law,nl]);
+  const a=RA_ADD[String(r.no).slice(-3)];const need=r.flags.some(f=>/유지|감소대책·개선번호 없음|개선 후 위험성|15 이상|미완료/.test(f));
+  if(need&&a&&raN(r.hz).startsWith(a[0])&&!String(r.ms||'').includes('[추가대책 제안'))ch.push(['ms','추가대책(제안)','',a[1]]);
+  const reopen=r.status==='완료'&&r.flags.some(f=>/개선 후 위험성/.test(f));if(reopen)ch.push(['status','상태','완료','진행']);
+  const left=need&&!a&&!String(r.ms||'').includes('[추가대책 제안');return{r,ch,left};});}
+function raFixOpen(){const P=raFixPlan();if(!P.length)return toast('검토 필요 항목이 없습니다');const nL=P.filter(p=>p.ch.some(c=>c[0]==='law')).length,nM=P.filter(p=>p.ch.some(c=>c[0]==='ms')).length,nR=P.filter(p=>p.ch.some(c=>c[0]==='status')).length,nI=P.filter(p=>!p.ch.length&&!p.left).length,nX=P.filter(p=>p.left).length;
+  $('mRaTitle').textContent='검토 필요 일괄 수정 — '+P.length+'건';
+  $('mRaBody').innerHTML=`<div class="grid g4" style="margin-bottom:10px"><div class="kpi blue"><div class="l">근거 조문 바로잡기</div><div class="v">${nL}</div></div><div class="kpi amber"><div class="l">추가대책(제안) 추가</div><div class="v">${nM}</div></div><div class="kpi red"><div class="l">완료 → 진행 (잔여 8 이상)</div><div class="v">${nR}</div></div><div class="kpi"><div class="l">확인만 (이미 반영됨)</div><div class="v">${nI}</div></div></div>
+  <div class="note warn" style="font-size:12.5px;margin-bottom:8px"><b>추가대책은 제안입니다.</b> 감소대책 끝에 <b>[추가대책 제안 · 담당·기한 지정 필요]</b>로 덧붙이며, 빈도·강도 점수와 기존 대책은 바꾸지 않습니다. 부서에서 내용을 확인해 담당자·기한을 넣고 실제로 시행해야 합니다. 근거 조문은 요지 기준으로 바로잡은 것이니 법령 원문과 대조하세요. 모든 변경은 항목의 변경 이력에 남습니다.${nX?` · 자동 처리 대상이 아닌 ${nX}건은 표시를 그대로 둡니다.`:''}</div>
+  <div class="scroll" style="max-height:420px"><table class="tbl" style="font-size:12.5px"><thead><tr><th>번호</th><th>유해·위험요인</th><th>수정 내용</th></tr></thead><tbody>${P.map(p=>`<tr><td class="nw">${esc(p.r.no)}<div>${gTag(p.r.risk)}</div></td><td>${esc(String(p.r.hz).slice(0,70))}</td><td>${p.ch.map(([k,l,o,n])=>k==='ms'?`<div><b>${l}</b><div style="white-space:pre-line">${esc(n)}</div></div>`:`<div><b>${l}</b> <span class="hint">${esc(String(o).slice(0,50))}</span> → ${esc(n)}</div>`).join('')||(p.left?'<span class="hint">수동 검토 필요 — 표시 유지</span>':'<span class="hint">점수·척도 보정은 이미 반영됨 — 표시만 지움</span>')}</td></tr>`).join('')}</tbody></table></div>`;
+  $('mRaFt').innerHTML=`<button class="btn" onclick="closeM('mRa')">취소</button><button class="btn p" onclick="raFixApply()">일괄 수정 적용</button>`;openM('mRa');}
+function raFixApply(){const P=raFixPlan(),by=ADMIN?ADMIN.name:'';let n=0;P.forEach(p=>{if(p.left)return;const r=p.r,log=[];
+  p.ch.forEach(([k,l,o,nv])=>{if(k==='law'){r.law=nv;log.push('근거 조문: '+String(o).slice(0,40)+' → '+nv);}else if(k==='ms'){r.ms=String(r.ms||'').trim()+'\n[추가대책 제안 · 담당·기한 지정 필요]\n'+nv;log.push('추가대책(제안) 추가');}else if(k==='status'){r.status='진행';log.push('상태: 완료 → 진행 (개선 후 위험성 8 이상)');}});
+  r.flags_done=(r.flags_done||[]).concat(r.flags);log.push('검토 표시 정리: '+r.flags.map(f=>f.slice(0,24)).join(' / '));r.flags=[];r.hist=(r.hist||[]).concat({at:now(),by,file:'검토 일괄 수정',t:log.join(' / ')});r.ua=now();n++;});
+  save();closeM('mRa');renderRa();toast(n+'건 수정했습니다 — 추가대책(제안)은 부서에서 담당·기한을 지정하세요');}
 function raFlagsOk(id){const r=S.ras.find(x=>x.id===id);if(!r)return;if(!confirm('검토 필요 표시를 지울까요? (내용을 확인·수정한 경우)'))return;r.flags_done=(r.flags||[]).concat(r.flags_done||[]);r.flags=[];r.ua=now();save();closeM('mRa');renderRa();toast('검토 완료로 표시했습니다');}
-function renderRa(){{const db=$('raDupBtn');if(db){const n=raDups().reduce((a,g)=>a+g.length-1,0);db.style.display=n?'':'none';db.textContent='🧹 중복 정리 ('+n+')';}}{const w=$('ra_wk');if(w){const cur=w.value;const ws=[...new Set(S.ras.map(raWk).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ko'));w.innerHTML='<option value="">전체 공정</option>'+ws.map(x=>`<option${x===cur?' selected':''}>${esc(x)}</option>`).join('');}}
+function renderRa(){{const fb=$('raFixBtn');if(fb){const n=S.ras.filter(r=>(r.flags||[]).length).length;fb.style.display=n?'':'none';fb.textContent='🛠 검토 일괄 수정 ('+n+')';}}{const db=$('raDupBtn');if(db){const n=raDups().reduce((a,g)=>a+g.length-1,0);db.style.display=n?'':'none';db.textContent='🧹 중복 정리 ('+n+')';}}{const w=$('ra_wk');if(w){const cur=w.value;const ws=[...new Set(S.ras.map(raWk).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ko'));w.innerHTML='<option value="">전체 공정</option>'+ws.map(x=>`<option${x===cur?' selected':''}>${esc(x)}</option>`).join('');}}
   const hi=S.ras.filter(r=>r.risk>=8&&r.status!=='완료').length,done=S.ras.filter(r=>r.status==='완료').length,late=S.ras.filter(r=>r.status!=='완료'&&r.due&&r.due<fmtD(now())).length;
   const avgB=S.ras.length?(S.ras.reduce((a,r)=>a+r.risk,0)/S.ras.length).toFixed(1):'-',avgA=done?(S.ras.filter(r=>r.status==='완료').reduce((a,r)=>a+(r.after_risk||0),0)/done).toFixed(1):'-';
   $('raKpi').innerHTML=`<div class="kpi"><div class="l">평가 건수</div><div class="v">${S.ras.length}</div></div><div class="kpi red"><div class="l">개선 필요(≥8) 미완료</div><div class="v">${hi}</div></div><div class="kpi amber"><div class="l">기한 초과</div><div class="v">${late}</div></div><div class="kpi green"><div class="l">평균 위험성 전 → 후</div><div class="v">${avgB}<small>→ ${avgA}</small></div></div>`;
