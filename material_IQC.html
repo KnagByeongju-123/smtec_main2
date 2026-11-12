@@ -5,7 +5,7 @@
 <script src="mat_grade.js?v=5"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>소재 수입검사 v4.0 | (주)태진다이텍</title>
+<title>소재 수입검사 v4.1 | (주)태진다이텍</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Malgun Gothic','맑은 고딕','Segoe UI',sans-serif;background:#f4f6f9;color:#222;font-size:14px;line-height:1.5}
@@ -239,7 +239,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}
             <th>검사일</th>
             <th>담당</th>
             <th>판정</th>
-            <th style="width:140px">성적서</th>
+            <th style="width:170px">성적서 · 밀시트</th>
           </tr>
         </thead>
         <tbody id="doneList"></tbody>
@@ -1082,8 +1082,29 @@ function millsheetBtn(g){
   if(g.millsheetFlag) return ` <span title="업체가 밀시트를 첨부했지만 서버에 원본이 없습니다 (Rev5.7 이전 등록 — 메일로만 전달)" style="font-size:10px;color:#b45309">📎메일</span>`;
   return '';
 }
-async function openMillsheet(path){
-  const w = window.open('', '_blank');
+/* [v4.1] 검사완료(관리대장) — 검사건에 연결된 코일의 밀시트 */
+function millsheetsOfInsp(d){
+  const ids = new Set((d.certIds||[]).filter(Boolean).map(String));
+  const seen = new Set();
+  return raw.filter(r => r.millsheet_path && ids.has(String(r.id)) && !seen.has(r.millsheet_path) && seen.add(r.millsheet_path))
+    .map(r => ({path:r.millsheet_path, name:r.millsheet_name||'', lot:r.lot_no||'', heat:r.heat_no||'', supplier:r.supplier||''}));
+}
+function millsheetDlName(m){
+  const ext = (m.path.match(/\.[a-z0-9]+$/i)||['.pdf'])[0];
+  return ('밀시트_' + m.supplier + '_' + (m.heat||m.lot) + ext).replace(/[\\/:*?"<>|\s]+/g,'_');
+}
+function millsheetDoneBtns(d){
+  const ms = millsheetsOfInsp(d);
+  if(!ms.length) return '';
+  return ms.map((m,i) => {
+    const p = m.path.replace(/'/g,"\\'"), n = millsheetDlName(m).replace(/'/g,"\\'");
+    return `<button class="btn btn-sm" style="background:#0ea5e9;color:#fff" onclick="openMillsheet('${p}')" title="밀시트 보기 ${escH(m.name)}">📎 밀시트${ms.length>1?(i+1):''}</button>`
+         + `<button class="btn btn-sm" style="background:#e0f2fe;color:#0369a1;border:1px solid #0ea5e9" onclick="openMillsheet('${p}','${n}')" title="밀시트 다운로드">⬇</button>`;
+  }).join('');
+}
+
+async function openMillsheet(path, dlName){
+  const w = dlName ? null : window.open('', '_blank');
   try{
     const res = await fetch(SB_URL + '/storage/v1/object/sign/millsheet/' + path, {
       method:'POST', headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Content-Type':'application/json'},
@@ -1091,7 +1112,12 @@ async function openMillsheet(path){
     });
     const j = await res.json();
     if(!res.ok || !j.signedURL) throw new Error(j.message || ('HTTP ' + res.status));
-    const url = SB_URL + '/storage/v1' + j.signedURL;
+    let url = SB_URL + '/storage/v1' + j.signedURL;
+    if(dlName){
+      url += '&download=' + encodeURIComponent(dlName);
+      const a = document.createElement('a'); a.href = url; a.download = dlName; document.body.appendChild(a); a.click(); a.remove();
+      return;
+    }
     if(w) w.location.href = url; else location.href = url;
   }catch(e){
     if(w) w.close();
@@ -1400,6 +1426,7 @@ function renderDone(){
         ? `<div style="margin-top:3px"><span class="badge" style="background:#fff7ed;color:#c2410c;border:1px solid #fdba74;font-size:10px" title="합격 라벨 부착이 확인되지 않았습니다">⚠ 라벨 부착 미확인</span></div>` : ''}</td>
       <td>
         <button class="btn btn-pri btn-sm" onclick="viewCert(${idx})">📄 성적서</button>
+        ${millsheetDoneBtns(d)}
         ${d.finalJudge==='OK' ? `<button class="btn btn-sm" style="background:#16a34a;color:#fff" onclick="printCoilLabels(${idx})" title="코일별 IQC 합격 라벨(QR·강종 표시) 출력 — 현장에서 QR 스캔으로 장착">🏷 라벨</button>` : ''}
         ${d.finalJudge==='OK' && !labelDone(d) ? `<button class="btn btn-sm" style="background:#c2410c;color:#fff" onclick="confirmLabel(${idx})" title="코일마다 합격 라벨을 붙였는지 현장 확인 후 누르세요">✔ 부착확인</button>` : ''}
         <button class="btn btn-warn btn-sm" onclick="reEditInsp(${idx})">수정</button>
