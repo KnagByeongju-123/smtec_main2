@@ -4,7 +4,7 @@
 <script src="audit.js?v=7"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>치수관리 위험 모니터링 (SKF씰) v1.2</title>
+<title>치수관리 위험 모니터링 (SKF씰) v1.3</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;900&display=swap">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
@@ -62,6 +62,9 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
 .act-area textarea{width:100%;min-height:56px;padding:8px 10px;font-size:12px;font-family:inherit;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;color:var(--text);resize:vertical;line-height:1.5}
 .act-area textarea:focus{outline:none;border-color:var(--accent)}
 .act-row{display:flex;gap:6px;margin-top:6px;align-items:center}
+.act-quick{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px}
+.act-quick button{font-size:12px;padding:6px 10px;border-radius:14px;border:1px solid var(--border);background:var(--bg);color:var(--text);cursor:pointer;font-family:inherit}
+.act-quick button.done{border-color:var(--ok);color:var(--ok);font-weight:700}
 .act-row select{flex:1;padding:8px 10px;font-size:12px;font-family:inherit;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;color:var(--text)}
 .act-info{font-size:10px;color:var(--text3);margin-top:5px}
 .act-badge{font-size:10px;padding:2px 8px;border-radius:10px;font-weight:700;margin-left:auto}
@@ -189,29 +192,52 @@ const CUST_NAME='SKF씰';
 const ACT_KEY='DIM_ACTION_SKF';
 
 // ===== 조치사항 =====
-function getActs(){try{return JSON.parse(localStorage.getItem(ACT_KEY)||'{}')}catch(e){return{}}}
-function saveActs(a){localStorage.setItem(ACT_KEY,JSON.stringify(a))}
+/* v1.3 조치사항을 스마트팩토리 서버(kv_store 'dim_action_v1' = {고객:{경고키:{text,result,savedAt,savedBy,...}}})에 저장
+   — 예전에는 이 기기(브라우저)에만 저장돼 다른 측정원·PC에서 안 보였음. 기존 기기 저장분은 처음 열 때 서버로 옮김 */
+const ACT_KV='dim_action_v1';
+let ACTS={};
+const SBH={apikey:'sb_publishable_9j2YkkL-7ul1TrhH-NjVdQ_vWDG2-1D',Authorization:'Bearer sb_publishable_9j2YkkL-7ul1TrhH-NjVdQ_vWDG2-1D','Content-Type':'application/json'};
+const SBU='https://omngtyewdaqpphnzeate.supabase.co/rest/v1/kv_store';
+async function kvAll(){const r=await fetch(SBU+'?key=eq.'+ACT_KV+'&select=value',{headers:SBH});if(!r.ok)throw new Error('조치 불러오기 '+r.status);const j=await r.json();return (j[0]&&j[0].value)||{};}
+async function kvPutAll(v){const r=await fetch(SBU+'?on_conflict=key',{method:'POST',headers:Object.assign({Prefer:'resolution=merge-duplicates,return=minimal'},SBH),body:JSON.stringify({key:ACT_KV,value:v})});if(!r.ok)throw new Error('조치 저장 '+r.status);}
+async function loadActs(){
+  try{
+    const all=await kvAll();ACTS=all[CUST_NAME]||{};
+    let local={};try{local=JSON.parse(localStorage.getItem(ACT_KEY)||'{}')}catch(e){}
+    const move=Object.keys(local).filter(k=>!ACTS[k]||(local[k].savedAt||'')>(ACTS[k].savedAt||''));
+    if(move.length){await saveActsServer(a=>{move.forEach(k=>a[k]=Object.assign({savedBy:'(이 기기 기록 이전)'},local[k]))});}
+  }catch(e){console.warn(e);toast('⚠ 조치사항 서버 연결 실패 — 잠시 후 다시');}
+}
+async function saveActsServer(fn){const all=await kvAll();const a=all[CUST_NAME]||{};fn(a);all[CUST_NAME]=a;await kvPutAll(all);ACTS=a;}
+function getActs(){return ACTS}
+function meName(){try{const u=JSON.parse(localStorage.getItem('tj_audit_user')||'null'),a=JSON.parse(localStorage.getItem('esg_pin_auth')||'null');return (u&&u.name)||(a&&a.name)||''}catch(e){return ''}}
+const QUICK=[['금형 연마','조치중'],['펀치·다이 교체','조치중'],['셋팅 조정','조치중'],['소재 확인·교환','조치중'],['관찰 — 다음 LOT 재측정','조치중'],['재측정 정상 · 중심치 복귀 확인','조치완료']];
+function quickAct(i,k){const q=QUICK[k],t=document.getElementById('actTxt_'+i),r=document.getElementById('actRes_'+i);
+  const d=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Seoul',month:'2-digit',day:'2-digit'}).format(new Date());
+  t.value=(t.value?t.value.replace(/\s+$/,'')+'\n':'')+d+' '+q[0];r.value=q[1];saveAction(i);}
 function actKey(w){return w.partNo+'|'+w.gVal+'|'+w.item+'|'+w.date}
 function escH(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
 function actBadge(res){if(res==='조치완료')return'<span class="act-badge done">✅ 조치완료</span>';if(res==='조치중')return'<span class="act-badge ing">🔧 조치중</span>';return'<span class="act-badge none">⏳ 미조치</span>'}
 function buildActHtml(i,w){
   const a=getActs()[actKey(w)]||{};
   return '<div class="act-area"><div class="act-title">🛠 조치사항'+actBadge(a.result)+'</div>'
-    +'<textarea id="actTxt_'+i+'" placeholder="조치내용 입력 (예: 금형 연마 실시, 펀치 교체 등)">'+escH(a.text||'')+'</textarea>'
+    +'<div class="act-quick">'+QUICK.map((q,k)=>'<button type="button" class="'+(q[1]==='조치완료'?'done':'')+'" onclick="quickAct('+i+','+k+')">'+escH(q[0])+'</button>').join('')+'</div>'
+    +'<textarea id="actTxt_'+i+'" placeholder="버튼을 누르거나 직접 입력 (예: 금형 연마 실시, 펀치 교체 등)">'+escH(a.text||'')+'</textarea>'
     +'<div class="act-row"><select id="actRes_'+i+'">'
     +['미조치','조치중','조치완료'].map(o=>'<option value="'+o+'"'+((a.result||'미조치')===o?' selected':'')+'>'+o+'</option>').join('')
     +'</select><button class="btn-sm" onclick="saveAction('+i+')" style="background:var(--ok);color:#000;padding:8px 16px">💾 저장</button></div>'
     +'<div class="act-info" id="actInfo_'+i+'">'+(a.savedAt?'마지막 저장: '+a.savedAt+(a.savedBy?' · '+a.savedBy:''):'')+'</div></div>';
 }
-function saveAction(i){
+async function saveAction(i){
   const w=(_curList||[])[i];if(!w){toast('⚠ 대상 없음');return}
   const text=document.getElementById('actTxt_'+i).value.trim();
   const result=document.getElementById('actRes_'+i).value;
   const acts=getActs();const k=actKey(w);
   const kst=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date()).replace(',','');
-  if(!text&&result==='미조치'){delete acts[k]}else{acts[k]={text,result,savedAt:kst,partNo:w.partNo,gVal:w.gVal,item:w.item,date:w.date}}
-  saveActs(acts);
-  document.getElementById('actInfo_'+i).textContent='마지막 저장: '+kst;
+  const by=meName();
+  try{await saveActsServer(a=>{if(!text&&result==='미조치'){delete a[k]}else{a[k]={text,result,savedAt:kst,savedBy:by,partNo:w.partNo,gVal:w.gVal,item:w.item,date:w.date}}});}
+  catch(e){toast('⚠ 저장 실패 — '+e.message);return}
+  document.getElementById('actInfo_'+i).textContent='마지막 저장: '+kst+(by?' · '+by:'');
   const badge=document.getElementById('actTxt_'+i).closest('.act-area').querySelector('.act-badge');
   if(badge)badge.outerHTML=actBadge(result);
   toast('💾 조치사항 저장');
@@ -259,6 +285,7 @@ function parseDate(raw){if(!raw)return null;const s=String(raw).replace(/[^0-9]/
 
 // ===== 위험 분석 =====
 async function runAnalysis(){
+  await loadActs();   /* v1.3 서버 조치사항 먼저 */
   const btn=document.getElementById('btnAnalysis'),st=document.getElementById('analysisStatus');
   btn.disabled=true;st.style.display='block';st.textContent='📥 로드 중...';st.style.color='var(--accent)';
   document.getElementById('warningList').innerHTML='<div class="loading"><span class="spin"></span>분석 중...</div>';
@@ -405,7 +432,7 @@ function renderAllData(){
   c.innerHTML=f.slice(0,100).map(r=>'<div style="display:flex;gap:6px;padding:6px 8px;background:var(--bg);border:1px solid rgba(255,255,255,.04);border-radius:6px;margin-bottom:3px;font-size:11px;align-items:center"><span style="color:var(--text3);min-width:65px">'+String(r.c0||'')+'</span><span style="color:var(--accent);font-weight:600;min-width:80px">'+String(r.c1||'')+'</span><span style="color:var(--text2);flex:1">'+String(r.c7||'')+'</span><span style="font-weight:700;color:var(--text)">'+(r.c35!=null?Number(r.c35).toFixed(3):'-')+'</span><span style="color:var(--text3);font-size:9px">'+(r.c20||'-')+'~'+(r.c21||'-')+'</span></div>').join('')+(f.length>100?'<div style="text-align:center;padding:8px;color:var(--text3);font-size:11px">... 외 '+(f.length-100)+'건</div>':'');
 }
 
-window.addEventListener('DOMContentLoaded',()=>{getStg()});
+window.addEventListener('DOMContentLoaded',()=>{getStg();loadActs();});
 </script>
 </body>
 </html>
