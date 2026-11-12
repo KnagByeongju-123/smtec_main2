@@ -5,7 +5,7 @@
 <script src="mat_grade.js?v=5"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>소재 수입검사 v3.9 | (주)태진다이텍</title>
+<title>소재 수입검사 v4.0 | (주)태진다이텍</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Malgun Gothic','맑은 고딕','Segoe UI',sans-serif;background:#f4f6f9;color:#222;font-size:14px;line-height:1.5}
@@ -1063,6 +1063,9 @@ function computeWaitGroups(){
     }
     g.coilCount = count || g._rows.length || 1;
     g.allCertIds = allIdsByKey.get(g.groupKey) || [];   /* [v3.9] */
+    /* [v4.0] 업체가 첨부한 밀시트 원본 (Storage millsheet 버킷) */
+    g.millsheets = g._rows.filter(r => r.millsheet_path).map(r => ({path:r.millsheet_path, name:r.millsheet_name||'', lot:r.lot_no||''}));
+    g.millsheetFlag = g._rows.some(r => r.has_millsheet);
     delete g._rows;
     delete g._maxCoilCount;
   }
@@ -1071,6 +1074,31 @@ function computeWaitGroups(){
 }
 
 /* ================ 검사 대기 렌더 ================ */
+/* [v4.0] 밀시트 열람 — Storage(millsheet) 서명 URL 로 새 창 */
+function millsheetBtn(g){
+  if(g.millsheets && g.millsheets.length){
+    return g.millsheets.map((m,i) => `<button onclick="event.stopPropagation();openMillsheet('${m.path.replace(/'/g,"\\'")}')" title="밀시트 원본 ${escH(m.name)} ${escH(m.lot)}" style="margin-left:4px;padding:2px 7px;font-size:11px;font-weight:700;border:1px solid #0ea5e9;background:#e0f2fe;color:#0369a1;border-radius:10px;cursor:pointer">📎${g.millsheets.length>1?(i+1):' 밀시트'}</button>`).join('');
+  }
+  if(g.millsheetFlag) return ` <span title="업체가 밀시트를 첨부했지만 서버에 원본이 없습니다 (Rev5.7 이전 등록 — 메일로만 전달)" style="font-size:10px;color:#b45309">📎메일</span>`;
+  return '';
+}
+async function openMillsheet(path){
+  const w = window.open('', '_blank');
+  try{
+    const res = await fetch(SB_URL + '/storage/v1/object/sign/millsheet/' + path, {
+      method:'POST', headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Content-Type':'application/json'},
+      body: JSON.stringify({expiresIn: 600})
+    });
+    const j = await res.json();
+    if(!res.ok || !j.signedURL) throw new Error(j.message || ('HTTP ' + res.status));
+    const url = SB_URL + '/storage/v1' + j.signedURL;
+    if(w) w.location.href = url; else location.href = url;
+  }catch(e){
+    if(w) w.close();
+    alert('밀시트를 열 수 없습니다: ' + (e.message || e));
+  }
+}
+
 function renderWait(){
   const groups = computeWaitGroups();
 
@@ -1123,7 +1151,7 @@ function renderWait(){
       <td>${g.width ?? '-'}</td>
       <td style="font-weight:700">${lotDisp}</td>
       <td><span class="badge-coils">${g.coilCount}</span></td>
-      <td style="font-size:11px">${heatStr}</td>
+      <td style="font-size:11px">${heatStr}${millsheetBtn(g)}</td>
       <td style="text-align:right;padding-right:10px">${(g.weight||0).toLocaleString()}</td>
       <td>${g.recvDate||'-'}</td>
       <td><span class="badge badge-wait">대기</span></td>
