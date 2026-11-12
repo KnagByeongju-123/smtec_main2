@@ -4,7 +4,7 @@
 <script src="audit.js?v=9"></script>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>소재입고 등록 (Rev5.7)</title>
+  <title>소재입고 등록 (Rev5.8)</title>
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
@@ -104,7 +104,7 @@
 </head>
 <body>
 <div class="hdr">
-  <h1>📤 소재입고 등록 (Rev5.6)</h1>
+  <h1>📤 소재입고 등록 (Rev5.8)</h1>
   <p>소재업체 템플릿 업로드 → DB 저장 · <span style="color:#ffeb3b;font-weight:700">성적서, 밀시트 첨부 가능</span></p>
 </div>
 <div class="tabs">
@@ -727,14 +727,25 @@ async function sendEmail(info){
      첨부 합계가 크면(Gmail 25MB 한도) 처음부터 본문 메일 + 밀시트 1건씩 나눠 발송 */
   const attBytes=attachments.reduce((s,a)=>s+Math.round((a.base64||'').length*3/4),0);
   const SPLIT_LIMIT=15*1024*1024;
+  /* [Rev5.8] 성공 판정은 GAS 가 JSON 으로 success/ok:true 를 돌려줄 때만 (로그인 화면 HTML 등은 실패)
+     모든 응답을 mail_send_log 에 기록 → 메일 미수신 원인 추적 */
   async function post(payload){
+    let status=0,t='',ok=false,detail='';
     try{
       const res=await fetch(gasUrl,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(payload)});
-      const t=await res.text().catch(()=>'');
-      const bad=!res.ok||/"(ok|success)"\s*:\s*false|"error"\s*:\s*"|"status"\s*:\s*"(error|fail)|Exception|<title>[^<]*(Error|오류)|too many times|limit exceeded/i.test(t);
-      if(bad)console.error('GAS 응답:',res.status,t.slice(0,300));
-      return {ok:!bad,detail:bad?('HTTP '+res.status+' '+t.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').slice(0,120)):''};
-    }catch(e){return {ok:false,detail:'네트워크 오류: '+(e.message||e)}}
+      status=res.status;t=await res.text().catch(()=>'');
+      let j=null;try{j=JSON.parse(t)}catch(_){}
+      ok=res.ok&&!!j&&(j.success===true||j.ok===true||j.result==='success'||j.status==='ok'||j.status==='success');
+      if(!ok)detail='HTTP '+status+' '+(j&&(j.message||j.error)?String(j.message||j.error):t.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ')).slice(0,140);
+    }catch(e){detail='네트워크 오류: '+(e.message||e)}
+    if(!ok)console.error('GAS 응답:',status,t.slice(0,300));
+    try{
+      const at=payload.attachments||[];
+      fetch(getSbUrl()+'/rest/v1/mail_send_log',{method:'POST',headers:{'Content-Type':'application/json','apikey':getSbKey(),'Authorization':'Bearer '+getSbKey(),'Prefer':'return=minimal'},
+        body:JSON.stringify({page:'material_upload',subject:String(payload.subject||'').slice(0,200),recipients_n:(payload.recipients||[]).length,
+          attach_n:at.length,attach_bytes:at.reduce((s,a)=>s+Math.round((a.base64||'').length*3/4),0),ok:ok,http_status:status,response:t.slice(0,1000)})}).catch(()=>{});
+    }catch(_){}
+    return {ok:ok,detail:detail};
   }
   const base={action:'sendMail',subject:subject,html:html,text:subject,recipients:info.recipients||[]};
   if(attachments.length&&attBytes<=SPLIT_LIMIT){
