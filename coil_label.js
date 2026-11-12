@@ -67,7 +67,7 @@
 
   function cardHtml(L, img, mono) {   // mono : 흑백 라벨 프린터용 식별색 표시
     return `<div class="lb">
-      <div class="hd"><span>입고 소재</span><small>(주)태진다이텍</small></div>
+      <div class="hd"><span>수입검사 합격</span><small>(주)태진다이텍</small></div>
       ${band(L, mono)}
       <div class="bd"><img class="qr" src="${img}" alt="QR">
         <table>
@@ -78,12 +78,12 @@
           <tr><th>공급사</th><td>${esc(L.supplier || '')}</td></tr>
           <tr><th>입고</th><td>${esc(L.date || '')}</td></tr>
         </table></div>
-      <div class="ft"><b>코일 ${L.seq}/${L.n}</b><span>#${esc(L.certId)} · 수입검사 합격 후 장착</span></div>
+      <div class="ft"><b>코일 ${L.seq}/${L.n}</b><span>#${esc(L.certId)}</span></div>
     </div>`;
   }
   const LABEL_CSS = `
 .lb{border:1.5px solid #000;padding:2mm 3mm;display:flex;flex-direction:column;overflow:hidden;break-inside:avoid;page-break-inside:avoid;background:#fff;color:#000;font-family:'Malgun Gothic','맑은 고딕','Apple SD Gothic Neo',sans-serif}
-.lb .hd{display:flex;justify-content:space-between;align-items:center;background:#1e3a8a;color:#fff;padding:1mm 2mm;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.lb .hd{display:flex;justify-content:space-between;align-items:center;background:#15803d;color:#fff;padding:1mm 2mm;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 .lb .hd span{font-size:15pt;font-weight:900;letter-spacing:2px} .lb .hd small{font-size:8pt}
 .lb .bd{flex:1;display:flex;gap:2mm;align-items:center;padding-top:1.5mm}
 .lb .qr{width:30mm;height:30mm;image-rendering:pixelated;flex-shrink:0}
@@ -173,9 +173,9 @@ ${roll ? '.lb{border:0;padding:3mm;break-after:page;page-break-after:always}.lb 
     if (border) { c.strokeStyle = '#000'; c.lineWidth = mm(0.4); c.strokeRect(mm(0.2), mm(0.2), cv.width - mm(0.4), cv.height - mm(0.4)); }
     const P = 3;                                   // 안쪽 여백(mm)
     // 머리글
-    c.fillStyle = mono ? '#000' : '#1e3a8a'; c.fillRect(mm(P), mm(P), mm(Wmm - 2 * P), mm(7));
+    c.fillStyle = mono ? '#000' : '#15803d'; c.fillRect(mm(P), mm(P), mm(Wmm - 2 * P), mm(7));
     c.fillStyle = '#fff'; c.textBaseline = 'middle';
-    c.font = `900 ${mm(5)}px ${FONT}`; c.fillText('입고 소재', mm(P + 2), mm(P + 3.6));
+    c.font = `900 ${mm(5)}px ${FONT}`; c.fillText('수입검사 합격', mm(P + 2), mm(P + 3.6));
     c.font = `${mm(2.8)}px ${FONT}`; c.textAlign = 'right'; c.fillText('(주)태진다이텍', mm(Wmm - P - 2), mm(P + 3.6)); c.textAlign = 'left';
     // 강종 띠
     if (g.MatGrade) g.MatGrade.drawBand(c, L.material, mm(P), mm(P + 8), mm(Wmm - 2 * P), mm(8.5), FONT, L.t, L.w, !border);   // 테두리 없음 = 라벨 프린터 → 흑백
@@ -206,7 +206,7 @@ ${roll ? '.lb{border:0;padding:3mm;break-after:page;page-break-after:always}.lb 
     const fy = Hmm - P - 4;
     c.strokeStyle = '#000'; c.lineWidth = mm(0.3); c.beginPath(); c.moveTo(mm(P), mm(fy)); c.lineTo(mm(Wmm - P), mm(fy)); c.stroke();
     c.fillStyle = '#000'; c.font = `900 ${mm(3.6)}px ${FONT}`; c.fillText(`코일 ${L.seq}/${L.n}`, mm(P), mm(fy + 2.4));
-    c.font = `${mono ? 700 : 400} ${mm(2.6)}px ${FONT}`; c.textAlign = 'right'; c.fillText(`#${L.certId} · 수입검사 합격 후 장착`, mm(Wmm - P), mm(fy + 2.4)); c.textAlign = 'left';
+    c.font = `${mono ? 700 : 400} ${mm(2.6)}px ${FONT}`; c.textAlign = 'right'; c.fillText(`#${L.certId}`, mm(Wmm - P), mm(fy + 2.4)); c.textAlign = 'left';
     if (mono) {   // 회색 가장자리(안티앨리어싱)를 흑/백으로 — 감열 프린터가 회색을 망점으로 찍어 글자가 번지는 것 방지
       const im = c.getImageData(0, 0, cv.width, cv.height), d = im.data;
       for (let i = 0; i < d.length; i += 4) { const v = (d[i] * 299 + d[i + 1] * 587 + d[i + 2] * 114) / 1000 < 150 ? 0 : 255; d[i] = d[i + 1] = d[i + 2] = v; d[i + 3] = 255; }
