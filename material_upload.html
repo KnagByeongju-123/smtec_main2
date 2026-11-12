@@ -4,7 +4,7 @@
 <script src="audit.js?v=9"></script>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>소재입고 등록 (Rev5.9)</title>
+  <title>소재입고 등록 (Rev6.0)</title>
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
@@ -104,7 +104,7 @@
 </head>
 <body>
 <div class="hdr">
-  <h1>📤 소재입고 등록 (Rev5.9)</h1>
+  <h1>📤 소재입고 등록 (Rev6.0)</h1>
   <p>소재업체 템플릿 업로드 → DB 저장 · <span style="color:#ffeb3b;font-weight:700">성적서, 밀시트 첨부 가능</span></p>
 </div>
 <div class="tabs">
@@ -887,7 +887,7 @@ async function doRegister(){
   document.getElementById('doneSummary').innerHTML=summary;
   document.getElementById('btnRegister').disabled=false;
   /* [Rev5.5] _certBatch 스냅샷 - goStep(4)의 500ms prepareCertBatch 재빌드/자동복귀 초기화와 무관하게 보존 */
-  const _certSnapshot=(_certBatch&&_certBatch.length)?_certBatch.filter(c=>!c.done).map(c=>({...c})):[];
+  const _certSnapshot=(_certBatch&&_certBatch.length)?_certBatch.map((c,i)=>({...c,_idx:i})).filter(c=>!c.done):[];
   /* 성적서를 직접 입력해 [저장]한 건(done)도 QR 라벨 대상 — 저장 응답의 행(id 포함)을 보존 */
   /* [Rev5.9] 메일용 사본 (성적서 내용 + 밀시트) */
   const _mailCertBatch=(_certBatch||[]).map(c=>({...c}));
@@ -938,6 +938,26 @@ async function doRegister(){
       }catch(e){
         console.error('Supabase 저장 오류:',e);
         sbFail=dbRows.length-sbOk;
+      }
+    };
+
+    /* [Rev6.0] 밀시트는 메일과 별개로 항상 관리대장(Storage)에 보관
+       - [저장]을 누르지 않고 첨부만 한 밀시트(자동 생성 성적서)도 보관
+       - [저장] 때 보관에 실패한 밀시트는 여기서 다시 시도 */
+    const _autoCertIdByIdx={};
+    let msStoreOk=0,msStoreFail=0,_msStoreErr='';
+    const ensureMillsheetsStored=async()=>{
+      for(let i=0;i<_mailCertBatch.length;i++){
+        const ms=_mailMillsheets[i];if(!ms)continue;
+        if(typeof ms==='object'&&ms.storagePath){msStoreOk++;continue}
+        const c=_mailCertBatch[i];
+        const certId=(c.savedRow&&c.savedRow.id)||_autoCertIdByIdx[i];
+        if(!certId){msStoreFail++;_msStoreErr='성적서 번호 없음';continue}
+        try{
+          const path=await uploadMillsheetToStorage(certId,ms);
+          if(typeof ms==='object')ms.storagePath=path;
+          msStoreOk++;
+        }catch(e){msStoreFail++;_msStoreErr=e.message||String(e);console.error('밀시트 보관 실패:',e)}
       }
     };
 
@@ -992,6 +1012,8 @@ async function doRegister(){
           if(r.ok){
             certAutoOk=emptyPayloads.length;
             _qrCerts=r.rows;
+            /* [Rev6.0] 자동 생성된 성적서 ↔ 밀시트 연결용 (응답 순서 = 요청 순서) */
+            r.rows.forEach((row,k)=>{const sn=_certSnapshot[k];if(sn&&row&&row.id)_autoCertIdByIdx[sn._idx]=row.id});
             if(_certBatch&&_certBatch.length)_certBatch.forEach(c=>{if(!c.done)c.autoCreated=true});
           }else{
             certAutoFail=emptyPayloads.length;
@@ -1012,10 +1034,14 @@ async function doRegister(){
       postCertBatch().catch(e=>{console.error('성적서 생성 오류:',e);certAutoFail=_certSnapshot.length;_certAutoErr=e.message||String(e)})
     ]);
 
+    await ensureMillsheetsStored().catch(e=>{console.error('밀시트 보관 오류:',e)});
+
     const sbEl=document.getElementById('sbStatusLive');
     if(sbEl){
       let extra='';
-      if(certAutoOk>0)extra=`<br>📋 IQC 빈 성적서 ${certAutoOk}건 자동 생성 (수입검사 대기)`;
+      if(msStoreOk>0)extra+=`<br>📎 밀시트 ${msStoreOk}개 관리대장 보관 완료`;
+      if(msStoreFail>0)extra+=`<br><span style="color:#c62828;font-weight:700">❌ 밀시트 ${msStoreFail}개 관리대장 보관 실패 — ${_msStoreErr}<br>화면을 캡처해 품질관리팀에 알려 주세요</span>`;
+      if(certAutoOk>0)extra+=`<br>📋 IQC 빈 성적서 ${certAutoOk}건 자동 생성 (수입검사 대기)`;
       if(certAutoFail>0)extra+=`<br><span style="color:#c62828;font-weight:700">❌ IQC 성적서 ${certAutoFail}건 생성 실패 — 수입검사 대기에 표시되지 않습니다!<br>사유: ${_certAutoErr}</span>`;
       if(sbOk>0&&sbFail===0){
         sbEl.innerHTML='✅ Supabase 저장 완료: '+sbOk+'건 → 5분 이내 MES 자동등록 예정'+extra;
@@ -1067,7 +1093,7 @@ async function doRegister(){
 
     /* [Rev5.5] 저장 전부 완료 후에만 자동복귀 시작.
        성적서 생성 실패 시 자동복귀 생략 → 화면에 남은 오류를 작업자가 확인 */
-    if(certAutoFail>0||sbFail>0||!(mailRes&&mailRes.ok)){
+    if(certAutoFail>0||sbFail>0||msStoreFail>0||!(mailRes&&mailRes.ok)){
       showToast('⚠ 저장 오류 발생 - 화면의 상태를 확인하세요');
     }else if(_qrLabels.length){
       /* 라벨 출력 전에 화면이 넘어가지 않도록 자동 복귀 생략 */
@@ -1948,7 +1974,7 @@ async function uploadMillsheetToStorage(certId,ms){
   if(!up.ok)throw new Error('Storage HTTP '+up.status+' '+(await up.text().catch(()=>'')).slice(0,150));
   const pr=await fetch(SB_URL+'/rest/v1/inspection_certs?id=eq.'+certId,{
     method:'PATCH',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Prefer':'return=minimal'},
-    body:JSON.stringify({millsheet_path:path,millsheet_name:name,millsheet_mime:mime})});
+    body:JSON.stringify({millsheet_path:path,millsheet_name:name,millsheet_mime:mime,has_millsheet:true})});
   if(!pr.ok)throw new Error('DB 기록 HTTP '+pr.status);
   return path;
 }
