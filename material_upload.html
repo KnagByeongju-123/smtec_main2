@@ -4,7 +4,7 @@
 <script src="audit.js?v=9"></script>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>소재입고 등록 (Rev5.8)</title>
+  <title>소재입고 등록 (Rev5.9)</title>
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
@@ -104,7 +104,7 @@
 </head>
 <body>
 <div class="hdr">
-  <h1>📤 소재입고 등록 (Rev5.8)</h1>
+  <h1>📤 소재입고 등록 (Rev5.9)</h1>
   <p>소재업체 템플릿 업로드 → DB 저장 · <span style="color:#ffeb3b;font-weight:700">성적서, 밀시트 첨부 가능</span></p>
 </div>
 <div class="tabs">
@@ -598,10 +598,14 @@ async function sendEmail(info){
   /* [Rev4.9] 성적서 상세 + 밀시트 첨부 모으기 (모든 _certBatch 카드 전체 표시) */
   const attachments=[];
   let certSummaryHtml='';
-  if(typeof _certBatch!=='undefined' && Array.isArray(_certBatch) && _certBatch.length){
+  /* [Rev5.9] [최종등록] 시점에 떠 둔 사본 사용 — goStep(4) 0.5초 뒤 prepareCertBatch 가 _certMillsheets 를 비워서
+     (11/09 QR 미리보기가 메일보다 먼저 실행되게 된 뒤부터) 밀시트가 메일에 첨부되지 않던 문제 */
+  const mailBatch=info.certBatch||_certBatch;
+  const mailMs=info.millsheets||_certMillsheets;
+  if(Array.isArray(mailBatch) && mailBatch.length){
     const cards=[];
-    _certBatch.forEach((c, idx)=>{
-      const ms=_certMillsheets&&_certMillsheets[idx];
+    mailBatch.forEach((c, idx)=>{
+      const ms=mailMs&&mailMs[idx];
       const cd=c.certData||{};
       const finalJ=cd.finalJ||'-';
       const judgeColor=finalJ==='NG'?'#c62828':(finalJ==='OK'?'#2e7d32':'#888');
@@ -885,6 +889,9 @@ async function doRegister(){
   /* [Rev5.5] _certBatch 스냅샷 - goStep(4)의 500ms prepareCertBatch 재빌드/자동복귀 초기화와 무관하게 보존 */
   const _certSnapshot=(_certBatch&&_certBatch.length)?_certBatch.filter(c=>!c.done).map(c=>({...c})):[];
   /* 성적서를 직접 입력해 [저장]한 건(done)도 QR 라벨 대상 — 저장 응답의 행(id 포함)을 보존 */
+  /* [Rev5.9] 메일용 사본 (성적서 내용 + 밀시트) */
+  const _mailCertBatch=(_certBatch||[]).map(c=>({...c}));
+  const _mailMillsheets=Object.assign({},_certMillsheets||{});
   const _doneCertRows=(_certBatch&&_certBatch.length)?_certBatch.filter(c=>c.done&&c.savedRow&&c.savedRow.id).map(c=>({...c.savedRow})):[];
   goStep(4);
   /* [Rev5.5] 자동복귀는 Supabase 저장(입고+성적서) 완료 후 시작 - 저장 전 화면 이탈로 인한 수입검사 누락 방지 */
@@ -1043,7 +1050,7 @@ async function doRegister(){
     const ntfyMsg='📤 소재입고 등록 완료\n\n🏢 업체: '+(_batchCompany||cfg.from||'-')+' ('+cfg.fromCode+')\n📅 입고일: '+(_batchDate||todayStr)+'\n📦 등록: '+ok+'건\n💾 Supabase: '+sbOk+'건'+(sbFail?' (실패 '+sbFail+')':'')+'\n🔄 MES 자동등록: 5분 이내\n'+(cfg.worker?'👤 작업자: '+cfg.worker+'\n':'')+'\n📋 소재정보:\n  '+matSummary; /* [Rev5.6] 전체 출력 */
 
     /* [Rev5.7] 발송 끝날 때까지 창 닫기 경고 + 실제 결과 표시 + 실패 시 [다시 보내기] */
-    _mailInfo={company:_batchCompany||cfg.from||'-',date:_batchDate||todayStr,count:ok,from:cfg.from,to:cfg.to,worker:cfg.worker,rows:rows};
+    _mailInfo={company:_batchCompany||cfg.from||'-',date:_batchDate||todayStr,count:ok,from:cfg.from,to:cfg.to,worker:cfg.worker,rows:rows,certBatch:_mailCertBatch,millsheets:_mailMillsheets};
     if(ntfyEl){ntfyEl.innerHTML='📧 메일·알림 발송 중... <b style="color:#c62828">창을 닫지 마세요</b>';}
     _mailSending=true;
     const [,mailRes]=await Promise.all([
