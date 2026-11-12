@@ -4,7 +4,7 @@
 <script src="audit.js?v=9"></script>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>소재입고 등록 (Rev5.6)</title>
+  <title>소재입고 등록 (Rev5.7)</title>
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
@@ -723,13 +723,34 @@ async function sendEmail(info){
   const subjectSuffix=attachments.length?(' / 밀시트 '+attachments.length+'개 첨부'):'';
   const subject='📤 소재입고 '+info.count+'건 — '+info.company+' ('+info.date+')'+subjectSuffix;
 
-  try{
-    await fetch(gasUrl,{
-      method:'POST',
-      headers:{'Content-Type':'text/plain;charset=utf-8'},
-      body:JSON.stringify({action:'sendMail',subject:subject,html:html,text:subject,recipients:info.recipients||[],attachments:attachments})
-    });
-  }catch(e){console.log('메일 발송 실패:',e)}
+  /* [Rev5.7] GAS 응답 확인 — 예전에는 실패해도 "발송 완료"로 표시됨.
+     첨부 합계가 크면(Gmail 25MB 한도) 처음부터 본문 메일 + 밀시트 1건씩 나눠 발송 */
+  const attBytes=attachments.reduce((s,a)=>s+Math.round((a.base64||'').length*3/4),0);
+  const SPLIT_LIMIT=15*1024*1024;
+  async function post(payload){
+    try{
+      const res=await fetch(gasUrl,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(payload)});
+      const t=await res.text().catch(()=>'');
+      const bad=!res.ok||/"(ok|success)"\s*:\s*false|"error"\s*:\s*"|"status"\s*:\s*"(error|fail)|Exception|<title>[^<]*(Error|오류)|too many times|limit exceeded/i.test(t);
+      if(bad)console.error('GAS 응답:',res.status,t.slice(0,300));
+      return {ok:!bad,detail:bad?('HTTP '+res.status+' '+t.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').slice(0,120)):''};
+    }catch(e){return {ok:false,detail:'네트워크 오류: '+(e.message||e)}}
+  }
+  const base={action:'sendMail',subject:subject,html:html,text:subject,recipients:info.recipients||[]};
+  if(attachments.length&&attBytes<=SPLIT_LIMIT){
+    const r=await post(Object.assign({},base,{attachments:attachments}));
+    if(r.ok)return {ok:true,millsheets:attachments.length};
+    console.warn('통합 메일 실패 → 나눠서 재발송:',r.detail);
+  }
+  const r0=await post(Object.assign({},base,{subject:subject.replace(subjectSuffix,'')+(attachments.length?' (밀시트 별도 메일)':''),attachments:[]}));
+  let okN=0,failN=0,lastErr=r0.ok?'':r0.detail;
+  for(const a of attachments){
+    const ra=await post({action:'sendMail',subject:'📎 밀시트 — '+info.company+' ('+info.date+') '+a.name,
+      html:'<div style="font-family:sans-serif">소재입고 밀시트 원본 첨부 — '+info.company+' / 입고일 '+info.date+'<br>파일: '+a.name+'</div>',
+      text:'밀시트 '+a.name,recipients:info.recipients||[],attachments:[a]});
+    if(ra.ok)okN++;else{failN++;lastErr=ra.detail}
+  }
+  return {ok:r0.ok&&failN===0,millsheets:okN,failed:failN,detail:lastErr};
 }
 
 const COL_MAP={'재질':'_material_type','material_type':'_material_type','두께':'_thickness','thickness':'_thickness','폭':'_width','width_mm':'_width','피치':'_pitch','pitch':'_pitch','로트':'lot','lot':'lot','로트번호':'lot','소재중량':'weight','중량':'weight','weight':'weight','입고일자':'incoming_date','소재입고일자':'incoming_date','incoming_date':'incoming_date','비고':'note','note':'note','메모':'note','업체명':'_customer','고객사':'_customer','customer':'_customer'};
@@ -1010,15 +1031,16 @@ async function doRegister(){
 
     const ntfyMsg='📤 소재입고 등록 완료\n\n🏢 업체: '+(_batchCompany||cfg.from||'-')+' ('+cfg.fromCode+')\n📅 입고일: '+(_batchDate||todayStr)+'\n📦 등록: '+ok+'건\n💾 Supabase: '+sbOk+'건'+(sbFail?' (실패 '+sbFail+')':'')+'\n🔄 MES 자동등록: 5분 이내\n'+(cfg.worker?'👤 작업자: '+cfg.worker+'\n':'')+'\n📋 소재정보:\n  '+matSummary; /* [Rev5.6] 전체 출력 */
 
-    await Promise.all([
+    /* [Rev5.7] 발송 끝날 때까지 창 닫기 경고 + 실제 결과 표시 + 실패 시 [다시 보내기] */
+    _mailInfo={company:_batchCompany||cfg.from||'-',date:_batchDate||todayStr,count:ok,from:cfg.from,to:cfg.to,worker:cfg.worker,rows:rows};
+    if(ntfyEl){ntfyEl.innerHTML='📧 메일·알림 발송 중... <b style="color:#c62828">창을 닫지 마세요</b>';}
+    _mailSending=true;
+    const [,mailRes]=await Promise.all([
       sendNtfyUploadComplete(ntfyMsg).catch(e=>console.log('ntfy 실패:',e)),
-      sendEmail({company:_batchCompany||cfg.from||'-',date:_batchDate||todayStr,count:ok,from:cfg.from,to:cfg.to,worker:cfg.worker,rows:rows}).catch(e=>console.log('메일 실패:',e))
+      sendEmail(_mailInfo).catch(e=>({ok:false,detail:String(e&&e.message||e)}))
     ]);
-
-    if(ntfyEl){
-      ntfyEl.innerHTML='✅ 알림 발송 완료';
-      ntfyEl.style.color='#2e7d32';
-    }
+    _mailSending=false;
+    showMailResult(ntfyEl,mailRes);
 
     const titleEl=document.getElementById('doneTitle');
     if(titleEl&&sbOk>0){
@@ -1027,7 +1049,7 @@ async function doRegister(){
 
     /* [Rev5.5] 저장 전부 완료 후에만 자동복귀 시작.
        성적서 생성 실패 시 자동복귀 생략 → 화면에 남은 오류를 작업자가 확인 */
-    if(certAutoFail>0||sbFail>0){
+    if(certAutoFail>0||sbFail>0||!(mailRes&&mailRes.ok)){
       showToast('⚠ 저장 오류 발생 - 화면의 상태를 확인하세요');
     }else if(_qrLabels.length){
       /* 라벨 출력 전에 화면이 넘어가지 않도록 자동 복귀 생략 */
@@ -1037,6 +1059,32 @@ async function doRegister(){
       startAutoReturn(10);
     }
   })();
+}
+
+/* [Rev5.7] 메일 발송 상태 */
+let _mailInfo=null,_mailSending=false;
+window.addEventListener('beforeunload',e=>{if(_mailSending){e.preventDefault();e.returnValue='메일 발송 중입니다. 창을 닫으면 밀시트가 전달되지 않을 수 있습니다.';return e.returnValue}});
+function showMailResult(el,r){
+  if(!el)return;
+  r=r||{ok:false,detail:'결과 없음'};
+  if(r.ok){
+    el.innerHTML='✅ 메일·알림 발송 완료'+(r.millsheets?(' (밀시트 '+r.millsheets+'개)'):'');
+    el.style.color='#2e7d32';
+  }else{
+    el.innerHTML='❌ 메일 발송 실패'+(r.failed?(' — 밀시트 '+r.failed+'개 미발송'):'')+'<br><span style="font-size:11px;color:#555">'+(r.detail||'')+'</span><br>'
+      +'<span style="font-size:11px;color:#555">밀시트 원본은 서버에 보관되어 있어 수입검사 화면에서 볼 수 있습니다.</span><br>'
+      +'<button onclick="retryMail()" style="margin-top:6px;padding:6px 14px;font-size:13px;font-weight:700;background:#1565c0;color:#fff;border:none;border-radius:6px">📧 다시 보내기</button>';
+    el.style.color='#c62828';
+  }
+}
+async function retryMail(){
+  const el=document.getElementById('ntfyStatusLive');
+  if(!_mailInfo){showToast('다시 보낼 내용이 없습니다');return}
+  if(el)el.innerHTML='📧 다시 보내는 중... <b style="color:#c62828">창을 닫지 마세요</b>';
+  _mailSending=true;
+  const r=await sendEmail(_mailInfo).catch(e=>({ok:false,detail:String(e&&e.message||e)}));
+  _mailSending=false;
+  showMailResult(el,r);
 }
 
 /* 소재 QR 라벨 (coil_label.js) — [최종등록] 직후 등록 코일별 QR 라벨 */
@@ -1848,6 +1896,45 @@ function readCertModalData(){
   c.certData=data;
 }
 
+/* [Rev5.7] 밀시트 사진 압축 — PDF·작은 사진(0.8MB 이하)은 그대로 */
+function compressMillsheet(ms){
+  return new Promise((resolve)=>{
+    if(!/^image\/(jpeg|png|webp)$/i.test(ms.mimeType)||ms.fileSize<=800*1024){resolve(ms);return}
+    const img=new Image();
+    img.onload=()=>{
+      const MAXS=2000,sc=Math.min(1,MAXS/Math.max(img.width,img.height));
+      const cv=document.createElement('canvas');cv.width=Math.round(img.width*sc);cv.height=Math.round(img.height*sc);
+      const cx=cv.getContext('2d');cx.fillStyle='#fff';cx.fillRect(0,0,cv.width,cv.height);cx.drawImage(img,0,0,cv.width,cv.height);
+      const du=cv.toDataURL('image/jpeg',0.82);
+      const size=Math.round((du.length-du.indexOf(',')-1)*3/4);
+      if(size>=ms.fileSize){resolve(ms);return}
+      resolve({dataUrl:du,originalName:ms.originalName.replace(/\.[^.]+$/,'')+'.jpg',mimeType:'image/jpeg',fileSize:size});
+    };
+    img.onerror=()=>resolve(ms);
+    img.src=ms.dataUrl;
+  });
+}
+
+/* [Rev5.7] 밀시트 원본을 Supabase Storage(millsheet 버킷)에 보관 → inspection_certs.millsheet_path 기록
+   메일이 실패해도 원본이 남고, 소재 수입검사 화면에서 바로 열람 */
+async function uploadMillsheetToStorage(certId,ms){
+  const SB_URL=getSbUrl(),SB_KEY=getSbKey();
+  const dataUrl=(typeof ms==='string')?ms:ms.dataUrl;
+  const mime=(typeof ms==='string')?(dataUrl.match(/data:([^;]+)/)?.[1]||'image/jpeg'):(ms.mimeType||'application/octet-stream');
+  const name=(typeof ms==='string')?'millsheet':(ms.originalName||'millsheet');
+  const ext=mime==='application/pdf'?'pdf':(mime==='image/png'?'png':(mime==='image/webp'?'webp':'jpg'));
+  const path=certId+'/'+Date.now()+'.'+ext;
+  const blob=await (await fetch(dataUrl)).blob();
+  const up=await fetch(SB_URL+'/storage/v1/object/millsheet/'+path,{
+    method:'POST',headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Content-Type':mime},body:blob});
+  if(!up.ok)throw new Error('Storage HTTP '+up.status+' '+(await up.text().catch(()=>'')).slice(0,150));
+  const pr=await fetch(SB_URL+'/rest/v1/inspection_certs?id=eq.'+certId,{
+    method:'PATCH',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Prefer':'return=minimal'},
+    body:JSON.stringify({millsheet_path:path,millsheet_name:name,millsheet_mime:mime})});
+  if(!pr.ok)throw new Error('DB 기록 HTTP '+pr.status);
+  return path;
+}
+
 function certMillsheetUpload(input){
   const f=input.files[0];if(!f)return;
   const MAX=10*1024*1024;
@@ -1856,17 +1943,21 @@ function certMillsheetUpload(input){
     input.value='';return;
   }
   const r=new FileReader();
-  r.onload=e=>{
+  const idx=_certCurrentIdx;
+  r.onload=async e=>{
     /* [Rev4.9 핵심수정] 밀시트 첨부 시점에 사용자가 입력한 X1/X2/X3 값 먼저 보존 */
     readCertModalData();
-    _certMillsheets[_certCurrentIdx]={
+    let ms={
       dataUrl:e.target.result,
       originalName:f.name,
       mimeType:f.type||(/\.pdf$/i.test(f.name)?'application/pdf':'image/jpeg'),
       fileSize:f.size
     };
+    /* [Rev5.7] 사진 밀시트는 긴 변 2000px JPEG 로 줄여서 첨부 (메일 25MB 한도 초과로 통째로 안 나가던 문제) */
+    try{ms=await compressMillsheet(ms)}catch(err){console.warn('밀시트 압축 실패 → 원본 사용:',err)}
+    _certMillsheets[idx]=ms;
     renderCertModal();
-    showToast(`✅ 밀시트 첨부: ${f.name}`);
+    showToast(`✅ 밀시트 첨부: ${f.name}`+(ms.fileSize<f.size?` (${(f.size/1048576).toFixed(1)}MB → ${(ms.fileSize/1048576).toFixed(1)}MB)`:''));
   };
   r.onerror=()=>{showToast('⚠ 파일 읽기 실패');};
   r.readAsDataURL(f);
@@ -1995,6 +2086,17 @@ async function certSaveCurrent(){
         const arr=JSON.parse(lastResp.text);
         if(Array.isArray(arr)&&arr.length>0&&arr[0].id){savedId=arr[0].id;c.savedRow=arr[0];}   /* [최종등록] 후 QR 라벨용 */
       }catch(_){}
+      /* [Rev5.7] 밀시트 원본 Storage 보관 */
+      if(savedId&&millsheetImg){
+        try{
+          const path=await uploadMillsheetToStorage(savedId,millsheetImg);
+          if(typeof millsheetImg==='object')millsheetImg.storagePath=path;
+          console.log('[CERT] 밀시트 보관 OK:',path);
+        }catch(msErr){
+          console.error('[CERT] 밀시트 보관 실패:',msErr);
+          alert('⚠ 밀시트 서버 보관 실패\n'+(msErr.message||msErr)+'\n\n성적서는 저장되었습니다. 밀시트는 [최종등록] 메일로 전달됩니다.\n계속 실패하면 화면을 캡처해 관리자에게 전달하세요.');
+        }
+      }
       
       if(savedId){
         /* id로 GET 검증 */
