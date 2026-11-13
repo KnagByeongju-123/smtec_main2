@@ -5,7 +5,7 @@
 <script src="mat_grade.js?v=5"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>소재 수입검사 v3.9 | (주)태진다이텍</title>
+<title>소재 수입검사 v4.2 | (주)태진다이텍</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Malgun Gothic','맑은 고딕','Segoe UI',sans-serif;background:#f4f6f9;color:#222;font-size:14px;line-height:1.5}
@@ -145,7 +145,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 
 <div class="hdr">
   <div>
-    <h1>📋 소재 수입검사 시스템 v3.9</h1>
+    <h1>📋 소재 수입검사 시스템 v4.2</h1>
     <div class="sub">(주)태진다이텍 · 품질관리팀 · 그룹 자동 통합 (공급자+재질+두께+폭)</div>
   </div>
   <div class="user-info" id="userInfoBar">검사자: <b id="loginUser">로그인 필요</b></div>
@@ -239,7 +239,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}
             <th>검사일</th>
             <th>담당</th>
             <th>판정</th>
-            <th style="width:140px">성적서</th>
+            <th style="width:170px">성적서 · 밀시트</th>
           </tr>
         </thead>
         <tbody id="doneList"></tbody>
@@ -1063,6 +1063,9 @@ function computeWaitGroups(){
     }
     g.coilCount = count || g._rows.length || 1;
     g.allCertIds = allIdsByKey.get(g.groupKey) || [];   /* [v3.9] */
+    /* [v4.0] 업체가 첨부한 밀시트 원본 (Storage millsheet 버킷) */
+    g.millsheets = g._rows.filter(r => r.millsheet_path).map(r => ({path:r.millsheet_path, name:r.millsheet_name||'', lot:r.lot_no||''}));
+    g.millsheetFlag = g._rows.some(r => r.has_millsheet);
     delete g._rows;
     delete g._maxCoilCount;
   }
@@ -1071,6 +1074,60 @@ function computeWaitGroups(){
 }
 
 /* ================ 검사 대기 렌더 ================ */
+/* [v4.0] 밀시트 열람 — Storage(millsheet) 서명 URL 로 새 창 */
+function millsheetBtn(g){
+  if(g.millsheets && g.millsheets.length){
+    return g.millsheets.map((m,i) => `<button onclick="event.stopPropagation();openMillsheet('${m.path.replace(/'/g,"\\'")}')" title="밀시트 원본 ${escH(m.name)} ${escH(m.lot)}" style="margin-left:4px;padding:2px 7px;font-size:11px;font-weight:700;border:1px solid #0ea5e9;background:#e0f2fe;color:#0369a1;border-radius:10px;cursor:pointer">📎${g.millsheets.length>1?(i+1):' 밀시트'}</button>`).join('');
+  }
+  if(g.millsheetFlag) return ` <span title="업체가 밀시트를 첨부했지만 서버에 원본이 없습니다 (Rev5.7 이전 등록 — 메일로만 전달)" style="font-size:10px;color:#b45309">📎메일</span>`;
+  return '';
+}
+/* [v4.1] 검사완료(관리대장) — 검사건에 연결된 코일의 밀시트 */
+function millsheetsOfInsp(d){
+  const ids = new Set((d.certIds||[]).filter(Boolean).map(String));
+  /* [v4.2] 같은 업체·LOT·입고일로 다시 등록된 성적서(검사 후 재등록)의 밀시트도 포함 */
+  const k = r => (r.supplier||'') + '|' + (r.lot_no||'') + '|' + (r.receipt_date||'');
+  const keys = new Set(raw.filter(r => ids.has(String(r.id))).map(k));
+  const seen = new Set();
+  return raw.filter(r => r.millsheet_path && (ids.has(String(r.id)) || keys.has(k(r))) && !seen.has(r.millsheet_path) && seen.add(r.millsheet_path))
+    .map(r => ({path:r.millsheet_path, name:r.millsheet_name||'', lot:r.lot_no||'', heat:r.heat_no||'', supplier:r.supplier||''}));
+}
+function millsheetDlName(m){
+  const ext = (m.path.match(/\.[a-z0-9]+$/i)||['.pdf'])[0];
+  return ('밀시트_' + m.supplier + '_' + (m.heat||m.lot) + ext).replace(/[\\/:*?"<>|\s]+/g,'_');
+}
+function millsheetDoneBtns(d){
+  const ms = millsheetsOfInsp(d);
+  if(!ms.length) return '';
+  return ms.map((m,i) => {
+    const p = m.path.replace(/'/g,"\\'"), n = millsheetDlName(m).replace(/'/g,"\\'");
+    return `<button class="btn btn-sm" style="background:#0ea5e9;color:#fff" onclick="openMillsheet('${p}')" title="밀시트 보기 ${escH(m.name)}">📎 밀시트${ms.length>1?(i+1):''}</button>`
+         + `<button class="btn btn-sm" style="background:#e0f2fe;color:#0369a1;border:1px solid #0ea5e9" onclick="openMillsheet('${p}','${n}')" title="밀시트 다운로드">⬇</button>`;
+  }).join('');
+}
+
+async function openMillsheet(path, dlName){
+  const w = dlName ? null : window.open('', '_blank');
+  try{
+    const res = await fetch(SB_URL + '/storage/v1/object/sign/millsheet/' + path, {
+      method:'POST', headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Content-Type':'application/json'},
+      body: JSON.stringify({expiresIn: 600})
+    });
+    const j = await res.json();
+    if(!res.ok || !j.signedURL) throw new Error(j.message || ('HTTP ' + res.status));
+    let url = SB_URL + '/storage/v1' + j.signedURL;
+    if(dlName){
+      url += '&download=' + encodeURIComponent(dlName);
+      const a = document.createElement('a'); a.href = url; a.download = dlName; document.body.appendChild(a); a.click(); a.remove();
+      return;
+    }
+    if(w) w.location.href = url; else location.href = url;
+  }catch(e){
+    if(w) w.close();
+    alert('밀시트를 열 수 없습니다: ' + (e.message || e));
+  }
+}
+
 function renderWait(){
   const groups = computeWaitGroups();
 
@@ -1123,7 +1180,7 @@ function renderWait(){
       <td>${g.width ?? '-'}</td>
       <td style="font-weight:700">${lotDisp}</td>
       <td><span class="badge-coils">${g.coilCount}</span></td>
-      <td style="font-size:11px">${heatStr}</td>
+      <td style="font-size:11px">${heatStr}${millsheetBtn(g)}</td>
       <td style="text-align:right;padding-right:10px">${(g.weight||0).toLocaleString()}</td>
       <td>${g.recvDate||'-'}</td>
       <td><span class="badge badge-wait">대기</span></td>
@@ -1372,6 +1429,7 @@ function renderDone(){
         ? `<div style="margin-top:3px"><span class="badge" style="background:#fff7ed;color:#c2410c;border:1px solid #fdba74;font-size:10px" title="합격 라벨 부착이 확인되지 않았습니다">⚠ 라벨 부착 미확인</span></div>` : ''}</td>
       <td>
         <button class="btn btn-pri btn-sm" onclick="viewCert(${idx})">📄 성적서</button>
+        ${millsheetDoneBtns(d)}
         ${d.finalJudge==='OK' ? `<button class="btn btn-sm" style="background:#16a34a;color:#fff" onclick="printCoilLabels(${idx})" title="코일별 IQC 합격 라벨(QR·강종 표시) 출력 — 현장에서 QR 스캔으로 장착">🏷 라벨</button>` : ''}
         ${d.finalJudge==='OK' && !labelDone(d) ? `<button class="btn btn-sm" style="background:#c2410c;color:#fff" onclick="confirmLabel(${idx})" title="코일마다 합격 라벨을 붙였는지 현장 확인 후 누르세요">✔ 부착확인</button>` : ''}
         <button class="btn btn-warn btn-sm" onclick="reEditInsp(${idx})">수정</button>
