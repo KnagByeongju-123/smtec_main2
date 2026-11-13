@@ -613,7 +613,7 @@ body.worker #tabstrip,body.worker #statbar,body.worker #crumb{display:none!impor
 <div id="top">
   <button id="ham" onclick="mnav(true)">☰</button>
   <button id="homeBtn" data-p="home" title="홈" onclick="go('home')">🏠</button><div id="menu"></div><div id="navQ"><input id="navQi" placeholder="메뉴 검색" autocomplete="off"><kbd>Ctrl K</kbd><div id="navQL"></div></div>
-  <div class="brand">TJ 세이프 <small>개인의견청취 · AI 위험성평가 · <span title="화면 버전 — 이 날짜가 아니면 Ctrl+Shift+R">v11.13-03:00</span></small></div>
+  <div class="brand">TJ 세이프 <small>개인의견청취 · AI 위험성평가 · <span title="화면 버전 — 이 날짜가 아니면 Ctrl+Shift+R">v11.13-03:20</span></small></div>
   <div id="topR"><a id="manBtn" href="safety_manual.html" target="_blank" rel="noopener" title="사용 설명서 (새 창)">📖 설명서</a><button id="favBtn" type="button" title="지금 화면을 즐겨찾기에 추가/해제" onclick="favToggle(CUR)">☆</button><span id="whoAv"></span><span id="who" class="hint"></span><span id="syncDot" title="동기화 상태" onclick="syncNow(true)"></span></div>
 </div>
 <div id="tabstrip" class="noprint"></div>
@@ -805,9 +805,13 @@ body.worker #tabstrip,body.worker #statbar,body.worker #crumb{display:none!impor
   <div class="ph"><div><h2>개선조치 관리</h2><div class="sub">위험성 감소대책의 이행 현황 · 기한 관리 · 완료 처리(조치 후 사진)</div></div></div>
   <div class="grid g4 noprint" id="actKpi"></div>
   <div class="panel"><h3>지연 · 임박 조치</h3><div id="actLate"></div></div>
-  <div class="panel"><h3>전체 조치 목록</h3>
-    <div class="scroll"><table class="tbl resp" id="actTbl"><thead><tr><th>No</th><th>유해·위험요인</th><th>감소대책</th><th>담당</th><th>기한</th><th class="c">D-day</th><th class="c">위험성(전→후)</th><th>상태</th></tr></thead><tbody></tbody></table></div>
+  <div class="panel"><h3>진행해야 할 조치 <span class="tag s4" id="actOpenN"></span><span class="hint">기한 초과 → 기한 임박 → 위험성 높은 순</span></h3>
+    <div class="scroll"><table class="tbl resp" id="actTbl"><thead><tr><th>No</th><th>유해·위험요인</th><th>감소대책</th><th>담당</th><th>기한</th><th class="c">D-day</th><th class="c">위험성</th><th>상태</th></tr></thead><tbody></tbody></table></div>
     <div class="cards" id="actCards"></div>
+  </div>
+  <div class="panel"><h3 style="cursor:pointer" onclick="ACTDONE=!ACTDONE;renderAction()">완료된 조치 <span class="tag s3" id="actDoneN"></span><span class="hint" id="actDoneT"></span></h3>
+    <div id="actDoneBox"><div class="scroll"><table class="tbl resp" id="actTbl2"><thead><tr><th>No</th><th>유해·위험요인</th><th>감소대책</th><th>담당</th><th>완료일</th><th class="c">위험성(전→후)</th><th>상태</th></tr></thead><tbody></tbody></table></div>
+    <div class="cards" id="actCards2"></div></div>
   </div>
 </section>
 
@@ -1445,7 +1449,7 @@ const RA_ROT={'ddfb020a0e25':90,'020e79ad893e':90,'3925fc81858b':90,'77cebda66ea
 function raRot(u){const m=String(u||'').match(/_([0-9a-f]{12})\.jpg/);return m&&RA_ROT[m[1]]||0;}
 function rotCss(v){return v?`transform:rotate(${v%1000}deg)${v>=1000?' scaleY(-1)':''};`:'';}
 /* 새 버전 알림 — 브라우저가 예전 화면을 쓰고 있으면 위에 띠를 띄움 */
-const TJ_VERSION='11.13-03:00';
+const TJ_VERSION='11.13-03:20';
 async function verCheck(){try{if(!/^https?:/.test(location.protocol))return;const t=await (await fetch(location.pathname+'?vc='+Date.now(),{cache:'no-store'})).text();const m=t.match(/const TJ_VERSION='([^']+)'/);if(!m||m[1]===TJ_VERSION||$('verBar'))return;
   const b=document.createElement('div');b.id='verBar';b.style.cssText='position:fixed;left:0;right:0;top:0;z-index:9998;background:#b91c1c;color:#fff;padding:10px 14px;text-align:center;font-weight:700;font-size:14px;cursor:pointer';b.textContent='⚠ 새 버전('+m[1]+')이 있습니다. 지금 화면은 예전 버전('+TJ_VERSION+')입니다 — 여기를 눌러 새로고침하세요 (가져오기·올리기 전에 꼭!)';
   b.onclick=()=>{const u=new URL(location.href);u.searchParams.set('v',Date.now());location.replace(u.toString());};document.body.appendChild(b);}catch(e){}}
@@ -2212,6 +2216,7 @@ function renderRa(){raCurFill();raDetFill();{const fb=$('raFixBtn');if(fb){const
 }
 
 /* ---------- 개선조치 ---------- */
+var ACTDONE=false;
 function renderAction(){
   const td=fmtD(now());const open=S.ras.filter(r=>r.status!=='완료');
   const late=open.filter(r=>r.due&&r.due<td),soon=open.filter(r=>r.due&&r.due>=td&&(new Date(r.due)-new Date(td))/864e5<=7);
@@ -2219,8 +2224,13 @@ function renderAction(){
   $('actKpi').innerHTML=`<div class="kpi"><div class="l">진행 중 조치</div><div class="v">${open.length}</div></div><div class="kpi red"><div class="l">기한 초과</div><div class="v">${late.length}</div></div><div class="kpi amber"><div class="l">7일 내 임박</div><div class="v">${soon.length}</div></div><div class="kpi green"><div class="l">완료 · 평균 소요일</div><div class="v">${done.length}<small>건 / ${avgDays}일</small></div></div>`;
   const dd=r=>{if(!r.due)return'-';const d=Math.round((new Date(r.due)-new Date(td))/864e5);return d<0?`<span class="tag s4">D+${-d}</span>`:d===0?'<span class="tag urg">D-day</span>':d<=7?`<span class="tag s1">D-${d}</span>`:`D-${d}`;};
   $('actLate').innerHTML=[...late,...soon].length?[...late,...soon].map(r=>`<div class="card" style="margin-bottom:8px" onclick="openRa('${r.id}')"><div class="tw">${dd(r)}${gTag(r.risk)}<span class="hint" style="margin-left:auto">${r.no}</span></div><div class="t">${esc(r.hz)}</div><div class="m">${esc(r.place)} · 담당 ${esc(r.owner||'-')} · 기한 ${r.due}</div></div>`).join(''):'<div class="hint">지연·임박 조치가 없습니다 👍</div>';
-  const list=[...S.ras].sort((a,b)=>(a.status==='완료')-(b.status==='완료')||(a.due||'9').localeCompare(b.due||'9'));
-  $('actTbl').querySelector('tbody').innerHTML=list.map(r=>`<tr class="rw" onclick="openRa('${r.id}')"><td class="readout">${r.no}</td><td>${esc(r.hz)}</td><td style="white-space:pre-line;font-size:12.5px;min-width:220px">${esc(r.ms)}</td><td>${esc(r.owner||'-')}</td><td>${r.due||'-'}</td><td class="c">${r.status==='완료'?'<span class="tag s3">완료</span>':dd(r)}</td><td class="c">${r.risk} → ${r.status==='완료'?r.after_risk:'-'}</td><td><span class="tag ${r.status==='완료'?'s3':r.status==='진행'?'s1':'s0'}">${r.status}</span></td></tr>`).join('')||'<tr><td colspan="8" class="c hint" style="padding:20px">조치 항목이 없습니다</td></tr>';
+  /* 진행할 조치: 기한 초과 → 기한 가까운 순(기한 없으면 뒤) → 위험성 높은 순 · 완료: 최근 완료 순 */
+  const list=open.slice().sort((a,b)=>(a.due&&a.due<td?0:1)-(b.due&&b.due<td?0:1)||(a.due||'9999').localeCompare(b.due||'9999')||(b.risk||0)-(a.risk||0));
+  const dl=done.slice().sort((a,b)=>(b.done_at||0)-(a.done_at||0));
+  $('actOpenN').textContent=list.length+'건';$('actDoneN').textContent=dl.length+'건';$('actDoneT').textContent=ACTDONE?'▲ 눌러서 접기':'▼ 눌러서 펼치기';$('actDoneBox').style.display=ACTDONE?'':'none';
+  $('actTbl2').querySelector('tbody').innerHTML=ACTDONE?dl.map(r=>`<tr class="rw" onclick="openRa('${r.id}')"><td class="readout">${r.no}</td><td>${esc(r.hz)}</td><td style="white-space:pre-line;font-size:12.5px;min-width:220px">${esc(r.ms)}</td><td>${esc(r.owner||'-')}</td><td>${r.done_at?fmtD(r.done_at):'-'}</td><td class="c">${r.risk} → ${r.after_risk||'-'}</td><td><span class="tag s3">완료</span></td></tr>`).join(''):'';
+  $('actCards2').innerHTML=ACTDONE?dl.map(r=>`<div class="card" onclick="openRa('${r.id}')"><div class="tw"><span class="tag s3">완료</span><span class="hint" style="margin-left:auto">${r.no}</span></div><div class="t">${esc(r.hz)}</div><div class="m">${esc(r.owner||'-')} · 완료 ${r.done_at?fmtD(r.done_at):'-'} · 위험성 ${r.risk}→${r.after_risk||'-'}</div></div>`).join(''):'';
+  $('actTbl').querySelector('tbody').innerHTML=list.map(r=>`<tr class="rw" onclick="openRa('${r.id}')"><td class="readout">${r.no}</td><td>${esc(r.hz)}</td><td style="white-space:pre-line;font-size:12.5px;min-width:220px">${esc(r.ms)}</td><td>${esc(r.owner||'-')}</td><td>${r.due||'-'}</td><td class="c">${r.status==='완료'?'<span class="tag s3">완료</span>':dd(r)}</td><td class="c">${gTag(r.risk)}</td><td><span class="tag ${r.status==='진행'?'s1':'s0'}">${r.status}</span></td></tr>`).join('')||'<tr><td colspan="8" class="c hint" style="padding:20px">진행해야 할 조치가 없습니다 👍</td></tr>';
   $('actCards').innerHTML=list.map(r=>`<div class="card" onclick="openRa('${r.id}')"><div class="tw"><span class="tag ${r.status==='완료'?'s3':r.status==='진행'?'s1':'s0'}">${r.status}</span>${r.status!=='완료'?dd(r):''}<span class="hint" style="margin-left:auto">${r.no}</span></div><div class="t">${esc(r.hz)}</div><div class="m">${esc(r.owner||'-')} · ${r.due||'-'} · 위험성 ${r.risk}→${r.status==='완료'?r.after_risk:'-'}</div></div>`).join('');
 }
 
