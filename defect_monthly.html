@@ -3170,6 +3170,37 @@ function renderVendor(info, s, idx, total){
 // ============================================================
 // 월별 손실비용 종합표 (Image 2 양식 그대로)
 // ============================================================
+// 선별비용(개인별 불량발생 비용) 월별 합계 — Q-COST 산출용
+function personalLossByMonth(year){
+  const arr = Array(12).fill(0);
+  PERSONAL_LOSS.forEach(p => {
+    const m = /^(\d{4})\D(\d{1,2})/.exec(String(p.date || '').trim());
+    if(!m || Number(m[1]) !== year) return;
+    const mo = Number(m[2]);
+    if(mo >= 1 && mo <= 12) arr[mo-1] += (p.amount || 0);
+  });
+  return arr;
+}
+
+// 선별비용을 고친 직후 종합표의 선별비용·Q-COST 행만 다시 계산
+function refreshQcostRows(){
+  document.querySelectorAll('table.cost-table').forEach(tbl => {
+    const year = Number(tbl.getAttribute('data-year'));
+    const sort = personalLossByMonth(year);
+    const put = (cell, v) => { if(cell){ cell.textContent = v === 0 ? '0' : fmt(v); cell.classList.toggle('zero', v === 0); } };
+    let lossSum = 0, sortSum = 0;
+    for(let m = 1; m <= 12; m++){
+      const lossCell = tbl.querySelector(`td[data-qc="loss"][data-qc-m="${m}"]`);
+      const loss = lossCell ? Number(lossCell.getAttribute('data-v')) || 0 : 0;
+      put(tbl.querySelector(`td[data-qc="sort"][data-qc-m="${m}"]`), sort[m-1]);
+      put(tbl.querySelector(`td[data-qc="total"][data-qc-m="${m}"]`), loss + sort[m-1]);
+      lossSum += loss; sortSum += sort[m-1];
+    }
+    put(tbl.querySelector('td[data-qc="sort-sum"]'), sortSum);
+    put(tbl.querySelector('td[data-qc="total-sum"]'), lossSum + sortSum);
+  });
+}
+
 function renderMonthlyCostTable(info, sorted){
   // 보고기간의 연도 (가장 큰 해)
   const year = info.dateMax ? info.dateMax.getFullYear() : new Date().getFullYear();
@@ -3254,12 +3285,38 @@ function renderMonthlyCostTable(info, sorted){
   });
   rows += '<tbody class="vgrp">';
   
-  // 연도 합계 행
+  // Q-COST 구성: 불량손실 계 + 선별비용(개인별 불량발생 비용에 등록된 선별 건)
+  const sortByMonth = personalLossByMonth(year);
+  let lossSumCells = '', sortCells = '';
+  let lossSum = 0, sortSum = 0;
+  monthCols.forEach((m, i) => {
+    const lv = yearTotalByMonth[i], sv = sortByMonth[i];
+    lossSumCells += `<td class="num ${lv === 0 ? 'zero' : ''}" data-qc="loss" data-qc-m="${m}" data-v="${lv}">${lv === 0 ? '0' : fmt(lv)}</td>`;
+    sortCells += `<td class="num ${sv === 0 ? 'zero' : ''}" data-qc="sort" data-qc-m="${m}">${sv === 0 ? '0' : fmt(sv)}</td>`;
+    lossSum += lv; sortSum += sv;
+  });
+  rows += `
+    <tr>
+      <td class="vendor-cell" rowspan="2">Q-COST<br>구성</td>
+      <td class="item-cell">불량손실<br>계</td>
+      ${lossSumCells}
+      <td class="num">${fmt(lossSum)}</td>
+      <td class="num zero">—</td>
+    </tr>
+    <tr class="lossr">
+      <td class="item-cell" style="color:var(--accent); font-weight:700;">선별비용</td>
+      ${sortCells}
+      <td class="num" data-qc="sort-sum">${fmt(sortSum)}</td>
+      <td class="num zero">—</td>
+    </tr>
+  `;
+  
+  // 연도 합계 행 (Q-COST = 불량손실 + 선별비용)
   let yearTotalCells = '';
   let grandTotal = 0;
   monthCols.forEach((m, i) => {
-    const v = yearTotalByMonth[i];
-    yearTotalCells += `<td class="num ${v === 0 ? 'zero' : ''}">${v === 0 ? '0' : fmt(v)}</td>`;
+    const v = yearTotalByMonth[i] + sortByMonth[i];
+    yearTotalCells += `<td class="num ${v === 0 ? 'zero' : ''}" data-qc="total" data-qc-m="${m}">${v === 0 ? '0' : fmt(v)}</td>`;
     grandTotal += v;
   });
   
@@ -3272,9 +3329,9 @@ function renderMonthlyCostTable(info, sorted){
   rows += `
     <tr class="totalr year-${year}">
       <td class="vendor-cell">${year}년</td>
-      <td class="item-cell" style="font-weight:700;">${year}년</td>
+      <td class="item-cell" style="font-weight:700;">Q-COST</td>
       ${yearTotalCells}
-      <td class="num">${fmt(grandTotal)}</td>
+      <td class="num" data-qc="total-sum">${fmt(grandTotal)}</td>
       <td class="num ${prevYearGrandLoss === 0 ? 'zero' : ''}">${prevYearGrandLoss === 0 ? '—' : fmt(prevYearGrandLoss)}</td>
     </tr>
   `;
@@ -3318,7 +3375,7 @@ function renderMonthlyCostTable(info, sorted){
   <div class="sec-head">
     <div class="sec-no">${secNum('cost')}.</div>
     <div class="sec-title">월별 손실비용 종합
-      <small>거래처별 검사수·불량수·손실비용 / ${prevYear}년 비교</small>
+      <small>거래처별 검사수·불량수·손실비용 / Q-COST = 불량손실 + 선별비용 / ${prevYear}년 비교(불량손실)</small>
     </div>
     <div class="sec-tag warn">COST</div>
   </div>
@@ -4403,6 +4460,9 @@ function commitPersonalLossEdit(cell){
   // localStorage 저장
   savePersonalLoss();
   
+  // 월별 손실비용 종합표의 선별비용·Q-COST 행 갱신
+  refreshQcostRows();
+  
   // 셀 표시 정리 (숫자 콤마 적용)
   if(field === 'persons' || field === 'hours' || field === 'hourlyRate'){
     cell.textContent = fmt(item[field]);
@@ -5240,7 +5300,11 @@ function downloadExcelReport(){
     r3.push(t3);
     costAoa.push(r3);
   });
-  costAoa.push(['', `${maxY}년 합계`, ...yearMonthlyTotal, yearMonthlyTotal.reduce((a,b)=>a+b, 0)]);
+  const sortMonthly = personalLossByMonth(maxY);
+  const qcostMonthly = yearMonthlyTotal.map((v, i) => v + sortMonthly[i]);
+  costAoa.push(['Q-COST 구성', '불량손실 계(원)', ...yearMonthlyTotal, yearMonthlyTotal.reduce((a,b)=>a+b, 0)]);
+  costAoa.push(['', '선별비용(원)', ...sortMonthly, sortMonthly.reduce((a,b)=>a+b, 0)]);
+  costAoa.push(['', `${maxY}년 Q-COST(원)`, ...qcostMonthly, qcostMonthly.reduce((a,b)=>a+b, 0)]);
   
   const wsCost = XLSX.utils.aoa_to_sheet(costAoa);
   wsCost['!cols'] = [{wch:14},{wch:16}, ...Array(12).fill({wch:13}), {wch:14}];
