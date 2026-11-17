@@ -4,7 +4,7 @@
 <script src="audit.js?v=9"></script>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>소재입고 등록 (Rev6.1)</title>
+  <title>소재입고 등록 (Rev6.2)</title>
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
@@ -104,7 +104,7 @@
 </head>
 <body>
 <div class="hdr">
-  <h1>📤 소재입고 등록 (Rev6.1)</h1>
+  <h1>📤 소재입고 등록 (Rev6.2)</h1>
   <p>소재업체 템플릿 업로드 → DB 저장 · <span style="color:#ffeb3b;font-weight:700">성적서, 밀시트 첨부 가능</span></p>
 </div>
 <div class="tabs">
@@ -1959,16 +1959,27 @@ function compressMillsheet(ms){
   });
 }
 
+/* [Rev6.2] 밀시트 파일 형식 정리 — PC 에 깔린 PDF 뷰어(이파피루스 등)가 PDF 를
+   'application/vnd.download.epapyrus.pdf' 같은 이름으로 넘겨 서버 보관이 거부(400)되던 문제 */
+function normMillMime(name,type){
+  const n=String(name||'').toLowerCase(),t=String(type||'').toLowerCase();
+  if(/\.pdf$/.test(n)||t.indexOf('pdf')>=0)return 'application/pdf';
+  if(/\.png$/.test(n)||t==='image/png')return 'image/png';
+  if(/\.webp$/.test(n)||t==='image/webp')return 'image/webp';
+  if(/\.(heic|heif)$/.test(n)||/heic|heif/.test(t))return 'image/heic';
+  return 'image/jpeg';
+}
+
 /* [Rev5.7] 밀시트 원본을 Supabase Storage(millsheet 버킷)에 보관 → inspection_certs.millsheet_path 기록
    메일이 실패해도 원본이 남고, 소재 수입검사 화면에서 바로 열람 */
 async function uploadMillsheetToStorage(certId,ms){
   const SB_URL=getSbUrl(),SB_KEY=getSbKey();
   const dataUrl=(typeof ms==='string')?ms:ms.dataUrl;
-  const mime=(typeof ms==='string')?(dataUrl.match(/data:([^;]+)/)?.[1]||'image/jpeg'):(ms.mimeType||'application/octet-stream');
+  const mime=normMillMime((typeof ms==='object'&&ms.originalName)||'',(typeof ms==='string')?(dataUrl.match(/data:([^;]+)/)?.[1]||''):(ms.mimeType||''));
   const name=(typeof ms==='string')?'millsheet':(ms.originalName||'millsheet');
   const ext=mime==='application/pdf'?'pdf':(mime==='image/png'?'png':(mime==='image/webp'?'webp':'jpg'));
   const path=certId+'/'+Date.now()+'.'+ext;
-  const blob=await (await fetch(dataUrl)).blob();
+  const blob=new Blob([await (await fetch(dataUrl)).arrayBuffer()],{type:mime});
   const up=await fetch(SB_URL+'/storage/v1/object/millsheet/'+path,{
     method:'POST',headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Content-Type':mime},body:blob});
   if(!up.ok)throw new Error('Storage HTTP '+up.status+' '+(await up.text().catch(()=>'')).slice(0,150));
@@ -1994,7 +2005,7 @@ function certMillsheetUpload(input){
     let ms={
       dataUrl:e.target.result,
       originalName:f.name,
-      mimeType:f.type||(/\.pdf$/i.test(f.name)?'application/pdf':'image/jpeg'),
+      mimeType:normMillMime(f.name,f.type),
       fileSize:f.size
     };
     /* [Rev5.7] 사진 밀시트는 긴 변 2000px JPEG 로 줄여서 첨부 (메일 25MB 한도 초과로 통째로 안 나가던 문제) */
