@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<script src="audit.js?v=9"></script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🎯 개선과제 대장 v1.0</title>
+<!-- 개선과제 대장 v1.0 — 데이터 → 과제 → 원인(4M·5Why) → 조치 → 효과확인(조치 전/후 4주 자동 비교) → 표준화 → 결재·종결
+     IATF 16949 10.2 부적합 및 시정조치 · 10.3 지속적 개선 · 9.1.1 모니터링
+     DB: improvement_tasks · 자동 측정: rpc improvement_metric / improvement_metric_options · 사진: Storage improvement 버킷 -->
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#0f172a;--card:#1e293b;--card2:#263449;--line:#334155;--line2:#475569;--tx:#e2e8f0;--tx2:#cbd5e1;--sub:#94a3b8;--dim:#64748b;
+  --blue:#60a5fa;--green:#4ade80;--amber:#fbbf24;--red:#f87171;--violet:#c4b5fd;--cyan:#67e8f9}
+body{font-family:-apple-system,BlinkMacSystemFont,"Malgun Gothic",sans-serif;background:var(--bg);color:var(--tx);min-height:100vh;padding-bottom:40px;font-size:14px}
+button,input,select,textarea{font-family:inherit;font-size:14px}
+.top{position:sticky;top:0;z-index:5;background:linear-gradient(135deg,#1e3a8a,#0f172a);border-bottom:1px solid var(--line);padding:12px 16px}
+.top h1{font-size:18px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.top h1 small{font-size:11px;color:var(--sub);font-weight:400}
+.top .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center}
+.btn{border:1px solid var(--line2);background:var(--card2);color:var(--tx);border-radius:8px;padding:7px 12px;cursor:pointer;font-weight:600}
+.btn:hover{border-color:var(--blue)}
+.btn.pri{background:#2563eb;border-color:#2563eb;color:#fff}
+.btn.ok{background:#15803d;border-color:#15803d;color:#fff}
+.btn.warn{background:#b45309;border-color:#b45309;color:#fff}
+.btn.danger{background:transparent;border-color:#7f1d1d;color:var(--red)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+select,input[type=text],input[type=date],input[type=number],textarea{background:#0b1222;border:1px solid var(--line2);color:var(--tx);border-radius:6px;padding:7px 9px;width:100%}
+textarea{min-height:62px;resize:vertical;line-height:1.5}
+.wrap{max-width:1200px;margin:0 auto;padding:14px 16px}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.tab{padding:6px 12px;border-radius:999px;border:1px solid var(--line2);background:var(--card);cursor:pointer;font-size:13px;color:var(--tx2)}
+.tab.on{background:#1d4ed8;border-color:#1d4ed8;color:#fff}
+.tab b{margin-left:4px;font-variant-numeric:tabular-nums}
+.filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.filters select{width:auto;min-width:120px}
+.filters label{display:flex;align-items:center;gap:6px;color:var(--sub);font-size:13px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;cursor:pointer;display:flex;flex-direction:column;gap:8px}
+.card:hover{border-color:var(--blue)}
+.card .no{font-size:11px;color:var(--dim);display:flex;justify-content:space-between;gap:6px}
+.card .t{font-size:15px;font-weight:700;line-height:1.35}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--line2);color:var(--tx2)}
+.st{font-weight:700}
+.st-등록{color:#93c5fd;border-color:#1e40af}.st-원인분석{color:#c4b5fd;border-color:#5b21b6}.st-조치중{color:#fcd34d;border-color:#92400e}
+.st-효과확인중{color:#67e8f9;border-color:#155e75}.st-표준화{color:#86efac;border-color:#166534}.st-종결{color:#a3e635;border-color:#3f6212}.st-취소{color:var(--dim)}
+.due-over{color:var(--red);font-weight:700}
+.eff{display:flex;align-items:baseline;gap:8px;font-variant-numeric:tabular-nums;font-size:13px;color:var(--tx2)}
+.eff b{font-size:16px}
+.good{color:var(--green)}.bad{color:var(--red)}
+.empty{padding:40px;text-align:center;color:var(--sub);background:var(--card);border:1px dashed var(--line2);border-radius:12px;line-height:1.7}
+/* 상세 */
+.modal{position:fixed;inset:0;background:rgba(2,6,23,.75);z-index:20;display:flex;justify-content:center;align-items:flex-start;overflow-y:auto;padding:20px 10px}
+.modal[hidden]{display:none}
+.sheet{background:var(--bg);border:1px solid var(--line2);border-radius:14px;width:100%;max-width:980px;margin-bottom:40px}
+.sheet .hd{position:sticky;top:0;background:#111c33;border-bottom:1px solid var(--line);padding:12px 16px;border-radius:14px 14px 0 0;display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;z-index:2}
+.sheet .hd h2{font-size:16px}
+.steps{display:flex;gap:4px;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid var(--line)}
+.step{font-size:12px;padding:4px 10px;border-radius:999px;background:var(--card);color:var(--dim);border:1px solid var(--line)}
+.step.done{color:var(--green);border-color:#166534}
+.step.cur{background:#1d4ed8;color:#fff;border-color:#1d4ed8}
+.body{padding:14px 16px;display:flex;flex-direction:column;gap:14px}
+.sec{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px}
+.sec h3{font-size:14px;display:flex;justify-content:space-between;gap:8px;align-items:center}
+.sec h3 small{font-weight:400;color:var(--sub);font-size:11px}
+.sec.lock{opacity:.55}
+.f2{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
+.fld{display:flex;flex-direction:column;gap:4px;min-width:0}
+.fld>span{font-size:12px;color:var(--sub)}
+.m4{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px}
+.m4 .fld>span{color:var(--amber);font-weight:700}
+.why{display:flex;gap:6px;align-items:center}
+.why b{color:var(--violet);width:44px;flex-shrink:0;font-size:12px}
+.photos{display:flex;gap:8px;flex-wrap:wrap}
+.photos .ph{width:110px;height:84px;border-radius:8px;border:1px solid var(--line2);background:#0b1222 center/cover no-repeat;position:relative;cursor:pointer}
+.photos .ph button{position:absolute;top:2px;right:2px;border:none;background:rgba(0,0,0,.6);color:#fff;border-radius:4px;font-size:11px;padding:1px 5px;cursor:pointer}
+.bars{display:grid;grid-template-columns:90px 1fr 110px;gap:8px 10px;align-items:center;font-variant-numeric:tabular-nums}
+.bar{height:22px;border-radius:4px;background:var(--line2)}
+.bar.a{background:#64748b}.bar.b{background:#2563eb}
+.verdict{font-size:15px;font-weight:700}
+.docs{display:flex;gap:12px;flex-wrap:wrap}
+.docs label{display:flex;gap:6px;align-items:center;cursor:pointer}
+.sign{display:grid;grid-template-columns:repeat(4,1fr);border:1px solid var(--line2);border-radius:8px;overflow:hidden}
+.sign div{border-left:1px solid var(--line2);text-align:center;padding:6px 4px;display:flex;flex-direction:column;gap:4px;align-items:center;min-height:92px}
+.sign div:first-child{border-left:none}
+.sign .r{font-size:12px;color:var(--sub);border-bottom:1px solid var(--line);width:100%;padding-bottom:4px}
+.sign .nm{font-weight:700}
+.sign .dt{font-size:11px;color:var(--green)}
+.hist{font-size:12px;color:var(--sub);line-height:1.7;max-height:140px;overflow:auto}
+.ft{position:sticky;bottom:0;background:#111c33;border-top:1px solid var(--line);padding:10px 16px;display:flex;gap:8px;flex-wrap:wrap;justify-content:space-between;border-radius:0 0 14px 14px}
+.ft .l,.ft .r{display:flex;gap:8px;flex-wrap:wrap}
+.hint{font-size:12px;color:var(--amber)}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#0f766e;color:#fff;padding:10px 18px;border-radius:8px;z-index:50;font-weight:600}
+.toast[hidden]{display:none}
+.viewer{position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:40;display:flex;align-items:center;justify-content:center}
+.viewer[hidden]{display:none}
+.viewer img{max-width:95vw;max-height:90vh}
+@media (max-width:600px){.bars{grid-template-columns:70px 1fr 90px}.sign div{min-height:80px}}
+</style>
+</head>
+<body>
+<div class="top">
+  <h1>🎯 개선과제 대장 <small>v1.0 · 데이터 → 과제 → 원인 → 조치 → 효과확인 → 표준화 · IATF 10.2·10.3</small></h1>
+  <div class="row">
+    <button class="btn pri" id="btnNew">＋ 새 과제</button>
+    <button class="btn" id="btnReload">🔄 새로고침</button>
+    <span id="who" style="font-size:12px;color:var(--sub)"></span>
+  </div>
+</div>
+<div class="wrap">
+  <div class="tabs" id="tabs"></div>
+  <div class="filters">
+    <select id="fDept"><option value="">전체 부서</option><option>품질</option><option>생산</option><option>보전</option></select>
+    <select id="fSrc"><option value="">전체 출처</option></select>
+    <label><input type="checkbox" id="fOver"> 기한 초과만</label>
+  </div>
+  <div class="grid" id="list"></div>
+</div>
+
+<!-- 상세 -->
+<div class="modal" id="modal" hidden>
+  <div class="sheet">
+    <div class="hd">
+      <h2 id="mTitle">새 과제</h2>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn" id="btnReport">📄 보고서</button>
+        <button class="btn" id="btnClose">✕ 닫기</button>
+      </div>
+    </div>
+    <div class="steps" id="steps"></div>
+    <div class="body">
+      <!-- ① 기본 -->
+      <div class="sec" id="secBase">
+        <h3>① 과제 등록 <small>효과 지표를 고르면 등록일 기준 조치 전 4주 값이 자동으로 고정됩니다</small></h3>
+        <div class="f2">
+          <label class="fld"><span>출처</span><select id="iSource"></select></label>
+          <label class="fld"><span>담당 부서</span><select id="iDept"><option>품질</option><option>생산</option><option>보전</option></select></label>
+          <label class="fld"><span>담당자</span><input type="text" id="iOwner" placeholder="이름"></label>
+          <label class="fld"><span>기한</span><input type="date" id="iDue"></label>
+        </div>
+        <label class="fld"><span>과제명</span><input type="text" id="iTitle" placeholder="예: Raceway 1179 Outer 휨 불량 감소"></label>
+        <label class="fld"><span>문제 설명 (무엇이 · 얼마나 · 언제부터)</span><textarea id="iProblem"></textarea></label>
+        <div class="f2">
+          <label class="fld"><span>효과 지표</span><select id="iMType">
+            <option value="">선택</option><option value="defect_model">품번 불량 수량 (불량관리)</option><option value="defect_type">불량유형 수량 (불량관리)</option>
+            <option value="stop_reason">정지 사유 시간 (MES)</option><option value="mat_vendor">업체 소재불량 (생산현황)</option><option value="manual">직접 입력 (KPI 등)</option></select></label>
+          <label class="fld"><span>대상</span><select id="iMKey"></select><input type="text" id="iMKeyText" placeholder="지표 이름" hidden></label>
+          <label class="fld" id="fldMach"><span>호기 (정지 사유만, 비우면 전체)</span><input type="text" id="iMMach" placeholder="예: 31"></label>
+          <label class="fld"><span>목표 (감소 %)</span><input type="number" id="iTarget" min="0" max="100" step="5" placeholder="예: 50"></label>
+        </div>
+        <div class="eff" id="baseInfo"></div>
+      </div>
+      <!-- ② 현상 -->
+      <div class="sec" id="secPhen">
+        <h3>② 현상 파악 <small>언제 · 어디서 · 어떤 불량이 · 얼마나</small></h3>
+        <textarea id="iPhen"></textarea>
+        <div class="photos" id="photos"></div>
+        <div><label class="btn" style="display:inline-block">📷 사진 추가<input type="file" id="iPhoto" accept="image/*" multiple hidden></label></div>
+      </div>
+      <!-- ③ 원인 -->
+      <div class="sec" id="secCause">
+        <h3>③ 원인 분석 <small>4M · 왜 5번 · 발생원인 / 유출원인</small></h3>
+        <div class="m4">
+          <label class="fld"><span>사람 (Man)</span><textarea id="c4_man" placeholder="작업방법 미준수, 숙련도 등"></textarea></label>
+          <label class="fld"><span>설비 (Machine)</span><textarea id="c4_mac" placeholder="금형, 설비 상태 등"></textarea></label>
+          <label class="fld"><span>자재 (Material)</span><textarea id="c4_mat" placeholder="소재 두께·경도·표면 등"></textarea></label>
+          <label class="fld"><span>방법 (Method)</span><textarea id="c4_met" placeholder="작업표준, 검사방법 등"></textarea></label>
+        </div>
+        <div class="fld"><span>왜 5번 (5 Why)</span>
+          <div class="why"><b>왜 1</b><input type="text" id="w1"></div><div class="why"><b>왜 2</b><input type="text" id="w2"></div>
+          <div class="why"><b>왜 3</b><input type="text" id="w3"></div><div class="why"><b>왜 4</b><input type="text" id="w4"></div>
+          <div class="why"><b>왜 5</b><input type="text" id="w5"></div>
+        </div>
+        <div class="f2">
+          <label class="fld"><span>발생원인 (왜 만들어졌나)</span><textarea id="cOccur"></textarea></label>
+          <label class="fld"><span>유출원인 (왜 못 걸렀나)</span><textarea id="cOut"></textarea></label>
+        </div>
+      </div>
+      <!-- ④ 조치 -->
+      <div class="sec" id="secAct">
+        <h3>④ 조치 <small>영구대책 실시일부터 4주 뒤 효과를 자동 측정합니다</small></h3>
+        <label class="fld"><span>임시조치 (즉시 · 선별·격리 등)</span><textarea id="aTemp"></textarea></label>
+        <label class="fld"><span>영구대책</span><textarea id="aPerm"></textarea></label>
+        <div class="f2">
+          <label class="fld"><span>영구대책 실시일</span><input type="date" id="aDate"></label>
+        </div>
+        <label class="fld"><span>수평전개 (유사 품번·호기 적용)</span><textarea id="aHoriz" placeholder="적용한 품번·호기, 해당 없음이면 사유"></textarea></label>
+      </div>
+      <!-- ⑤ 효과 -->
+      <div class="sec" id="secEff">
+        <h3>⑤ 효과 확인 <small>조치 전 4주 vs 영구대책 실시일부터 4주 · 같은 기준으로 자동 계산</small></h3>
+        <div class="bars" id="effBars"></div>
+        <div class="verdict" id="effVerdict"></div>
+        <div><button class="btn" id="btnMeasure">📏 지금 측정</button> <span class="hint" id="effHint"></span></div>
+        <div class="f2" id="manualEff" hidden>
+          <label class="fld"><span>조치 전 값 (직접 입력)</span><input type="number" id="mBefore"></label>
+          <label class="fld"><span>조치 후 값 (직접 입력)</span><input type="number" id="mAfter"></label>
+        </div>
+      </div>
+      <!-- ⑥ 표준화 -->
+      <div class="sec" id="secStd">
+        <h3>⑥ 표준화 <small>반영한 문서를 체크하세요 (1개 이상)</small></h3>
+        <div class="docs" id="docs"></div>
+        <label class="fld"><span>반영 내용 (문서번호 · 개정)</span><textarea id="sMemo"></textarea></label>
+      </div>
+      <!-- ⑦ 결재 -->
+      <div class="sec" id="secSign">
+        <h3>⑦ 결재 <small>순서대로 · 본인 로그인 시 서명 가능</small></h3>
+        <div class="sign" id="sign"></div>
+      </div>
+      <div class="sec"><h3>진행 이력</h3><div class="hist" id="hist"></div></div>
+    </div>
+    <div class="ft">
+      <div class="l"><button class="btn danger" id="btnCancelTask">과제 취소</button><button class="btn" id="btnPrev">◀ 이전 단계</button></div>
+      <div class="r"><span class="hint" id="nextHint"></span><button class="btn" id="btnSave">💾 저장</button><button class="btn ok" id="btnNext">다음 단계 ▶</button></div>
+    </div>
+  </div>
+</div>
+<div class="viewer" id="viewer" hidden><img id="viewerImg" alt="사진"></div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+const SB_URL = 'https://omngtyewdaqpphnzeate.supabase.co';
+const SB_KEY = 'sb_publishable_9j2YkkL-7ul1TrhH-NjVdQ_vWDG2-1D';
+const H = { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY };
+const STAGES = ['등록', '원인분석', '조치중', '효과확인중', '표준화', '종결'];
+const SOURCES = ['현황판', 'KPI 미달', '고객불만', '소재불량(SCAR)', '공정불량', '설비 정지', '내부심사', '기타'];
+const DOCS = ['작업표준서', '점검표(일상·정기)', 'PFMEA', '관리계획서', '검사기준서', '교육 실시'];
+const APPROVERS = [ {k:'author', role:'작성', name:'김상기'}, {k:'review1', role:'검토', name:'강병주'}, {k:'review2', role:'검토', name:'강창구'}, {k:'approve', role:'승인', name:'김정만'} ];
+const MLABEL = { defect_model:'품번 불량 수량', defect_type:'불량유형 수량', stop_reason:'정지 사유 시간', mat_vendor:'업체 소재불량', manual:'직접 입력' };
+let TASKS = [], OPTS = null, CUR = null, TAB = '진행중';
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = (v) => v == null || isNaN(+v) ? '—' : (+v).toLocaleString('ko-KR');
+const kst = (d = new Date()) => new Date(d.getTime() + 9 * 3600e3).toISOString().slice(0, 10);
+const addDays = (ymd, n) => { const d = new Date(ymd + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+const me = () => { try { const u = window.tjAudit && window.tjAudit.user(); return (u && u.name) || ''; } catch (e) { return ''; } };
+function toast(m) { const t = $('toast'); t.textContent = m; t.hidden = false; clearTimeout(toast._t); toast._t = setTimeout(() => t.hidden = true, 2200); }
+
+async function api(path, opt = {}) {
+  const r = await fetch(SB_URL + '/rest/v1/' + path, { ...opt, headers: { ...H, 'Content-Type': 'application/json', Prefer: 'return=representation', ...(opt.headers || {}) } });
+  const t = await r.text();
+  if (!r.ok) throw new Error(r.status + ' ' + t.slice(0, 200));
+  return t ? JSON.parse(t) : null;
+}
+const rpc = (fn, args) => api('rpc/' + fn, { method: 'POST', body: JSON.stringify(args || {}) });
+
+/* ---------- 목록 ---------- */
+async function load() {
+  try { TASKS = await api('improvement_tasks?select=*&order=created_at.desc&limit=500'); }
+  catch (e) { $('list').innerHTML = '<div class="empty">불러오지 못했습니다: ' + esc(e.message) + '</div>'; return; }
+  renderList();
+}
+const isOver = (t) => t.due_date && t.due_date < kst() && !['종결', '취소'].includes(t.status);
+function effOf(t) {
+  const b = t.baseline && t.baseline.value, a = t.after && t.after.value;
+  if (b == null || a == null || !(+b)) return null;
+  return Math.round((b - a) / b * 1000) / 10;
+}
+function renderList() {
+  const counts = { '진행중': TASKS.filter(t => !['종결', '취소'].includes(t.status)).length };
+  STAGES.forEach(s => counts[s] = TASKS.filter(t => t.status === s).length);
+  counts['취소'] = TASKS.filter(t => t.status === '취소').length;
+  $('tabs').innerHTML = ['진행중', ...STAGES, '취소'].map(s => `<span class="tab ${s === TAB ? 'on' : ''}" data-tab="${s}">${s}<b>${counts[s] || 0}</b></span>`).join('');
+  const fd = $('fDept').value, fs = $('fSrc').value, fo = $('fOver').checked;
+  let v = TASKS.filter(t => TAB === '진행중' ? !['종결', '취소'].includes(t.status) : t.status === TAB);
+  if (fd) v = v.filter(t => t.dept === fd);
+  if (fs) v = v.filter(t => t.source === fs);
+  if (fo) v = v.filter(isOver);
+  if (!v.length) { $('list').innerHTML = `<div class="empty">${TASKS.length ? '조건에 맞는 과제가 없습니다.' : '등록된 과제가 없습니다.<br>[＋ 새 과제]로 첫 과제를 등록하세요.<br>예: 현황판의 불량 Top 품번, 정지시간 1위 사유'}</div>`; return; }
+  $('list').innerHTML = v.map(t => {
+    const e = effOf(t), m = t.metric || {};
+    const dd = t.due_date ? Math.round((new Date(t.due_date) - new Date(kst())) / 864e5) : null;
+    return `<div class="card" data-id="${t.id}">
+      <div class="no"><span>${esc(t.task_no || '')} · ${esc(t.source || '')}</span><span class="${isOver(t) ? 'due-over' : ''}">${t.due_date ? '기한 ' + t.due_date.slice(5) + (dd != null && !['종결','취소'].includes(t.status) ? ' (D' + (dd >= 0 ? '-' + dd : '+' + (-dd)) + ')' : '') : ''}</span></div>
+      <div class="t">${esc(t.title)}</div>
+      <div class="chips"><span class="chip st st-${esc(t.status)}">${esc(t.status)}</span><span class="chip">${esc(t.dept || '-')} · ${esc(t.owner || '-')}</span>${m.type ? `<span class="chip">${esc(MLABEL[m.type] || '')}: ${esc(m.key || '')}${m.machine ? ' · ' + esc(m.machine) + '호기' : ''}</span>` : ''}</div>
+      <div class="eff">${t.baseline && t.baseline.value != null ? `조치 전 <b>${fmt(t.baseline.value)}</b>${esc(t.baseline.unit || '')}` : '조치 전 —'}
+        ${t.after && t.after.value != null ? ` → 조치 후 <b>${fmt(t.after.value)}</b>${esc(t.after.unit || '')} ${e != null ? `<span class="${e >= (+t.target_pct || 0) ? 'good' : 'bad'}">(${e >= 0 ? '▼' : '▲'} ${Math.abs(e)}%)</span>` : ''}` : ''}</div>
+    </div>`;
+  }).join('');
+}
+
+/* ---------- 지표 선택 ---------- */
+async function loadOpts() { if (!OPTS) { try { OPTS = await rpc('improvement_metric_options'); } catch (e) { OPTS = {}; } } return OPTS; }
+async function fillKeys(type, keep) {
+  const sel = $('iMKey'), txt = $('iMKeyText');
+  $('fldMach').hidden = type !== 'stop_reason';
+  if (type === 'manual') { sel.hidden = true; txt.hidden = false; txt.value = keep || ''; return; }
+  sel.hidden = false; txt.hidden = true;
+  const o = (await loadOpts())[type] || [];
+  sel.replaceChildren(new Option(type ? '선택' : '—', ''), ...o.map(x => new Option(type === 'mat_vendor' ? `${x.v} (${x.k})` : `${x.k}  ·  최근 90일 ${fmt(x.v)}${type === 'stop_reason' ? '분' : ''}`, x.k)));
+  if (keep && !o.some(x => x.k === keep)) sel.appendChild(new Option(keep, keep));
+  sel.value = keep || '';
+}
+
+/* ---------- 상세 ---------- */
+function blank() { return { status: '등록', source: '현황판', dept: '품질', title: '', detail: {}, approvals: {}, history: [] }; }
+async function openTask(t) {
+  CUR = JSON.parse(JSON.stringify(t || blank()));
+  const d = CUR.detail || (CUR.detail = {});
+  $('mTitle').textContent = CUR.id ? `${CUR.task_no || ''} · ${CUR.title}` : '새 과제';
+  $('iSource').replaceChildren(...SOURCES.map(s => new Option(s)));
+  $('iSource').value = CUR.source || '기타'; $('iDept').value = CUR.dept || '품질';
+  $('iOwner').value = CUR.owner || ''; $('iDue').value = CUR.due_date || ''; $('iTitle').value = CUR.title || ''; $('iProblem').value = CUR.problem || '';
+  const m = CUR.metric || {};
+  $('iMType').value = m.type || ''; await fillKeys(m.type || '', m.key); $('iMMach').value = m.machine || ''; $('iTarget').value = CUR.target_pct ?? '';
+  $('iPhen').value = d.phen || '';
+  ['man', 'mac', 'mat', 'met'].forEach(k => $('c4_' + k).value = (d.c4 || {})[k] || '');
+  for (let i = 1; i <= 5; i++) $('w' + i).value = (d.why || [])[i - 1] || '';
+  $('cOccur').value = d.occur || ''; $('cOut').value = d.outflow || '';
+  $('aTemp').value = d.temp || ''; $('aPerm').value = d.perm || ''; $('aDate').value = d.action_date || ''; $('aHoriz').value = d.horiz || '';
+  $('docs').innerHTML = DOCS.map(x => `<label><input type="checkbox" value="${esc(x)}" ${(d.docs || []).includes(x) ? 'checked' : ''}> ${esc(x)}</label>`).join('');
+  $('sMemo').value = d.std_memo || '';
+  $('mBefore').value = m.type === 'manual' && CUR.baseline ? CUR.baseline.value ?? '' : '';
+  $('mAfter').value = m.type === 'manual' && CUR.after ? CUR.after.value ?? '' : '';
+  renderPhotos(); renderState();
+  $('modal').hidden = false; document.body.style.overflow = 'hidden';
+}
+function closeTask() { $('modal').hidden = true; document.body.style.overflow = ''; CUR = null; }
+
+function collect() {
+  const d = CUR.detail || (CUR.detail = {});
+  CUR.source = $('iSource').value; CUR.dept = $('iDept').value; CUR.owner = $('iOwner').value.trim(); CUR.due_date = $('iDue').value || null;
+  CUR.title = $('iTitle').value.trim(); CUR.problem = $('iProblem').value.trim();
+  const type = $('iMType').value;
+  const key = type === 'manual' ? $('iMKeyText').value.trim() : $('iMKey').value;
+  const old = CUR.metric || {};
+  const nm = type ? { type, key, machine: type === 'stop_reason' ? $('iMMach').value.trim().replace(/[^0-9]/g, '') : '', label: MLABEL[type] } : null;
+  if (JSON.stringify([old.type, old.key, old.machine || '']) !== JSON.stringify([nm && nm.type, nm && nm.key, (nm && nm.machine) || ''])) { CUR.baseline = null; CUR.after = null; }
+  CUR.metric = nm; CUR.target_pct = $('iTarget').value === '' ? null : +$('iTarget').value;
+  d.phen = $('iPhen').value.trim();
+  d.c4 = { man: $('c4_man').value.trim(), mac: $('c4_mac').value.trim(), mat: $('c4_mat').value.trim(), met: $('c4_met').value.trim() };
+  d.why = [1, 2, 3, 4, 5].map(i => $('w' + i).value.trim());
+  d.occur = $('cOccur').value.trim(); d.outflow = $('cOut').value.trim();
+  d.temp = $('aTemp').value.trim(); d.perm = $('aPerm').value.trim();
+  if ((d.action_date || '') !== ($('aDate').value || '')) CUR.after = null;
+  d.action_date = $('aDate').value || null; d.horiz = $('aHoriz').value.trim();
+  d.docs = [...$('docs').querySelectorAll('input:checked')].map(x => x.value); d.std_memo = $('sMemo').value.trim();
+  if (type === 'manual') {
+    const b = $('mBefore').value, a = $('mAfter').value;
+    CUR.baseline = b === '' ? null : { value: +b, unit: '', manual: true };
+    CUR.after = a === '' ? null : { value: +a, unit: '', manual: true, at: kst() };
+  }
+}
+
+/* 조치 전 4주: 등록일 전날까지 28일 · 조치 후 4주: 영구대책 실시일부터 28일 */
+async function measure(final) {
+  const m = CUR.metric; if (!m || !m.type || m.type === 'manual' || !m.key) return;
+  const reg = (CUR.created_at ? kst(new Date(CUR.created_at)) : kst());
+  if (!CUR.baseline || CUR.baseline.value == null) {
+    const from = addDays(reg, -28), to = addDays(reg, -1);
+    const r = await rpc('improvement_metric', { p_type: m.type, p_key: m.key, p_machine: m.machine || null, p_from: from, p_to: to });
+    CUR.baseline = { from, to, value: r.value, cases: r.cases, unit: r.unit, at: kst() };
+  }
+  const ad = CUR.detail && CUR.detail.action_date;
+  if (ad) {
+    const end = addDays(ad, 27), today = kst(), to = end < today ? end : addDays(today, -1);
+    if (to >= ad) {
+      const r = await rpc('improvement_metric', { p_type: m.type, p_key: m.key, p_machine: m.machine || null, p_from: ad, p_to: to });
+      const days = Math.round((new Date(to) - new Date(ad)) / 864e5) + 1;
+      CUR.after = { from: ad, to, value: r.value, cases: r.cases, unit: r.unit, days, complete: days >= 28, at: today };
+    }
+  }
+}
+
+function renderEff() {
+  const b = CUR.baseline, a = CUR.after, m = CUR.metric || {};
+  const unit = (b && b.unit) || (a && a.unit) || '';
+  $('manualEff').hidden = m.type !== 'manual';
+  $('btnMeasure').hidden = !m.type || m.type === 'manual';
+  if (!b || b.value == null) { $('effBars').innerHTML = ''; $('effVerdict').textContent = m.type ? '조치 전 값이 아직 없습니다. 저장하면 계산합니다.' : '효과 지표를 먼저 고르세요.'; $('effHint').textContent = ''; return; }
+  // 4주 미만이면 28일로 환산해서 비교 (같은 길이)
+  const aScaled = a && a.value != null ? (a.days && a.days < 28 ? Math.round(a.value / a.days * 28) : +a.value) : null;
+  const max = Math.max(+b.value || 0, aScaled || 0, 1);
+  $('effBars').innerHTML =
+    `<span>조치 전 4주</span><div class="bar a" style="width:${Math.max(2, b.value / max * 100)}%"></div><b>${fmt(b.value)} ${esc(unit)}</b>` +
+    (aScaled != null ? `<span>조치 후 ${a.complete || !a.days ? '4주' : a.days + '일→4주 환산'}</span><div class="bar b" style="width:${Math.max(2, aScaled / max * 100)}%"></div><b>${fmt(aScaled)} ${esc(unit)}</b>` : '');
+  const e = aScaled != null && +b.value ? Math.round((b.value - aScaled) / b.value * 1000) / 10 : null;
+  const tgt = +CUR.target_pct || 0;
+  if (e == null) $('effVerdict').textContent = CUR.detail.action_date ? '조치 후 자료가 아직 없습니다.' : '영구대책 실시일을 넣으면 조치 후 값을 측정합니다.';
+  else { $('effVerdict').innerHTML = `${e >= 0 ? '▼ ' + e + '% 감소' : '▲ ' + (-e) + '% 증가'} · 목표 ${tgt}% → <span class="${e >= tgt ? 'good' : 'bad'}">${e >= tgt ? '달성' : '미달'}</span>${a && a.days && a.days < 28 ? ' (진행 중, 확정은 4주 후)' : ''}`; }
+  $('effHint').textContent = b.from ? `조치 전 ${b.from}~${b.to}` + (a && a.from ? ` · 조치 후 ${a.from}~${a.to}` : '') : '';
+}
+
+function stageIdx() { return STAGES.indexOf(CUR.status); }
+function renderState() {
+  const i = stageIdx(), cancelled = CUR.status === '취소';
+  $('steps').innerHTML = STAGES.map((s, k) => `<span class="step ${k < i ? 'done' : ''} ${k === i ? 'cur' : ''}">${k + 1}. ${s}</span>`).join('') + (cancelled ? '<span class="step cur">취소됨</span>' : '');
+  const lock = (id, from) => $(id).classList.toggle('lock', !cancelled && i < from);
+  lock('secCause', 1); lock('secAct', 2); lock('secEff', 3); lock('secStd', 4); lock('secSign', 4);
+  renderEff(); renderSign();
+  $('hist').innerHTML = (CUR.history || []).slice().reverse().map(h => `${esc(h.at)} · ${esc(h.by || '-')} · ${esc(h.msg)}`).join('<br>') || '—';
+  $('btnPrev').disabled = i <= 0 || cancelled || CUR.status === '종결';
+  $('btnNext').disabled = cancelled || CUR.status === '종결';
+  $('btnCancelTask').disabled = !CUR.id || cancelled || CUR.status === '종결';
+  $('btnReport').disabled = !CUR.id;
+  $('nextHint').textContent = cancelled ? '' : (CUR.status === '종결' ? '종결된 과제입니다' : (gate() || ''));
+  $('btnNext').textContent = CUR.status === '효과확인중' && effFail() ? '미달 → 원인 재분석 ▶' : (CUR.status === '표준화' ? '종결 ▶' : '다음 단계 ▶');
+}
+function effPct() {
+  const b = CUR.baseline, a = CUR.after; if (!b || !a || b.value == null || a.value == null || !(+b.value)) return null;
+  const aS = a.days && a.days < 28 ? a.value / a.days * 28 : a.value; return (b.value - aS) / b.value * 100;
+}
+function effFail() { const e = effPct(); return CUR.after && (CUR.after.complete || CUR.after.manual) && e != null && e < (+CUR.target_pct || 0); }
+/* 다음 단계로 가기 전에 채워야 할 것 */
+function gate() {
+  const d = CUR.detail || {};
+  switch (CUR.status) {
+    case '등록': if (!CUR.title) return '과제명을 입력하세요'; if (!CUR.metric || !CUR.metric.key) return '효과 지표를 고르세요'; if (CUR.target_pct == null) return '목표(감소 %)를 넣으세요'; if (!CUR.owner || !CUR.due_date) return '담당자·기한을 넣으세요'; return '';
+    case '원인분석': if (!d.occur) return '발생원인을 입력하세요'; return '';
+    case '조치중': if (!d.perm || !d.action_date) return '영구대책과 실시일을 입력하세요'; return '';
+    case '효과확인중': if (!CUR.after || !(CUR.after.complete || CUR.after.manual)) return CUR.detail.action_date ? '조치 후 4주(' + addDays(CUR.detail.action_date, 27) + '까지)가 지나야 확정됩니다' : '영구대책 실시일이 없습니다'; return '';
+    case '표준화': if (!(d.docs || []).length) return '반영한 문서를 1개 이상 체크하세요'; if (APPROVERS.some(a => !(CUR.approvals || {})[a.k])) return '결재 4명이 모두 서명해야 종결됩니다'; return '';
+  }
+  return '';
+}
+function renderSign() {
+  const ap = CUR.approvals || {}, who = me(), canStage = CUR.status === '표준화';
+  $('sign').innerHTML = APPROVERS.map((a, k) => {
+    const s = ap[a.k], prevOk = APPROVERS.slice(0, k).every(p => ap[p.k]);
+    const can = canStage && !s && prevOk && who === a.name;
+    return `<div><span class="r">${a.role}</span><span class="nm">${a.name}</span>${s ? `<span class="dt">✔ ${esc(s.at)}</span>` : (can ? `<button class="btn ok" data-sign="${a.k}">서명</button>` : `<span class="dt" style="color:var(--dim)">${canStage && prevOk ? (who ? '본인만 서명' : '로그인 필요') : '대기'}</span>`)}</div>`;
+  }).join('');
+}
+
+function log(msg) { (CUR.history || (CUR.history = [])).push({ at: new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 16).replace('T', ' '), by: me() || '(미로그인)', msg }); }
+async function save(msg) {
+  collect();
+  if (!CUR.title) { toast('과제명을 입력하세요'); return false; }
+  try { await measure(); } catch (e) { console.warn('측정 실패', e); }
+  if (msg) log(msg); else if (!CUR.id) log('과제 등록');
+  const body = { status: CUR.status, source: CUR.source, title: CUR.title, problem: CUR.problem, dept: CUR.dept, owner: CUR.owner, due_date: CUR.due_date,
+    metric: CUR.metric, target_pct: CUR.target_pct, baseline: CUR.baseline, after: CUR.after, detail: CUR.detail, approvals: CUR.approvals || {}, history: CUR.history || [] };
+  try {
+    const r = CUR.id ? await api('improvement_tasks?id=eq.' + CUR.id, { method: 'PATCH', body: JSON.stringify(body) })
+                     : await api('improvement_tasks', { method: 'POST', body: JSON.stringify(body) });
+    Object.assign(CUR, r[0]);
+  } catch (e) { toast('저장 실패: ' + e.message); return false; }
+  $('mTitle').textContent = `${CUR.task_no || ''} · ${CUR.title}`;
+  renderState(); toast('저장했습니다'); load(); return true;
+}
+
+/* ---------- 사진 ---------- */
+function renderPhotos() {
+  const ps = (CUR.detail && CUR.detail.photos) || [];
+  $('photos').innerHTML = ps.map((p, k) => `<div class="ph" data-ph="${k}" style="background-image:url('${esc(p.thumb || '')}')"><button data-del="${k}">✕</button></div>`).join('');
+}
+async function compress(file) {
+  const url = URL.createObjectURL(file); const img = new Image(); img.src = url; await img.decode();
+  const s = Math.min(1, 1600 / Math.max(img.width, img.height)), c = document.createElement('canvas');
+  c.width = Math.round(img.width * s); c.height = Math.round(img.height * s); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  const t = document.createElement('canvas'), ts = Math.min(1, 220 / Math.max(img.width, img.height)); t.width = Math.round(img.width * ts); t.height = Math.round(img.height * ts); t.getContext('2d').drawImage(img, 0, 0, t.width, t.height);
+  URL.revokeObjectURL(url);
+  return { blob: await new Promise(r => c.toBlob(r, 'image/jpeg', 0.82)), thumb: t.toDataURL('image/jpeg', 0.7) };
+}
+async function addPhotos(files) {
+  if (!CUR.id && !(await save())) return;
+  for (const f of files) {
+    try {
+      const { blob, thumb } = await compress(f);
+      const path = CUR.id + '/' + Date.now() + '.jpg';
+      const r = await fetch(SB_URL + '/storage/v1/object/improvement/' + path, { method: 'POST', headers: { ...H, 'Content-Type': 'image/jpeg' }, body: blob });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      (CUR.detail.photos || (CUR.detail.photos = [])).push({ path, name: f.name, thumb });
+    } catch (e) { toast('사진 올리기 실패: ' + e.message); }
+  }
+  renderPhotos(); await save('사진 추가');
+}
+async function viewPhoto(p) {
+  try {
+    const r = await fetch(SB_URL + '/storage/v1/object/sign/improvement/' + p.path, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify({ expiresIn: 600 }) });
+    const j = await r.json(); $('viewerImg').src = SB_URL + '/storage/v1' + j.signedURL; $('viewer').hidden = false;
+  } catch (e) { toast('사진을 열 수 없습니다'); }
+}
+
+/* ---------- 보고서 (1장) ---------- */
+function report() {
+  if (!CUR || !CUR.id) return;
+  collect();
+  const d = CUR.detail || {}, m = CUR.metric || {}, b = CUR.baseline || {}, a = CUR.after || {}, ap = CUR.approvals || {}, e = effPct();
+  const row = (k, v) => `<tr><th>${k}</th><td>${esc(v || '-').replace(/\n/g, '<br>')}</td></tr>`;
+  const w = window.open('', '_blank'); if (!w) { toast('팝업이 차단되었습니다'); return; }
+  w.document.write(`<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><title>개선과제 보고서 ${esc(CUR.task_no)}</title><style>
+  @page{size:A4;margin:12mm}*{box-sizing:border-box}body{font-family:'Malgun Gothic',sans-serif;font-size:11px;color:#000;margin:0}
+  h1{font-size:18px;text-align:center;margin:0 0 8px}.top{display:flex;justify-content:space-between;align-items:flex-end;gap:10px;margin-bottom:8px}
+  .sg{border-collapse:collapse}.sg td,.sg th{border:1px solid #000;width:62px;text-align:center;font-size:10px;padding:2px}.sg td{height:42px;vertical-align:bottom}
+  table.t{border-collapse:collapse;width:100%;margin-bottom:6px}table.t th,table.t td{border:1px solid #555;padding:4px 6px;vertical-align:top;text-align:left}
+  table.t th{background:#eef2f7;width:96px;white-space:nowrap}.sec{font-weight:700;background:#1e3a8a;color:#fff;padding:3px 6px;margin-top:6px}
+  .bars{display:grid;grid-template-columns:90px 1fr 110px;gap:4px 8px;align-items:center;margin:6px 0}.bar{height:14px;background:#94a3b8}.bar.b{background:#1d4ed8}
+  .foot{margin-top:8px;font-size:9px;display:flex;justify-content:space-between;border-top:1px solid #000;padding-top:3px}</style></head><body>
+  <div class="top"><div><b>${esc(CUR.task_no)}</b> · ${esc(CUR.source || '')} · ${esc(CUR.dept || '')} ${esc(CUR.owner || '')}<br>등록 ${esc((CUR.created_at || '').slice(0, 10))} · 기한 ${esc(CUR.due_date || '-')} · 상태 ${esc(CUR.status)}</div>
+  <table class="sg"><tr>${APPROVERS.map(x => `<th>${x.role}</th>`).join('')}</tr><tr>${APPROVERS.map(x => `<td>${x.name}<br>${ap[x.k] ? '✔ ' + esc(ap[x.k].at.slice(0, 10)) : ''}</td>`).join('')}</tr></table></div>
+  <h1>개선과제 보고서</h1>
+  <table class="t">${row('과제명', CUR.title)}${row('문제', CUR.problem)}${row('효과 지표', (MLABEL[m.type] || '') + ' · ' + (m.key || '') + (m.machine ? ' · ' + m.machine + '호기' : '') + ' · 목표 ' + (CUR.target_pct ?? '-') + '% 감소')}</table>
+  <div class="sec">현상</div><table class="t">${row('현상', d.phen)}</table>
+  <div class="sec">원인 분석</div><table class="t">${row('사람', (d.c4 || {}).man)}${row('설비', (d.c4 || {}).mac)}${row('자재', (d.c4 || {}).mat)}${row('방법', (d.c4 || {}).met)}${row('왜 5번', (d.why || []).filter(Boolean).map((x, i) => (i + 1) + '. ' + x).join('\n'))}${row('발생원인', d.occur)}${row('유출원인', d.outflow)}</table>
+  <div class="sec">조치</div><table class="t">${row('임시조치', d.temp)}${row('영구대책', d.perm)}${row('실시일', d.action_date)}${row('수평전개', d.horiz)}</table>
+  <div class="sec">효과 확인</div>
+  <div class="bars"><span>조치 전 4주</span><div class="bar" style="width:100%"></div><b>${fmt(b.value)} ${esc(b.unit || '')}</b>
+  ${a.value != null ? `<span>조치 후 4주</span><div class="bar b" style="width:${b.value ? Math.max(2, Math.min(100, (a.days && a.days < 28 ? a.value / a.days * 28 : a.value) / b.value * 100)) : 0}%"></div><b>${fmt(a.days && a.days < 28 ? Math.round(a.value / a.days * 28) : a.value)} ${esc(a.unit || '')}</b>` : ''}</div>
+  <table class="t">${row('결과', e == null ? '측정 전' : (e >= 0 ? Math.round(e * 10) / 10 + '% 감소' : Math.round(-e * 10) / 10 + '% 증가') + ' (목표 ' + (CUR.target_pct ?? '-') + '%) → ' + (e >= (+CUR.target_pct || 0) ? '달성' : '미달'))}${row('측정 기간', (b.from ? '조치 전 ' + b.from + '~' + b.to : '') + (a.from ? ' / 조치 후 ' + a.from + '~' + a.to : ''))}</table>
+  <div class="sec">표준화</div><table class="t">${row('반영 문서', (d.docs || []).join(', '))}${row('반영 내용', d.std_memo)}</table>
+  <div class="foot"><span>IATF 16949 10.2 · 10.3 · 개선과제 대장 (SmartFactory)</span><span>㈜태진다이텍 · 출력 ${kst()}</span></div>
+  <script>setTimeout(()=>print(),300)<\/script></body></html>`);
+  w.document.close();
+}
+
+/* ---------- 이벤트 ---------- */
+$('tabs').onclick = (e) => { const t = e.target.closest('[data-tab]'); if (t) { TAB = t.dataset.tab; renderList(); } };
+['fDept', 'fSrc', 'fOver'].forEach(id => $(id).onchange = renderList);
+$('list').onclick = (e) => { const c = e.target.closest('[data-id]'); if (c) openTask(TASKS.find(t => String(t.id) === c.dataset.id)); };
+$('btnNew').onclick = () => openTask(null);
+$('btnReload').onclick = load;
+$('btnClose').onclick = closeTask;
+$('iMType').onchange = () => fillKeys($('iMType').value, '');
+$('btnSave').onclick = () => save();
+$('btnMeasure').onclick = async () => { collect(); try { await measure(); renderEff(); toast('측정했습니다 — 저장하면 기록됩니다'); } catch (e) { toast('측정 실패: ' + e.message); } };
+$('btnNext').onclick = async () => {
+  collect(); try { await measure(); } catch (e) {}
+  if (CUR.status === '효과확인중' && effFail()) { CUR.status = '원인분석'; CUR.after = null; await save('효과 미달 → 원인 재분석'); return; }
+  const g = gate(); if (g) { toast(g); renderState(); return; }
+  const i = stageIdx(), next = STAGES[i + 1]; if (!next) return;
+  CUR.status = next; await save(`${STAGES[i]} → ${next}`);
+};
+$('btnPrev').onclick = async () => { const i = stageIdx(); if (i > 0) { CUR.status = STAGES[i - 1]; await save(`${STAGES[i]} → ${STAGES[i - 1]} (되돌림)`); } };
+$('btnCancelTask').onclick = async () => {
+  if (!$('btnCancelTask').dataset.arm) { $('btnCancelTask').dataset.arm = '1'; $('btnCancelTask').textContent = '한 번 더 누르면 취소'; setTimeout(() => { delete $('btnCancelTask').dataset.arm; $('btnCancelTask').textContent = '과제 취소'; }, 3000); return; }
+  delete $('btnCancelTask').dataset.arm; $('btnCancelTask').textContent = '과제 취소';
+  CUR.status = '취소'; await save('과제 취소');
+};
+$('sign').onclick = async (e) => {
+  const b = e.target.closest('[data-sign]'); if (!b) return;
+  const a = APPROVERS.find(x => x.k === b.dataset.sign); if (me() !== a.name) { toast('본인만 서명할 수 있습니다'); return; }
+  (CUR.approvals || (CUR.approvals = {}))[a.k] = { name: a.name, at: new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 16).replace('T', ' ') };
+  await save(`${a.role} 서명 (${a.name})`);
+};
+$('iPhoto').onchange = (e) => { const f = [...e.target.files]; e.target.value = ''; if (f.length) addPhotos(f); };
+$('photos').onclick = async (e) => {
+  const del = e.target.closest('[data-del]'); const ps = CUR.detail.photos || [];
+  if (del) { e.stopPropagation(); ps.splice(+del.dataset.del, 1); renderPhotos(); await save('사진 삭제'); return; }
+  const p = e.target.closest('[data-ph]'); if (p) viewPhoto(ps[+p.dataset.ph]);
+};
+$('viewer').onclick = () => $('viewer').hidden = true;
+$('btnReport').onclick = report;
+$('modal').onclick = (e) => { if (e.target === $('modal')) closeTask(); };
+
+$('fSrc').append(...SOURCES.map(s => new Option(s)));
+setTimeout(() => { const n = me(); $('who').textContent = n ? '로그인: ' + n : '로그인하면 결재 서명이 가능합니다'; }, 800);
+load();
+</script>
+</body>
+</html>
