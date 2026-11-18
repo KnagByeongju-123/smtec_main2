@@ -6438,9 +6438,48 @@ function mcApplyToCumulative(){
     setTimeout(() => {
       closeMonthClose();
       generateReportFromCumulative();
+      kpiRegisterAfterClose(R.monthKey);   // 월마감 → 서버 저장 → KPI관리 품질 실적 자동 등록
     }, 700);
   }catch(e){
     alert('반영 실패: ' + e.message);
+  }
+}
+
+// ============================================================
+// 📊 월마감 → KPI관리 품질 실적 자동 등록
+//   계산식·등록 규칙은 KPI관리 사이트의 sf_kpi.js (매일 자동 등록 작업과 같은 파일)
+//   직접 입력한 KPI 실적은 덮어쓰지 않고, 자동 등록분([SF])만 새로 쓴다
+// ============================================================
+const KPI_SF_JS = 'https://kimsanggi85-del.github.io/ESG_KIP-Team-process/sf_kpi.js';
+function kpiLoadSfJs(){
+  if(window.SFKPI && window.SFKPI.register) return Promise.resolve(window.SFKPI);
+  return new Promise((ok, ng) => {
+    const sc = document.createElement('script');
+    sc.src = KPI_SF_JS + '?t=' + Date.now();
+    sc.onload = () => (window.SFKPI && window.SFKPI.register) ? ok(window.SFKPI) : ng(new Error('sf_kpi.js 형식 오류'));
+    sc.onerror = () => ng(new Error('KPI관리 sf_kpi.js 를 불러오지 못했습니다'));
+    document.head.appendChild(sc);
+  });
+}
+async function kpiRegisterAfterClose(monthKey){
+  const [y, m] = String(monthKey || '').split('-').map(Number);
+  if(!y || !m) return;
+  try{
+    showStatus(`📊 ${monthKey} KPI 품질 실적 등록 중... (서버 저장 후 등록)`, 'info');
+    // KPI 계산은 서버에 저장된 월간보고 자료를 읽으므로 먼저 서버에 올린다
+    if(QS_TIMER){ clearTimeout(QS_TIMER); QS_TIMER = null; }
+    for(let i = 0; i < 20 && QS_BUSY; i++) await new Promise(r => setTimeout(r, 300));
+    if(!(await qsPush(true))) throw new Error('월간보고 서버 저장 실패 — [☁ 서버 동기화] 후 KPI관리에서 [불러오기]를 눌러 주세요');
+    const SF = await kpiLoadSfJs();
+    const res = await SF.register({ months: [[y, m]], depts: ['Q'] });
+    const kept = res.lines.filter(l => /직접 입력값/.test(l));
+    const msg = `📊 ${monthKey} KPI 품질 실적 — 등록 ${res.saved}건 · 변경없음 ${res.same}건` +
+                (res.kept ? ` · 직접 입력값 유지 ${res.kept}건` : '') + (res.skipped ? ` · 건너뜀 ${res.skipped}건` : '');
+    showStatus(msg, res.saved || res.same ? 'success' : 'info');
+    if(kept.length) console.info('[KPI] 직접 입력값 유지\n' + kept.join('\n'));
+  }catch(e){
+    console.error('[KPI 자동 등록]', e);
+    showStatus('📊 KPI 자동 등록 실패: ' + e.message + ' — 매일 07:17 자동 등록 작업이 다시 시도합니다', 'error');
   }
 }
 
