@@ -4,7 +4,7 @@
 <script src="audit.js?v=7"></script>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>불량관리 시스템 v3.9</title>
+  <title>불량관리 시스템 v4.0</title>
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
@@ -212,7 +212,7 @@
   .login-bar a.gohome{margin-left:auto;background:#fff;color:#1565c0;border:1px solid #90caf9;border-radius:6px;padding:3px 8px;font-size:11px;text-decoration:none;font-family:inherit}
 </style>
 
-<div class="hdr"><button class="home-btn" onclick="location.href='index.html'">🏠</button><h1>🔍 불량관리 시스템 v3.9</h1><p>기판 영역별 불량 등록 · 이력 추적 · 통계 분석</p><button class="share-btn" onclick="window.open(SB_DASHBOARD_URL,'_blank')">📊 DB</button></div>
+<div class="hdr"><button class="home-btn" onclick="location.href='index.html'">🏠</button><h1>🔍 불량관리 시스템 v4.0</h1><p>기판 영역별 불량 등록 · 이력 추적 · 통계 분석</p><button class="share-btn" onclick="window.open(SB_DASHBOARD_URL,'_blank')">📊 DB</button></div>
 <div class="tabs"><div class="tab on" onclick="swTab(0)">📝 불량등록</div><div class="tab" onclick="swTab(1)">📋 이력</div><div class="tab" onclick="swTab(2)">📊 주간보고</div><div class="tab" onclick="swTab(3)">📅 월간보고</div><div class="tab" onclick="swTab(4)">⚙ 설정</div></div>
 
 <div class="pnl on" id="pnl0">
@@ -623,7 +623,10 @@ function adjCount(t,d){defectCounts[t]=Math.max(0,(defectCounts[t]||0)+d);const 
 function onCountInput(t,v){defectCounts[t]=Math.max(0,parseInt(v)||0);const e=document.getElementById('cnt_'+t.replace(/\s/g,'_'));if(e)e.value=defectCounts[t]}
 
 /* ★★★ saveDefect - 일자등록 + 로그인사용자 적용 ★★★ */
-async function saveDefect(){if(!selectedZone)return;const ent=Object.entries(defectCounts).filter(([,v])=>v>0);const worker=document.getElementById('selWorker').value||(currentLoginUser&&currentLoginUser.name)||'';if(!worker){showToast('⚠ 검사자를 선택하세요 (설정탭에서 작업자 등록)');return}const inspectQty=parseInt(document.getElementById('inspectQtyInput').value)||0;if(!ent.length&&!inspectQty){showToast('검사수 또는 불량수량 입력');return}const inputDate=document.getElementById('regDefectDate').value||kstToday();const dt=inputDate,tm=kstTimeStr(),rec=(inputDate===kstToday())?kstISOForDB():(inputDate+'T'+kstTimeStr()+'+09:00');const note=document.getElementById('defectNote').value.trim();const inspLine=document.getElementById('selInspLine').value,prodLine=document.getElementById('selProdLine').value,prodDate=document.getElementById('selProdDate').value||null;showLoading('저장...');try{let rows;if(ent.length){rows=ent.map(([type,qty],idx)=>({defect_date:dt,defect_time:tm,recorded_at:rec,model_name:currentModel,side:currentSide,zone_name:selectedZone.name,defect_type:type,qty:qty,inspect_qty:idx===0?inspectQty:0,note:note,worker:worker,inspect_line:inspLine,prod_line:prodLine,prod_date:prodDate}))}else{rows=[{defect_date:dt,defect_time:tm,recorded_at:rec,model_name:currentModel,side:currentSide,zone_name:selectedZone.name,defect_type:'양품',qty:0,inspect_qty:inspectQty,note:note,worker:worker,inspect_line:inspLine,prod_line:prodLine,prod_date:prodDate}]}await sbInsert('defect_history',rows);const totalDef=ent.reduce((s,[,q])=>s+q,0);showToast(totalDef>0?`✅ ${selectedZone.name} 불량 ${totalDef}건`:`✅ 양품 등록`);if(navigator.vibrate)navigator.vibrate([50,30,50]);learnItemMap(currentModel,prodLine,prodDate);closeDefectInput();loadTodayStats();
+async function saveDefect(){if(!selectedZone)return;const ent=Object.entries(defectCounts).filter(([,v])=>v>0);const worker=document.getElementById('selWorker').value||(currentLoginUser&&currentLoginUser.name)||'';if(!worker){showToast('⚠ 검사자를 선택하세요 (설정탭에서 작업자 등록)');return}const inspectQty=parseInt(document.getElementById('inspectQtyInput').value)||0;if(!ent.length&&!inspectQty){showToast('검사수 또는 불량수량 입력');return}const inputDate=document.getElementById('regDefectDate').value||kstToday();const dt=inputDate,tm=kstTimeStr(),rec=(inputDate===kstToday())?kstISOForDB():(inputDate+'T'+kstTimeStr()+'+09:00');const note=document.getElementById('defectNote').value.trim();const inspLine=document.getElementById('selInspLine').value,prodLine=document.getElementById('selProdLine').value,prodDate=document.getElementById('selProdDate').value||null;
+  /* [v4.0] Raceway(SBC)는 생산일자·생산호기 필수 — 휨 불량을 호기·코일·열처리 배치로 추적 (개선과제 IMP-2611-01·02) */
+  if(_custKey(getModelCustomer(currentModel))==='RACEWAY'||/SBC/i.test(inspLine)){if(!prodDate){showToast('⚠ Raceway는 생산일자(프레스 생산일)를 넣어 주세요');return}if(!prodLine){showToast('⚠ 생산호기를 골라 주세요');return}}
+  showLoading('저장...');try{let rows;if(ent.length){rows=ent.map(([type,qty],idx)=>({defect_date:dt,defect_time:tm,recorded_at:rec,model_name:currentModel,side:currentSide,zone_name:selectedZone.name,defect_type:type,qty:qty,inspect_qty:idx===0?inspectQty:0,note:note,worker:worker,inspect_line:inspLine,prod_line:prodLine,prod_date:prodDate}))}else{rows=[{defect_date:dt,defect_time:tm,recorded_at:rec,model_name:currentModel,side:currentSide,zone_name:selectedZone.name,defect_type:'양품',qty:0,inspect_qty:inspectQty,note:note,worker:worker,inspect_line:inspLine,prod_line:prodLine,prod_date:prodDate}]}await sbInsert('defect_history',rows);const totalDef=ent.reduce((s,[,q])=>s+q,0);showToast(totalDef>0?`✅ ${selectedZone.name} 불량 ${totalDef}건`:`✅ 양품 등록`);if(navigator.vibrate)navigator.vibrate([50,30,50]);learnItemMap(currentModel,prodLine,prodDate);closeDefectInput();loadTodayStats();
 /* ★ 등록 후 기종명·검사수·기판보드 리셋 */
 document.getElementById('selModelInput').value='';
 document.getElementById('selModel').value='';
@@ -650,6 +653,9 @@ function _pnScore(modelName,itemCode,itemName){
   if(nm&&ni&&(nm===ni||ni.startsWith(nm)||nm.startsWith(ni)))return 2;
   const rm=_pnRoot(modelName),ri=_pnRoot(itemCode);
   if(rm&&ri&&rm.length>=6&&rm===ri)return 1;
+  /* [v4.0] Raceway: 기종명 앞 4자리(1179T Outer) = 품번 BDA-4자리(IW/OW-BDA-1179-3) */
+  const fm=String(modelName||'').match(/^\s*(\d{4})/),fi=String(itemCode||'').match(/BDA-(\d{4})/i);
+  if(fm&&fi&&fm[1]===fi[1])return 2;
   return 0;
 }
 async function searchProdHo(){
@@ -668,9 +674,10 @@ async function searchProdHo(){
     if(matched.length)html+='<optgroup label="🔍 '+pd+' 품번매칭">'+matched.map(m=>`<option value="${m.name}">${lbl[m.score]} ${m.name} · ${m.code}</option>`).join('')+'</optgroup>';
     html+='<optgroup label="전체 호기">'+(allHo||[]).map(h=>`<option value="${h.name}">${h.name}</option>`).join('')+'</optgroup>';
     sel.innerHTML=html;
+    /* [v4.0] 후보가 여럿이거나 없으면 직접 고르게 비워 둔다 (지난 선택을 그대로 쓰면 엉뚱한 호기로 쌓임) */
     if(matched.length===1){sel.value=matched[0].name;showToast('🔍 '+matched[0].code+' → '+matched[0].name)}
-    else if(matched.length>1){sel.value=matched[0].name;showToast('🔍 후보 '+matched.length+'개')}
-    else{if(prev)sel.value=prev;showToast('⚠ '+pd+' 품번 매칭 없음 (수동선택 시 자동학습)')}
+    else if(matched.length>1){sel.value='';showToast('🔍 '+pd+' 생산 호기 '+matched.length+'곳 — 실제 생산한 호기를 고르세요')}
+    else{sel.value='';showToast('⚠ '+pd+' 품번 매칭 없음 — 생산일자 확인 후 호기를 직접 고르세요')}
   }catch(e){console.log('생산호기 검색 실패:',e)}
 }
 /* 고객사명 비교키 (공백/대소문자 무시, SBC·Raceway 동일 취급) */
