@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<script src="audit.js?v=9"></script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>📏 구간별 평면도 측정 v1.0</title>
+<!-- 구간별 평면도 측정 기록 v1.0 — Raceway 휨이 프레스·열처리(외주)·표면처리 중 어디서 생기는지 구간별로 같은 LOT를 측정해 비교
+     개선과제 IMP-2611-01 (Raceway 휨 불량 감소) 원인분석 · IATF 8.5.1 / 8.4.2.4 외주 공정 관리
+     자료: warp_measure · 규격(평면도 USL) qc_part_spec · 세부 기종 raceway_parts -->
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#0f172a;--card:#1e293b;--card2:#263449;--line:#334155;--line2:#475569;--tx:#e2e8f0;--tx2:#cbd5e1;--sub:#94a3b8;--dim:#64748b;
+  --blue:#60a5fa;--b2:#2563eb;--green:#4ade80;--amber:#fbbf24;--red:#f87171}
+body{font-family:-apple-system,BlinkMacSystemFont,"Malgun Gothic",sans-serif;background:var(--bg);color:var(--tx);min-height:100vh;padding-bottom:40px;font-size:14px}
+button,input,select,textarea{font-family:inherit;font-size:14px}
+.top{position:sticky;top:0;z-index:5;background:linear-gradient(135deg,#7c2d12,#0f172a);border-bottom:1px solid var(--line);padding:12px 16px}
+.top h1{font-size:18px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}.top h1 small{font-size:11px;color:var(--sub);font-weight:400}
+.tabs{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}.tab{padding:7px 14px;border-radius:999px;border:1px solid var(--line2);background:var(--card);cursor:pointer;color:var(--tx2)}
+.tab.on{background:#c2410c;border-color:#c2410c;color:#fff}
+.wrap{max-width:1100px;margin:0 auto;padding:14px 16px;display:flex;flex-direction:column;gap:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.card h2{font-size:15px;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:baseline}.card h2 small{font-weight:400;color:var(--sub);font-size:11px}
+.btn{border:1px solid var(--line2);background:var(--card2);color:var(--tx);border-radius:8px;padding:7px 12px;cursor:pointer;font-weight:600}
+.btn.pri{background:var(--b2);border-color:var(--b2);color:#fff}.btn.sm{padding:4px 8px;font-size:12px}
+select,input,textarea{background:#0b1222;border:1px solid var(--line2);color:var(--tx);border-radius:6px;padding:7px 9px;max-width:100%}
+textarea{width:100%;min-height:48px;resize:vertical}
+.f{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px}
+.fld{display:flex;flex-direction:column;gap:4px}.fld>span{font-size:12px;color:var(--sub)}.fld>span b{color:var(--red)}
+.stages{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:6px}
+.st{border:1px solid var(--line2);border-radius:8px;padding:8px 10px;cursor:pointer;background:#0b1222}.st b{display:block}.st span{font-size:11px;color:var(--sub)}
+.st.on{border-color:#f97316;background:#431407}
+.vals{display:grid;grid-template-columns:repeat(auto-fill,minmax(78px,1fr));gap:6px}
+.vals label{display:flex;flex-direction:column;font-size:11px;color:var(--sub);gap:2px}
+.vals input{text-align:right;font-variant-numeric:tabular-nums}
+.vals input.ng{border-color:var(--red);color:var(--red)}
+.live{display:flex;gap:14px;flex-wrap:wrap;font-size:13px;background:#0b1222;border:1px solid var(--line);border-radius:8px;padding:8px 12px}
+.live b{font-variant-numeric:tabular-nums}
+table{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeric:tabular-nums}
+th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
+th{color:var(--sub);font-size:12px;font-weight:600;position:sticky;top:0;background:var(--card)}
+td.n,th.n{text-align:right}
+.tw{overflow:auto;max-height:520px}
+.g{color:var(--green)}.w{color:var(--amber)}.b{color:var(--red)}.dm{color:var(--dim)}
+.note{font-size:12px;color:var(--sub);line-height:1.6}
+.verdict{background:#0b1222;border:1px solid var(--line2);border-radius:8px;padding:10px 12px;line-height:1.7;font-size:13px}
+.chart svg text{fill:var(--sub);font-size:11px}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#0f766e;color:#fff;padding:10px 18px;border-radius:8px;z-index:50;font-weight:600}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div class="top">
+  <h1>📏 구간별 평면도 측정 <small>v1.0 · Raceway 휨이 어느 공정에서 생기는지 · IMP-2611-01</small></h1>
+  <div class="tabs"><span class="tab on" data-tab="in">측정 입력</span><span class="tab" data-tab="an">구간별 비교</span><span class="tab" data-tab="ls">측정 이력</span><button class="btn sm" id="bForm" style="margin-left:auto">🖨 빈 기록지 인쇄</button></div>
+</div>
+
+<div class="wrap" id="pIn">
+  <div class="card">
+    <h2>측정 구간 <small>같은 LOT를 구간마다 재야 어디서 휘는지 나옵니다</small></h2>
+    <div class="stages" id="stages"></div>
+  </div>
+  <div class="card">
+    <h2>제품 · LOT</h2>
+    <div class="f">
+      <label class="fld"><span>측정일 <b>*</b></span><input type="date" id="iDate"></label>
+      <label class="fld"><span>품번 <b>*</b></span><select id="iPart"></select></label>
+      <label class="fld"><span>세부 기종</span><select id="iVar"><option value="">—</option></select></label>
+      <label class="fld"><span>생산 호기</span><select id="iHo"><option value="">—</option></select></label>
+      <label class="fld"><span>LOT (작업지시·생산일) <b>*</b></span><input id="iLot" list="lotList" placeholder="예: 1119-49 또는 WO번호"><datalist id="lotList"></datalist></label>
+      <label class="fld"><span>소재 HEAT</span><input id="iHeat" placeholder="코일 HEAT"></label>
+      <label class="fld" id="fBatch"><span>열처리 배치번호</span><input id="iBatch" placeholder="외주 열처리 배치"></label>
+      <label class="fld" id="fVendor"><span>외주 업체</span><input id="iVendor" list="vendList" placeholder="열처리·표면처리 업체"><datalist id="vendList"></datalist></label>
+      <label class="fld"><span>측정 방법</span><select id="iMethod"><option>정반 + 틈새게이지</option><option>3차원 측정기</option><option>평면도 측정기(다이얼)</option><option>기타</option></select></label>
+      <label class="fld"><span>측정자 <b>*</b></span><input id="iWho"></label>
+    </div>
+  </div>
+  <div class="card">
+    <h2>평면도 측정값 (mm) <small>권장 10개 · 최대 20개 · 규격 <span id="uslTxt">—</span></small></h2>
+    <div class="vals" id="vals"></div>
+    <div class="row" style="display:flex;gap:6px"><button class="btn sm" id="bMore">＋ 칸 추가</button><button class="btn sm" id="bClear">지우기</button></div>
+    <div class="live" id="live"></div>
+    <label class="fld"><span>메모 (적재 방법·특이사항)</span><textarea id="iMemo" placeholder="예: 열처리 적재 5단, 링 겹침 / 금형 정비 직후 / 코일 끝단"></textarea></label>
+    <div><button class="btn pri" id="bSave">💾 저장</button> <span class="note" id="saveMsg"></span></div>
+  </div>
+  <div class="card">
+    <h2>측정 방법 <small>구간끼리 비교하려면 같은 방법으로</small></h2>
+    <div class="note">
+      ① 같은 LOT에서 <b>Outer·Inner 각 10개</b>를 무작위로 뽑습니다 (휨은 가끔 튀는 제품이 문제라 개수가 중요합니다).<br>
+      ② 정반 위에 링을 올리고 <b>가장 큰 틈</b>을 틈새게이지로 잽니다 (0.01mm 단위). 3차원으로 잰 값과 섞지 않습니다.<br>
+      ③ 같은 LOT를 <b>① 프레스 직후 → ② 열처리 후(외주 입고) → ④ 출하 전</b> 순서로 잽니다. LOT 칸을 구간마다 똑같이 적어야 짝지어 비교됩니다.<br>
+      ④ 열처리 배치번호는 외주 업체 납품서·이력표에서 옮겨 적습니다.
+    </div>
+  </div>
+</div>
+
+<div class="wrap" id="pAn" hidden>
+  <div class="card">
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <input type="date" id="aFrom"> ~ <input type="date" id="aTo">
+      <select id="aFam"><option value="">전체 기종</option></select>
+      <button class="btn" id="bAn">조회</button>
+    </div>
+  </div>
+  <div class="card"><h2>판정 <small>자동 요약</small></h2><div class="verdict" id="verdict">—</div></div>
+  <div class="card">
+    <h2>구간별 평면도 <small>Outer / Inner · 개별 측정값 기준</small></h2>
+    <div class="chart" id="cStage"></div>
+    <div class="tw"><table><thead><tr><th>구간</th><th>구분</th><th class="n">측정 건</th><th class="n">개수</th><th class="n">평균</th><th class="n">최대</th><th class="n">규격 50% 초과</th><th class="n">규격 초과</th></tr></thead><tbody id="tStage"></tbody></table></div>
+  </div>
+  <div class="card">
+    <h2>같은 LOT 짝 비교 <small>구간을 지나며 평균·최대가 얼마나 커졌나</small></h2>
+    <div class="tw"><table><thead><tr><th>LOT</th><th>품번</th><th>호기</th><th class="n">① 프레스</th><th class="n">② 열처리 후</th><th class="n">③ 표면처리 후</th><th class="n">④ 출하 전</th><th>가장 커진 구간</th></tr></thead><tbody id="tPair"></tbody></table></div>
+    <p class="note">칸 값 = 평균 / 최대 (mm). 같은 LOT·같은 품번을 두 구간 이상 잰 경우만 나옵니다.</p>
+  </div>
+  <div class="card">
+    <h2>열처리 배치별 <small>② 열처리 후 측정 · 배치번호 기준</small></h2>
+    <div class="tw"><table><thead><tr><th>배치</th><th>업체</th><th>품번</th><th class="n">개수</th><th class="n">평균</th><th class="n">최대</th><th class="n">규격 50% 초과</th></tr></thead><tbody id="tBatch"></tbody></table></div>
+  </div>
+</div>
+
+<div class="wrap" id="pLs" hidden>
+  <div class="card">
+    <h2>측정 이력 <small id="lsInfo"></small></h2>
+    <div class="tw"><table><thead><tr><th>측정일</th><th>구간</th><th>품번</th><th>호기</th><th>LOT</th><th>배치</th><th class="n">n</th><th class="n">평균</th><th class="n">최대</th><th>측정자</th><th>메모</th><th></th></tr></thead><tbody id="tList"></tbody></table></div>
+  </div>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+const SB_URL = 'https://omngtyewdaqpphnzeate.supabase.co';
+const SB_KEY = 'sb_publishable_9j2YkkL-7ul1TrhH-NjVdQ_vWDG2-1D';
+const H = { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY };
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const kst = (d = new Date()) => new Date(d.getTime() + 9 * 3600e3).toISOString().slice(0, 10);
+const addD = (s, n) => { const d = new Date(s + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+const me = () => { try { const u = window.tjAudit && window.tjAudit.user(); return (u && u.name) || ''; } catch (e) { return ''; } };
+function toast(m) { const t = $('toast'); t.textContent = m; t.hidden = false; clearTimeout(toast._t); toast._t = setTimeout(() => t.hidden = true, 2400); }
+async function api(path, opt = {}) {
+  const r = await fetch(SB_URL + '/rest/v1/' + path, { ...opt, headers: { ...H, 'Content-Type': 'application/json', Prefer: 'return=representation', ...(opt.headers || {}) } });
+  const t = await r.text(); if (!r.ok) throw new Error(r.status + ' ' + t.slice(0, 200)); return t ? JSON.parse(t) : null;
+}
+const STAGES = [
+  { k: '1', nm: '① 프레스 직후', d: '생산 현장 · 열처리 보내기 전', ht: false },
+  { k: '2', nm: '② 열처리 후', d: '한성특수금속 열처리 입고 때', ht: true, vendor: '한성특수금속' },
+  { k: '3', nm: '③ 표면처리 후', d: '표면처리 품번만 (동진)', ht: true, vendor: '동진' },
+  { k: '4', nm: '④ 출하 전', d: 'SBC 검사 전·출하 대기', ht: true, vendor: '' } ];
+const VENDORS = STAGES.map(s => s.vendor).filter(Boolean);
+const SNM = Object.fromEntries(STAGES.map(s => [s.k, s.nm]));
+const HOS = [36, 45, 46, 47, 48, 49];
+let PARTS = [], STAGE = '1', NV = 10, ROWS = [];
+const famOf = (pn) => (String(pn).match(/BDA-(\d{4}[A-Z]?)/) || [])[1] || '';
+const sideOf = (pn) => /^OW/.test(pn) ? 'Outer' : /^IW/.test(pn) ? 'Inner' : '';
+const fx = (v, d = 3) => v == null || isNaN(v) ? '—' : (+v).toFixed(d);
+const stat = (a) => { const v = a.map(Number).filter(x => !isNaN(x)); if (!v.length) return null; return { n: v.length, avg: v.reduce((s, x) => s + x, 0) / v.length, max: Math.max(...v), min: Math.min(...v) }; };
+
+/* ---------- 입력 ---------- */
+function drawStages() {
+  $('stages').innerHTML = STAGES.map(s => `<div class="st ${s.k === STAGE ? 'on' : ''}" data-k="${s.k}"><b>${s.nm}</b><span>${s.d}</span></div>`).join('');
+  const st = STAGES.find(s => s.k === STAGE); $('fBatch').hidden = !st.ht; $('fVendor').hidden = !st.ht;
+  // 구간에 맞는 외주 업체 기본값 (직접 고친 값은 그대로 둔다)
+  const v = $('iVendor').value.trim(); if (!v || VENDORS.includes(v)) $('iVendor').value = st.vendor || '';
+}
+$('stages').onclick = (e) => { const s = e.target.closest('.st'); if (!s) return; STAGE = s.dataset.k; drawStages(); };
+function usl() { const p = PARTS.find(x => x.part_number === $('iPart').value); return p && p.usl != null ? +p.usl : null; }
+function drawVals(keep) {
+  const old = keep ? [...document.querySelectorAll('#vals input')].map(i => i.value) : [];
+  $('vals').innerHTML = Array.from({ length: NV }, (_, i) => `<label>${i + 1}<input type="number" step="0.01" min="0" inputmode="decimal" value="${esc(old[i] || '')}"></label>`).join('');
+  live();
+}
+function vals() { return [...document.querySelectorAll('#vals input')].map(i => i.value.trim()).filter(v => v !== '').map(Number).filter(v => !isNaN(v)); }
+function live() {
+  const u = usl(); $('uslTxt').textContent = u != null ? '≤ ' + u + ' mm' : '(규격 미등록)';
+  document.querySelectorAll('#vals input').forEach(i => i.classList.toggle('ng', u != null && i.value !== '' && +i.value > u));
+  const s = stat(vals());
+  $('live').innerHTML = s ? `개수 <b>${s.n}</b> · 평균 <b>${fx(s.avg)}</b> · 최대 <b class="${u != null && s.max > u ? 'b' : u != null && s.max > u / 2 ? 'w' : 'g'}">${fx(s.max, 2)}</b> · 최소 <b>${fx(s.min, 2)}</b>${u != null ? ` · 규격 초과 <b class="${vals().filter(v => v > u).length ? 'b' : ''}">${vals().filter(v => v > u).length}</b>` : ''}` : '<span class="note">측정값을 넣으면 평균·최대가 바로 계산됩니다</span>';
+}
+$('vals').oninput = live; $('iPart').onchange = () => { live(); fillVar(); };
+$('bMore').onclick = () => { if (NV < 20) { NV += 5; NV = Math.min(NV, 20); drawVals(true); } };
+$('bClear').onclick = () => { drawVals(false); };
+function fillVar() {
+  const f = famOf($('iPart').value).replace(/[A-Z]$/, '');
+  const vs = (window.RPARTS || []).filter(p => String(p.pn).replace(/\s/g, '').startsWith(f));
+  $('iVar').innerHTML = '<option value="">—</option>' + vs.map(p => `<option>${esc(p.pn)}</option>`).join('');
+}
+async function save() {
+  const v = vals(), msg = $('saveMsg');
+  const need = [['iDate', '측정일'], ['iPart', '품번'], ['iLot', 'LOT'], ['iWho', '측정자']].filter(([id]) => !$(id).value.trim()).map(x => x[1]);
+  if (need.length) { toast(need.join('·') + ' 을(를) 넣어 주세요'); return; }
+  if (v.length < 3) { toast('측정값을 3개 이상 넣어 주세요'); return; }
+  if (v.some(x => x > 5)) { toast('5mm 넘는 값이 있습니다. 단위(mm)를 확인해 주세요'); return; }
+  const pn = $('iPart').value, st = STAGES.find(s => s.k === STAGE);
+  const body = { meas_date: $('iDate').value, stage: STAGE, part_number: pn, family: famOf(pn), side: sideOf(pn), ho: $('iHo').value ? +$('iHo').value : null,
+    lot_no: $('iLot').value.trim(), heat_no: $('iHeat').value.trim() || null, ht_batch: st.ht ? ($('iBatch').value.trim() || null) : null, ht_vendor: st.ht ? ($('iVendor').value.trim() || null) : null,
+    inspector: $('iWho').value.trim(), method: $('iMethod').value, usl: usl(), vals: v,
+    memo: [$('iVar').value ? '세부 ' + $('iVar').value : '', $('iMemo').value.trim()].filter(Boolean).join(' · ') || null, created_by: me() || null };
+  $('bSave').disabled = true;
+  try { await api('warp_measure', { method: 'POST', body: JSON.stringify(body) });
+    msg.textContent = `저장 완료 ${new Date().toLocaleTimeString('ko-KR')} — ${SNM[STAGE]} ${pn} LOT ${body.lot_no} ${v.length}개`;
+    toast('저장했습니다'); drawVals(false); $('iMemo').value = '';
+    // 같은 LOT 반대쪽(Outer↔Inner)을 이어서 재기 쉽게 품번만 바꿔 둔다
+    const other = pn.replace(/^(IW|OW)/, m => m === 'IW' ? 'OW' : 'IW'); if (PARTS.some(p => p.part_number === other)) { $('iPart').value = other; live(); }
+    loadLots();
+  } catch (e) { toast('저장 실패: ' + e.message); }
+  $('bSave').disabled = false;
+}
+$('bSave').onclick = save;
+async function loadLots() {
+  try { const r = await api('warp_measure?select=lot_no,ht_vendor&order=id.desc&limit=300');
+    $('lotList').innerHTML = [...new Set(r.map(x => x.lot_no).filter(Boolean))].slice(0, 60).map(l => `<option value="${esc(l)}">`).join('');
+    $('vendList').innerHTML = [...new Set(r.map(x => x.ht_vendor).filter(Boolean))].map(l => `<option value="${esc(l)}">`).join(''); } catch (e) {}
+}
+
+/* ---------- 분석 ---------- */
+async function loadRows() {
+  const f = $('aFrom').value, t = $('aTo').value;
+  ROWS = await api(`warp_measure?select=*&meas_date=gte.${f}&meas_date=lte.${t}&order=meas_date.desc,id.desc&limit=3000`) || [];
+}
+async function analyze() {
+  try { await loadRows(); } catch (e) { $('verdict').innerHTML = '<span class="b">불러오지 못했습니다: ' + esc(e.message) + '</span>'; return; }
+  const fam = $('aFam').value, R = ROWS.filter(r => !fam || String(r.family).replace(/[A-Z]$/, '') === fam);
+  const fams = [...new Set(ROWS.map(r => String(r.family || '').replace(/[A-Z]$/, '')).filter(Boolean))].sort();
+  const keep = $('aFam').value; $('aFam').innerHTML = '<option value="">전체 기종</option>' + fams.map(x => `<option ${x === keep ? 'selected' : ''}>${x}</option>`).join('');
+  // 구간 × Outer/Inner
+  const grp = {}; R.forEach(r => { const k = r.stage + '|' + r.side; (grp[k] = grp[k] || { st: r.stage, side: r.side, recs: 0, v: [], half: 0, over: 0 }); const g = grp[k]; g.recs++;
+    (r.vals || []).forEach(x => { x = +x; g.v.push(x); if (r.usl != null) { if (x > r.usl / 2) g.half++; if (x > r.usl) g.over++; } }); });
+  const G = Object.values(grp).sort((a, b) => a.st.localeCompare(b.st) || a.side.localeCompare(b.side));
+  $('tStage').innerHTML = G.length ? G.map(g => { const s = stat(g.v); return `<tr><td>${SNM[g.st] || g.st}</td><td>${esc(g.side)}</td><td class="n">${g.recs}</td><td class="n">${s.n}</td><td class="n">${fx(s.avg)}</td><td class="n">${fx(s.max, 2)}</td><td class="n ${g.half ? 'w' : ''}">${g.half} (${(g.half / s.n * 100).toFixed(1)}%)</td><td class="n ${g.over ? 'b' : ''}">${g.over}</td></tr>`; }).join('')
+    : '<tr><td colspan="8" class="note">기간 안에 측정 기록이 없습니다. [측정 입력]에서 같은 LOT를 구간별로 재 주세요.</td></tr>';
+  drawStageChart(G);
+  // LOT 짝
+  const lots = {}; R.forEach(r => { const k = r.lot_no + '|' + r.part_number; (lots[k] = lots[k] || { lot: r.lot_no, pn: r.part_number, ho: r.ho, st: {} }); const L = lots[k]; if (r.ho) L.ho = r.ho; (L.st[r.stage] = L.st[r.stage] || []).push(...(r.vals || []).map(Number)); });
+  const P = Object.values(lots).filter(L => Object.keys(L.st).length >= 2);
+  const jumps = {};
+  $('tPair').innerHTML = P.length ? P.map(L => {
+    const cell = (k) => { const s = L.st[k] && stat(L.st[k]); return s ? `${fx(s.avg)} / ${fx(s.max, 2)}` : '<span class="dm">—</span>'; };
+    const ks = Object.keys(L.st).sort(); let best = null;
+    for (let i = 1; i < ks.length; i++) { const a = stat(L.st[ks[i - 1]]), b = stat(L.st[ks[i]]), dlt = b.avg - a.avg; if (!best || dlt > best.d) best = { d: dlt, from: ks[i - 1], to: ks[i] }; }
+    if (best && best.d > 0) { const key = best.from + '→' + best.to; jumps[key] = (jumps[key] || 0) + 1; }
+    return `<tr><td>${esc(L.lot)}</td><td>${esc(L.pn)}</td><td>${L.ho ?? '—'}</td><td class="n">${cell('1')}</td><td class="n">${cell('2')}</td><td class="n">${cell('3')}</td><td class="n">${cell('4')}</td><td>${best && best.d > 0 ? `${SNM[best.from].slice(0, 1)}→${SNM[best.to].slice(0, 1)} <span class="w">+${fx(best.d)}</span>` : '<span class="g">변화 없음</span>'}</td></tr>`; }).join('')
+    : '<tr><td colspan="8" class="note">같은 LOT를 두 구간 이상 잰 기록이 아직 없습니다.</td></tr>';
+  // 배치
+  const bt = {}; R.filter(r => r.stage === '2' && r.ht_batch).forEach(r => { const k = r.ht_batch + '|' + r.part_number; (bt[k] = bt[k] || { b: r.ht_batch, vd: r.ht_vendor, pn: r.part_number, v: [], usl: r.usl }); bt[k].v.push(...(r.vals || []).map(Number)); });
+  const B = Object.values(bt).map(x => ({ ...x, s: stat(x.v), half: x.usl != null ? x.v.filter(v => v > x.usl / 2).length : 0 })).sort((a, b) => b.s.avg - a.s.avg);
+  $('tBatch').innerHTML = B.length ? B.map(x => `<tr><td>${esc(x.b)}</td><td>${esc(x.vd || '')}</td><td>${esc(x.pn)}</td><td class="n">${x.s.n}</td><td class="n">${fx(x.s.avg)}</td><td class="n">${fx(x.s.max, 2)}</td><td class="n ${x.half ? 'w' : ''}">${x.half}</td></tr>`).join('') : '<tr><td colspan="7" class="note">배치번호를 적은 ② 열처리 후 기록이 없습니다.</td></tr>';
+  // 판정
+  const L = [];
+  const byStage = (k, side) => { const g = grp[k + '|' + side]; return g ? stat(g.v) : null; };
+  ['Outer', 'Inner'].forEach(side => { const a = byStage('1', side), b = byStage('2', side), d = byStage('4', side);
+    if (a && b) L.push(`${side}: 프레스 직후 평균 ${fx(a.avg)} → 열처리 후 ${fx(b.avg)} (<b class="${b.avg - a.avg > 0.01 ? 'w' : 'g'}">${b.avg - a.avg >= 0 ? '+' : ''}${fx(b.avg - a.avg)}</b>)${d ? ` → 출하 전 ${fx(d.avg)}` : ''}`); });
+  const tot = Object.values(jumps).reduce((s, x) => s + x, 0);
+  if (tot) { const [k, c] = Object.entries(jumps).sort((a, b) => b[1] - a[1])[0]; const [f, t] = k.split('→');
+    L.push(`짝 비교 ${P.length}개 LOT 중 <b>${c}개</b>가 <b>${SNM[f]} → ${SNM[t]}</b> 구간에서 가장 많이 커졌습니다.`);
+    L.push(t === '2' ? '→ <b>외주 열처리</b>(장입·적재·냉각) 쪽을 먼저 보십시오.' : f === '1' && t !== '2' ? '' : t === '4' ? '→ 열처리 이후 <b>운송·보관·취급</b>을 확인하십시오.' : '');
+  }
+  const a1 = byStage('1', 'Outer'); if (a1 && R.some(r => r.stage === '1' && r.usl) && a1.max > (R.find(r => r.usl) || {}).usl / 2) L.push('프레스 직후에도 규격 50%를 넘는 Outer가 있습니다 → <b>프레스 성형</b>에서 이미 휨이 시작됩니다.');
+  $('verdict').innerHTML = L.filter(Boolean).length ? L.filter(Boolean).join('<br>') : '측정이 더 쌓이면 자동으로 판정합니다. 같은 LOT를 ① 프레스 직후와 ② 열처리 후에 각각 Outer·Inner 10개씩 재는 것이 핵심입니다.';
+}
+function svgEl(tag, a, p) { const e = document.createElementNS('http://www.w3.org/2000/svg', tag); for (const k in a) e.setAttribute(k, a[k]); if (p) p.appendChild(e); return e; }
+function drawStageChart(G) {
+  const box = $('cStage'); box.innerHTML = ''; if (!G.length) return;
+  const W = box.clientWidth || 600, Hh = 220, m = { t: 14, r: 10, b: 30, l: 42 };
+  const all = G.flatMap(g => g.v), hi = Math.max(...all, 0.05) * 1.1;
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${Hh}`, width: '100%', role: 'img', 'aria-label': '구간별 평면도 분포' }, box);
+  const cols = G.length, cw = (W - m.l - m.r) / cols, Y = (v) => m.t + (1 - v / hi) * (Hh - m.t - m.b);
+  for (let i = 0; i <= 4; i++) { const v = hi * i / 4; svgEl('line', { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), stroke: '#334155', 'stroke-width': .5 }, svg); svgEl('text', { x: m.l - 4, y: Y(v) + 3, 'text-anchor': 'end' }, svg).textContent = v.toFixed(2); }
+  G.forEach((g, i) => { const cx = m.l + (i + .5) * cw, col = g.side === 'Outer' ? '#f97316' : '#60a5fa';
+    g.v.forEach((v, j) => svgEl('circle', { cx: cx + ((j * 37) % 100 / 100 - .5) * cw * .5, cy: Y(v), r: 2.6, fill: col, opacity: .6 }, svg));
+    const s = stat(g.v); svgEl('line', { x1: cx - cw * .3, x2: cx + cw * .3, y1: Y(s.avg), y2: Y(s.avg), stroke: '#e2e8f0', 'stroke-width': 2 }, svg);
+    svgEl('text', { x: cx, y: Hh - 16, 'text-anchor': 'middle' }, svg).textContent = (SNM[g.st] || g.st).replace(/\s.*/, '') + ' ' + (SNM[g.st] || '').split(' ').slice(1, 2).join('');
+    const t = svgEl('text', { x: cx, y: Hh - 3, 'text-anchor': 'middle' }, svg); t.textContent = g.side; t.style.fill = col; });
+}
+
+/* ---------- 이력 ---------- */
+async function loadList() {
+  try { const r = await api('warp_measure?select=*&order=meas_date.desc,id.desc&limit=300');
+    $('lsInfo').textContent = '최근 ' + r.length + '건';
+    $('tList').innerHTML = r.length ? r.map(x => { const s = stat(x.vals || []); return `<tr><td>${x.meas_date}</td><td>${SNM[x.stage] || x.stage}</td><td>${esc(x.part_number)}</td><td>${x.ho ?? '—'}</td><td>${esc(x.lot_no)}</td><td>${esc(x.ht_batch || '')}</td><td class="n">${s ? s.n : 0}</td><td class="n">${s ? fx(s.avg) : '—'}</td><td class="n ${x.usl != null && s && s.max > x.usl ? 'b' : ''}">${s ? fx(s.max, 2) : '—'}</td><td>${esc(x.inspector || '')}</td><td style="white-space:normal;min-width:140px">${esc(x.memo || '')}</td><td><button class="btn sm" data-del="${x.id}">삭제</button></td></tr>`; }).join('')
+      : '<tr><td colspan="12" class="note">기록이 없습니다.</td></tr>';
+  } catch (e) { $('tList').innerHTML = '<tr><td colspan="12" class="b">' + esc(e.message) + '</td></tr>'; }
+}
+$('tList').onclick = async (e) => { const b = e.target.closest('[data-del]'); if (!b) return;
+  if (!b.dataset.arm) { b.dataset.arm = 1; b.textContent = '한 번 더'; setTimeout(() => { delete b.dataset.arm; b.textContent = '삭제'; }, 2500); return; }
+  try { await api('warp_measure?id=eq.' + b.dataset.del, { method: 'DELETE' }); toast('삭제했습니다'); loadList(); } catch (er) { toast('삭제 실패: ' + er.message); } };
+
+/* ---------- 빈 기록지 (현장 종이용) ---------- */
+$('bForm').onclick = () => {
+  const w = window.open('', '_blank'); if (!w) { toast('팝업이 막혀 있습니다'); return; }
+  const grid = (side) => `<tr><th rowspan="1" style="width:90px">${side}</th>${Array.from({ length: 10 }, (_, i) => `<td class="v"><span>${i + 1}</span></td>`).join('')}<td class="v"><span>최대</span></td></tr>`;
+  const block = (st) => `<table class="f"><tr><th colspan="12" class="h">${st.nm} <small>${st.d}</small></th></tr>
+    <tr><td>측정일</td><td colspan="2"></td><td>품번</td><td colspan="2"></td><td>LOT</td><td colspan="2"></td><td>호기</td><td colspan="2"></td></tr>
+    <tr><td>HEAT</td><td colspan="2"></td><td>${st.ht ? '열처리 배치' : '금형'}</td><td colspan="2"></td><td>${st.ht ? '외주 업체' : '측정 방법'}</td><td colspan="2">${st.vendor || ''}</td><td>측정자</td><td colspan="2"></td></tr>
+    ${grid('Outer')}${grid('Inner')}<tr><td>메모</td><td colspan="11" style="height:28px"></td></tr></table>`;
+  w.document.write(`<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><title>구간별 평면도 측정 기록지</title><style>
+  @page{size:A4;margin:10mm}body{font:11px 'Malgun Gothic',sans-serif;margin:0;color:#000}
+  h1{font-size:17px;margin:0 0 2px}p{margin:0 0 8px;font-size:10px}
+  table.f{border-collapse:collapse;width:100%;margin-bottom:9px}table.f td,table.f th{border:1px solid #000;padding:4px 5px;height:22px}
+  th.h{background:#eee;text-align:left;font-size:12px}th.h small{font-weight:400;font-size:10px}
+  td.v{width:7.5%;height:30px;vertical-align:top}td.v span{font-size:8px;color:#555}
+  .sg{float:right;border-collapse:collapse}.sg td,.sg th{border:1px solid #000;width:58px;text-align:center;font-size:10px;padding:2px}.sg td{height:30px}</style></head><body>
+  <table class="sg"><tr><th>작성</th><th>검토</th><th>승인</th></tr><tr><td></td><td></td><td></td></tr></table>
+  <h1>구간별 평면도 측정 기록지 (Raceway 휨)</h1>
+  <p>㈜태진다이텍 · IMP-2611-01 · 같은 LOT를 구간마다 Outer·Inner 각 10개 · 정반+틈새게이지 최대 틈(0.01mm) · 기록 후 SmartFactory [구간별 평면도 측정]에 입력</p>
+  ${STAGES.map(block).join('')}</body></html>`);
+  w.document.close(); setTimeout(() => w.print(), 300);
+};
+
+/* ---------- 탭·초기화 ---------- */
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+  document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x === t));
+  $('pIn').hidden = t.dataset.tab !== 'in'; $('pAn').hidden = t.dataset.tab !== 'an'; $('pLs').hidden = t.dataset.tab !== 'ls';
+  if (t.dataset.tab === 'an') analyze(); if (t.dataset.tab === 'ls') loadList(); });
+$('bAn').onclick = analyze; $('aFam').onchange = analyze;
+(async function init() {
+  $('iDate').value = kst(); $('aTo').value = kst(); $('aFrom').value = addD(kst(), -60);
+  $('iHo').innerHTML = '<option value="">—</option>' + HOS.map(h => `<option value="${h}">${h}호기</option>`).join('');
+  setTimeout(() => { if (!$('iWho').value) $('iWho').value = me(); }, 800);
+  drawStages(); drawVals(false);
+  try {
+    const [parts, specs, rp] = await Promise.all([
+      api('qc_part?select=id,part_number,part_name&part_number=like.*BDA*&order=part_number'),
+      api('qc_part_spec?select=part_id,usl,item_name,valid_to&item_name=like.*평면*'),
+      api('raceway_parts?select=pn,sort&order=sort').catch(() => [])]);
+    const today = kst();
+    PARTS = parts.filter(p => /^(IW|OW)-BDA/.test(p.part_number)).map(p => { const s = specs.filter(x => x.part_id === p.id && (!x.valid_to || x.valid_to >= today)); return { ...p, usl: s.length ? Math.max(...s.map(x => +x.usl)) : null }; });
+    window.RPARTS = rp || [];
+    $('iPart').innerHTML = PARTS.map(p => `<option value="${esc(p.part_number)}">${esc(p.part_number)} (${sideOf(p.part_number)})</option>`).join('');
+    const d = PARTS.find(p => p.part_number === 'OW-BDA-1179'); if (d) $('iPart').value = d.part_number;
+    fillVar(); live(); loadLots();
+  } catch (e) { toast('품번을 불러오지 못했습니다: ' + e.message); }
+})();
+</script>
+</body>
+</html>
