@@ -4,7 +4,7 @@
 <script src="audit.js?v=7"></script>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>불량관리 시스템 v4.0</title>
+  <title>불량관리 시스템 v4.1</title>
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
@@ -659,25 +659,37 @@ function _pnScore(modelName,itemCode,itemName){
   return 0;
 }
 async function searchProdHo(){
+  /* [v4.1] 생산일자 기준 자동 입력 — 그날 MES 생산실적(daily_production 전체 작업지시 + machine_item_daily 스냅샷)에서
+     기종 품번과 맞는 호기를 찾아 자동 선택. 여러 곳이면 매칭 점수 → 그날 타수 많은 호기 순으로 자동 선택(바꿀 수 있음),
+     그날 실적이 없으면 생산일자 이전 3일까지 찾아 가장 가까운 날 호기를 선택 */
   const model=currentModel||document.getElementById('selModel').value;
-  const pd=document.getElementById('selProdDate').value||kstToday();
-  const sel=document.getElementById('selProdLine');const prev=sel.value;
+  const pdIn=document.getElementById('selProdDate').value;
+  const pd=pdIn||kstToday();
+  const sel=document.getElementById('selProdLine');
   const allHo=(cachedCommon.machines&&cachedCommon.machines.length)?cachedCommon.machines:cachedCommon.prodLines;
   if(!model)return;
+  const addD=(d,n)=>{const x=new Date(d+'T00:00:00');x.setDate(x.getDate()+n);return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0')};
   try{
-    const rows=await sbSelect('machine_item_daily',{work_date:'eq.'+pd},'machine_name.asc',300);
-    const scored=rows.map(r=>({name:r.machine_name,code:r.item_code||'',item:r.item_name||'',score:_pnScore(model,r.item_code,r.item_name)})).filter(r=>r.score>0);
-    const seen=new Set();const matched=[];
-    scored.sort((a,b)=>b.score-a.score).forEach(r=>{if(!seen.has(r.name)){seen.add(r.name);matched.push(r)}});
+    const ms=await sbSelect('machine_status',{},'machine_code.asc',100);const MN={};ms.forEach(m=>{if(m.machine_code)MN[m.machine_code]=m.machine_name});
+    async function cands(day){
+      const [dp,mid]=await Promise.all([sbSelect('daily_production',{ymd:'eq.'+day},'machine_code.asc',500).catch(()=>[]),sbSelect('machine_item_daily',{work_date:'eq.'+day},'machine_name.asc',300).catch(()=>[])]);
+      const m={};
+      dp.forEach(r=>{const name=MN[r.machine_code];if(!name)return;const sc=_pnScore(model,r.item_code,'');if(sc<=0)return;const k=name;const o=m[k]||(m[k]={name,code:r.item_code,score:0,shot:0,day});o.score=Math.max(o.score,sc);o.shot+=(+r.shot_qty||0);});
+      mid.forEach(r=>{const sc=_pnScore(model,r.item_code,r.item_name);if(sc<=0)return;const o=m[r.machine_name]||(m[r.machine_name]={name:r.machine_name,code:r.item_code||'',score:0,shot:0,day});o.score=Math.max(o.score,sc);});
+      return Object.values(m).sort((a,b)=>b.score-a.score||b.shot-a.shot);
+    }
+    let matched=await cands(pd),usedDay=pd;
+    if(!matched.length){for(let k=1;k<=3&&!matched.length;k++){usedDay=addD(pd,-k);matched=await cands(usedDay);}}
     const lbl={3:'✅',2:'⭐',1:'🔸'};
     let html='<option value="">생산호기</option>';
-    if(matched.length)html+='<optgroup label="🔍 '+pd+' 품번매칭">'+matched.map(m=>`<option value="${m.name}">${lbl[m.score]} ${m.name} · ${m.code}</option>`).join('')+'</optgroup>';
-    html+='<optgroup label="전체 호기">'+(allHo||[]).map(h=>`<option value="${h.name}">${h.name}</option>`).join('')+'</optgroup>';
+    if(matched.length)html+='<optgroup label="🔍 '+usedDay+' 품번매칭 (MES)">'+matched.map(m=>`<option value="${m.name}">${lbl[m.score]} ${m.name} · ${m.code}${m.shot?' · '+m.shot.toLocaleString()+'타':''}</option>`).join('')+'</optgroup>';
+    html+='<optgroup label="전체 호기">'+(allHo||[]).filter(h=>!matched.some(m=>m.name===h.name)).map(h=>`<option value="${h.name}">${h.name}</option>`).join('')+'</optgroup>';
     sel.innerHTML=html;
-    /* [v4.0] 후보가 여럿이거나 없으면 직접 고르게 비워 둔다 (지난 선택을 그대로 쓰면 엉뚱한 호기로 쌓임) */
-    if(matched.length===1){sel.value=matched[0].name;showToast('🔍 '+matched[0].code+' → '+matched[0].name)}
-    else if(matched.length>1){sel.value='';showToast('🔍 '+pd+' 생산 호기 '+matched.length+'곳 — 실제 생산한 호기를 고르세요')}
-    else{sel.value='';showToast('⚠ '+pd+' 품번 매칭 없음 — 생산일자 확인 후 호기를 직접 고르세요')}
+    if(matched.length){
+      sel.value=matched[0].name;saveLastSelection();
+      const note=usedDay!==pd?' ('+pd+' 실적 없음 → '+usedDay+' 기준)':'';
+      showToast('🔍 '+matched[0].code+' → '+matched[0].name+' 자동 입력'+note+(matched.length>1?' · 후보 '+matched.length+'곳, 다르면 바꾸세요':''));
+    }else{sel.value='';showToast('⚠ '+pd+' 전후 MES 생산실적에 이 기종 품번이 없음 — 호기를 직접 고르세요')}
   }catch(e){console.log('생산호기 검색 실패:',e)}
 }
 /* 고객사명 비교키 (공백/대소문자 무시, SBC·Raceway 동일 취급) */
