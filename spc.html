@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<script src="audit.js?v=9"></script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>📈 SPC 관리도·공정능력 v1.0</title>
+<!-- SPC 관리도·공정능력 v1.0 — 출하검사 측정값으로 품번·항목별 Cp/Cpk/Pp/Ppk, X̄-R 관리도, 이상 패턴(규칙 1~3), 히스토그램
+     IATF 16949 9.1.1.1 제조공정 모니터링·측정 · 8.3.3.3 특별특성 · SQ 공정능력
+     자료: qc_shipping_inspection + qc_shipping_measurement + qc_part_spec → rpc spc_items / spc_series -->
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#0f172a;--card:#1e293b;--card2:#263449;--line:#334155;--line2:#475569;--tx:#e2e8f0;--tx2:#cbd5e1;--sub:#94a3b8;--dim:#64748b;
+  --blue:#60a5fa;--b2:#2563eb;--green:#4ade80;--amber:#fbbf24;--red:#f87171}
+body{font-family:-apple-system,BlinkMacSystemFont,"Malgun Gothic",sans-serif;background:var(--bg);color:var(--tx);min-height:100vh;padding-bottom:40px;font-size:14px}
+button,input,select{font-family:inherit;font-size:14px}
+.top{position:sticky;top:0;z-index:5;background:linear-gradient(135deg,#1e3a8a,#0f172a);border-bottom:1px solid var(--line);padding:12px 16px}
+.top h1{font-size:18px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}.top h1 small{font-size:11px;color:var(--sub);font-weight:400}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.btn{border:1px solid var(--line2);background:var(--card2);color:var(--tx);border-radius:8px;padding:7px 12px;cursor:pointer;font-weight:600}
+.btn.on{background:var(--b2);border-color:var(--b2);color:#fff}.btn.sm{padding:4px 8px;font-size:12px}
+select,input[type=date],input[type=search]{max-width:100%;background:#0b1222;border:1px solid var(--line2);color:var(--tx);border-radius:6px;padding:7px 9px}
+label.chk{display:flex;gap:5px;align-items:center;font-size:13px;color:var(--tx2);cursor:pointer}
+.wrap{max-width:1200px;margin:0 auto;padding:14px 16px;display:flex;flex-direction:column;gap:14px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:2px;cursor:pointer}
+.kpi.on{outline:2px solid var(--blue)}
+.kpi .k{font-size:12px;color:var(--sub)}.kpi .v{font-size:26px;font-weight:800;font-variant-numeric:tabular-nums}.kpi .d{font-size:11px;color:var(--dim)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.card h2{font-size:15px;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:baseline}.card h2 small{font-weight:400;color:var(--sub);font-size:11px}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px}
+.tw{overflow:auto;max-height:520px}
+table{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeric:tabular-nums}
+th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
+th{color:var(--sub);font-size:12px;font-weight:600;position:sticky;top:0;background:var(--card);z-index:1}
+td.n,th.n{text-align:right}
+tr.click{cursor:pointer}tr.click:hover td,tr.sel td{background:var(--card2)}
+.g{color:var(--green)}.w{color:var(--amber)}.b{color:var(--red)}.dm{color:var(--dim)}
+.tag{display:inline-block;font-size:11px;padding:1px 6px;border-radius:4px;background:#7c2d12;color:#fed7aa;margin-left:4px}
+.chart{position:relative}.chart svg text{fill:var(--sub);font-size:11px}
+.tip{position:absolute;pointer-events:none;background:#0b1222;border:1px solid var(--line2);border-radius:6px;padding:5px 8px;font-size:12px;white-space:pre;z-index:3}
+.note{font-size:12px;color:var(--sub);line-height:1.6}
+.stat{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:6px}
+.stat div{background:#0b1222;border:1px solid var(--line);border-radius:8px;padding:7px 9px}.stat b{display:block;font-size:17px;font-variant-numeric:tabular-nums}.stat span{font-size:11px;color:var(--sub)}
+.viol{font-size:13px;line-height:1.7}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#0f766e;color:#fff;padding:10px 18px;border-radius:8px;z-index:50;font-weight:600}
+[hidden]{display:none!important}
+@media print{body{background:#fff;color:#000}.top,.noprint,#cardList{display:none!important}.card{border:1px solid #999;background:#fff;break-inside:avoid}
+  .chart svg text{fill:#333}.stat div{background:#fff}.note{color:#333}}
+</style>
+</head>
+<body>
+<div class="top">
+  <h1>📈 SPC 관리도·공정능력 <small>v1.0 · 출하검사 측정값 · X̄-R 관리도 · Cp/Cpk/Pp/Ppk · IATF 9.1.1.1</small></h1>
+</div>
+
+<div class="wrap">
+  <div class="row noprint">
+    <button class="btn on" data-range="90">최근 90일</button><button class="btn" data-range="180">최근 6개월</button><button class="btn" data-range="365">최근 1년</button>
+    <input type="date" id="dFrom"> ~ <input type="date" id="dTo"> <button class="btn" id="btnGo">조회</button>
+  </div>
+  <div class="kpis noprint" id="kpis">
+    <div class="kpi on" data-f="all"><span class="k">분석 항목</span><span class="v" id="kAll">—</span><span class="d">부분군 5개 이상인 치수 항목</span></div>
+    <div class="kpi" data-f="bad"><span class="k">Cpk 1.0 미만</span><span class="v b" id="kBad">—</span><span class="d">공정능력 부족 · 전수/개선 필요</span></div>
+    <div class="kpi" data-f="warn"><span class="k">Cpk 1.0~1.33</span><span class="v w" id="kWarn">—</span><span class="d">관리 강화</span></div>
+    <div class="kpi" data-f="ok"><span class="k">기준 충족</span><span class="v g" id="kOk">—</span><span class="d">일반 1.33 · 특별특성 1.67 이상</span></div>
+    <div class="kpi" data-f="sc"><span class="k">특별특성 미달</span><span class="v" id="kSc">—</span><span class="d">SC/M/I 등 · Cpk 1.67 미만</span></div>
+  </div>
+
+  <div class="card" id="cardList">
+    <h2>품번·항목별 공정능력 <small id="listInfo">Cpk 낮은 순 · 행을 누르면 관리도</small></h2>
+    <div class="row">
+      <select id="fPart"><option value="">전체 품번</option></select>
+      <input type="search" id="fText" placeholder="항목명 검색">
+      <label class="chk"><input type="checkbox" id="fSc"> 특별특성만</label>
+    </div>
+    <div class="tw"><table><thead><tr><th>품번</th><th>항목</th><th class="n">규격</th><th class="n">부분군</th><th class="n">평균</th><th class="n">σ</th><th class="n">Cp</th><th class="n">Cpk</th><th class="n">Ppk</th><th class="n">기준</th><th>판정</th></tr></thead><tbody id="tList"></tbody></table></div>
+    <p class="note">Cpk = 군내+군간 산포(Between/Within: R̄/d₂와 회차 평균의 이동범위 MR̄/1.128) 기준, Ppk = 전체 측정값 표준편차 기준. σ 열은 Cpk에 쓴 값입니다. 하한이 0인 항목(진원도·평면도·동심도 등 기하공차)은 상한만 있는 단측 규격으로 보고 Cpu로 계산합니다(Cp·Pp 없음).<br>
+    한 부분군 = 출하검사 1회에 같은 항목을 잰 값(보통 5점)입니다. 5점이 거의 같은 값이라 군내 산포(R̄/d₂)만 쓰면 Cpk가 실제보다 크게 나오므로, 회차 사이 변동(호기·로트·세팅)을 더해 계산합니다.</p>
+  </div>
+
+  <div id="detail" hidden>
+    <div class="card">
+      <h2><span id="dTitle">—</span> <span class="row noprint"><select id="fHo"></select><button class="btn sm" id="btnTask">과제 등록</button><button class="btn sm" id="btnPrint">🖨 인쇄</button></span></h2>
+      <div class="stat" id="dStat"></div>
+      <div class="viol" id="dViol"></div>
+    </div>
+    <div class="card"><h2>X̄ 관리도 <small>검사 회차별 평균 · 관리한계 = X̄̄ ± 2.66×MR̄ (회차 간 이동범위) · 규격(USL/LSL)</small></h2><div class="chart" id="cX"></div></div>
+    <div class="two">
+      <div class="card"><h2>R 관리도 <small>한 회차 안의 범위(최대−최소) · UCL = D₄×R̄</small></h2><div class="chart" id="cR"></div></div>
+      <div class="card"><h2>히스토그램 <small>개별 측정값 · 정규분포 곡선</small></h2><div class="chart" id="cH"></div></div>
+    </div>
+    <div class="card noprint">
+      <h2>측정 이력 <small id="sInfo"></small></h2>
+      <div class="tw" style="max-height:340px"><table><thead><tr><th>검사일</th><th>호기</th><th>LOT</th><th>검사자</th><th class="n">X̄</th><th class="n">R</th><th>측정값</th><th>이상</th></tr></thead><tbody id="tSer"></tbody></table></div>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+const SB_URL = 'https://omngtyewdaqpphnzeate.supabase.co';
+const SB_KEY = 'sb_publishable_9j2YkkL-7ul1TrhH-NjVdQ_vWDG2-1D';
+const H = { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY };
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const kst = (d = new Date()) => new Date(d.getTime() + 9 * 3600e3).toISOString().slice(0, 10);
+const addD = (s, n) => { const d = new Date(s + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+const me = () => { try { const u = window.tjAudit && window.tjAudit.user(); return (u && u.name) || ''; } catch (e) { return ''; } };
+function toast(m) { const t = $('toast'); t.textContent = m; t.hidden = false; clearTimeout(toast._t); toast._t = setTimeout(() => t.hidden = true, 2600); }
+async function api(path, opt = {}) {
+  const r = await fetch(SB_URL + '/rest/v1/' + path, { ...opt, headers: { ...H, 'Content-Type': 'application/json', Prefer: 'return=representation', ...(opt.headers || {}) } });
+  const t = await r.text(); if (!r.ok) throw new Error(r.status + ' ' + t.slice(0, 200)); return t ? JSON.parse(t) : null;
+}
+const rpc = (fn, a) => api('rpc/' + fn, { method: 'POST', body: JSON.stringify(a || {}) });
+
+/* 관리도 계수 (n = 부분군 크기) */
+const A2 = {2:1.880,3:1.023,4:0.729,5:0.577,6:0.483,7:0.419,8:0.373,9:0.337,10:0.308,11:0.285,12:0.266};
+const D3 = {2:0,3:0,4:0,5:0,6:0,7:0.076,8:0.136,9:0.184,10:0.223,11:0.256,12:0.283};
+const D4 = {2:3.267,3:2.574,4:2.282,5:2.114,6:2.004,7:1.924,8:1.864,9:1.816,10:1.777,11:1.744,12:1.717};
+const D2 = {2:1.128,3:1.693,4:2.059,5:2.326,6:2.534,7:2.704,8:2.847,9:2.970,10:3.078,11:3.173,12:3.258};
+const isSC = (s) => !!(s && s.trim() && !/[가-힣]/.test(s));  // 특별특성 기호(SC·M·I·C·F·HIC 등)가 있으면 특별특성
+const need = (x) => isSC(x.special_char) ? 1.67 : 1.33;
+const fx = (v, d = 2) => v == null || isNaN(v) ? '—' : (+v).toFixed(d);
+const dec = (x) => { const s = String(x.usl) + ' ' + String(x.lsl); const m = s.match(/\.(\d+)/g); return Math.min(4, Math.max(2, ...(m || ['.00']).map(t => t.length - 1)) + 1); };
+const grade = (x) => {
+  if (x.sigma_o != null && +x.sigma_o === 0) return { c: 'dm', t: '측정값 모두 같음 · 분해능 확인', k: 'res' };
+  if (x.cpk == null) return { c: 'dm', t: '—', k: 'na' };
+  const v = +x.cpk;
+  if (v < 1) return { c: 'b', t: '부족', k: 'bad' };
+  if (v < 1.33) return { c: 'w', t: '관리 강화', k: 'warn' };
+  if (v < need(x)) return { c: 'w', t: '특별특성 미달', k: 'scw' };
+  return { c: 'g', t: '충족', k: 'ok' };
+};
+/* 표준정규 누적분포 */
+function Phi(z) { const t = 1 / (1 + 0.2316419 * Math.abs(z)); const d = 0.3989423 * Math.exp(-z * z / 2);
+  const p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274)))); return z > 0 ? 1 - p : p; }
+function ppm(mu, sd, lsl, usl, one) { if (!(sd > 0)) return 0; let p = 1 - Phi((usl - mu) / sd); if (!one) p += Phi((lsl - mu) / sd); return p * 1e6; }
+
+let ITEMS = [], FILTER = 'all', CUR = null, SER = [];
+
+function setRange(k) {
+  const y = addD(kst(), -1);
+  $('dFrom').value = addD(y, -(+k) + 1); $('dTo').value = y;
+  document.querySelectorAll('[data-range]').forEach(b => b.classList.toggle('on', b.dataset.range === k));
+  load();
+}
+async function load() {
+  const f = $('dFrom').value, t = $('dTo').value; if (!f || !t) return;
+  $('tList').innerHTML = '<tr><td colspan="11" class="note">계산 중…</td></tr>'; $('detail').hidden = true;
+  try { ITEMS = await rpc('spc_items', { p_from: f, p_to: t }) || []; }
+  catch (e) { $('tList').innerHTML = '<tr><td colspan="11" class="b">불러오지 못했습니다: ' + esc(e.message) + '</td></tr>'; return; }
+  ITEMS.forEach(x => x.g = grade(x));
+  const parts = [...new Map(ITEMS.map(x => [x.part_id, x])).values()].sort((a, b) => a.part_number.localeCompare(b.part_number));
+  const keep = $('fPart').value;
+  $('fPart').innerHTML = '<option value="">전체 품번 (' + parts.length + ')</option>' + parts.map(p => `<option value="${p.part_id}">${esc(p.part_number)} ${esc(p.part_name || '')}</option>`).join('');
+  if (parts.some(p => String(p.part_id) === keep)) $('fPart').value = keep;
+  const c = (k) => ITEMS.filter(x => x.g.k === k).length;
+  $('kAll').textContent = ITEMS.length; $('kBad').textContent = c('bad'); $('kWarn').textContent = c('warn');
+  $('kOk').textContent = c('ok'); $('kSc').textContent = ITEMS.filter(x => isSC(x.special_char) && x.cpk != null && +x.cpk < 1.67 && +x.sigma_o > 0).length;
+  drawList();
+  const q = new URLSearchParams(location.search);
+  if (q.get('part') && q.get('item')) { const x = ITEMS.find(i => String(i.part_id) === q.get('part') && String(i.item_no) === q.get('item')); if (x) openItem(x); }
+}
+function shown() {
+  const p = $('fPart').value, s = $('fText').value.trim().toLowerCase(), sc = $('fSc').checked;
+  return ITEMS.filter(x => (!p || String(x.part_id) === p) && (!s || (x.item_name || '').toLowerCase().includes(s) || x.part_number.toLowerCase().includes(s))
+    && (!sc || isSC(x.special_char))
+    && (FILTER === 'all' || (FILTER === 'sc' ? isSC(x.special_char) && x.cpk != null && +x.cpk < 1.67 && +x.sigma_o > 0 : FILTER === 'ok' ? x.g.k === 'ok' : x.g.k === FILTER)))
+    .sort((a, b) => (a.cpk == null ? 99 : +a.cpk) - (b.cpk == null ? 99 : +b.cpk));
+}
+function drawList() {
+  const L = shown();
+  $('listInfo').textContent = L.length + '개 항목 · Cpk 낮은 순 · 행을 누르면 관리도';
+  if (!L.length) { $('tList').innerHTML = '<tr><td colspan="11" class="note">조건에 맞는 항목이 없습니다.</td></tr>'; return; }
+  $('tList').innerHTML = L.map((x, i) => {
+    const d = dec(x), spec = x.one_sided ? '≤ ' + (+x.usl) : (+x.lsl) + ' ~ ' + (+x.usl);
+    return `<tr class="click" data-i="${ITEMS.indexOf(x)}"><td><b>${esc(x.part_number)}</b> <span class="note">${esc(x.part_name || '')}</span></td>
+    <td>${x.item_no}. ${esc(x.item_name)}${x.special_char ? '<span class="tag">' + esc(x.special_char) + '</span>' : ''}</td>
+    <td class="n">${spec}</td><td class="n">${x.k}</td><td class="n">${fx(x.grand_mean, d)}</td><td class="n">${fx(x.sigma_bw, d + 1)}</td>
+    <td class="n">${fx(x.cp)}</td><td class="n ${x.g.c}"><b>${fx(x.cpk)}</b></td><td class="n">${fx(x.ppk)}</td><td class="n">${need(x)}</td><td class="${x.g.c}">${x.g.t}</td></tr>`;
+  }).join('');
+}
+
+async function openItem(x) {
+  CUR = x; $('detail').hidden = false;
+  document.querySelectorAll('#tList tr').forEach(r => r.classList.toggle('sel', +r.dataset.i === ITEMS.indexOf(x)));
+  $('dTitle').innerHTML = `${esc(x.part_number)} · ${x.item_no}. ${esc(x.item_name)}${x.special_char ? '<span class="tag">' + esc(x.special_char) + '</span>' : ''}`;
+  $('cX').innerHTML = $('cR').innerHTML = $('cH').innerHTML = '<p class="note">불러오는 중…</p>';
+  try { SER = await rpc('spc_series', { p_part: x.part_id, p_item: x.item_no, p_lsl: x.lsl, p_usl: x.usl, p_from: $('dFrom').value, p_to: $('dTo').value }) || []; }
+  catch (e) { $('cX').innerHTML = '<p class="b">불러오지 못했습니다: ' + esc(e.message) + '</p>'; return; }
+  const hos = [...new Set(SER.map(s => s.ho).filter(h => h != null))].sort((a, b) => a - b);
+  $('fHo').innerHTML = '<option value="">전체 호기</option>' + hos.map(h => `<option value="${h}">${h}호기</option>`).join('');
+  $('fHo').hidden = hos.length < 2;
+  $('btnTask').disabled = false; $('btnTask').textContent = '과제 등록'; delete $('btnTask').dataset.arm;
+  drawDetail();
+  $('detail').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+/* 계산: 관리한계 · 공정능력 · 이상 패턴 */
+function calc(rows, x) {
+  const k = rows.length; if (!k) return null;
+  const ns = rows.map(r => r.vals.length).sort((a, b) => a - b), n = Math.min(12, Math.max(2, ns[Math.floor(k / 2)]));
+  const xb = rows.map(r => +r.xbar), rr = rows.map(r => +r.r);
+  const gm = xb.reduce((a, b) => a + b, 0) / k, rbar = rr.reduce((a, b) => a + b, 0) / k;
+  const all = rows.flatMap(r => r.vals.map(Number)), N = all.length, mu = all.reduce((a, b) => a + b, 0) / N;
+  const so = N > 1 ? Math.sqrt(all.reduce((a, v) => a + (v - mu) ** 2, 0) / (N - 1)) : 0, sw = rbar / D2[n];
+  const mrs = xb.slice(1).map((v, i) => Math.abs(v - xb[i])), mrbar = mrs.length ? mrs.reduce((a, b) => a + b, 0) / mrs.length : 0;
+  // Between/Within: σb² = (MR̄/1.128)² − σw²/n , σbw = √(σb² + σw²)
+  const sbw = Math.sqrt(Math.max((mrbar / 1.128) ** 2 - sw ** 2 / n, 0) + sw ** 2);
+  const lsl = +x.lsl, usl = +x.usl, one = !!x.one_sided, tol = usl - lsl;
+  const cap = (s) => s > 0 ? (one ? (usl - gm) / (3 * s) : Math.min(usl - gm, gm - lsl) / (3 * s)) : null;
+  const L = { n, k, N, gm, rbar, mrbar, sw, sbw, so, ucl: gm + 2.66 * mrbar, lcl: gm - 2.66 * mrbar, rucl: D4[n] * rbar, rlcl: D3[n] * rbar,
+    cp: !one && sbw > 0 ? tol / (6 * sbw) : null, cpk: cap(sbw), pp: !one && so > 0 ? tol / (6 * so) : null, ppk: cap(so),
+    oos: all.filter(v => v < lsl || v > usl).length, ppm: ppm(mu, so, lsl, usl, one), min: Math.min(...all), max: Math.max(...all), all };
+  // 이상 패턴: 1) 관리한계 밖  2) 중심선 한쪽 연속 7점  3) 연속 6점 상승/하강  4) R 관리한계 밖
+  const fl = rows.map(() => []);
+  xb.forEach((v, i) => { if (v > L.ucl || v < L.lcl) fl[i].push(1); });
+  let run = 0, side = 0;
+  xb.forEach((v, i) => { const s = v > gm ? 1 : v < gm ? -1 : 0; run = s && s === side ? run + 1 : 1; side = s; if (s && run >= 7) for (let j = i - run + 1; j <= i; j++) if (!fl[j].includes(2)) fl[j].push(2); });
+  let up = 1, dn = 1;
+  for (let i = 1; i < k; i++) { up = xb[i] > xb[i - 1] ? up + 1 : 1; dn = xb[i] < xb[i - 1] ? dn + 1 : 1;
+    if (up >= 6 || dn >= 6) for (let j = i - Math.max(up, dn) + 1; j <= i; j++) if (!fl[j].includes(3)) fl[j].push(3); }
+  rr.forEach((v, i) => { if (v > L.rucl || (L.rlcl > 0 && v < L.rlcl)) fl[i].push(4); });
+  L.flags = fl; return L;
+}
+const RULE = { 1: '관리한계 밖', 2: '한쪽 연속 7점', 3: '연속 6점 상승/하강', 4: 'R 한계 밖' };
+
+function drawDetail() {
+  const x = CUR, ho = $('fHo').value, rows = SER.filter(s => !ho || String(s.ho) === ho);
+  const L = calc(rows, x), d = dec(x);
+  if (!L) { $('dStat').innerHTML = ''; $('dViol').innerHTML = '<span class="note">측정값이 없습니다.</span>'; ['cX', 'cR', 'cH'].forEach(i => $(i).innerHTML = ''); $('tSer').innerHTML = ''; return; }
+  CUR.L = L;
+  const g = L.cpk == null ? 'dm' : L.cpk < 1 ? 'b' : L.cpk < need(x) ? 'w' : 'g';
+  const st = (k, v, c = '') => `<div><span>${k}</span><b class="${c}">${v}</b></div>`;
+  $('dStat').innerHTML = st('규격', x.one_sided ? '≤ ' + (+x.usl) : (+x.lsl) + ' ~ ' + (+x.usl)) + st('부분군 / 측정값', L.k + ' / ' + L.N + ' (n=' + L.n + ')')
+    + st('평균 X̄̄', fx(L.gm, d)) + st('σ 군내 / 군간포함 / 전체', fx(L.sw, d + 1) + ' / ' + fx(L.sbw, d + 1) + ' / ' + fx(L.so, d + 1))
+    + (x.one_sided ? '' : st('Cp', fx(L.cp))) + st(x.one_sided ? 'Cpk (Cpu)' : 'Cpk', fx(L.cpk), g) + st('Ppk', fx(L.ppk))
+    + st('기준', need(x) + (isSC(x.special_char) ? ' (특별특성)' : '')) + st('규격 밖 측정값', L.oos, L.oos ? 'b' : '') + st('추정 불량률(정규분포)', L.ppm < 1 ? '< 1 ppm' : Math.round(L.ppm).toLocaleString() + ' ppm', L.ppm > 63 ? 'w' : '');
+  const cnt = {}; L.flags.forEach(f => f.forEach(r => cnt[r] = (cnt[r] || 0) + 1));
+  const msg = [];
+  if (L.so === 0) msg.push('<span class="w">측정값이 모두 같아 산포를 계산할 수 없습니다. 측정기 분해능(눈금)이 공차에 비해 큰지 확인하십시오 (MSA ndc).</span>');
+  if (Object.keys(cnt).length) msg.push('<b class="w">이상 패턴</b> ' + Object.entries(cnt).map(([r, c]) => `${RULE[r]} ${c}점`).join(' · ') + ' — 해당 부분군은 그래프에 빨간 점, 이력표에 표시');
+  else msg.push('<span class="g">이상 패턴 없음</span> (관리한계 밖 · 한쪽 연속 7점 · 연속 6점 상승/하강 · R 한계 밖 기준)');
+  const off = L.gm - (x.one_sided ? L.gm : (+x.lsl + +x.usl) / 2);
+  if (!x.one_sided && L.cp && L.cpk && L.cp - L.cpk > 0.3) msg.push(`<span class="w">평균이 규격 중심에서 ${off > 0 ? '+' : ''}${fx(off, d)} 치우쳐 있습니다</span> — 산포보다 <b>중심 조정</b>(금형·세팅)으로 Cpk를 올릴 수 있습니다 (Cp ${fx(L.cp)} → Cpk ${fx(L.cpk)}).`);
+  if (L.sbw > 0 && L.sw > 0 && L.sbw > 2 * L.sw) msg.push(`<span class="w">검사 회차 사이 변동이 한 회차 안 변동의 ${fx(L.sbw / L.sw, 1)}배입니다</span> — 로트·호기·소재·세팅 차이가 산포의 대부분입니다.${$('fHo').options.length > 2 && !$('fHo').value ? ' 호기를 나눠 보십시오.' : ''}`);
+  $('dViol').innerHTML = msg.join('<br>');
+  chart($('cX'), rows, rows.map(r => +r.xbar), [
+    { v: L.ucl, c: '#f87171', t: 'UCL ' + fx(L.ucl, d + 1), dash: '5 4' }, { v: L.gm, c: '#60a5fa', t: 'CL ' + fx(L.gm, d + 1) }, { v: L.lcl, c: '#f87171', t: 'LCL ' + fx(L.lcl, d + 1), dash: '5 4' },
+    { v: +x.usl, c: '#fbbf24', t: 'USL ' + (+x.usl) }, ...(x.one_sided ? [] : [{ v: +x.lsl, c: '#fbbf24', t: 'LSL ' + (+x.lsl) }])], L.flags.map(f => f.some(r => r < 4)), d, 240);
+  chart($('cR'), rows, rows.map(r => +r.r), [{ v: L.rucl, c: '#f87171', t: 'UCL ' + fx(L.rucl, d + 1), dash: '5 4' }, { v: L.rbar, c: '#60a5fa', t: 'R̄ ' + fx(L.rbar, d + 1) },
+    ...(L.rlcl > 0 ? [{ v: L.rlcl, c: '#f87171', t: 'LCL ' + fx(L.rlcl, d + 1), dash: '5 4' }] : [])], L.flags.map(f => f.includes(4)), d + 1, 190);
+  hist($('cH'), L, x, d);
+  $('sInfo').textContent = rows.length + '회 · 최근 순';
+  $('tSer').innerHTML = rows.map((r, i) => ({ r, f: L.flags[i] })).reverse().map(({ r, f }) => `<tr><td>${r.d}</td><td>${r.ho ?? '—'}</td><td>${esc(r.lot_no || '')}</td><td>${esc(r.inspector || '')}</td>
+    <td class="n ${f.some(v => v < 4) ? 'b' : ''}">${fx(r.xbar, d + 1)}</td><td class="n ${f.includes(4) ? 'b' : ''}">${fx(r.r, d)}</td>
+    <td class="note">${r.vals.map(v => { const o = +v < +x.lsl || +v > +x.usl; return o ? '<b class="b">' + (+v) + '</b>' : (+v); }).join(', ')}</td><td class="w">${f.map(v => RULE[v]).join(', ')}</td></tr>`).join('');
+}
+
+function tipOf(box) { let t = box.querySelector('.tip'); if (!t) { t = document.createElement('div'); t.className = 'tip'; t.hidden = true; box.appendChild(t); }
+  return { show(ev, s) { t.textContent = s; t.hidden = false; const r = box.getBoundingClientRect(); let px = ev.clientX - r.left + 12; if (px + t.offsetWidth > box.clientWidth) px -= t.offsetWidth + 24; t.style.left = px + 'px'; t.style.top = (ev.clientY - r.top + 12) + 'px'; }, hide() { t.hidden = true; } }; }
+function svgEl(tag, a, p) { const e = document.createElementNS('http://www.w3.org/2000/svg', tag); for (const k in a) e.setAttribute(k, a[k]); if (p) p.appendChild(e); return e; }
+
+function chart(box, rows, ys, lines, bad, d, Hh) {
+  box.innerHTML = '';
+  const W = box.clientWidth || 600, m = { t: 12, r: 92, b: 24, l: 52 };
+  const vals = ys.concat(lines.map(l => l.v)).filter(v => isFinite(v));
+  let lo = Math.min(...vals), hi = Math.max(...vals); const pad = (hi - lo) * 0.08 || Math.abs(hi) * 0.01 || 0.01; lo -= pad; hi += pad;
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${Hh}`, width: '100%', role: 'img', 'aria-label': '관리도' }, box);
+  const X = (i) => m.l + (rows.length < 2 ? (W - m.l - m.r) / 2 : i / (rows.length - 1) * (W - m.l - m.r)), Y = (v) => m.t + (hi - v) / (hi - lo) * (Hh - m.t - m.b);
+  for (let i = 0; i <= 4; i++) { const v = lo + (hi - lo) * i / 4; svgEl('line', { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), stroke: '#334155', 'stroke-width': 0.5 }, svg);
+    svgEl('text', { x: m.l - 6, y: Y(v) + 4, 'text-anchor': 'end' }, svg).textContent = v.toFixed(d); }
+  lines.forEach(l => svgEl('line', { x1: m.l, x2: W - m.r, y1: Y(l.v), y2: Y(l.v), stroke: l.c, 'stroke-width': 1.4, ...(l.dash ? { 'stroke-dasharray': l.dash } : {}) }, svg));
+  // 라벨 겹침 방지: 위에서부터 12px 이상 띄움
+  let prev = -1e9; lines.map(l => ({ l, y: Y(l.v) })).sort((p, q) => p.y - q.y).forEach(o => { const y = Math.max(o.y, prev + 12); prev = y;
+    const t = svgEl('text', { x: W - m.r + 4, y: y + 4 }, svg); t.textContent = o.l.t; t.style.fill = o.l.c; });
+  svgEl('polyline', { points: ys.map((v, i) => X(i) + ',' + Y(v)).join(' '), fill: 'none', stroke: '#94a3b8', 'stroke-width': 1.2 }, svg);
+  // x축 날짜 (최대 6개)
+  const step = Math.max(1, Math.ceil(rows.length / 6));
+  rows.forEach((r, i) => { if (i % step === 0) svgEl('text', { x: X(i), y: Hh - 6, 'text-anchor': 'middle' }, svg).textContent = r.d.slice(5); });
+  const tip = tipOf(box);
+  ys.forEach((v, i) => { const r = rows[i];
+    const c = svgEl('circle', { cx: X(i), cy: Y(v), r: bad[i] ? 4.5 : 3, fill: bad[i] ? '#f87171' : '#60a5fa', stroke: '#0f172a', 'stroke-width': 1 }, svg);
+    const hit = svgEl('circle', { cx: X(i), cy: Y(v), r: 9, fill: 'transparent' }, svg);
+    hit.addEventListener('mousemove', ev => tip.show(ev, `${r.d}${r.ho != null ? ' · ' + r.ho + '호기' : ''}${r.lot_no ? ' · ' + r.lot_no : ''}\n값 ${v.toFixed(d + 1)}\n측정 ${r.vals.map(Number).join(', ')}`));
+    hit.addEventListener('mouseleave', () => tip.hide()); void c; });
+}
+function hist(box, L, x, d) {
+  box.innerHTML = '';
+  const W = box.clientWidth || 360, Hh = 190, m = { t: 14, r: 10, b: 24, l: 30 };
+  const lsl = +x.lsl, usl = +x.usl;
+  let lo = Math.min(L.min, x.one_sided ? L.min : lsl), hi = Math.max(L.max, usl); const pad = (hi - lo) * 0.06 || 0.01; lo -= pad; hi += pad;
+  const bins = Math.min(20, Math.max(6, Math.round(Math.sqrt(L.N)))), bw = (hi - lo) / bins, cnt = new Array(bins).fill(0);
+  L.all.forEach(v => cnt[Math.min(bins - 1, Math.max(0, Math.floor((v - lo) / bw)))]++);
+  const top = Math.max(...cnt, 1);
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${Hh}`, width: '100%', role: 'img', 'aria-label': '히스토그램' }, box);
+  const X = (v) => m.l + (v - lo) / (hi - lo) * (W - m.l - m.r), Y = (c) => m.t + (1 - c / top) * (Hh - m.t - m.b);
+  cnt.forEach((c, i) => { if (c) svgEl('rect', { x: X(lo + i * bw) + 1, y: Y(c), width: Math.max(1, X(lo + bw) - X(lo) - 2), height: Hh - m.b - Y(c), fill: '#3b82f6', opacity: 0.75, rx: 2 }, svg); });
+  if (L.so > 0) { const pts = []; for (let i = 0; i <= 60; i++) { const v = lo + (hi - lo) * i / 60, f = Math.exp(-((v - L.gm) ** 2) / (2 * L.so ** 2)) / (L.so * Math.sqrt(2 * Math.PI)) * L.N * bw; pts.push(X(v) + ',' + Y(Math.min(f, top * 1.2))); }
+    svgEl('polyline', { points: pts.join(' '), fill: 'none', stroke: '#e2e8f0', 'stroke-width': 1.3 }, svg); }
+  [[usl, 'USL'], ...(x.one_sided ? [] : [[lsl, 'LSL']])].forEach(([v, t]) => { svgEl('line', { x1: X(v), x2: X(v), y1: m.t, y2: Hh - m.b, stroke: '#fbbf24', 'stroke-width': 1.5 }, svg);
+    const e = svgEl('text', { x: X(v), y: m.t - 2, 'text-anchor': 'middle' }, svg); e.textContent = t; e.style.fill = '#fbbf24'; });
+  [lo + pad, (lo + hi) / 2, hi - pad].forEach(v => svgEl('text', { x: X(v), y: Hh - 6, 'text-anchor': 'middle' }, svg).textContent = v.toFixed(d));
+}
+
+/* 공정능력 미달 항목을 개선과제 대장에 등록 (직접 입력 지표: 추정 불량률 ppm, 목표 Cpk 기준까지 감소) */
+async function addTask(btn) {
+  const x = CUR, L = x && x.L; if (!L) return;
+  if (!btn.dataset.arm) { btn.dataset.arm = '1'; btn.textContent = '한 번 더 눌러 등록'; setTimeout(() => { delete btn.dataset.arm; if (!btn.disabled) btn.textContent = '과제 등록'; }, 3000); return; }
+  btn.disabled = true;
+  const t = kst(), who = me() || '(미로그인)', base = Math.round(L.ppm), goal = need(x);
+  const goalPpm = ppm(0, 1, -3 * goal, 3 * goal, x.one_sided) ;
+  const tgt = base > 0 ? Math.min(99, Math.max(30, Math.ceil((1 - goalPpm / base) * 100))) : 50;
+  try {
+    const r = await api('improvement_tasks', { method: 'POST', body: JSON.stringify({
+      status: '등록', source: '공정능력(SPC)', title: `${x.part_number} ${x.item_name} 공정능력 향상`,
+      problem: `SPC 분석(${$('dFrom').value}~${$('dTo').value}${$('fHo').value ? ', ' + $('fHo').value + '호기' : ''}) ${x.part_number} ${x.item_no}. ${x.item_name}${x.special_char ? ' [' + x.special_char + ']' : ''} 규격 ${x.one_sided ? '≤' + (+x.usl) : (+x.lsl) + '~' + (+x.usl)} · 평균 ${fx(L.gm, 4)} · Cpk ${fx(L.cpk)} / Ppk ${fx(L.ppk)} (기준 ${goal}) · 부분군 ${L.k}`,
+      dept: '품질', metric: { type: 'manual', key: `${x.part_number} ${x.item_name} 추정 불량률(ppm, Ppk 기준) · 목표 Cpk ${goal} 이상`, label: '직접 입력' }, target_pct: tgt,
+      baseline: { value: base, unit: 'ppm', manual: true, from: $('dFrom').value, to: $('dTo').value, at: t, cpk: L.cpk != null ? +L.cpk.toFixed(2) : null, ppk: L.ppk != null ? +L.ppk.toFixed(2) : null },
+      history: [{ at: new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 16).replace('T', ' '), by: who, msg: '과제 등록 (SPC 공정능력)' }] }) });
+    btn.textContent = '✔ ' + r[0].task_no; toast(r[0].task_no + ' 등록 — 개선과제 대장에서 담당·기한을 넣어 주세요');
+  } catch (e) { btn.disabled = false; btn.textContent = '과제 등록'; toast('등록 실패: ' + e.message); }
+}
+
+document.querySelectorAll('[data-range]').forEach(b => b.onclick = () => setRange(b.dataset.range));
+$('btnGo').onclick = () => { document.querySelectorAll('[data-range]').forEach(b => b.classList.remove('on')); load(); };
+document.querySelectorAll('.kpi').forEach(k => k.onclick = () => { FILTER = k.dataset.f; document.querySelectorAll('.kpi').forEach(e => e.classList.toggle('on', e === k)); drawList(); });
+['fPart', 'fSc'].forEach(i => $(i).onchange = drawList); $('fText').oninput = drawList;
+$('tList').onclick = (e) => { const tr = e.target.closest('tr[data-i]'); if (tr) openItem(ITEMS[+tr.dataset.i]); };
+$('fHo').onchange = drawDetail; $('btnTask').onclick = (e) => addTask(e.currentTarget); $('btnPrint').onclick = () => window.print();
+let _rz; window.addEventListener('resize', () => { clearTimeout(_rz); _rz = setTimeout(() => { if (CUR && !$('detail').hidden) drawDetail(); }, 200); });
+setRange('90');
+</script>
+</body>
+</html>
