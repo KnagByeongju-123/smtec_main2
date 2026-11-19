@@ -1,1071 +1,284 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-<script src="audit.js?v=7"></script>
+<script src="audit.js?v=9"></script>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>주간보고서</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>📑 주간 품질·생산 회의 v1.0</title>
+<!-- 주간 품질·생산 회의 자료 v1.0 — 한 주의 생산·OEE·불량·정지·소재·출하·SPC·개선과제를 자동 집계 + 8주 추이 + 회의록·조치사항·결재
+     IATF 16949 9.1.3 분석·평가 · 9.3 경영검토 입력 · 10.3 지속적 개선
+     자료: rpc weekly_report(p_from) · 회의록 weekly_meeting · 조치 → improvement_tasks -->
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&display=swap');
 *{box-sizing:border-box;margin:0;padding:0}
-:root{--bg:#f0f2f5;--card:#fff;--primary:#1565c0;--primary-light:#e3f2fd;--red:#c62828;--red-light:#ffebee;--ok:#2e7d32;--ok-light:#e8f5e9;--warn:#e65100;--warn-light:#fff3e0;--gray:#888;--border:#e0e0e0;--shadow:0 2px 8px rgba(0,0,0,.06);--radius:12px}
-body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:#212121;padding-bottom:40px;-webkit-tap-highlight-color:transparent}
-.hdr{background:linear-gradient(135deg,#0d47a1,#1565c0);color:#fff;padding:14px 16px;display:flex;align-items:center;gap:10px}
-.hdr .home-btn{background:rgba(255,255,255,.15);border:none;color:#fff;width:32px;height:32px;border-radius:8px;font-size:16px;cursor:pointer}
-.hdr h1{font-size:17px;font-weight:800;flex:1}.hdr p{font-size:10px;opacity:.7}
-.card{background:var(--card);border:2px solid #333;border-radius:var(--radius);padding:14px;margin:12px;box-shadow:var(--shadow)}
-.card-tit{font-size:14px;font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:6px;justify-content:space-between}
-.btn{padding:10px 14px;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;transition:transform .1s}.btn:active{transform:scale(.97)}
-.btn-blue{background:linear-gradient(135deg,#1565c0,#42a5f5);color:#fff}
-.btn-green{background:linear-gradient(135deg,#2e7d32,#66bb6a);color:#fff}
-.btn-gray{background:#f5f5f5;color:#555;border:1px solid #ddd}
-.btn-sm{padding:8px 12px;font-size:12px}
-.stat-table{width:100%;border-collapse:collapse;font-size:13px;border:2.5px solid #222}
-.stat-table th{background:#e8eaed;padding:8px 6px;text-align:center;font-weight:700;border:1.5px solid #444;white-space:nowrap;font-size:12px;position:sticky;top:0;color:#222}
-.stat-table td{padding:7px 6px;border:1.5px solid #555;text-align:center;font-size:13px}
-@media print{
-  .card{border:2px solid #000 !important;box-shadow:none !important}
-  .summary-card{border:1.5px solid #000 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-  .stat-table{border:2.5px solid #000 !important}
-  .stat-table th{border:1.5px solid #000 !important;background:#e0e0e0 !important;color:#000 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-  .stat-table td{border:1.5px solid #000 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-  .stat-table .st-total{background:#e8eaed !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-}
-.stat-table tr:hover{background:#fafafa}
-.stat-table .st-total{background:#f5f5f5;font-weight:700}
-.chip{display:inline-block;padding:2px 7px;border-radius:5px;font-size:10px;font-weight:700}
-.empty{text-align:center;padding:24px;color:#bbb;font-size:13px}
-.toast{position:fixed;bottom:30px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.85);color:#fff;padding:8px 18px;border-radius:18px;font-size:12px;font-weight:600;z-index:9999;opacity:0;transition:opacity .3s;pointer-events:none}.toast.show{opacity:1}
-.loading{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(255,255,255,.8);display:flex;align-items:center;justify-content:center;z-index:9999;flex-direction:column;gap:12px}
-.loading .spinner{width:36px;height:36px;border:4px solid #e0e0e0;border-top-color:var(--primary);border-radius:50%;animation:spin .8s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}.loading p{font-size:13px;color:#555;font-weight:600}.loading.hide{display:none}
-.filter-row{display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap;align-items:center}
-.filter-row select,.filter-row input{padding:8px;border:1.5px solid #ddd;border-radius:8px;font-size:12px;font-family:inherit;background:#fff}
-.summary-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
-.summary-card{border:1.5px solid #555;border-radius:10px;padding:12px 8px;text-align:center}
-.summary-card .sv{font-size:20px;font-weight:800}.summary-card .sl{font-size:9px;margin-top:2px}
+:root{--paper:#fff;--ink:#0f172a;--sub:#475569;--dim:#94a3b8;--line:#cbd5e1;--soft:#f1f5f9;--blue:#1d4ed8;--green:#15803d;--amber:#b45309;--red:#b91c1c}
+body{font-family:-apple-system,BlinkMacSystemFont,"Malgun Gothic",sans-serif;background:#e2e8f0;color:var(--ink);font-size:13px;padding-bottom:40px}
+button,input,select,textarea{font-family:inherit;font-size:13px}
+.bar{position:sticky;top:0;z-index:5;background:#0f172a;color:#e2e8f0;padding:10px 16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.bar h1{font-size:16px;margin-right:auto}
+.btn{border:1px solid #475569;background:#1e293b;color:#e2e8f0;border-radius:7px;padding:6px 11px;cursor:pointer;font-weight:600}
+.btn.pri{background:#2563eb;border-color:#2563eb}.btn.sm{padding:3px 8px;font-size:12px;background:#fff;color:var(--ink);border-color:var(--line)}
+.bar input{background:#0b1222;border:1px solid #475569;color:#e2e8f0;border-radius:6px;padding:6px 8px}
+.paper{max-width:1000px;margin:16px auto;background:var(--paper);padding:26px 28px;border-radius:6px;box-shadow:0 2px 10px rgba(0,0,0,.12);display:flex;flex-direction:column;gap:16px}
+.head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;border-bottom:2px solid var(--ink);padding-bottom:10px;flex-wrap:wrap}
+.head h2{font-size:21px}.head p{color:var(--sub);margin-top:3px}
+table.sg{border-collapse:collapse;font-size:12px}table.sg th,table.sg td{border:1px solid var(--ink);text-align:center;width:70px;padding:3px}
+table.sg td{height:46px;font-size:11px;vertical-align:middle}table.sg td button{font-size:11px}
+h3{font-size:14px;border-left:4px solid var(--blue);padding-left:8px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+h3 small{font-weight:400;color:var(--sub);font-size:11px}
+.kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:8px}
+.kpi{border:1px solid var(--line);border-radius:8px;padding:8px 10px}.kpi .k{font-size:11px;color:var(--sub)}.kpi .v{font-size:20px;font-weight:800;font-variant-numeric:tabular-nums}.kpi .d{font-size:11px}
+.issues{background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:10px 14px}.issues li{margin:3px 0 3px 18px;line-height:1.55}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+table.t{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:5px 6px;text-align:left}
+table.t th{background:var(--soft);font-size:12px;color:var(--sub);font-weight:600}
+td.n,th.n{text-align:right}
+.up{color:var(--red)}.dn{color:var(--green)}.g{color:var(--green)}.w{color:var(--amber)}.b{color:var(--red)}.mu{color:var(--dim)}
+.chart svg text{fill:var(--sub);font-size:10px}
+textarea,input.in{width:100%;border:1px solid var(--line);border-radius:6px;padding:6px 8px;background:#fff;color:var(--ink)}
+textarea{min-height:70px;resize:vertical}
+.act td input{border:1px solid var(--line);border-radius:4px;padding:4px 6px;width:100%}
+.note{font-size:11px;color:var(--sub);line-height:1.5}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#0f766e;color:#fff;padding:10px 18px;border-radius:8px;z-index:50;font-weight:600}
+[hidden]{display:none!important}
+.empty{color:var(--dim);font-size:12px;padding:6px 0}
+@media (max-width:760px){.kpis{grid-template-columns:repeat(2,1fr)}.two{grid-template-columns:1fr}.paper{padding:16px 14px;margin:8px}}
+@media print{@page{size:A4;margin:10mm}body{background:#fff;padding:0;font-size:11px}.bar,.noprint{display:none!important}.paper{box-shadow:none;margin:0;padding:0;max-width:none;gap:10px}
+  section{break-inside:avoid}.toast{display:none!important}input::placeholder,textarea::placeholder{color:transparent}select,input[type=date]{appearance:none;-webkit-appearance:none;border:none;background:none}textarea{border:none;min-height:0;resize:none}.act td input{border:none}.kpi .v{font-size:17px}}
 </style>
 </head>
 <body>
-<div class="hdr">
-  <button class="home-btn" onclick="history.back()">←</button>
-  <div><h1>📊 주간보고서</h1><p>고객사별 PPM 추이 · 기종별 불량 분석</p></div>
+<div class="bar">
+  <h1>📑 주간 품질·생산 회의 자료 <small style="font-size:11px;color:#94a3b8;font-weight:400">v1.0</small></h1>
+  <button class="btn" id="bPrev">◀ 전주</button>
+  <input type="date" id="wDate" title="주간 시작(월요일)">
+  <button class="btn" id="bNext">다음 주 ▶</button>
+  <button class="btn pri" id="bSave">💾 회의록 저장</button>
+  <button class="btn" id="bPrint">🖨 인쇄 / PDF</button>
 </div>
 
-<!-- 필터 -->
-<div class="card">
-  <div class="card-tit" style="font-size:15px">🔍 조회 조건</div>
-  <div class="filter-row">
-    <select id="rptCustomer" style="flex:1;min-width:100px;font-size:14px;padding:10px"><option value="">전체 고객사</option></select>
-    <select id="rptInspLine" style="flex:1;min-width:100px;font-size:14px;padding:10px"><option value="">전체 검사라인</option></select>
+<div class="paper" id="paper">
+  <div class="head">
+    <div><h2>주간 품질·생산 회의 자료</h2><p id="hRange">—</p><p class="note">㈜태진다이텍 · 자동 집계(SmartFactory) · 출력일 <span id="hNow"></span></p></div>
+    <table class="sg"><tr><th>작성</th><th>검토</th><th>검토</th><th>승인</th></tr><tr id="sgRow"></tr></table>
   </div>
-  <div class="filter-row">
-    <input type="date" id="rptDateFrom" style="flex:1;min-width:110px;font-size:14px;padding:10px">
-    <span style="font-size:14px;color:#888;font-weight:700">~</span>
-    <input type="date" id="rptDateTo" style="flex:1;min-width:110px;font-size:14px;padding:10px">
-    <input type="number" id="rptTargetPpm" value="2000" min="0" style="width:70px;text-align:center;font-size:14px;padding:10px" title="목표PPM">
-    <span style="font-size:12px;color:#888;font-weight:600">목표</span>
-  </div>
-  <div style="display:flex;gap:4px;margin-bottom:8px;flex-wrap:wrap">
-    <button class="btn btn-sm btn-gray" onclick="setRange('4w')" style="padding:6px 12px;font-size:13px">4주</button>
-    <button class="btn btn-sm btn-gray" onclick="setRange('12w')" style="padding:6px 12px;font-size:13px">12주</button>
-    <button class="btn btn-sm btn-gray" onclick="setRange('6m')" style="padding:6px 12px;font-size:13px">6개월</button>
-    <button class="btn btn-sm btn-gray" onclick="setRange('1y')" style="padding:6px 12px;font-size:13px">1년</button>
-  </div>
-  <div style="display:flex;gap:6px;flex-wrap:nowrap">
-    <button class="btn btn-blue" onclick="loadReport()" style="flex:1;font-size:15px;padding:13px">📊 조회</button>
-    <button class="btn btn-green" onclick="exportReport()" style="flex:0;min-width:80px;font-size:15px;padding:13px">📥 엑셀</button>
-  </div>
-</div>
 
-<!-- 전체 요약 -->
-<div class="card" id="summaryCard" style="display:none">
-  <div class="card-tit"><span>🔢 이번 주 요약</span><span style="font-size:10px;color:var(--gray)" id="thisWeekLabel"></span></div>
-  <div class="summary-grid">
-    <div class="summary-card" style="background:var(--primary-light)"><div class="sv" style="color:var(--primary)" id="smInspect">0</div><div class="sl" style="color:#555">검사수</div></div>
-    <div class="summary-card" style="background:var(--red-light)"><div class="sv" style="color:var(--red)" id="smDefect">0</div><div class="sl" style="color:#555">불량수</div></div>
-    <div class="summary-card" style="background:var(--warn-light)"><div class="sv" style="color:var(--warn)" id="smPpm">0</div><div class="sl" style="color:#555">PPM</div></div>
-    <div class="summary-card" style="background:#f3e5f5"><div class="sv" style="color:#7b1fa2" id="smRate">0%</div><div class="sl" style="color:#555">불량률</div></div>
-  </div>
+  <section><h3>1. 주간 요약 <small>( ) 안은 전주</small></h3><div class="kpis" id="kpis"></div></section>
+  <section><h3>2. 주요 이슈 <small>자동 판단 · 회의 안건</small></h3><ul class="issues" id="issues"></ul></section>
+  <section class="two">
+    <div><h3>3. OEE 추이 <small>최근 8주 · %</small></h3><div class="chart" id="cOee"></div></div>
+    <div><h3>4. 공정불량 추이 <small>최근 8주 · 불량관리 등록 수량</small></h3><div class="chart" id="cDef"></div></div>
+  </section>
+  <section class="two">
+    <div><h3>5. 불량 유형 <small>이번 주 · 전주 · 증감</small></h3><table class="t" id="tType"></table></div>
+    <div><h3>6. 불량 품번 Top 6 <small>주요 유형</small></h3><table class="t" id="tModel"></table></div>
+  </section>
+  <section class="two">
+    <div><h3>7. 설비 정지 사유 <small>MES · 이번 주 · 전주</small></h3><table class="t" id="tStop"></table></div>
+    <div><h3>8. OEE 낮은 호기 <small>이번 주 · 정지 1위</small></h3><table class="t" id="tMach"></table></div>
+  </section>
+  <section class="two">
+    <div><h3>9. 소재불량 <small>생산현황 등록 · 공급사</small></h3><div id="tMat"></div></div>
+    <div><h3>10. 출하검사 · 특별불량 <small>NG · 고객 클레임 보고</small></h3><div id="tShip"></div></div>
+  </section>
+  <section><h3>11. 공정능력 미달 <small>이번 주 출하검사한 항목 · 최근 90일 Cpk · 일반 1.0 미만 / 특별특성 1.67 미만</small></h3><table class="t" id="tSpc"></table></section>
+  <section><h3>12. 개선과제 진행 <small>개선과제 대장 · 미종결 + 이번 주 변경</small></h3><table class="t" id="tTask"></table></section>
+  <section>
+    <h3>13. 회의록</h3>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <label><span class="note">참석자</span><input class="in" id="mAtt" placeholder="예: 김정만, 강창구, 강병주, 김상기, 생산 ○○○"></label>
+      <label><span class="note">논의 내용</span><textarea id="mNotes" placeholder="이슈별 논의 내용·결정 사항"></textarea></label>
+    </div>
+  </section>
+  <section>
+    <h3>14. 조치 사항 <small class="noprint"><button class="btn sm" id="bAddAct">＋ 행 추가</button></small></h3>
+    <table class="t act"><thead><tr><th style="width:34px">No</th><th>조치 내용</th><th style="width:110px">담당</th><th style="width:130px">기한</th><th style="width:90px">상태</th><th class="noprint" style="width:110px"></th></tr></thead><tbody id="tAct"></tbody></table>
+    <p class="note noprint">[과제 등록]을 누르면 개선과제 대장에 등록되고 과제번호가 남습니다. 지난 회의의 미완료 조치는 자동으로 이어 옵니다.</p>
+  </section>
 </div>
-
-<!-- 공정불량 요약 (통합) -->
-<div class="card" id="processSummaryCard" style="display:none">
-  <div class="card-tit"><span>🏭 주간 공정불량 요약</span><span style="font-size:10px;color:var(--gray)" id="processRange"></span></div>
-  <div id="processSummaryWrap"></div>
-</div>
-
-<!-- 불량유형 Top -->
-<div class="card" id="defectTopCard" style="display:none">
-  <div class="card-tit">🏷 이번 주 불량유형 Top 10</div>
-  <div id="defectTopWrap"></div>
-</div>
-
-<!-- 미지정 모델 디버그 -->
-<div class="card" id="unmappedCard" style="display:none">
-  <div class="card-tit"><span>⚠️ 미지정 모델 (마스터 DB 미등록 / customer 비어있음)</span><button class="btn btn-sm" onclick="copyUnmappedList()" style="background:#607d8b;color:#fff;font-size:10px;padding:4px 10px">📋 복사</button></div>
-  <div style="font-size:11px;color:var(--gray);margin-bottom:8px">아래 모델들을 <b>defect_model</b> 또는 <b>general_model_tj</b> 마스터에 등록하거나 customer 값을 채워주세요.</div>
-  <div id="unmappedWrap" style="overflow-x:auto"></div>
-</div>
-
-<!-- 일별 상세 (차트 + 테이블 동일 스크롤) -->
-<div class="card" id="dailyCard" style="display:none">
-  <div class="card-tit"><span>📋 주간 고객사별 PPM 추이</span><span style="font-size:10px;color:var(--gray)" id="dailyChartRange"></span></div>
-  <div style="overflow-x:auto;-webkit-overflow-scrolling:touch" id="dailyScrollWrap">
-    <div id="dailyChartWrap"><canvas id="dailyChart" style="height:320px"></canvas></div>
-    <div style="margin-top:12px" id="dailyTableWrap"></div>
-  </div>
-</div>
-
-<!-- MES 불량 -->
-<div class="card" id="mesCard" style="display:none">
-  <div class="card-tit"><span>🏭 MES 불량</span><span style="font-size:10px;color:var(--gray)" id="mesRange"></span></div>
-  <div class="filter-row" style="margin-bottom:8px">
-    <input type="text" id="mesApiUrl" value="http://localhost:5100" placeholder="MES API URL" style="flex:1;min-width:140px;padding:8px;border:1.5px solid #ddd;border-radius:8px;font-size:12px">
-    <button class="btn btn-sm" onclick="loadMesData()" style="background:linear-gradient(135deg,#e65100,#ff9800);color:#fff;flex:0">🏭 MES 조회</button>
-  </div>
-  <div id="mesSummaryWrap"></div>
-  <div id="mesWeeklyWrap" style="margin-top:10px"></div>
-  <div style="overflow-x:auto;margin-top:8px" id="mesTableWrap"></div>
-</div>
-
-<div class="loading hide" id="loadingOverlay"><div class="spinner"></div><p id="loadingText">로딩 중...</p></div>
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" hidden></div>
 
 <script>
-/* ===== Supabase 설정 (불량관리와 동일) ===== */
-const SB_URL='https://omngtyewdaqpphnzeate.supabase.co';
-const SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tbmd0eWV3ZGFxcHBobnplYXRlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4ODk4ODksImV4cCI6MjA5MDQ2NTg4OX0.Zxur3t02JHtOcXforCMSwO3i2mMaf5sViE0tXXUC0-s';
-function sbH(){return{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Content-Type':'application/json','Prefer':'return=representation'}}
-async function sbGet(t,f,o,l){const p=new URLSearchParams();if(f)Object.entries(f).forEach(([k,v])=>{if(v!==undefined&&v!==null&&v!=='')p.append(k,v)});if(o)p.append('order',o);if(l)p.append('limit',l);p.append('select','*');const r=await fetch(SB_URL+'/rest/v1/'+t+'?'+p.toString(),{headers:sbH()});if(!r.ok)throw new Error(r.status);return r.json()}
+const SB_URL = 'https://omngtyewdaqpphnzeate.supabase.co';
+const SB_KEY = 'sb_publishable_9j2YkkL-7ul1TrhH-NjVdQ_vWDG2-1D';
+const H = { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY };
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const n0 = (v) => v == null ? '—' : Math.round(+v).toLocaleString('ko-KR');
+const kst = (d = new Date()) => new Date(d.getTime() + 9 * 3600e3).toISOString().slice(0, 10);
+const nowK = () => new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 16).replace('T', ' ');
+const addD = (s, n) => { const d = new Date(s + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+const monday = (s) => { const d = new Date(s + 'T00:00:00Z'); return addD(s, -((d.getUTCDay() + 6) % 7)); };
+const me = () => { try { const u = window.tjAudit && window.tjAudit.user(); return (u && u.name) || ''; } catch (e) { return ''; } };
+function toast(m) { const t = $('toast'); t.textContent = m; t.hidden = false; clearTimeout(toast._t); toast._t = setTimeout(() => t.hidden = true, 2600); }
+async function api(path, opt = {}) {
+  const r = await fetch(SB_URL + '/rest/v1/' + path, { ...opt, headers: { ...H, 'Content-Type': 'application/json', Prefer: 'return=representation', ...(opt.headers || {}) } });
+  const t = await r.text(); if (!r.ok) throw new Error(r.status + ' ' + t.slice(0, 200)); return t ? JSON.parse(t) : null;
+}
+const rpc = (fn, a) => api('rpc/' + fn, { method: 'POST', body: JSON.stringify(a || {}) });
+const APPROVERS = [ {k:'author', role:'작성', name:'김상기'}, {k:'review1', role:'검토', name:'강병주'}, {k:'review2', role:'검토', name:'강창구'}, {k:'approve', role:'승인', name:'김정만'} ];
+const SPC_URL = 'spc.html', TASK_URL = 'improvement_tasks.html';
+let D = null, M = null, WK = '';
 
-/* ===== 유틸 ===== */
-let _tt;
-function showToast(m){const e=document.getElementById('toast');e.textContent=m;e.classList.add('show');clearTimeout(_tt);_tt=setTimeout(()=>e.classList.remove('show'),2500)}
-function showLoading(t){document.getElementById('loadingText').textContent=t||'로딩...';document.getElementById('loadingOverlay').classList.remove('hide')}
-function hideLoading(){document.getElementById('loadingOverlay').classList.add('hide')}
+/* 증감 표시: 불량·정지는 늘면 빨강, OEE는 늘면 초록 */
+function delta(cur, prev, goodUp = false, unit = '') {
+  if (cur == null || prev == null || +prev === 0) return '';
+  const p = (cur - prev) / prev * 100; if (Math.abs(p) < 0.5) return '<span class="mu">→ 0%</span>';
+  const bad = goodUp ? p < 0 : p > 0;
+  return `<span class="${bad ? 'up' : 'dn'}">${p > 0 ? '▲' : '▼'} ${Math.abs(p).toFixed(0)}%${unit}</span>`;
+}
+// 주차: 월요일이 속한 달 기준, 그 달 n번째 월요일 = n주차
+function weekLabel(f) { const d = new Date(f + 'T00:00:00Z'), m = d.getUTCMonth() + 1, wn = Math.ceil(d.getUTCDate() / 7);
+  return `${d.getUTCFullYear()}년 ${m}월 ${wn}주차 (${f.slice(5).replace('-', '/')} ~ ${addD(f, 6).slice(5).replace('-', '/')})`; }
 
-function getMonday(ds){const d=new Date(ds+'T00:00:00');const day=d.getDay();const diff=d.getDate()-day+(day===0?-6:1);return new Date(d.setDate(diff))}
-function fmtMD(d){return(d.getMonth()+1)+'/'+d.getDate()}
-function isoWeekNum(d){const t=new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()));const dn=t.getUTCDay()||7;t.setUTCDate(t.getUTCDate()+4-dn);const ys=new Date(Date.UTC(t.getUTCFullYear(),0,1));return Math.ceil((((t-ys)/86400000)+1)/7)}
-function weekKey(ds){return'W'+isoWeekNum(getMonday(ds))}
-function fmtYMD(d){const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),dd=String(d.getDate()).padStart(2,'0');return y+'-'+m+'-'+dd}
-function weekRange(ds){const mon=getMonday(ds);const sun=new Date(mon);sun.setDate(sun.getDate()+6);return{from:fmtYMD(mon),to:fmtYMD(sun)}}
-function isoWeekMonday(year,wk){const jan4=new Date(Date.UTC(year,0,4));const jan4Day=jan4.getUTCDay()||7;const w1Mon=new Date(jan4);w1Mon.setUTCDate(jan4.getUTCDate()-jan4Day+1);const target=new Date(w1Mon);target.setUTCDate(w1Mon.getUTCDate()+(wk-1)*7);return new Date(target.getUTCFullYear(),target.getUTCMonth(),target.getUTCDate())}
-function ppmColor(v,target){return v>target?'#c62828':v>target/2?'#e65100':'#2e7d32'}
-
-/* ===== 데이터 ===== */
-let models=[],customers=[],generalModels=[],inspLines=[],reportData=null;
-
-async function loadMaster(){
-  const [m,gm,cc,il]=await Promise.all([
-    sbGet('defect_model',{},'id.asc',500),
-    sbGet('general_model_tj',{},'id.asc',2000).catch(()=>[]),
-    sbGet('common_code',{},'id.asc',500),
-    sbGet('common_code',{code_group:'eq.d_inspect_line'},'id.asc',100).catch(()=>[])
-  ]);
-  models=m.map(r=>({name:r.model_name||'',customer:r.customer||'',cat1:r.category1||'',cat2:r.category2||''}));
-  generalModels=(gm||[]).map(r=>({name:r.model_name||'',customer:r.customer||''}));
-  customers=[...new Set([...models.map(x=>x.customer),...generalModels.map(x=>x.customer)].filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ko'));
-  inspLines=il.map(r=>r.code_value||'').filter(Boolean);
-
-  document.getElementById('rptCustomer').innerHTML='<option value="">전체 고객사</option>'+customers.map(c=>'<option value="'+c+'">'+c+'</option>').join('');
-  document.getElementById('rptInspLine').innerHTML='<option value="">전체 검사라인</option>'+inspLines.map(c=>'<option value="'+c+'">'+c+'</option>').join('');
+async function load(w) {
+  WK = monday(w); $('wDate').value = WK; history.replaceState(null, '', '?w=' + WK);
+  $('hRange').textContent = weekLabel(WK); $('hNow').textContent = nowK();
+  $('issues').innerHTML = '<li>집계 중…</li>';
+  try {
+    const [d, m, pm] = await Promise.all([rpc('weekly_report', { p_from: WK }), api('weekly_meeting?week_start=eq.' + WK), api('weekly_meeting?week_start=lt.' + WK + '&order=week_start.desc&limit=1')]);
+    D = d; M = (m && m[0]) || { week_start: WK, attendees: '', notes: '', actions: [], approvals: {} };
+    if (!(m && m[0]) && pm && pm[0]) M.actions = (pm[0].actions || []).filter(a => a.status !== '완료').map(a => ({ ...a, carried: pm[0].week_start }));
+    $('mAtt').value = M.attendees || ''; $('mNotes').value = M.notes || '';
+    render();
+  } catch (e) { $('issues').innerHTML = '<li class="b">불러오지 못했습니다: ' + esc(e.message) + '</li>'; }
 }
 
-function modelToCust(mn){
-  const m=models.find(x=>x.name===mn);
-  if(m)return m.customer||'미지정';
-  const gm=generalModels.find(x=>x.name===mn);
-  if(gm)return gm.customer||'미지정';
-  return'미지정';
+function render() {
+  const d = D, ow = d.oee_weeks || [], oc = ow[ow.length - 1] || {}, op = ow[ow.length - 2] || {};
+  const dw = d.defect_weeks || [], dc = (dw[dw.length - 1] || {}).qty, dp = (dw[dw.length - 2] || {}).qty;
+  const ppm = (q, p) => p ? q / p * 1e6 : null;
+  const mats = d.mat || [], ship = d.ship || {}, tasks = d.tasks || [], open = tasks.filter(t => !['종결', '취소'].includes(t.status));
+  const k = (t, v, s, cls = '') => `<div class="kpi"><div class="k">${t}</div><div class="v ${cls}">${v}</div><div class="d">${s}</div></div>`;
+  $('kpis').innerHTML =
+    k('생산실적', n0(oc.qty), `(${n0(op.qty)}) ${delta(oc.qty, op.qty, true)}`) +
+    k('OEE', oc.oee != null ? oc.oee + '%' : '—', `(${op.oee ?? '—'}%) ${oc.oee != null && op.oee != null ? '<span class="' + (oc.oee >= op.oee ? 'dn' : 'up') + '">' + (oc.oee >= op.oee ? '+' : '') + (oc.oee - op.oee).toFixed(1) + 'p</span>' : ''}`, oc.oee >= 65 ? 'g' : oc.oee >= 40 ? 'w' : 'b') +
+    k('공정불량', n0(dc), `(${n0(dp)}) ${delta(dc, dp)}`) +
+    k('불량률', ppm(dc, oc.qty) != null ? n0(ppm(dc, oc.qty)) : '—', `ppm (${ppm(dp, op.qty) != null ? n0(ppm(dp, op.qty)) : '—'})`) +
+    k('소재불량', mats.length + '건', `(${d.mat_prev ?? 0}건)`, mats.length ? 'w' : '') +
+    k('출하검사 NG', (ship.ng || 0) + '건', `검사 ${n0(ship.n)}회`, ship.ng ? 'b' : 'g');
+  drawIssues();
+  line($('cOee'), ow.map(x => x.wk), [{ v: ow.map(x => x.oee), c: '#1d4ed8', t: 'OEE' }, { v: ow.map(x => x.oper), c: '#94a3b8', t: '가동률', dash: '4 3' }], 0, 100);
+  bars($('cDef'), dw.map(x => x.wk), dw.map(x => +x.qty), '#dc2626');
+  const tbl = (rows, head, fn) => rows && rows.length ? `<thead><tr>${head}</tr></thead><tbody>${rows.map(fn).join('')}</tbody>` : '<tbody><tr><td class="empty">해당 없음</td></tr></tbody>';
+  $('tType').innerHTML = tbl(d.defect_types, '<th>유형</th><th class="n">이번 주</th><th class="n">전주</th><th class="n">증감</th>', x => `<tr><td>${esc(x.nm)}</td><td class="n"><b>${n0(x.qty)}</b></td><td class="n">${n0(x.prev ?? 0)}</td><td class="n">${x.prev ? delta(x.qty, x.prev) : '<span class="up">신규</span>'}</td></tr>`);
+  $('tModel').innerHTML = tbl(d.defect_models, '<th>품번</th><th>주 유형</th><th class="n">이번 주</th><th class="n">전주</th><th class="n">증감</th>', x => `<tr><td>${esc(x.nm)}</td><td>${esc(x.main || '')}</td><td class="n"><b>${n0(x.qty)}</b></td><td class="n">${n0(x.prev ?? 0)}</td><td class="n">${x.prev ? delta(x.qty, x.prev) : '<span class="up">신규</span>'}</td></tr>`);
+  $('tStop').innerHTML = tbl(d.stops, '<th>정지 사유</th><th class="n">횟수</th><th class="n">이번 주(시간)</th><th class="n">전주</th><th class="n">증감</th>', x => `<tr><td>${esc(x.nm)}</td><td class="n">${x.cnt}</td><td class="n"><b>${(x.mins / 60).toFixed(1)}</b></td><td class="n">${x.prev != null ? (x.prev / 60).toFixed(1) : '—'}</td><td class="n">${delta(x.mins, x.prev)}</td></tr>`);
+  $('tMach').innerHTML = tbl(d.machines_low, '<th>호기</th><th class="n">OEE</th><th class="n">가동률</th><th>정지 1위</th>', x => `<tr><td>${x.ho}호기</td><td class="n ${x.oee < 40 ? 'b' : 'w'}"><b>${x.oee}%</b></td><td class="n">${x.oper ?? '—'}%</td><td>${x.top ? esc(x.top) + ' ' + (x.top_min / 60).toFixed(1) + 'h' : '<span class="mu">정지 기록 없음 · 일보 확인</span>'}</td></tr>`);
+  $('tMat').innerHTML = mats.length ? `<table class="t"><thead><tr><th>일자</th><th>호기 · 품번</th><th>공급사 · LOT</th><th>내용</th></tr></thead><tbody>${mats.map(x => `<tr><td>${x.d.slice(5)}</td><td>${esc((x.mc || '').replace(/_.*/, ''))} ${esc(x.item || '')}</td><td>${esc(x.vendor || '—')}<br><span class="note">${esc(x.lot || '')}</span></td><td style="white-space:normal">${esc(x.detail || '')}</td></tr>`).join('')}</tbody></table>` : '<p class="empty">이번 주 소재불량 등록 없음</p>';
+  const ng = ship.ng_list || [], sdr = d.sdr || [];
+  $('tShip').innerHTML = `<p>출하검사 <b>${n0(ship.n)}회</b> · NG <b class="${ship.ng ? 'b' : 'g'}">${ship.ng || 0}건</b></p>` +
+    (ng.length ? `<table class="t"><tbody>${ng.map(x => `<tr><td>${x.d.slice(5)}</td><td>${esc(x.part)}</td><td>${esc(x.reason || '')}</td></tr>`).join('')}</tbody></table>` : '') +
+    `<p style="margin-top:8px">특별불량 보고(고객 클레임) <b>${sdr.length}건</b></p>` +
+    (sdr.length ? `<table class="t"><tbody>${sdr.map(x => `<tr><td>${esc(x.doc_no || '')}</td><td>${esc(x.customer || '')} ${esc(x.part_no || '')}</td><td style="white-space:normal">${esc(x.defect_desc || '')}</td><td>${esc(x.final_status || '')}</td></tr>`).join('')}</tbody></table>` : '');
+  $('tSpc').innerHTML = tbl(d.spc, '<th>품번</th><th>항목</th><th>특성</th><th class="n">검사 회차</th><th class="n">Cpk</th><th class="n">Ppk</th><th class="n">기준</th>', x => {
+    const sc = x.special_char && !/[가-힣]/.test(x.special_char);
+    return `<tr><td><a href="${SPC_URL}?part=${x.part_id}&item=${x.item_no}" target="_blank">${esc(x.part_number)}</a></td><td>${x.item_no}. ${esc(x.item_name)}</td><td>${esc(sc ? x.special_char : '')}</td><td class="n">${x.k}</td><td class="n ${x.cpk < 1 ? 'b' : 'w'}"><b>${(+x.cpk).toFixed(2)}</b></td><td class="n">${(+x.ppk).toFixed(2)}</td><td class="n">${sc ? '1.67' : '1.33'}</td></tr>`; });
+  $('tTask').innerHTML = tbl(tasks, '<th>과제번호</th><th>과제</th><th>단계</th><th>담당</th><th>기한</th><th class="n">목표</th>', x => `<tr><td><a href="${TASK_URL}#${esc(x.task_no)}" target="_blank">${esc(x.task_no)}</a></td><td style="white-space:normal">${esc(x.title)}</td><td>${esc(x.status)}</td><td>${esc(x.owner || '—')}</td><td class="${x.overdue ? 'b' : ''}">${esc(x.due_date || '—')}${x.overdue ? ' (지연)' : ''}</td><td class="n">${x.target_pct != null ? x.target_pct + '%' : '—'}</td></tr>`);
+  drawActs(); drawSign();
 }
 
-/* ===== 날짜 범위 단축 버튼 ===== */
-function setRange(preset){
-  const today=new Date();const fmt=d=>d.toISOString().split('T')[0];
-  const to=document.getElementById('rptDateTo'),from=document.getElementById('rptDateFrom');
-  to.value=fmt(today);
-  if(preset==='4w'){const d=new Date(today);d.setDate(d.getDate()-28);from.value=fmt(d)}
-  else if(preset==='12w'){const d=new Date(today);d.setDate(d.getDate()-84);from.value=fmt(d)}
-  else if(preset==='6m'){const d=new Date(today);d.setMonth(d.getMonth()-6);from.value=fmt(d)}
-  else if(preset==='1y'){const d=new Date(today);d.setFullYear(d.getFullYear()-1);from.value=fmt(d)}
+/* 주요 이슈: 전주 대비 나빠진 것 · 기준 미달 · 지연을 회의 안건으로 */
+function drawIssues() {
+  const d = D, L = [], ow = d.oee_weeks || [], oc = ow[ow.length - 1] || {}, op = ow[ow.length - 2] || {};
+  const avg8 = ow.length ? ow.reduce((a, x) => a + (+x.oee || 0), 0) / ow.length : null;
+  if (oc.oee != null && op.oee != null) L.push(`OEE ${oc.oee}% — 전주 ${op.oee}% 대비 ${oc.oee >= op.oee ? '+' : ''}${(oc.oee - op.oee).toFixed(1)}p (8주 평균 ${avg8.toFixed(1)}%). 가동률 ${oc.oper}% · 성능률 ${oc.perf}% · 양품률 ${oc.qual}%`);
+  (d.defect_models || []).filter(x => x.qty >= 100 && (!x.prev || x.qty > x.prev * 1.3)).slice(0, 3).forEach(x =>
+    L.push(`<b>${esc(x.nm)}</b> 불량 ${n0(x.qty)}EA (${esc(x.main || '')}) — ${x.prev ? '전주 ' + n0(x.prev) + 'EA 대비 +' + Math.round((x.qty / x.prev - 1) * 100) + '%' : '전주 없음(신규)'}`));
+  (d.defect_types || []).filter(x => x.qty >= 50 && x.prev && x.qty > x.prev * 1.5).slice(0, 2).forEach(x =>
+    L.push(`불량유형 <b>${esc(x.nm)}</b> ${n0(x.qty)}EA — 전주 ${n0(x.prev)}EA의 ${(x.qty / x.prev).toFixed(1)}배`));
+  (d.stops || []).filter(x => x.mins >= 300 && x.prev && x.mins > x.prev * 1.3).slice(0, 2).forEach(x =>
+    L.push(`정지 <b>${esc(x.nm)}</b> ${(x.mins / 60).toFixed(1)}시간 — 전주 ${(x.prev / 60).toFixed(1)}시간 대비 증가`));
+  (d.machines_low || []).filter(x => x.oee < 20).forEach(x =>
+    L.push(`${x.ho}호기 OEE ${x.oee}% — ${x.top ? '정지 1위 ' + esc(x.top) : '정지 기록 없이 낮음 → 생산일보 실적·불량 입력 확인'}`));
+  if ((d.mat || []).length) L.push(`소재불량 ${(d.mat || []).length}건 — ${[...new Set((d.mat || []).map(x => x.vendor).filter(Boolean))].map(esc).join(', ') || '공급사 미확인'}`);
+  if ((d.ship || {}).ng) L.push(`<b class="b">출하검사 NG ${(d.ship || {}).ng}건</b>`);
+  if ((d.sdr || []).length) L.push(`<b class="b">특별불량 보고 ${(d.sdr || []).length}건</b>`);
+  const sc = (d.spc || []).filter(x => x.special_char && !/[가-힣]/.test(x.special_char));
+  if ((d.spc || []).length) L.push(`공정능력 미달 ${(d.spc || []).length}항목${sc.length ? ' (특별특성 ' + sc.length + ')' : ''} — 최저 ${esc(d.spc[0].part_number)} ${esc(d.spc[0].item_name)} Cpk ${(+d.spc[0].cpk).toFixed(2)}`);
+  const od = (d.tasks || []).filter(x => x.overdue); if (od.length) L.push(`<b class="b">기한 지난 개선과제 ${od.length}건</b> — ${od.map(x => esc(x.task_no)).join(', ')}`);
+  const nob = (d.tasks || []).filter(x => !['종결', '취소'].includes(x.status) && !x.owner); if (nob.length) L.push(`담당 미지정 과제 ${nob.length}건 — ${nob.map(x => esc(x.task_no)).join(', ')}`);
+  $('issues').innerHTML = L.length ? L.map(s => '<li>' + s + '</li>').join('') : '<li>특이사항 없음</li>';
 }
 
-/* ===== 주간보고서 로드 ===== */
-async function loadReport(){
-  const custF=document.getElementById('rptCustomer').value;
-  const inspF=document.getElementById('rptInspLine').value;
-  const target=parseInt(document.getElementById('rptTargetPpm').value)||2000;
-
-  const fromS=document.getElementById('rptDateFrom').value;
-  const toS=document.getElementById('rptDateTo').value;
-  if(!fromS||!toS){showToast('날짜 범위를 선택하세요');return}
-
-  showLoading('주간보고서 조회 중...');
-  try{
-    let rows=await sbGet('defect_history',{defect_date:'gte.'+fromS},'defect_date.asc',10000);
-    rows=rows.filter(r=>r.defect_date<=toS);
-
-    if(custF){const cm=new Set();models.filter(m=>m.customer===custF).forEach(m=>cm.add(m.name));generalModels.filter(m=>m.customer===custF).forEach(m=>cm.add(m.name));rows=rows.filter(r=>cm.has(r.model_name))}
-    if(inspF)rows=rows.filter(r=>(r.inspect_line||'')===inspF);
-
-    // 주차별 고객사별 집계
-    const wMap={},custSet=new Set(),wKeys=[],wkSet=new Set();
-    rows.forEach(r=>{
-      const wk=weekKey(r.defect_date),c=modelToCust(r.model_name);
-      if(!wkSet.has(wk)){wkSet.add(wk);wKeys.push({k:wk,d:r.defect_date})}
-      custSet.add(c);
-      if(!wMap[wk])wMap[wk]={};
-      if(!wMap[wk][c])wMap[wk][c]={i:0,d:0};
-      wMap[wk][c].i+=(r.inspect_qty||0);
-      if(r.defect_type&&r.defect_type!=='양품')wMap[wk][c].d+=(r.qty||0);
-    });
-    wKeys.sort((a,b)=>a.d.localeCompare(b.d));
-    let sortedW=wKeys.map(w=>w.k);
-    const custs=[...custSet].sort((a,b)=>a.localeCompare(b,'ko'));
-
-    // 주차→월요일 일자 매핑 (실제 데이터 + 미래 빈 주차)
-    const weekToMonday={};
-    wKeys.forEach(wk=>{weekToMonday[wk.k]=fmtYMD(getMonday(wk.d))});
-
-    // 최소 20개 주차가 표시되도록 빈 열 추가
-    const MIN_WEEKS=20;
-    {
-      const lastMon=sortedW.length?getMonday(wKeys[wKeys.length-1].d):getMonday(new Date().toISOString().split('T')[0]);
-      const existing=new Set(sortedW);
-      let w=0;
-      while(sortedW.length<MIN_WEEKS){
-        w++;
-        const d=new Date(lastMon);d.setDate(d.getDate()+w*7);
-        const k='W'+isoWeekNum(d);
-        if(!existing.has(k)){sortedW.push(k);existing.add(k);weekToMonday[k]=fmtYMD(d)}
-      }
-    }
-
-    // 이번주 = 데이터가 있는 마지막 주 (향후 빈 주차 제외)
-    const dataWeeks=wKeys.map(w=>w.k); // 실제 데이터가 있는 주차만
-    const thisWk=dataWeeks.length?dataWeeks[dataWeeks.length-1]:null;
-    const lwRows=thisWk?rows.filter(r=>weekKey(r.defect_date)===thisWk):[];
-    const mSum={};
-    lwRows.forEach(r=>{
-      const mn=r.model_name||'?';
-      if(!mSum[mn])mSum[mn]={inner:{i:0,d:0},outer:{i:0,d:0},total:{i:0,d:0}};
-      // Inner/Outer: 기종명에 "Outer" 포함 시 Outer, 아니면 Inner
-      const isO=/outer/i.test(mn);
-      const bk=isO?'outer':'inner';
-      mSum[mn][bk].i+=(r.inspect_qty||0);
-      mSum[mn].total.i+=(r.inspect_qty||0);
-      if(r.defect_type&&r.defect_type!=='양품'){mSum[mn][bk].d+=(r.qty||0);mSum[mn].total.d+=(r.qty||0)}
-    });
-
-    // 불량유형 Top
-    const tTop={};
-    lwRows.forEach(r=>{if(r.defect_type&&r.defect_type!=='양품'&&(r.qty||0)>0)tTop[r.defect_type]=(tTop[r.defect_type]||0)+(r.qty||0)});
-
-    // 일별 집계
-    const daily={};
-    rows.forEach(r=>{
-      const dt=r.defect_date;if(!dt)return;
-      if(!daily[dt])daily[dt]={i:0,d:0,types:{},custs:{}};
-      const c=modelToCust(r.model_name);
-      if(!daily[dt].custs[c])daily[dt].custs[c]={i:0,d:0,crack:0};
-      daily[dt].custs[c].i+=(r.inspect_qty||0);
-      daily[dt].i+=(r.inspect_qty||0);
-      if(r.defect_type&&r.defect_type!=='양품'){
-        daily[dt].d+=(r.qty||0);daily[dt].custs[c].d+=(r.qty||0);
-        const t=r.defect_type;daily[dt].types[t]=(daily[dt].types[t]||0)+(r.qty||0);
-        if(/크랙|crack/i.test(t))daily[dt].custs[c].crack+=(r.qty||0);
-      }
-    });
-
-    // 미지정 모델 집계 (마스터 미등록 또는 customer 비어있음)
-    const unmapped={};
-    rows.forEach(r=>{
-      if(modelToCust(r.model_name)==='미지정'){
-        const mn=r.model_name||'(빈 모델명)';
-        if(!unmapped[mn]){
-          const inM=models.find(x=>x.name===mn);
-          const inG=generalModels.find(x=>x.name===mn);
-          let reason='마스터 미등록';
-          if(inM)reason='defect_model에 있으나 customer 비어있음';
-          else if(inG)reason='general_model_tj에 있으나 customer 비어있음';
-          unmapped[mn]={cnt:0,qty:0,inspQty:0,reason,lastDate:''};
-        }
-        unmapped[mn].cnt++;
-        unmapped[mn].inspQty+=(r.inspect_qty||0);
-        if(r.defect_type&&r.defect_type!=='양품')unmapped[mn].qty+=(r.qty||0);
-        if(r.defect_date>unmapped[mn].lastDate)unmapped[mn].lastDate=r.defect_date;
-      }
-    });
-
-    reportData={wMap,sortedW,custs,mSum,tTop,rows,thisWk,fromS,toS,target,daily,weekToMonday,unmapped};
-
-    // 이번주 요약
-    let twI=0,twD=0;
-    if(thisWk&&wMap[thisWk])Object.values(wMap[thisWk]).forEach(v=>{twI+=v.i;twD+=v.d});
-    document.getElementById('smInspect').textContent=twI.toLocaleString();
-    document.getElementById('smDefect').textContent=twD.toLocaleString();
-    document.getElementById('smPpm').textContent=(twI>0?Math.round(twD/twI*1e6):0).toLocaleString();
-    document.getElementById('smRate').textContent=(twI>0?(twD/twI*100).toFixed(2):0)+'%';
-    document.getElementById('thisWeekLabel').textContent=thisWk?thisWk+'~':'';
-
-    renderProcessSummary(mSum,thisWk,target,wMap,sortedW,custs);
-    renderDefectTop(tTop);
-    renderUnmapped(unmapped);
-    renderDailyTable(daily,target);
-
-    ['summaryCard','processSummaryCard','defectTopCard','unmappedCard','dailyCard','mesCard'].forEach(id=>document.getElementById(id).style.display='block');
-    showToast('📊 조회 완료');
-  }catch(e){showToast('오류: '+e.message)}
-  hideLoading();
+/* ---------- 차트 ---------- */
+function svgEl(tag, a, p) { const e = document.createElementNS('http://www.w3.org/2000/svg', tag); for (const k in a) e.setAttribute(k, a[k]); if (p) p.appendChild(e); return e; }
+function line(box, xs, series, lo, hi) {
+  box.innerHTML = ''; const W = box.clientWidth || 440, Hh = 170, m = { t: 14, r: 10, b: 20, l: 30 };
+  const vals = series.flatMap(s => s.v).filter(v => v != null).map(Number); if (!vals.length) { box.innerHTML = '<p class="empty">자료 없음</p>'; return; }
+  lo = Math.max(lo, Math.floor(Math.min(...vals) / 10) * 10 - 10); hi = Math.min(hi, Math.ceil(Math.max(...vals) / 10) * 10 + 5);
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${Hh}`, width: '100%' }, box);
+  const X = (i) => m.l + (i + 0.5) * (W - m.l - m.r) / xs.length, Y = (v) => m.t + (hi - v) / (hi - lo) * (Hh - m.t - m.b);
+  for (let v = lo; v <= hi; v += 10) { svgEl('line', { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), stroke: '#e2e8f0' }, svg); svgEl('text', { x: m.l - 4, y: Y(v) + 3, 'text-anchor': 'end' }, svg).textContent = v; }
+  xs.forEach((x, i) => svgEl('text', { x: X(i), y: Hh - 5, 'text-anchor': 'middle' }, svg).textContent = x);
+  series.forEach((s, si) => { const pts = s.v.map((v, i) => v == null ? null : [X(i), Y(+v)]).filter(Boolean);
+    svgEl('polyline', { points: pts.map(p => p.join(',')).join(' '), fill: 'none', stroke: s.c, 'stroke-width': si ? 1.4 : 2.2, ...(s.dash ? { 'stroke-dasharray': s.dash } : {}) }, svg);
+    s.v.forEach((v, i) => { if (v == null) return; if (!si) { svgEl('circle', { cx: X(i), cy: Y(+v), r: i === xs.length - 1 ? 4 : 2.6, fill: s.c }, svg);
+      const t = svgEl('text', { x: X(i), y: Y(+v) - 7, 'text-anchor': 'middle' }, svg); t.textContent = (+v).toFixed(1); t.style.fill = s.c; if (i === xs.length - 1) t.style.fontWeight = 700; } });
+    const t = svgEl('text', { x: m.l + 4 + si * 52, y: m.t - 3 }, svg); t.textContent = '— ' + s.t; t.style.fill = s.c; });
+}
+function bars(box, xs, ys, col) {
+  box.innerHTML = ''; const W = box.clientWidth || 440, Hh = 170, m = { t: 14, r: 10, b: 20, l: 40 };
+  const hi = Math.max(...ys, 1) * 1.15, svg = svgEl('svg', { viewBox: `0 0 ${W} ${Hh}`, width: '100%' }, box);
+  const bw = (W - m.l - m.r) / xs.length, Y = (v) => m.t + (1 - v / hi) * (Hh - m.t - m.b);
+  [0, 0.5, 1].forEach(f => { const v = Math.round(hi / 1.15 * f); svgEl('line', { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), stroke: '#e2e8f0' }, svg); svgEl('text', { x: m.l - 4, y: Y(v) + 3, 'text-anchor': 'end' }, svg).textContent = n0(v); });
+  ys.forEach((v, i) => { const last = i === ys.length - 1;
+    svgEl('rect', { x: m.l + i * bw + bw * 0.18, y: Y(v), width: bw * 0.64, height: Hh - m.b - Y(v), fill: col, opacity: last ? 1 : 0.45, rx: 2 }, svg);
+    const t = svgEl('text', { x: m.l + (i + 0.5) * bw, y: Y(v) - 4, 'text-anchor': 'middle' }, svg); t.textContent = n0(v); if (last) { t.style.fontWeight = 700; t.style.fill = col; }
+    svgEl('text', { x: m.l + (i + 0.5) * bw, y: Hh - 5, 'text-anchor': 'middle' }, svg).textContent = xs[i]; });
 }
 
-// 고객사별 목표PPM
-const CUST_TARGET_PPM={
-  '세동산업':300,'세풍':300,
-  '일진글로벌':1000,'일진':1000,
-  'SKF씰':600,'SKF':600,
-  'SBC':2000,'태진레이스웨이':2000,'태진':2000,
-  '진양오일씰':1000,'진양':1000
+/* ---------- 조치 사항 ---------- */
+function drawActs() {
+  const A = M.actions || [];
+  $('tAct').innerHTML = A.length ? A.map((a, i) => `<tr data-i="${i}"><td>${i + 1}</td>
+    <td><input data-f="text" value="${esc(a.text || '')}" placeholder="조치 내용">${a.carried ? '<span class="note">↪ ' + esc(a.carried) + ' 회의에서 이월</span>' : ''}</td>
+    <td><input data-f="owner" value="${esc(a.owner || '')}"></td><td><input data-f="due" type="date" value="${esc(a.due || '')}"></td>
+    <td><select data-f="status">${['진행', '완료', '보류'].map(s => `<option ${a.status === s ? 'selected' : ''}>${s}</option>`).join('')}</select></td>
+    <td class="noprint">${a.task_no ? `<a href="${TASK_URL}#${esc(a.task_no)}" target="_blank">${esc(a.task_no)}</a>` : '<button class="btn sm" data-task>과제 등록</button>'} <button class="btn sm" data-del title="삭제">✕</button></td></tr>`).join('')
+    : '<tr><td colspan="6" class="empty">조치 사항이 없습니다. [＋ 행 추가]</td></tr>';
+}
+function readActs() { document.querySelectorAll('#tAct tr[data-i]').forEach(tr => { const a = M.actions[+tr.dataset.i]; tr.querySelectorAll('[data-f]').forEach(e => a[e.dataset.f] = e.value); }); }
+$('bAddAct').onclick = () => { readActs(); (M.actions = M.actions || []).push({ text: '', owner: '', due: addD(WK, 13), status: '진행' }); drawActs(); };
+$('tAct').onclick = async (e) => {
+  const tr = e.target.closest('tr[data-i]'); if (!tr) return; readActs(); const i = +tr.dataset.i, a = M.actions[i];
+  if (e.target.matches('[data-del]')) { M.actions.splice(i, 1); drawActs(); return; }
+  if (e.target.matches('[data-task]')) {
+    if (!a.text.trim()) { toast('조치 내용을 먼저 적어 주세요'); return; }
+    e.target.disabled = true;
+    try {
+      const r = await api('improvement_tasks', { method: 'POST', body: JSON.stringify({ status: '등록', source: '주간회의', title: a.text.trim(), owner: a.owner || null, due_date: a.due || null, dept: '품질',
+        problem: `${weekLabel(WK)} 주간 품질·생산 회의 조치 사항`, metric: { type: 'manual', key: '', label: '직접 입력' }, target_pct: null,
+        history: [{ at: nowK(), by: me() || '(미로그인)', msg: '과제 등록 (주간회의 ' + WK + ')' }] }) });
+      a.task_no = r[0].task_no; await save(true); toast(a.task_no + ' 등록 — 개선과제 대장에서 지표를 정해 주세요');
+    } catch (er) { e.target.disabled = false; toast('등록 실패: ' + er.message); }
+  }
 };
-function getCustTarget(c){
-  if(CUST_TARGET_PPM[c])return CUST_TARGET_PPM[c];
-  for(const[k,v]of Object.entries(CUST_TARGET_PPM)){if(c.includes(k)||k.includes(c))return v}
-  return null;
+
+/* ---------- 결재 ---------- */
+function drawSign() {
+  const ap = M.approvals || {}, who = me();
+  $('sgRow').innerHTML = APPROVERS.map((a, k) => { const s = ap[a.k], prevOk = APPROVERS.slice(0, k).every(p => ap[p.k]);
+    return `<td>${a.name}<br>${s ? '<b style="color:#b91c1c">✔ 서명</b><br>' + esc(s.at.slice(5, 10)) : (who === a.name && prevOk ? `<button class="btn sm noprint" data-sign="${a.k}">서명</button>` : '')}</td>`; }).join('');
 }
+$('sgRow').onclick = async (e) => { const b = e.target.closest('[data-sign]'); if (!b) return; const a = APPROVERS.find(x => x.k === b.dataset.sign);
+  if (me() !== a.name) { toast('본인만 서명할 수 있습니다'); return; }
+  (M.approvals || (M.approvals = {}))[a.k] = { name: a.name, at: nowK() }; await save(true); drawSign(); };
 
-/* ===== 공정불량 요약 (카드식 통합) ===== */
-function renderProcessSummary(mSum,thisWk,target,wMap,sortedW,custs){
-  const el=document.getElementById('processSummaryWrap');
-  document.getElementById('processRange').textContent=thisWk?thisWk+'~':'';
-
-  const mdls=Object.keys(mSum).sort((a,b)=>a.localeCompare(b,'ko'));
-
-  // 고객사별 그룹 (mSum 기반)
-  const cg={};mdls.forEach(mn=>{const c=modelToCust(mn);if(!cg[c])cg[c]=[];cg[c].push(mn)});
-  // wMap에만 있는 고객사도 추가 (이번주 데이터 없지만 다른 주에 있는 경우)
-  if(custs)custs.forEach(c=>{if(!cg[c])cg[c]=[]});
-  // 고객사 정렬: SBC → SKF씰 → 나머지 가나다순
-  const CUST_ORDER=['SBC','SKF씰','SKF'];
-  function custSortKey(c){
-    for(let i=0;i<CUST_ORDER.length;i++){if(c===CUST_ORDER[i]||c.includes(CUST_ORDER[i]))return String(i).padStart(3,'0')}
-    return '999'+c;
-  }
-  const cNames=Object.keys(cg).sort((a,b)=>custSortKey(a).localeCompare(custSortKey(b),'ko'));
-  const isSBC=c=>/SBC/i.test(c);
-
-  let html='';
-
-  cNames.forEach(cust=>{
-    const gm=cg[cust];
-    const ct=getCustTarget(cust);
-    const thr=ct||target;
-
-    // 이번주 고객사 합계
-    let ci=0,cd=0;
-    gm.forEach(mn=>{ci+=mSum[mn].total.i;cd+=mSum[mn].total.d});
-    const cp=ci>0?Math.round(cd/ci*1e6):0;
-    const cr=ci>0?(cd/ci*100).toFixed(2):'0.00';
-
-    // 고객사 헤더 + 목표 + 카드
-    html+='<div style="margin-top:14px;border:2px solid #333;border-radius:12px;overflow:hidden">';
-    // 헤더바
-    html+='<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:#e8eaed;border-bottom:2px solid #333">';
-    html+='<span style="font-size:13px;font-weight:800;color:var(--primary)">'+cust+'</span>';
-    html+='<span style="font-size:11px;font-weight:700;color:var(--warn)">목표: '+(ct?ct.toLocaleString()+'PPM':'미설정')+'</span>';
-    html+='</div>';
-
-    // 요약 카드 5칸 (검사수, 불량수, PPM, 불량률, 목표대비)
-    const overTarget=ct&&cp>ct;
-    const ppmBg=overTarget?'var(--red-light)':'var(--ok-light)';
-    const ppmTxt=overTarget?'var(--red)':'var(--ok)';
-    html+='<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:0;padding:0">';
-    html+='<div style="padding:12px 6px;text-align:center;border-right:1.5px solid #555"><div style="font-size:18px;font-weight:800;color:var(--primary)">'+ci.toLocaleString()+'</div><div style="font-size:9px;color:#888;margin-top:2px">검사수</div></div>';
-    html+='<div style="padding:12px 6px;text-align:center;border-right:1.5px solid #555"><div style="font-size:18px;font-weight:800;color:var(--red)">'+cd.toLocaleString()+'</div><div style="font-size:9px;color:#888;margin-top:2px">불량수</div></div>';
-    html+='<div style="padding:12px 6px;text-align:center;background:'+ppmBg+';border-right:1.5px solid #555"><div style="font-size:18px;font-weight:800;color:'+ppmTxt+'">'+cp.toLocaleString()+'</div><div style="font-size:9px;color:#888;margin-top:2px">PPM</div></div>';
-    html+='<div style="padding:12px 6px;text-align:center"><div style="font-size:18px;font-weight:800;color:#7b1fa2">'+cr+'%</div><div style="font-size:9px;color:#888;margin-top:2px">불량률</div></div>';
-    html+='</div>';
-
-    // SBC만 Inner/Outer 상세 테이블
-    if(isSBC(cust)&&gm.length){
-      function getModelKey(mn){const m=mn.match(/\d{3,5}/);return m?m[0]:mn}
-      const grpKeys=[...new Set(gm.map(mn=>getModelKey(mn)))].sort();
-      const grpData={};
-      grpKeys.forEach(k=>{grpData[k]={inner:{i:0,d:0},outer:{i:0,d:0},total:{i:0,d:0}}});
-      gm.forEach(mn=>{
-        const k=getModelKey(mn);
-        const isO=/outer/i.test(mn);
-        const bk=isO?'outer':'inner';
-        grpData[k][bk].i+=mSum[mn][bk].i;grpData[k][bk].d+=mSum[mn][bk].d;
-        const obk=isO?'inner':'outer';
-        grpData[k][obk].i+=mSum[mn][obk].i;grpData[k][obk].d+=mSum[mn][obk].d;
-        grpData[k].total.i+=mSum[mn].total.i;grpData[k].total.d+=mSum[mn].total.d;
-      });
-
-      html+='<div style="padding:8px;border-top:2px solid #333">';
-      html+='<table class="stat-table" style="margin:0"><thead><tr><th style="text-align:left;min-width:80px">구분</th>';
-      grpKeys.forEach(k=>{html+='<th style="min-width:55px">'+k+'</th>'});
-      html+='<th style="min-width:55px;background:var(--primary-light)">합계</th></tr></thead><tbody>';
-
-      ['inner','outer'].forEach(bk=>{
-        const lb=bk==='inner'?'Inner':'Outer';
-        const bgR=bk==='inner'?'#f8fbff':'#fff9f8';
-        html+='<tr style="background:'+bgR+'"><td style="font-size:12px;font-weight:600;color:var(--primary);text-align:left">'+lb+' 검사수</td>';
-        let si=0;grpKeys.forEach(k=>{const v=grpData[k][bk].i;si+=v;html+='<td>'+(v?v.toLocaleString():'-')+'</td>'});
-        html+='<td style="font-weight:700">'+si.toLocaleString()+'</td></tr>';
-        html+='<tr style="background:'+bgR+'"><td style="font-size:12px;font-weight:600;color:var(--red);text-align:left">'+lb+' 불량수</td>';
-        let sd=0;grpKeys.forEach(k=>{const v=grpData[k][bk].d;sd+=v;html+='<td style="color:var(--red)">'+(v?v.toLocaleString():'-')+'</td>'});
-        html+='<td style="font-weight:700;color:var(--red)">'+sd.toLocaleString()+'</td></tr>';
-        html+='<tr style="background:#fff8f0"><td style="font-size:12px;font-weight:700;color:var(--warn);text-align:left">'+lb+' PPM</td>';
-        let gi=0,gd=0;grpKeys.forEach(k=>{const s=grpData[k][bk],p=s.i>0?Math.round(s.d/s.i*1e6):0;gi+=s.i;gd+=s.d;html+='<td style="font-weight:800;color:'+ppmColor(p,thr)+'">'+(p?p.toLocaleString():'-')+'</td>'});
-        const gp=gi>0?Math.round(gd/gi*1e6):0;
-        html+='<td style="font-weight:800;color:'+ppmColor(gp,thr)+'">'+gp.toLocaleString()+'</td></tr>';
-      });
-
-      html+='<tr class="st-total"><td style="text-align:left">합계 검사수</td>';
-      let ai2=0;grpKeys.forEach(k=>{const v=grpData[k].total.i;ai2+=v;html+='<td>'+(v?v.toLocaleString():'-')+'</td>'});
-      html+='<td style="font-weight:800">'+ai2.toLocaleString()+'</td></tr>';
-      html+='<tr class="st-total"><td style="text-align:left;color:var(--red)">합계 불량수</td>';
-      let ad2=0;grpKeys.forEach(k=>{const v=grpData[k].total.d;ad2+=v;html+='<td style="color:var(--red)">'+(v?v.toLocaleString():'-')+'</td>'});
-      html+='<td style="font-weight:800;color:var(--red)">'+ad2.toLocaleString()+'</td></tr>';
-      html+='<tr class="st-total" style="background:var(--warn-light)"><td style="text-align:left;font-weight:800;color:var(--warn)">합계 PPM</td>';
-      let ati2=0,atd2=0;grpKeys.forEach(k=>{const s=grpData[k].total,p=s.i>0?Math.round(s.d/s.i*1e6):0;ati2+=s.i;atd2+=s.d;html+='<td style="font-weight:800;color:'+ppmColor(p,thr)+'">'+(p?p.toLocaleString():'-')+'</td>'});
-      const tp2=ati2>0?Math.round(atd2/ati2*1e6):0;
-      html+='<td style="font-weight:900;font-size:13px;color:'+ppmColor(tp2,thr)+'">'+tp2.toLocaleString()+'</td></tr>';
-      html+='</tbody></table></div>';
-    }
-
-    html+='</div>'; // 카드 닫기
-  });
-
-  el.innerHTML=html;
+async function save(quiet) {
+  readActs();
+  const body = { week_start: WK, attendees: $('mAtt').value.trim(), notes: $('mNotes').value, actions: (M.actions || []).filter(a => (a.text || '').trim() || a.task_no), approvals: M.approvals || {}, updated_at: new Date().toISOString(), updated_by: me() || null };
+  try { await api('weekly_meeting?on_conflict=week_start', { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=representation' }, body: JSON.stringify(body) });
+    M = { ...M, ...body }; if (!quiet) toast('회의록 저장 완료'); drawActs(); }
+  catch (e) { toast('저장 실패: ' + e.message); }
 }
-
-/* ===== 불량유형 Top ===== */
-function renderDefectTop(tTop){
-  const el=document.getElementById('defectTopWrap');
-  const sorted=Object.entries(tTop).sort((a,b)=>b[1]-a[1]).slice(0,10);
-  if(!sorted.length){el.innerHTML='<div class="empty">이번 주 불량 없음</div>';return}
-  const mx=sorted[0][1];
-  el.innerHTML=sorted.map(([n,q],i)=>{
-    const pct=(q/mx*100).toFixed(1);
-    const bc=i===0?'#c62828':i<3?'#e65100':'#1565c0';
-    return'<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">'+
-      '<span style="font-size:11px;font-weight:700;width:16px;text-align:right;color:#888">'+(i+1)+'</span>'+
-      '<span style="font-size:12px;font-weight:600;width:80px;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+n+'</span>'+
-      '<div style="flex:1;background:#f5f5f5;border-radius:4px;height:20px;overflow:hidden"><div style="width:'+pct+'%;background:'+bc+';height:100%;border-radius:4px"></div></div>'+
-      '<span style="font-size:13px;font-weight:800;color:'+bc+';width:40px;text-align:right">'+q+'</span></div>'
-  }).join('');
-}
-
-/* ===== 미지정 모델 디버그 패널 ===== */
-function renderUnmapped(unmapped){
-  const el=document.getElementById('unmappedWrap');
-  const list=Object.entries(unmapped).sort((a,b)=>b[1].qty-a[1].qty);
-  if(!list.length){el.innerHTML='<div class="empty" style="color:#2e7d32;font-weight:600">✅ 미지정 모델 없음 - 모든 모델이 마스터에 등록되어 있습니다</div>';return}
-  const totalCnt=list.reduce((s,[,v])=>s+v.cnt,0);
-  const totalQty=list.reduce((s,[,v])=>s+v.qty,0);
-  const totalInsp=list.reduce((s,[,v])=>s+v.inspQty,0);
-  const totalPpm=totalInsp>0?Math.round(totalQty/totalInsp*1e6):0;
-  let html='<div style="background:#fff3e0;border-left:4px solid #ff9800;padding:8px 12px;margin-bottom:10px;border-radius:4px;font-size:12px">'+
-    '<b style="color:#e65100">총 '+list.length+'개 모델</b> · 데이터 '+totalCnt.toLocaleString()+'건 · 검사 '+totalInsp.toLocaleString()+' · 불량 '+totalQty.toLocaleString()+' · <b>PPM '+totalPpm.toLocaleString()+'</b></div>';
-  html+='<table class="tbl" style="font-size:11px"><thead><tr>'+
-    '<th style="text-align:left">모델명</th>'+
-    '<th>건수</th>'+
-    '<th>검사수량</th>'+
-    '<th>불량수량</th>'+
-    '<th>PPM</th>'+
-    '<th>최종일자</th>'+
-    '<th style="text-align:left">사유</th>'+
-    '</tr></thead><tbody>';
-  list.forEach(([mn,v])=>{
-    const ppm=v.inspQty>0?Math.round(v.qty/v.inspQty*1e6):0;
-    const reasonColor=v.reason.includes('미등록')?'#c62828':'#e65100';
-    html+='<tr>'+
-      '<td style="text-align:left;font-weight:600">'+mn+'</td>'+
-      '<td>'+v.cnt+'</td>'+
-      '<td>'+v.inspQty.toLocaleString()+'</td>'+
-      '<td style="color:#c62828;font-weight:700">'+v.qty.toLocaleString()+'</td>'+
-      '<td style="font-weight:700">'+ppm.toLocaleString()+'</td>'+
-      '<td style="font-size:10px;color:#666">'+v.lastDate+'</td>'+
-      '<td style="text-align:left;color:'+reasonColor+';font-size:10px">'+v.reason+'</td>'+
-      '</tr>';
-  });
-  html+='</tbody></table>';
-  el.innerHTML=html;
-}
-
-function copyUnmappedList(){
-  if(!reportData||!reportData.unmapped){showToast('데이터 없음');return}
-  const list=Object.entries(reportData.unmapped).sort((a,b)=>b[1].qty-a[1].qty);
-  if(!list.length){showToast('미지정 모델 없음');return}
-  const txt='모델명\t건수\t검사수량\t불량수량\tPPM\t최종일자\t사유\n'+
-    list.map(([mn,v])=>{
-      const ppm=v.inspQty>0?Math.round(v.qty/v.inspQty*1e6):0;
-      return mn+'\t'+v.cnt+'\t'+v.inspQty+'\t'+v.qty+'\t'+ppm+'\t'+v.lastDate+'\t'+v.reason;
-    }).join('\n');
-  navigator.clipboard.writeText(txt).then(()=>showToast('📋 '+list.length+'개 모델 복사됨 (Excel 붙여넣기 가능)')).catch(()=>showToast('복사 실패'));
-}
-
-/* ===== 일별 추이 = 주차별 고객사 PPM 차트 + 데이터 테이블 ===== */
-function renderDailyTable(daily,target){
-  if(!reportData)return;
-  const{wMap,sortedW,custs}=reportData;
-  const el=document.getElementById('dailyTableWrap');
-  const rangeEl=document.getElementById('dailyChartRange');
-  if(sortedW.length)rangeEl.textContent=sortedW[0]+' ~ '+sortedW[sortedW.length-1];
-
-  // --- 주차별 크랙 수량 집계 ---
-  const crackByWeek={};
-  Object.entries(daily).forEach(([dt,d])=>{
-    const wk=weekKey(dt);
-    if(!crackByWeek[wk])crackByWeek[wk]=0;
-    Object.values(d.custs||{}).forEach(cv=>{crackByWeek[wk]+=cv.crack||0});
-  });
-
-  // --- 테이블 먼저 렌더링 (실제 너비 측정용) ---
-  // 셀 표시: 검사수 있으면 PPM 표시(0 포함), 검사수 없으면 빈칸
-  function ppmCell(v,thr){
-    if(!v||v.i===0)return'<td></td>';
-    const p=Math.round(v.d/v.i*1e6);
-    return'<td style="font-weight:600;color:'+ppmColor(p,thr)+'">'+p.toLocaleString()+'</td>';
-  }
-
-  let h='<table class="stat-table" id="dailyPpmTable"><thead><tr><th style="text-align:left;min-width:80px">구분</th>';
-  sortedW.forEach(wk=>{h+='<th style="min-width:50px">'+wk+'</th>'});
-  h+='</tr></thead><tbody>';
-  custs.forEach(c=>{
-    h+='<tr><td style="text-align:left;font-weight:700">'+c+'</td>';
-    const ct=getCustTarget(c)||target;
-    sortedW.forEach(wk=>{const v=(wMap[wk]&&wMap[wk][c])?wMap[wk][c]:null;h+=ppmCell(v,ct)});
-    h+='</tr>';
-  });
-  h+='<tr style="background:#f1f8e9"><td style="text-align:left;font-weight:700;color:#558b2f">크랙(ea)</td>';
-  sortedW.forEach(wk=>{const v=crackByWeek[wk];if(v===undefined||v===null){h+='<td></td>'}else{h+='<td style="font-weight:700;color:'+(v>0?'#c62828':'#2e7d32')+'">'+v+'</td>'}});
-  h+='</tr>';
-  h+='<tr class="st-total"><td style="text-align:left">합계</td>';
-  sortedW.forEach(wk=>{let ti=0,td=0,hasData=false;custs.forEach(c=>{const v=(wMap[wk]&&wMap[wk][c]);if(v){ti+=v.i;td+=v.d;hasData=true}});if(!hasData){h+='<td></td>'}else{const p=ti>0?Math.round(td/ti*1e6):0;h+='<td style="font-weight:800;color:'+ppmColor(p,target)+'">'+p.toLocaleString()+'</td>'}});
-  h+='</tr></tbody></table>';
-  el.innerHTML=h;
-
-  // --- 테이블 실제 너비 측정 후 차트 그리기 ---
-  requestAnimationFrame(()=>{
-    const tbl=document.getElementById('dailyPpmTable');
-    const W=tbl?tbl.offsetWidth:Math.max(700,sortedW.length*55+100);
-    const H=320;
-    const canvas=document.getElementById('dailyChart'),ctx=canvas.getContext('2d');
-    const wrap=document.getElementById('dailyChartWrap');
-    if(wrap)wrap.style.width=W+'px';
-    const dpr=window.devicePixelRatio||1;
-    canvas.width=W*dpr;canvas.height=H*dpr;canvas.style.width=W+'px';canvas.style.height=H+'px';ctx.scale(dpr,dpr);
-
-    const colors=['#1565c0','#c62828','#2e7d32','#7b1fa2','#e65100','#00838f','#4e342e','#283593','#ad1457','#558b2f'];
-    const cCol={};custs.forEach((c,i)=>{cCol[c]=colors[i%colors.length]});
-
-  // PPM 데이터
-  const pD={};custs.forEach(c=>{pD[c]=[]});
-  let mxP=0;
-  sortedW.forEach(wk=>{custs.forEach(c=>{const v=(wMap[wk]&&wMap[wk][c])?wMap[wk][c]:{i:0,d:0};const p=v.i>0?Math.round(v.d/v.i*1e6):0;pD[c].push(p);if(p>mxP)mxP=p})});
-  mxP=Math.max(mxP,2000);const yML=Math.ceil(mxP/1000)*1000;
-
-  // 크랙 데이터
-  const crackData=sortedW.map(wk=>crackByWeek[wk]||0);
-  let mxC=Math.max(...crackData,1);const yMR=Math.ceil(mxC/1)*1+1;
-
-  // 레이아웃
-  const pad={t:35,r:50,b:55,l:55},pw=W-pad.l-pad.r,ph=H-pad.t-pad.b;
-  ctx.clearRect(0,0,W,H);ctx.fillStyle='#fff';ctx.fillRect(0,0,W,H);
-
-  // 목표선 (최대 목표)
-  const maxTarget=Math.max(...custs.map(c=>getCustTarget(c)||target));
-  const tgtY=pad.t+ph-(maxTarget/yML)*ph;
-  ctx.strokeStyle='#ef5350';ctx.lineWidth=1;ctx.setLineDash([6,4]);
-  ctx.beginPath();ctx.moveTo(pad.l,tgtY);ctx.lineTo(pad.l+pw,tgtY);ctx.stroke();ctx.setLineDash([]);
-  ctx.fillStyle='#ef5350';ctx.font='9px "Noto Sans KR"';ctx.textAlign='left';ctx.fillText('목표 '+maxTarget.toLocaleString(),pad.l+2,tgtY-4);
-
-  // Y좌축 그리드 (PPM)
-  ctx.strokeStyle='#e0e0e0';ctx.lineWidth=.5;ctx.font='10px "Noto Sans KR"';ctx.fillStyle='#888';ctx.textAlign='right';
-  for(let i=0;i<=5;i++){const y=pad.t+ph-(i/5)*ph,v=Math.round(i/5*yML);ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(pad.l+pw,y);ctx.stroke();ctx.fillText(v.toLocaleString(),pad.l-6,y+3)}
-  ctx.save();ctx.translate(12,pad.t+ph/2);ctx.rotate(-Math.PI/2);ctx.fillStyle='#1565c0';ctx.font='bold 11px "Noto Sans KR"';ctx.textAlign='center';ctx.fillText('공정불량률(PPM)',0,0);ctx.restore();
-
-  // Y우축 (크랙)
-  ctx.textAlign='left';ctx.fillStyle='#666';ctx.font='10px "Noto Sans KR"';
-  for(let i=0;i<=yMR;i++){const y=pad.t+ph-(i/yMR)*ph;ctx.fillText(i,pad.l+pw+6,y+3)}
-  ctx.save();ctx.translate(W-8,pad.t+ph/2);ctx.rotate(Math.PI/2);ctx.fillStyle='#666';ctx.font='bold 11px "Noto Sans KR"';ctx.textAlign='center';ctx.fillText('크랙불량수(ea)',0,0);ctx.restore();
-
-  // X축
-  ctx.textAlign='center';ctx.fillStyle='#555';ctx.font='10px "Noto Sans KR"';
-  const xS=sortedW.length>1?pw/(sortedW.length-1):pw;
-  const barW=Math.min(xS*0.3,20);
-  sortedW.forEach((wk,i)=>{const x=pad.l+(sortedW.length>1?i*xS:pw/2);ctx.save();ctx.translate(x,pad.t+ph+14);ctx.rotate(-Math.PI/6);ctx.fillText(wk,0,0);ctx.restore()});
-
-  // 크랙 막대 (먼저 그려서 라인 뒤에 깔림)
-  ctx.globalAlpha=0.6;
-  sortedW.forEach((wk,i)=>{
-    const x=pad.l+(sortedW.length>1?i*xS:pw/2);
-    const v=crackData[i];
-    const bh=(v/yMR)*ph;
-    ctx.fillStyle='#8bc34a';
-    ctx.fillRect(x-barW/2,pad.t+ph-bh,barW,bh);
-    // 막대 위 숫자
-    if(v>0){ctx.fillStyle='#555';ctx.font='bold 10px "Noto Sans KR"';ctx.textAlign='center';ctx.fillText(v,x,pad.t+ph-bh-4)}
-  });
-  ctx.globalAlpha=1;
-
-  // PPM 라인
-  custs.forEach(c=>{
-    ctx.strokeStyle=cCol[c];ctx.lineWidth=2;ctx.beginPath();
-    pD[c].forEach((p,i)=>{const x=pad.l+(sortedW.length>1?i*xS:pw/2),y=pad.t+ph-(p/yML)*ph;i===0?ctx.moveTo(x,y):ctx.lineTo(x,y)});
-    ctx.stroke();
-    pD[c].forEach((p,i)=>{if(p>0){const x=pad.l+(sortedW.length>1?i*xS:pw/2),y=pad.t+ph-(p/yML)*ph;ctx.fillStyle=cCol[c];ctx.beginPath();ctx.arc(x,y,3.5,0,Math.PI*2);ctx.fill()}});
-  });
-
-  // 범례
-  let lx=pad.l;ctx.font='10px "Noto Sans KR"';
-  custs.forEach(c=>{ctx.fillStyle=cCol[c];ctx.fillRect(lx,6,10,10);ctx.fillStyle='#333';ctx.textAlign='left';ctx.fillText(c,lx+13,15);lx+=ctx.measureText(c).width+24});
-  // 크랙 범례
-  ctx.fillStyle='#8bc34a';ctx.fillRect(lx,6,10,10);ctx.fillStyle='#333';ctx.fillText('크랙(우축)',lx+13,15);
-
-  }); // requestAnimationFrame 닫기
-}
-
-/* ===== 엑셀 ===== */
-function exportReport(){
-  if(!reportData){showToast('먼저 조회하세요');return}
-  const{wMap,sortedW,custs,mSum,rows,target}=reportData;
-  const wb=XLSX.utils.book_new();
-
-  // S1: 주간PPM
-  const h1=['구분',...sortedW];
-  const r1=custs.map(c=>{const row=[c];sortedW.forEach(wk=>{const v=(wMap[wk]&&wMap[wk][c])?wMap[wk][c]:{i:0,d:0};row.push(v.i>0?Math.round(v.d/v.i*1e6):0)});return row});
-  const tot1=['합계'];sortedW.forEach(wk=>{let ti=0,td=0;custs.forEach(c=>{const v=(wMap[wk]&&wMap[wk][c])?wMap[wk][c]:{i:0,d:0};ti+=v.i;td+=v.d});tot1.push(ti>0?Math.round(td/ti*1e6):0)});
-  r1.push(tot1);
-  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([h1,...r1]),'주간PPM추이');
-
-  // S2: 공정불량
-  const mdls=Object.keys(mSum).sort();
-  if(mdls.length){
-    const h2=['구분',...mdls,'합계'];const r2=[];
-    ['inner','outer'].forEach(bk=>{
-      const lb=bk==='inner'?'Inner':'Outer';
-      const ir=[lb+' 검사수'],dr=[lb+' 불량수'],pr=[lb+' PPM'];
-      let si=0,sd=0;
-      mdls.forEach(mn=>{const s=mSum[mn][bk];ir.push(s.i);dr.push(s.d);pr.push(s.i>0?Math.round(s.d/s.i*1e6):0);si+=s.i;sd+=s.d});
-      ir.push(si);dr.push(sd);pr.push(si>0?Math.round(sd/si*1e6):0);
-      r2.push(ir,dr,pr);
-    });
-    const ti2=['합계 검사수'],td2=['합계 불량수'],tp2=['합계 PPM'];
-    let ati=0,atd=0;
-    mdls.forEach(mn=>{const s=mSum[mn].total;ti2.push(s.i);td2.push(s.d);tp2.push(s.i>0?Math.round(s.d/s.i*1e6):0);ati+=s.i;atd+=s.d});
-    ti2.push(ati);td2.push(atd);tp2.push(ati>0?Math.round(atd/ati*1e6):0);
-    r2.push(ti2,td2,tp2);
-    XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([h2,...r2]),'주간공정불량');
-  }
-
-  // S3: 원본
-  if(rows.length){
-    const h3=['일자','시간','기종','면','영역','불량유형','검사수','수량','작업자','검사라인','생산라인','비고'];
-    const r3=rows.map(r=>[r.defect_date,r.defect_time,r.model_name,r.side,r.zone_name,r.defect_type,r.inspect_qty||0,r.qty||0,r.worker,r.inspect_line,r.prod_line,r.note]);
-    XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([h3,...r3]),'원본데이터');
-  }
-
-  XLSX.writeFile(wb,'주간보고서_'+new Date().toISOString().split('T')[0].replace(/-/g,'')+'.xlsx');
-  showToast('📥 엑셀 다운로드');
-}
-
-/* ===== MES 불량 조회 ===== */
-let mesState={apiBase:'',baseFromS:'',baseToS:'',codeNames:{}};
-
-async function loadMesData(){
-  const fromS=document.getElementById('rptDateFrom').value;
-  const toS=document.getElementById('rptDateTo').value;
-  const apiBase=document.getElementById('mesApiUrl').value.replace(/\/$/,'');
-  if(!fromS||!toS){showToast('날짜 범위를 선택하세요');return}
-  if(!apiBase){showToast('MES API URL을 입력하세요');return}
-
-  mesState.apiBase=apiBase;
-  mesState.baseFromS=fromS;
-  mesState.baseToS=toS;
-
-  document.getElementById('mesCard').style.display='block';
-
-  // 1) 요약(상단 카드) + 주간 추이는 기본 범위로
-  showLoading('MES 불량 조회 중...');
-  try{
-    await fetchAndRenderMesSummary(fromS,toS);
-    // 2) 세부 표는 기본 범위로 + 주차 선택 UI 부착
-    await renderMesDetail(fromS,toS,null);
-    // 3) 주간 추이 차트
-    await renderMesWeekly(apiBase);
-    showToast('🏭 MES 조회 완료');
-  }catch(e){
-    document.getElementById('mesSummaryWrap').innerHTML='<div class="empty" style="color:var(--red)">❌ '+e.message+'<br><span style="font-size:10px;color:#888">qc_monitor.exe 실행 중인지 확인하세요</span></div>';
-    document.getElementById('mesTableWrap').innerHTML='';
-  }
-  hideLoading();
-}
-
-/* 요약 카드만 그리기 (상단 4칸) */
-async function fetchAndRenderMesSummary(fromS,toS){
-  document.getElementById('mesRange').textContent=fromS+' ~ '+toS;
-  const url=mesState.apiBase+'/api/mes_defect?start='+fromS+'&end='+toS;
-  const res=await fetch(url);
-  if(!res.ok)throw new Error('MES API 오류: '+res.status);
-  const data=await res.json();
-  if(data.error)throw new Error(data.error);
-
-  const totalShot=data.total_shot||0;
-  const totalNg=data.total_ng||0;
-  const mesPpm=totalShot>0?Math.round(totalNg/totalShot*1e6):0;
-
-  const sw=document.getElementById('mesSummaryWrap');
-  sw.innerHTML='<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:0;border:2px solid #333;border-radius:10px;overflow:hidden">'+
-    '<div style="padding:12px 6px;text-align:center;border-right:1.5px solid #555"><div style="font-size:18px;font-weight:800;color:var(--primary)">'+totalShot.toLocaleString()+'</div><div style="font-size:9px;color:#888;margin-top:2px">생산수</div></div>'+
-    '<div style="padding:12px 6px;text-align:center;border-right:1.5px solid #555"><div style="font-size:18px;font-weight:800;color:var(--red)">'+totalNg.toLocaleString()+'</div><div style="font-size:9px;color:#888;margin-top:2px">불량수</div></div>'+
-    '<div style="padding:12px 6px;text-align:center;border-right:1.5px solid #555;background:'+(mesPpm>3800?'var(--red-light)':'var(--ok-light)')+'"><div style="font-size:18px;font-weight:800;color:'+(mesPpm>3800?'var(--red)':'var(--ok)')+'">'+mesPpm.toLocaleString()+'</div><div style="font-size:9px;color:#888;margin-top:2px">PPM</div></div>'+
-    '<div style="padding:12px 6px;text-align:center"><div style="font-size:18px;font-weight:800;color:var(--warn)">목표 3,800</div><div style="font-size:9px;color:#888;margin-top:2px">PPM</div></div>'+
-    '</div>';
-}
-
-/* 세부 표만 그리기 + 주차 선택 UI */
-async function renderMesDetail(fromS,toS,selectedWk){
-  const tw=document.getElementById('mesTableWrap');
-  tw.innerHTML='<div class="empty" style="padding:20px">📊 세부 데이터 조회 중...</div>';
-
-  const url=mesState.apiBase+'/api/mes_defect?start='+fromS+'&end='+toS;
-  let data;
-  try{
-    const res=await fetch(url);
-    if(!res.ok)throw new Error('MES API 오류: '+res.status);
-    data=await res.json();
-    if(data.error)throw new Error(data.error);
-  }catch(e){
-    tw.innerHTML='<div class="empty" style="color:var(--red)">❌ '+e.message+'</div>';
-    return;
-  }
-
-  const rows=data.data||[];
-  const ngCodes=data.ng_codes||[];
-  const codeNames=data.code_names||{};
-  const totalShot=data.total_shot||0;
-  const totalNg=data.total_ng||0;
-  const ngTotals=data.ng_totals||{};
-  mesState.codeNames=codeNames;
-
-  // ===== 주차 선택 바 =====
-  const today=new Date();
-  const year=today.getFullYear();
-  const todayMon=fmtYMD(getMonday(today.toISOString().split('T')[0]));
-  let bar='<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:6px 4px;margin-bottom:6px;background:#f8f9fa;border:1.5px solid #555;border-radius:8px">';
-  bar+='<span style="font-size:12px;font-weight:700;color:var(--primary);padding:0 4px">📅 주차 선택:</span>';
-  bar+='<select id="mesWeekSel" onchange="onMesWeekChange()" style="padding:6px 10px;border:1.5px solid #555;border-radius:6px;font-size:12px;font-weight:600;min-width:120px;background:#fff">';
-  bar+='<option value="">전체 ('+fromS+' ~ '+toS+')</option>';
-  for(let i=1;i<=20;i++){
-    const wk='W'+i;
-    const mon=fmtYMD(isoWeekMonday(year,i));
-    if(mon>=todayMon)continue; // 이번주/미래 제외
-    const sun=new Date(mon+'T00:00:00');sun.setDate(sun.getDate()+6);
-    const sunS=fmtYMD(sun);
-    const sel=(selectedWk===wk)?' selected':'';
-    bar+='<option value="'+wk+'|'+mon+'|'+sunS+'"'+sel+'>'+wk+' ('+mon.slice(5)+'~'+sunS.slice(5)+')</option>';
-  }
-  bar+='</select>';
-  if(selectedWk){
-    bar+='<button onclick="resetMesWeek()" style="padding:6px 12px;border:1.5px solid #555;border-radius:6px;background:#fff;font-size:12px;font-weight:600;cursor:pointer">↺ 원래 범위</button>';
-    bar+='<span style="margin-left:auto;font-size:11px;color:var(--warn);font-weight:700">🔍 '+selectedWk+' 필터링 중</span>';
-  }
-  bar+='</div>';
-
-  if(!rows.length){
-    tw.innerHTML=bar+'<div class="empty">MES 불량 데이터 없음</div>';
-    return;
-  }
-
-  const activeNg=ngCodes.filter(c=>ngTotals[c]>0);
-
-  let h=bar+'<table class="stat-table"><thead><tr>';
-  h+='<th style="text-align:left;min-width:70px;background:#ffffcc">품목코드</th>';
-  h+='<th style="min-width:60px;background:#ffffcc">실적수량</th>';
-  activeNg.forEach(c=>{h+='<th style="min-width:50px;background:#ffffcc">'+(codeNames[c]||c)+'</th>'});
-  h+='<th style="min-width:50px;background:#ffffcc;font-weight:800">총계</th>';
-  h+='</tr></thead><tbody>';
-
-  const sorted=rows.filter(r=>r.ng_total>0).sort((a,b)=>b.ng_total-a.ng_total);
-
-  sorted.forEach(r=>{
-    h+='<tr>';
-    h+='<td style="text-align:left;font-size:12px;font-weight:600">'+r.item_code+'</td>';
-    h+='<td>'+r.shot.toLocaleString()+'</td>';
-    activeNg.forEach(c=>{
-      const v=r.ng_types[c]||0;
-      h+='<td style="'+(v>0?'color:var(--red);font-weight:700':'')+'">'+(v||'')+'</td>';
-    });
-    h+='<td style="font-weight:800;color:var(--red)">'+r.ng_total.toLocaleString()+'</td>';
-    h+='</tr>';
-  });
-
-  h+='<tr class="st-total"><td style="text-align:left;font-weight:800">Grand Total</td>';
-  h+='<td style="font-weight:800">'+totalShot.toLocaleString()+'</td>';
-  activeNg.forEach(c=>{h+='<td style="font-weight:800;color:var(--red)">'+(ngTotals[c]||0).toLocaleString()+'</td>'});
-  h+='<td style="font-weight:900;color:var(--red);font-size:13px">'+totalNg.toLocaleString()+'</td>';
-  h+='</tr></tbody></table>';
-
-  tw.innerHTML=h;
-}
-
-/* 주차 선택 변경 */
-async function onMesWeekChange(){
-  const sel=document.getElementById('mesWeekSel');
-  const v=sel.value;
-  if(!v){
-    // 전체 → 원래 범위로
-    showLoading('세부 데이터 조회 중...');
-    await renderMesDetail(mesState.baseFromS,mesState.baseToS,null);
-    hideLoading();
-    return;
-  }
-  const[wk,from,to]=v.split('|');
-  showLoading(wk+' 세부 데이터 조회 중...');
-  await renderMesDetail(from,to,wk);
-  hideLoading();
-}
-
-/* 원래 범위 복원 */
-async function resetMesWeek(){
-  showLoading('세부 데이터 조회 중...');
-  await renderMesDetail(mesState.baseFromS,mesState.baseToS,null);
-  hideLoading();
-}
-
-/* ===== 주간 MES PPM 추이 (전체 PPM만 단순 표시) ===== */
-async function renderMesWeekly(apiBase){
-  const wrap=document.getElementById('mesWeeklyWrap');
-  if(!wrap)return;
-  wrap.innerHTML='';
-  if(!reportData||!reportData.sortedW||!reportData.weekToMonday){
-    wrap.innerHTML='<div style="font-size:11px;color:#888;padding:6px;text-align:center">ℹ️ 주간 MES PPM 추이를 보려면 상단에서 [조회]를 먼저 실행하세요</div>';
-    return;
-  }
-  const{sortedW,weekToMonday}=reportData;
-
-  // ===== MES 그래프는 W1 ~ W20 고정 (현재 연도 기준) =====
-  const today=new Date();
-  const todayMon=fmtYMD(getMonday(today.toISOString().split('T')[0]));
-  const year=today.getFullYear();
-
-  // W1 ~ W20 주차 생성
-  const mesSortedW=[];
-  const mesWeekMonday={};
-  for(let i=1;i<=20;i++){
-    const wk='W'+i;
-    const mon=isoWeekMonday(year,i);
-    mesSortedW.push(wk);
-    mesWeekMonday[wk]=fmtYMD(mon);
-  }
-
-  // 이번주(현재 진행중) 제외 → 지난주까지만
-  const filteredW=mesSortedW.filter(wk=>mesWeekMonday[wk]<todayMon);
-
-  if(!filteredW.length){
-    wrap.innerHTML='<div style="font-size:11px;color:#888;padding:6px;text-align:center">표시할 지난주 데이터가 없습니다</div>';
-    return;
-  }
-
-  wrap.innerHTML='<div style="font-size:11px;color:#888;padding:6px">📊 주간 MES PPM 조회 중... ('+filteredW.length+'주)</div>';
-
-  // 병렬 호출 (4개씩 청크)
-  const results={};
-  const CHUNK=4;
-  for(let i=0;i<filteredW.length;i+=CHUNK){
-    const chunk=filteredW.slice(i,i+CHUNK);
-    const ps=chunk.map(async wk=>{
-      const mon=mesWeekMonday[wk];
-      const sun=new Date(mon+'T00:00:00');sun.setDate(sun.getDate()+6);
-      const sunS=fmtYMD(sun);
-      try{
-        const r=await fetch(apiBase+'/api/mes_defect?start='+mon+'&end='+sunS);
-        if(!r.ok){results[wk]=null;return}
-        const d=await r.json();
-        if(d.error){results[wk]=null;return}
-        results[wk]={shot:d.total_shot||0,ng:d.total_ng||0};
-      }catch(e){results[wk]=null}
-    });
-    await Promise.all(ps);
-  }
-
-  // 표시는 W1~W20 전체로 (이번주/미래는 빈칸 처리)
-  const displayW=mesSortedW;
-
-  const TARGET_PPM=3800;
-
-  // ===== 표 + 차트 컨테이너 =====
-  let h='<div style="font-size:12px;font-weight:700;color:var(--primary);padding:4px 0 6px 2px">📊 주간 MES PPM 추이 <span style="font-size:10px;color:var(--gray);font-weight:400">('+year+'년 '+displayW[0]+' ~ '+displayW[displayW.length-1]+', 이번주 제외)</span></div>';
-
-  // 차트 영역
-  h+='<div id="mesWeeklyChartWrap" style="overflow-x:auto;background:#fff;border:1.5px solid #555;border-radius:8px;padding:6px;margin-bottom:8px"><canvas id="mesWeeklyChart"></canvas></div>';
-
-  // 표 영역
-  h+='<div style="overflow-x:auto"><table class="stat-table" id="mesWeeklyTable"><thead><tr>';
-  h+='<th style="text-align:left;min-width:90px">구분</th>';
-  displayW.forEach(wk=>{h+='<th style="min-width:55px">'+wk+'</th>'});
-  h+='</tr></thead><tbody>';
-
-  h+='<tr><td style="text-align:left;font-weight:700">생산수</td>';
-  displayW.forEach(wk=>{
-    const v=results[wk];
-    if(!v||v.shot===0){h+='<td></td>'}
-    else{h+='<td style="font-weight:600;color:var(--primary)">'+v.shot.toLocaleString()+'</td>'}
-  });
-  h+='</tr>';
-
-  h+='<tr><td style="text-align:left;font-weight:700">불량수</td>';
-  displayW.forEach(wk=>{
-    const v=results[wk];
-    if(!v||v.shot===0){h+='<td></td>'}
-    else{h+='<td style="font-weight:600;color:'+(v.ng>0?'var(--red)':'#888')+'">'+v.ng.toLocaleString()+'</td>'}
-  });
-  h+='</tr>';
-
-  h+='<tr class="st-total"><td style="text-align:left;font-weight:800">PPM</td>';
-  displayW.forEach(wk=>{
-    const v=results[wk];
-    if(!v||v.shot===0){h+='<td></td>'}
-    else{
-      const p=Math.round(v.ng/v.shot*1e6);
-      const col=p>TARGET_PPM?'var(--red)':p>TARGET_PPM/2?'var(--warn)':'var(--ok)';
-      h+='<td style="font-weight:800;color:'+col+'">'+p.toLocaleString()+'</td>';
-    }
-  });
-  h+='</tr></tbody></table></div>';
-  h+='<div style="font-size:10px;color:#888;padding:4px 2px">목표: '+TARGET_PPM.toLocaleString()+' PPM</div>';
-
-  wrap.innerHTML=h;
-
-  // ===== 차트 그리기 =====
-  requestAnimationFrame(()=>{
-    const tbl=document.getElementById('mesWeeklyTable');
-    const W=tbl?tbl.offsetWidth:Math.max(700,displayW.length*55+100);
-    const H=260;
-    const canvas=document.getElementById('mesWeeklyChart');
-    if(!canvas)return;
-    const ctx=canvas.getContext('2d');
-    const cw=document.getElementById('mesWeeklyChartWrap');
-    if(cw)cw.style.width=W+'px';
-    const dpr=window.devicePixelRatio||1;
-    canvas.width=W*dpr;canvas.height=H*dpr;canvas.style.width=W+'px';canvas.style.height=H+'px';ctx.scale(dpr,dpr);
-
-    // PPM 데이터 배열 (전체 W1~W20)
-    const ppmData=displayW.map(wk=>{
-      const v=results[wk];
-      return(v&&v.shot>0)?Math.round(v.ng/v.shot*1e6):null;
-    });
-    const validPpm=ppmData.filter(p=>p!==null);
-    let mxP=Math.max(...(validPpm.length?validPpm:[0]),TARGET_PPM*1.2);
-    const yML=Math.ceil(mxP/1000)*1000||5000;
-
-    // 레이아웃
-    const pad={t:25,r:25,b:48,l:60},pw=W-pad.l-pad.r,ph=H-pad.t-pad.b;
-    ctx.clearRect(0,0,W,H);ctx.fillStyle='#fff';ctx.fillRect(0,0,W,H);
-
-    // 목표선
-    const tgtY=pad.t+ph-(TARGET_PPM/yML)*ph;
-    ctx.strokeStyle='#ef5350';ctx.lineWidth=1;ctx.setLineDash([6,4]);
-    ctx.beginPath();ctx.moveTo(pad.l,tgtY);ctx.lineTo(pad.l+pw,tgtY);ctx.stroke();ctx.setLineDash([]);
-    ctx.fillStyle='#ef5350';ctx.font='9px "Noto Sans KR"';ctx.textAlign='left';
-    ctx.fillText('목표 '+TARGET_PPM.toLocaleString(),pad.l+2,tgtY-4);
-
-    // Y축 그리드
-    ctx.strokeStyle='#e0e0e0';ctx.lineWidth=.5;ctx.font='10px "Noto Sans KR"';ctx.fillStyle='#888';ctx.textAlign='right';
-    for(let i=0;i<=5;i++){
-      const y=pad.t+ph-(i/5)*ph,v=Math.round(i/5*yML);
-      ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(pad.l+pw,y);ctx.stroke();
-      ctx.fillText(v.toLocaleString(),pad.l-6,y+3);
-    }
-    ctx.save();ctx.translate(14,pad.t+ph/2);ctx.rotate(-Math.PI/2);
-    ctx.fillStyle='#e65100';ctx.font='bold 11px "Noto Sans KR"';ctx.textAlign='center';
-    ctx.fillText('MES PPM',0,0);ctx.restore();
-
-    // X축 라벨
-    ctx.textAlign='center';ctx.fillStyle='#555';ctx.font='10px "Noto Sans KR"';
-    const xS=displayW.length>1?pw/(displayW.length-1):pw;
-    displayW.forEach((wk,i)=>{
-      const x=pad.l+(displayW.length>1?i*xS:pw/2);
-      ctx.fillText(wk,x,pad.t+ph+16);
-    });
-
-    // PPM 라인 (null 구간은 끊어서 그림)
-    const lineColor='#e65100';
-    ctx.strokeStyle=lineColor;ctx.lineWidth=2.5;
-    let started=false;
-    ctx.beginPath();
-    ppmData.forEach((p,i)=>{
-      if(p===null){started=false;return}
-      const x=pad.l+(displayW.length>1?i*xS:pw/2);
-      const y=pad.t+ph-(p/yML)*ph;
-      if(!started){ctx.moveTo(x,y);started=true}else{ctx.lineTo(x,y)}
-    });
-    ctx.stroke();
-
-    // 데이터 포인트 + 값 라벨 + 클릭 hit-target 저장
-    const hitPts=[];
-    ppmData.forEach((p,i)=>{
-      if(p===null)return;
-      const x=pad.l+(displayW.length>1?i*xS:pw/2);
-      const y=pad.t+ph-(p/yML)*ph;
-      const overTgt=p>TARGET_PPM;
-      ctx.fillStyle=overTgt?'#c62828':lineColor;
-      ctx.beginPath();ctx.arc(x,y,5,0,Math.PI*2);ctx.fill();
-      // 값 표시
-      ctx.fillStyle=overTgt?'#c62828':'#333';
-      ctx.font='bold 10px "Noto Sans KR"';ctx.textAlign='center';
-      ctx.fillText(p.toLocaleString(),x,y-9);
-      hitPts.push({x,y,wk:displayW[i],mon:mesWeekMonday[displayW[i]]});
-    });
-
-    // 캔버스 클릭 → 가까운 점 찾아서 세부 표 필터링
-    canvas.style.cursor='pointer';
-    canvas.title='데이터 포인트 클릭 시 해당 주차로 세부 데이터 필터링';
-    canvas.onclick=async (ev)=>{
-      const rect=canvas.getBoundingClientRect();
-      const cx=ev.clientX-rect.left,cy=ev.clientY-rect.top;
-      let best=null,bestD=999;
-      hitPts.forEach(pt=>{
-        const d=Math.hypot(pt.x-cx,pt.y-cy);
-        if(d<bestD){bestD=d;best=pt}
-      });
-      if(best&&bestD<25){
-        const sun=new Date(best.mon+'T00:00:00');sun.setDate(sun.getDate()+6);
-        const sunS=fmtYMD(sun);
-        const sel=document.getElementById('mesWeekSel');
-        if(sel){
-          const matchOpt=Array.from(sel.options).find(o=>o.value.startsWith(best.wk+'|'));
-          if(matchOpt){sel.value=matchOpt.value;await onMesWeekChange()}
-        }
-        // 페이지 스크롤을 표 위치로
-        const tw=document.getElementById('mesTableWrap');
-        if(tw)tw.scrollIntoView({behavior:'smooth',block:'start'});
-      }
-    };
-  });
-}
-
-/* ===== 초기화 ===== */
-async function init(){
-  // 날짜 기본값: 지난주 일요일 ~ 토요일
-  const today=new Date();const fmt=d=>d.toISOString().split('T')[0];
-  const dow=today.getDay(); // 0=일,1=월,...6=토
-  const lastSat=new Date(today);lastSat.setDate(today.getDate()-dow-1); // 지난 토요일
-  const lastSun=new Date(lastSat);lastSun.setDate(lastSat.getDate()-6); // 지난 일요일
-  document.getElementById('rptDateFrom').value=fmt(lastSun);
-  document.getElementById('rptDateTo').value=fmt(lastSat);
-
-  showLoading('마스터 로딩...');
-  try{await loadMaster()}catch(e){console.log('마스터 로드 실패:',e)}
-  hideLoading();
-}
-init();
+$('bSave').onclick = () => save(false);
+$('bPrint').onclick = () => { readActs(); document.querySelectorAll('textarea').forEach(t => { t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px'; }); window.print(); };
+$('bPrev').onclick = () => load(addD(WK, -7)); $('bNext').onclick = () => load(addD(WK, 7));
+$('wDate').onchange = () => $('wDate').value && load($('wDate').value);
+let _rz; window.addEventListener('resize', () => { clearTimeout(_rz); _rz = setTimeout(() => { if (D) { readActs(); render(); } }, 250); });
+// 기본: 지난주(회의는 지난주 실적을 봅니다) · ?w=YYYY-MM-DD 로 특정 주
+load(new URLSearchParams(location.search).get('w') || addD(monday(kst()), -7));
 </script>
 </body>
 </html>
