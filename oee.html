@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<script src="audit.js?v=9"></script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>⚙️ 설비 OEE 분석 v1.0</title>
+<!-- 설비 OEE 분석 v1.0 — 호기별 OEE(가동률×성능률×양품률) · 정지 사유 · 설비이상 MTTR/MTBF · 설비 수리 기록
+     IATF 16949 8.5.1.5 TPM · 9.1.1 모니터링
+     자료: 생산일보(kv tj_prod_daily_v1) → rpc oee_summary · MES 정지 기록(daily_downtime) · 설비 수리 기록(equipment_repair) -->
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#0f172a;--card:#1e293b;--card2:#263449;--line:#334155;--line2:#475569;--tx:#e2e8f0;--tx2:#cbd5e1;--sub:#94a3b8;--dim:#64748b;
+  --blue:#60a5fa;--b2:#2563eb;--green:#4ade80;--amber:#fbbf24;--red:#f87171}
+body{font-family:-apple-system,BlinkMacSystemFont,"Malgun Gothic",sans-serif;background:var(--bg);color:var(--tx);min-height:100vh;padding-bottom:40px;font-size:14px}
+button,input,select,textarea{font-family:inherit;font-size:14px}
+.top{position:sticky;top:0;z-index:5;background:linear-gradient(135deg,#14532d,#0f172a);border-bottom:1px solid var(--line);padding:12px 16px}
+.top h1{font-size:18px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}.top h1 small{font-size:11px;color:var(--sub);font-weight:400}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
+.btn{border:1px solid var(--line2);background:var(--card2);color:var(--tx);border-radius:8px;padding:7px 12px;cursor:pointer;font-weight:600}
+.btn.on{background:#15803d;border-color:#15803d;color:#fff}.btn.pri{background:var(--b2);border-color:var(--b2);color:#fff}
+.btn.sm{padding:4px 8px;font-size:12px}
+select,input[type=date],input[type=text],input[type=datetime-local],textarea{background:#0b1222;border:1px solid var(--line2);color:var(--tx);border-radius:6px;padding:7px 9px}
+textarea{width:100%;min-height:54px;resize:vertical}
+.wrap{max-width:1200px;margin:0 auto;padding:14px 16px;display:flex;flex-direction:column;gap:14px}
+.tabs{display:flex;gap:6px}.tab{padding:7px 14px;border-radius:999px;border:1px solid var(--line2);background:var(--card);cursor:pointer;color:var(--tx2)}
+.tab.on{background:#15803d;border-color:#15803d;color:#fff}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:2px}
+.kpi .k{font-size:12px;color:var(--sub)}.kpi .v{font-size:26px;font-weight:800;font-variant-numeric:tabular-nums}.kpi .d{font-size:11px;color:var(--dim)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.card h2{font-size:15px;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:baseline}.card h2 small{font-weight:400;color:var(--sub);font-size:11px}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:14px}
+.tw{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeric:tabular-nums}
+th,td{padding:7px 8px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
+th{color:var(--sub);font-size:12px;font-weight:600;position:sticky;top:0;background:var(--card)}
+td.n,th.n{text-align:right}
+tr.click{cursor:pointer}tr.click:hover td{background:var(--card2)}
+.oeebar{display:flex;align-items:center;gap:6px;min-width:150px}.oeebar i{display:block;height:12px;border-radius:3px}
+.g{color:var(--green)}.w{color:var(--amber)}.b{color:var(--red)}
+.chart{position:relative}
+.chart svg text{fill:var(--sub);font-size:11px}
+.tip{position:absolute;pointer-events:none;background:#0b1222;border:1px solid var(--line2);border-radius:6px;padding:5px 8px;font-size:12px;white-space:nowrap;z-index:3}
+.tip[hidden]{display:none}
+.note{font-size:12px;color:var(--sub);line-height:1.6}
+.detail{background:#0b1222;border:1px solid var(--line2);border-radius:8px;padding:10px;font-size:13px;line-height:1.7}
+.f2{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px}
+.fld{display:flex;flex-direction:column;gap:4px}.fld>span{font-size:12px;color:var(--sub)}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#0f766e;color:#fff;padding:10px 18px;border-radius:8px;z-index:50;font-weight:600}
+.toast[hidden],[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div class="top">
+  <h1>⚙️ 설비 OEE 분석 <small>v1.0 · OEE = 가동률 × 성능률 × 양품률 · IATF 8.5.1.5 TPM</small></h1>
+  <div class="row">
+    <div class="tabs"><span class="tab on" data-tab="oee">OEE 분석</span><span class="tab" data-tab="repair">설비 수리 기록</span></div>
+  </div>
+</div>
+
+<div class="wrap" id="pOee">
+  <div class="row" style="margin:0">
+    <button class="btn on" data-range="30">최근 30일</button><button class="btn" data-range="this">이번 달</button><button class="btn" data-range="last">지난달</button><button class="btn" data-range="90">최근 90일</button>
+    <input type="date" id="dFrom"> ~ <input type="date" id="dTo"> <button class="btn" id="btnGo">조회</button>
+  </div>
+  <div class="kpis">
+    <div class="kpi"><span class="k">OEE (전체)</span><span class="v" id="kOee">—</span><span class="d" id="kRange">—</span></div>
+    <div class="kpi"><span class="k">가동률</span><span class="v" id="kOper">—</span><span class="d">정지 뺀 가동시간 ÷ (근무−휴식)</span></div>
+    <div class="kpi"><span class="k">성능률</span><span class="v" id="kPerf">—</span><span class="d">실적 ÷ (SPM × 가동시간)</span></div>
+    <div class="kpi"><span class="k">양품률</span><span class="v" id="kQual">—</span><span class="d">(실적 − 불량) ÷ 실적</span></div>
+  </div>
+  <div class="two">
+    <div class="card"><h2>월별 OEE 추이 <small>최근 6개월 · 생산일보</small></h2><div class="chart" id="cTrend"></div></div>
+    <div class="card"><h2>정지 사유 Top 10 <small>MES 정지 기록 · 조회 기간</small></h2><div class="chart" id="cStop"></div></div>
+  </div>
+  <div class="card">
+    <h2>호기별 OEE <small>낮은 순 · 행을 누르면 정지 사유 Top 5 · 설비이상은 MES '설비이상' 기준</small></h2>
+    <div class="tw"><table><thead><tr><th>호기</th><th>OEE</th><th class="n">가동률</th><th class="n">성능률</th><th class="n">양품률</th><th class="n">생산일수</th><th class="n">설비이상</th><th class="n">MTTR(분)</th><th class="n">MTBF(시간)</th><th>정지 1위</th><th></th></tr></thead><tbody id="tMach"></tbody></table></div>
+    <div class="detail" id="mDetail" hidden></div>
+    <p class="note">OEE 색: <span class="g">65% 이상</span> · <span class="w">40~65%</span> · <span class="b">40% 미만</span>. 성능률은 SPM이 입력된 일보만 계산합니다(100% 넘으면 SPM 기준 확인 필요). 일보가 없는 날은 빠집니다.</p>
+  </div>
+  <div class="card" id="cardSus">
+    <h2>데이터 확인 필요 <small>불량이 실적의 50%를 넘는 일보 · 양품률 계산에서 뺐습니다</small></h2>
+    <div class="tw"><table><thead><tr><th>일자</th><th>호기</th><th>품번</th><th class="n">실적</th><th class="n">불량</th></tr></thead><tbody id="tSus"></tbody></table></div>
+    <p class="note">대부분 자동마감 일보의 불량 '기타' 항목입니다. MES 불량수량이 실제 불량인지 확인이 필요합니다.</p>
+  </div>
+</div>
+
+<div class="wrap" id="pRepair" hidden>
+  <div class="card">
+    <h2>설비 수리 기록 등록 <small>고장으로 멈춘 시간 · MTTR 직접 입력(KPI)의 근거</small></h2>
+    <div class="f2">
+      <label class="fld"><span>호기</span><select id="rHo"></select></label>
+      <label class="fld"><span>고장 시작</span><input type="datetime-local" id="rStart"></label>
+      <label class="fld"><span>수리 완료</span><input type="datetime-local" id="rEnd"></label>
+      <label class="fld"><span>구분</span><select id="rCat"><option>기계</option><option>전기</option><option>유압·공압</option><option>안전장치</option><option>기타</option></select></label>
+      <label class="fld"><span>수리자</span><input type="text" id="rWorker"></label>
+    </div>
+    <div class="f2">
+      <label class="fld"><span>고장 현상</span><textarea id="rSym"></textarea></label>
+      <label class="fld"><span>원인</span><textarea id="rCause"></textarea></label>
+      <label class="fld"><span>조치 내용</span><textarea id="rAct"></textarea></label>
+      <label class="fld"><span>교체 부품</span><textarea id="rParts"></textarea></label>
+    </div>
+    <div><button class="btn pri" id="btnRepSave">💾 저장</button> <span class="note" id="repMsg"></span></div>
+  </div>
+  <div class="card">
+    <h2>수리 이력 <small id="repSum"></small></h2>
+    <div class="row" style="margin:0"><select id="rMonth"></select></div>
+    <div class="tw"><table><thead><tr><th>시작</th><th>호기</th><th>구분</th><th class="n">수리(분)</th><th>현상</th><th>원인 · 조치</th><th>수리자</th></tr></thead><tbody id="tRep"></tbody></table></div>
+  </div>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+const SB_URL = 'https://omngtyewdaqpphnzeate.supabase.co';
+const SB_KEY = 'sb_publishable_9j2YkkL-7ul1TrhH-NjVdQ_vWDG2-1D';
+const H = { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY };
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const n0 = (v) => v == null ? '—' : (+v).toLocaleString('ko-KR');
+const pct = (v, d = 1) => v == null ? '—' : (+v).toFixed(d) + '%';
+const kst = (d = new Date()) => new Date(d.getTime() + 9 * 3600e3).toISOString().slice(0, 10);
+const addD = (s, n) => { const d = new Date(s + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+const me = () => { try { const u = window.tjAudit && window.tjAudit.user(); return (u && u.name) || ''; } catch (e) { return ''; } };
+function toast(m) { const t = $('toast'); t.textContent = m; t.hidden = false; clearTimeout(toast._t); toast._t = setTimeout(() => t.hidden = true, 2200); }
+async function api(path, opt = {}) {
+  const r = await fetch(SB_URL + '/rest/v1/' + path, { ...opt, headers: { ...H, 'Content-Type': 'application/json', Prefer: 'return=representation', ...(opt.headers || {}) } });
+  const t = await r.text(); if (!r.ok) throw new Error(r.status + ' ' + t.slice(0, 200)); return t ? JSON.parse(t) : null;
+}
+const rpc = (fn, a) => api('rpc/' + fn, { method: 'POST', body: JSON.stringify(a || {}) });
+const oeeCls = (v) => v == null ? '' : v >= 65 ? 'g' : v >= 40 ? 'w' : 'b';
+const oeeCol = (v) => v >= 65 ? '#4ade80' : v >= 40 ? '#fbbf24' : '#f87171';
+let DATA = null;
+
+/* ---------- 기간 ---------- */
+function setRange(k) {
+  const t = kst(), y = addD(t, -1);
+  let f = addD(t, -30), to = y;
+  if (k === '90') f = addD(t, -90);
+  if (k === 'this') f = t.slice(0, 8) + '01';
+  if (k === 'last') { const fl = t.slice(0, 8) + '01'; to = addD(fl, -1); f = to.slice(0, 8) + '01'; }
+  $('dFrom').value = f; $('dTo').value = to;
+  document.querySelectorAll('[data-range]').forEach(b => b.classList.toggle('on', b.dataset.range === k));
+  run();
+}
+
+async function run() {
+  const f = $('dFrom').value, t = $('dTo').value; if (!f || !t) return;
+  $('tMach').innerHTML = '<tr><td colspan="11" class="note">불러오는 중…</td></tr>';
+  try {
+    const [cur, six] = await Promise.all([rpc('oee_summary', { p_from: f, p_to: t }), rpc('oee_summary', { p_from: addD(kst(), -180).slice(0, 8) + '01', p_to: addD(kst(), -1) })]);
+    DATA = cur; drawKpi(cur, f, t); drawMach(cur); drawStops(cur.stops || []); drawTrend(six.trend || []); drawSus(cur.suspect || []);
+  } catch (e) { $('tMach').innerHTML = '<tr><td colspan="11" class="b">불러오지 못했습니다: ' + esc(e.message) + '</td></tr>'; }
+}
+function drawKpi(d, f, t) {
+  const m = d.machines || [];
+  const net = m.reduce((a, x) => a + (+x.net || 0), 0), runm = m.reduce((a, x) => a + (+x.run || 0), 0);
+  // 전체 성능·양품은 호기 가동시간 가중 평균
+  const w = (k) => { let s = 0, ws = 0; m.forEach(x => { if (x[k] != null && +x.run) { s += +x[k] * x.run; ws += +x.run; } }); return ws ? s / ws : null; };
+  const oper = net ? runm / net * 100 : null, perf = w('perf'), qual = w('qual');
+  const oee = oper != null && perf != null && qual != null ? oper * Math.min(perf, 100) * qual / 1e4 : null;
+  $('kOee').textContent = pct(oee); $('kOee').className = 'v ' + oeeCls(oee);
+  $('kOper').textContent = pct(oper); $('kPerf').textContent = pct(perf); $('kQual').textContent = pct(qual, 2);
+  $('kRange').textContent = f + ' ~ ' + t + ' · ' + m.length + '대';
+}
+function drawMach(d) {
+  const m = (d.machines || []).slice().sort((a, b) => (a.oee ?? 999) - (b.oee ?? 999));
+  if (!m.length) { $('tMach').innerHTML = '<tr><td colspan="11" class="note">기간 안에 생산일보가 없습니다.</td></tr>'; return; }
+  $('tMach').innerHTML = m.map(x => {
+    const top = (x.top || [])[0];
+    return `<tr class="click" data-ho="${x.ho}"><td><b>${x.ho}호기</b> <span class="note">${esc((x.mc || '').replace(/^\s*\d+\s*/, ''))}</span></td>
+    <td><div class="oeebar"><i style="width:${Math.max(2, (x.oee || 0) * 1.2)}px;background:${oeeCol(x.oee || 0)}"></i><b class="${oeeCls(x.oee)}">${pct(x.oee)}</b></div></td>
+    <td class="n">${pct(x.oper)}</td><td class="n ${x.perf > 100 ? 'w' : ''}">${pct(x.perf)}</td><td class="n">${pct(x.qual, 2)}</td><td class="n">${n0(x.days)}</td>
+    <td class="n">${x.f_n ? x.f_n + '회 · ' + n0(x.f_min) + '분' : '—'}</td><td class="n">${x.mttr ?? '—'}</td><td class="n">${x.mtbf_h ?? '—'}</td>
+    <td>${top ? esc(top.name) + ' ' + n0(Math.round(top.min / 60)) + 'h' : '—'}</td>
+    <td>${top ? `<button class="btn sm" data-task="${x.ho}">과제 등록</button>` : ''}</td></tr>`;
+  }).join('');
+}
+function showDetail(ho) {
+  const x = (DATA.machines || []).find(m => +m.ho === +ho); if (!x) return;
+  const el = $('mDetail'); el.hidden = false;
+  el.innerHTML = `<b>${x.ho}호기 정지 사유 Top 5</b> (조회 기간, MES 정지 기록)<br>` + ((x.top || []).map((t, i) => `${i + 1}. ${esc(t.name)} — ${n0(t.min)}분 (${n0(Math.round(t.min / 6) / 10)}시간) · ${n0(t.cnt)}회 · 1회 평균 ${Math.round(t.min / t.cnt)}분`).join('<br>') || '정지 기록 없음')
+    + `<br><span class="note">가동시간 ${n0(Math.round(x.run / 60))}시간 / 실근무 ${n0(Math.round(x.net / 60))}시간 · 실적 ${n0(x.qty)}${x.sus_n ? ' · 확인 필요 일보 ' + x.sus_n + '건' : ''}</span>`;
+}
+/* 정지 1위 사유로 개선과제 등록 → 개선과제 대장 */
+async function addTask(ho, btn) {
+  const x = (DATA.machines || []).find(m => +m.ho === +ho); const top = x && (x.top || [])[0]; if (!top) return;
+  if (!btn.dataset.arm) { btn.dataset.arm = '1'; btn.textContent = '한 번 더 눌러 등록'; setTimeout(() => { delete btn.dataset.arm; btn.textContent = '과제 등록'; }, 3000); return; }
+  btn.disabled = true;
+  try {
+    const t = kst(), from = addD(t, -28), to = addD(t, -1);
+    const b = await rpc('improvement_metric', { p_type: 'stop_reason', p_key: top.name, p_machine: String(ho), p_from: from, p_to: to });
+    const who = me() || '(미로그인)';
+    const r = await api('improvement_tasks', { method: 'POST', body: JSON.stringify({
+      status: '등록', source: '설비 정지', title: `${ho}호기 ${top.name} 정지 감소`,
+      problem: `OEE 분석(${$('dFrom').value}~${$('dTo').value}) ${ho}호기 OEE ${x.oee}% · 정지 1위 ${top.name} ${Math.round(top.min / 60)}시간(${top.cnt}회)`,
+      dept: '생산', metric: { type: 'stop_reason', key: top.name, machine: String(ho), label: '정지 사유 시간' }, target_pct: 30,
+      baseline: { from, to, value: b.value, cases: b.cases, unit: b.unit, at: t },
+      history: [{ at: new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 16).replace('T', ' '), by: who, msg: '과제 등록 (OEE 분석)' }] }) });
+    btn.textContent = '✔ ' + r[0].task_no; toast(r[0].task_no + ' 등록 — 개선과제 대장에서 담당·기한을 넣어 주세요');
+  } catch (e) { btn.disabled = false; btn.textContent = '과제 등록'; toast('등록 실패: ' + e.message); }
+}
+
+/* ---------- 차트 ---------- */
+function tipOf(box) { let t = box.querySelector('.tip'); if (!t) { t = document.createElement('div'); t.className = 'tip'; t.hidden = true; box.appendChild(t); }
+  return { show(ev, s) { t.textContent = s; t.hidden = false; const r = box.getBoundingClientRect(); let x = ev.clientX - r.left + 10; if (x + t.offsetWidth > box.clientWidth) x -= t.offsetWidth + 20; t.style.left = x + 'px'; t.style.top = (ev.clientY - r.top + 10) + 'px'; }, hide() { t.hidden = true; } }; }
+function svgEl(tag, attrs, parent) { const e = document.createElementNS('http://www.w3.org/2000/svg', tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; }
+function drawTrend(rows) {
+  const box = $('cTrend'); box.innerHTML = '';
+  if (!rows.length) { box.innerHTML = '<p class="note">자료가 없습니다</p>'; return; }
+  const W = box.clientWidth || 360, Hh = 210, m = { t: 16, r: 10, b: 24, l: 34 };
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${Hh}`, width: '100%', role: 'img', 'aria-label': '월별 OEE·가동률 추이' }, box);
+  const y = (v) => m.t + (100 - v) / 100 * (Hh - m.t - m.b), step = (W - m.l - m.r) / rows.length;
+  [0, 25, 50, 75, 100].forEach(v => { svgEl('line', { x1: m.l, x2: W - m.r, y1: y(v), y2: y(v), stroke: '#334155' }, svg); svgEl('text', { x: 4, y: y(v) + 4 }, svg).textContent = v + '%'; });
+  const tip = tipOf(box);
+  rows.forEach((r, i) => {
+    const cx = m.l + step * i + step / 2, bw = Math.min(34, step * 0.5);
+    const bar = svgEl('rect', { x: cx - bw / 2, y: y(r.oee || 0), width: bw, height: Math.max(1, y(0) - y(r.oee || 0)), rx: 2, fill: oeeCol(r.oee || 0) }, svg);
+    bar.addEventListener('pointermove', ev => tip.show(ev, `${r.mo} · OEE ${r.oee}% · 가동 ${r.oper}% · 성능 ${r.perf}% · 양품 ${r.qual}%`)); bar.addEventListener('pointerleave', () => tip.hide());
+    svgEl('text', { x: cx, y: y(r.oee || 0) - 4, 'text-anchor': 'middle', fill: '#e2e8f0' }, svg).textContent = r.oee + '%';
+    svgEl('text', { x: cx, y: Hh - 6, 'text-anchor': 'middle' }, svg).textContent = (+r.mo.slice(5)) + '월';
+  });
+  const pts = rows.map((r, i) => `${m.l + step * i + step / 2},${y(r.oper || 0)}`).join(' ');
+  svgEl('polyline', { points: pts, fill: 'none', stroke: '#60a5fa', 'stroke-width': 2 }, svg);
+  rows.forEach((r, i) => svgEl('circle', { cx: m.l + step * i + step / 2, cy: y(r.oper || 0), r: 3, fill: '#60a5fa' }, svg));
+  svgEl('text', { x: W - m.r, y: 12, 'text-anchor': 'end', fill: '#60a5fa' }, svg).textContent = '● 가동률';
+}
+function drawStops(rows) {
+  const box = $('cStop'); box.innerHTML = '';
+  if (!rows.length) { box.innerHTML = '<p class="note">정지 기록이 없습니다</p>'; return; }
+  const W = box.clientWidth || 360, rh = 22, Hh = rows.length * rh + 6, lw = 108, vw = 64;
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${Hh}`, width: '100%', role: 'img', 'aria-label': '정지 사유별 시간' }, box);
+  const mx = Math.max(...rows.map(r => +r.mins)) || 1, tip = tipOf(box);
+  rows.forEach((r, i) => {
+    const y0 = i * rh + 3, w = Math.max(2, r.mins / mx * (W - lw - vw));
+    svgEl('text', { x: 0, y: y0 + 13, fill: '#e2e8f0' }, svg).textContent = r.nm.length > 9 ? r.nm.slice(0, 9) + '…' : r.nm;
+    const b = svgEl('rect', { x: lw, y: y0, width: w, height: 16, rx: 2, fill: '#2563eb' }, svg);
+    b.addEventListener('pointermove', ev => tip.show(ev, `${r.nm} · ${Math.round(r.mins / 6) / 10}시간 · ${r.cnt}회 · 1회 평균 ${Math.round(r.mins / r.cnt)}분`)); b.addEventListener('pointerleave', () => tip.hide());
+    svgEl('text', { x: lw + w + 5, y: y0 + 13, fill: '#e2e8f0' }, svg).textContent = (Math.round(r.mins / 6) / 10) + 'h';
+  });
+}
+function drawSus(rows) {
+  $('cardSus').hidden = !rows.length;
+  $('tSus').innerHTML = rows.map(r => `<tr><td>${esc(r.d)}</td><td>${esc(r.mc)}</td><td>${esc(r.pn)}</td><td class="n">${n0(r.qty)}</td><td class="n b">${n0(r.ng)}</td></tr>`).join('');
+}
+
+/* ---------- 설비 수리 기록 ---------- */
+function fillHo() { const hs = [1,2,3,4,5,6,7,8,9,10,11,12,13,17,28,29,30,31,32,33,34,35,36,37,38,39,40,41,43,45,46,47,48,49]; $('rHo').replaceChildren(...hs.map(h => new Option(h + '호기', h))); }
+function months() { const t = kst(); const out = []; for (let i = 0; i < 12; i++) { const d = new Date(t.slice(0, 8) + '01T00:00:00Z'); d.setUTCMonth(d.getUTCMonth() - i); out.push(d.toISOString().slice(0, 7)); } $('rMonth').replaceChildren(...out.map(m => new Option(m, m))); }
+async function loadRep() {
+  const m = $('rMonth').value, f = m + '-01', d = new Date(f + 'T00:00:00Z'); d.setUTCMonth(d.getUTCMonth() + 1); const t = d.toISOString().slice(0, 10);
+  try {
+    const rows = await api(`equipment_repair?select=*&started_at=gte.${f}T00:00:00%2B09:00&started_at=lt.${t}T00:00:00%2B09:00&order=started_at.desc`);
+    const done = rows.filter(r => r.minutes != null), tot = done.reduce((a, r) => a + r.minutes, 0);
+    $('repSum').textContent = `${m} · ${rows.length}건 · 수리 ${n0(tot)}분 · MTTR ${done.length ? Math.round(tot / done.length) : '—'}분`;
+    $('tRep').innerHTML = rows.map(r => `<tr><td>${esc(new Date(new Date(r.started_at).getTime() + 9 * 3600e3).toISOString().slice(5, 16).replace('T', ' '))}</td><td>${r.machine_ho}호기</td><td>${esc(r.category || '')}</td><td class="n">${r.minutes ?? '진행 중'}</td><td>${esc(r.symptom || '')}</td><td>${esc([r.cause, r.action].filter(Boolean).join(' → '))}</td><td>${esc(r.worker || '')}</td></tr>`).join('') || '<tr><td colspan="7" class="note">기록이 없습니다</td></tr>';
+  } catch (e) { $('tRep').innerHTML = '<tr><td colspan="7" class="b">불러오지 못했습니다</td></tr>'; }
+}
+async function saveRep() {
+  const s = $('rStart').value, e = $('rEnd').value;
+  if (!s) { toast('고장 시작 시각을 넣으세요'); return; }
+  if (e && e < s) { toast('수리 완료가 시작보다 빠릅니다'); return; }
+  if (!$('rSym').value.trim()) { toast('고장 현상을 넣으세요'); return; }
+  const tz = (v) => v ? v + ':00+09:00' : null;
+  try {
+    await api('equipment_repair', { method: 'POST', body: JSON.stringify({ machine_ho: +$('rHo').value, started_at: tz(s), ended_at: tz(e), category: $('rCat').value,
+      symptom: $('rSym').value.trim(), cause: $('rCause').value.trim(), action: $('rAct').value.trim(), parts: $('rParts').value.trim(), worker: $('rWorker').value.trim(), recorded_by: me() }) });
+    ['rStart', 'rEnd', 'rSym', 'rCause', 'rAct', 'rParts'].forEach(id => $(id).value = '');
+    toast('저장했습니다'); $('rMonth').value = s.slice(0, 7); loadRep();
+  } catch (err) { toast('저장 실패: ' + err.message); }
+}
+
+/* ---------- 이벤트 ---------- */
+document.querySelectorAll('[data-range]').forEach(b => b.onclick = () => setRange(b.dataset.range));
+$('btnGo').onclick = () => { document.querySelectorAll('[data-range]').forEach(b => b.classList.remove('on')); run(); };
+$('tMach').onclick = (e) => { const b = e.target.closest('[data-task]'); if (b) { e.stopPropagation(); addTask(b.dataset.task, b); return; } const r = e.target.closest('[data-ho]'); if (r) showDetail(r.dataset.ho); };
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+  document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x === t));
+  $('pOee').hidden = t.dataset.tab !== 'oee'; $('pRepair').hidden = t.dataset.tab !== 'repair';
+  if (t.dataset.tab === 'repair') loadRep(); else run();
+});
+$('btnRepSave').onclick = saveRep; $('rMonth').onchange = loadRep;
+fillHo(); months(); setRange('30');
+</script>
+</body>
+</html>
