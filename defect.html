@@ -4,7 +4,7 @@
 <script src="audit.js?v=7"></script>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>불량관리 시스템 v4.3</title>
+  <title>불량관리 시스템 v4.4</title>
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
@@ -229,10 +229,12 @@
       <div class="ffld" style="min-width:90px"><label for="selInspLine">🏭 검사라인</label>
         <select id="selInspLine" onchange="saveLastSelection()"><option value="">검사라인</option></select></div>
       <div class="ffld" style="min-width:110px"><label for="selProdDate">📆 생산일자</label>
-        <input type="text" id="selProdDate" placeholder="생산일자" onfocus="this.type='date'" onblur="if(!this.value)this.type='text'" onchange="saveLastSelection();searchProdHo()" title="생산일자"></div>
+        <input type="text" id="selProdDate" placeholder="생산일자" onfocus="this.type='date'" onblur="if(!this.value)this.type='text'" onchange="saveLastSelection();searchProdHo()" title="생산일자">
+        <button type="button" onclick="addProdDate()" title="생산일자 여러 개 — 지금 날짜를 목록에 추가" style="margin-top:4px;font-size:11px;padding:3px 8px;border-radius:12px;border:1px solid #90caf9;background:#e3f2fd;color:#1565c0;cursor:pointer">＋ 생산일 추가</button></div>
       <div class="ffld" style="min-width:90px"><label for="selProdLine">⚙ 생산호기</label>
         <select id="selProdLine" onchange="saveLastSelection()"><option value="">생산호기</option></select></div>
     </div>
+    <div id="pdMulti" style="display:none;margin:4px 0 6px;font-size:12px;background:#f1f8ff;border:1px solid #bbdefb;border-radius:8px;padding:6px 8px"></div>
     <div class="fg"><label for="selCustomer">🏢 고객사</label><select id="selCustomer" onchange="onCustomerSelect()" style="font-size:13px"><option value="">고객사</option></select></div>
     <div class="fg"><label for="selModelInput">🔎 기종명</label><div class="model-search-wrap"><input type="text" id="selModelInput" placeholder="기종명 (검색: 1560, NSK...)" autocomplete="off" oninput="onModelSearch(this.value)" onfocus="onModelSearch(this.value)"><div class="model-dropdown" id="modelDropdown"></div></div><input type="hidden" id="selModel" value=""></div>
     <div class="fg"><label>면 선택</label><div class="btn-row"><button class="btn btn-sm" id="btnTop" onclick="selectSide('TOP')" style="flex:1;background:var(--accent-light);color:var(--accent);border:2px solid var(--accent)">🔝 TOP</button><button class="btn btn-sm" id="btnBot" onclick="selectSide('BOT')" style="flex:1;background:#f5f5f5;color:#888;border:2px solid #ddd">🔽 BOT</button></div></div></div>
@@ -623,11 +625,12 @@ function adjCount(t,d){defectCounts[t]=Math.max(0,(defectCounts[t]||0)+d);const 
 function onCountInput(t,v){defectCounts[t]=Math.max(0,parseInt(v)||0);const e=document.getElementById('cnt_'+t.replace(/\s/g,'_'));if(e)e.value=defectCounts[t]}
 
 /* ★★★ saveDefect - 일자등록 + 로그인사용자 적용 ★★★ */
-async function saveDefect(){if(!selectedZone)return;const ent=Object.entries(defectCounts).filter(([,v])=>v>0);const worker=document.getElementById('selWorker').value||(currentLoginUser&&currentLoginUser.name)||'';if(!worker){showToast('⚠ 검사자를 선택하세요 (설정탭에서 작업자 등록)');return}const inspectQty=parseInt(document.getElementById('inspectQtyInput').value)||0;if(!ent.length&&!inspectQty){showToast('검사수 또는 불량수량 입력');return}const inputDate=document.getElementById('regDefectDate').value||kstToday();const dt=inputDate,tm=kstTimeStr(),rec=(inputDate===kstToday())?kstISOForDB():(inputDate+'T'+kstTimeStr()+'+09:00');const note=document.getElementById('defectNote').value.trim();const inspLine=document.getElementById('selInspLine').value,prodLine=document.getElementById('selProdLine').value,prodDate=document.getElementById('selProdDate').value||null;
+async function saveDefect(){if(!selectedZone)return;const ent=Object.entries(defectCounts).filter(([,v])=>v>0);const worker=document.getElementById('selWorker').value||(currentLoginUser&&currentLoginUser.name)||'';if(!worker){showToast('⚠ 검사자를 선택하세요 (설정탭에서 작업자 등록)');return}const inspectQty=parseInt(document.getElementById('inspectQtyInput').value)||0;if(!ent.length&&!inspectQty){showToast('검사수 또는 불량수량 입력');return}const inputDate=document.getElementById('regDefectDate').value||kstToday();const dt=inputDate,tm=kstTimeStr(),rec=(inputDate===kstToday())?kstISOForDB():(inputDate+'T'+kstTimeStr()+'+09:00');const note=document.getElementById('defectNote').value.trim();const inspLine=document.getElementById('selInspLine').value,_pm=PD_LIST.length>0,prodLine=_pm?[...new Set(PD_LIST.map(x=>x.ho).filter(Boolean))].join(','):document.getElementById('selProdLine').value,prodDate=_pm?PD_LIST[0].d:(document.getElementById('selProdDate').value||null),prodDates=_pm?PD_LIST.map(x=>x.d).join(','):null;
   /* [v4.0] Raceway(SBC)는 생산일자·생산호기 필수 — 휨 불량을 호기·코일·열처리 배치로 추적 (개선과제 IMP-2611-01·02) */
   if(_custKey(getModelCustomer(currentModel))==='RACEWAY'||/SBC/i.test(inspLine)){if(!prodDate){showToast('⚠ Raceway는 생산일자(프레스 생산일)를 넣어 주세요');return}/* v4.3 생산호기는 필수 아님 — 생산일자로 자동 입력, 못 찾으면 비워 두고 저장 */}
-  showLoading('저장...');try{let rows;if(ent.length){rows=ent.map(([type,qty],idx)=>({defect_date:dt,defect_time:tm,recorded_at:rec,model_name:currentModel,side:currentSide,zone_name:selectedZone.name,defect_type:type,qty:qty,inspect_qty:idx===0?inspectQty:0,note:note,worker:worker,inspect_line:inspLine,prod_line:prodLine,prod_date:prodDate}))}else{rows=[{defect_date:dt,defect_time:tm,recorded_at:rec,model_name:currentModel,side:currentSide,zone_name:selectedZone.name,defect_type:'양품',qty:0,inspect_qty:inspectQty,note:note,worker:worker,inspect_line:inspLine,prod_line:prodLine,prod_date:prodDate}]}await sbInsert('defect_history',rows);const totalDef=ent.reduce((s,[,q])=>s+q,0);showToast(totalDef>0?`✅ ${selectedZone.name} 불량 ${totalDef}건`:`✅ 양품 등록`);if(navigator.vibrate)navigator.vibrate([50,30,50]);learnItemMap(currentModel,prodLine,prodDate);closeDefectInput();loadTodayStats();
+  showLoading('저장...');try{let rows;if(ent.length){rows=ent.map(([type,qty],idx)=>({defect_date:dt,defect_time:tm,recorded_at:rec,model_name:currentModel,side:currentSide,zone_name:selectedZone.name,defect_type:type,qty:qty,inspect_qty:idx===0?inspectQty:0,note:note,worker:worker,inspect_line:inspLine,prod_line:prodLine,prod_date:prodDate,prod_dates:prodDates}))}else{rows=[{defect_date:dt,defect_time:tm,recorded_at:rec,model_name:currentModel,side:currentSide,zone_name:selectedZone.name,defect_type:'양품',qty:0,inspect_qty:inspectQty,note:note,worker:worker,inspect_line:inspLine,prod_line:prodLine,prod_date:prodDate,prod_dates:prodDates}]}await sbInsert('defect_history',rows);const totalDef=ent.reduce((s,[,q])=>s+q,0);showToast(totalDef>0?`✅ ${selectedZone.name} 불량 ${totalDef}건`:`✅ 양품 등록`);if(navigator.vibrate)navigator.vibrate([50,30,50]);learnItemMap(currentModel,prodLine,prodDate);closeDefectInput();loadTodayStats();
 /* ★ 등록 후 기종명·검사수·기판보드 리셋 */
+PD_LIST=[];paintPdMulti();
 document.getElementById('selModelInput').value='';
 document.getElementById('selModel').value='';
 currentModel='';
@@ -658,6 +661,41 @@ function _pnScore(modelName,itemCode,itemName){
   if(fm&&fi&&fm[1]===fi[1])return 2;
   return 0;
 }
+/* [v4.4] 생산일자 여러 개 — 한 박스에 여러 날 생산분이 섞인 경우. 날짜마다 호기 자동, 저장 시 생산일자 = 가장 이른 날,
+   생산호기 = 날짜별 호기 쉼표 목록(예: 46_300,48_300), 전체 생산일은 prod_dates 칸 */
+let PD_LIST=[];   // [{d, ho, code}]
+async function _hoCands(model,pd){
+  const addD=(d,n)=>{const x=new Date(d+'T00:00:00');x.setDate(x.getDate()+n);return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0')};
+  const ms=await sbSelect('machine_status',{},'machine_code.asc',100);const MN={};ms.forEach(m=>{if(m.machine_code)MN[m.machine_code]=m.machine_name});
+  async function cands(day){
+    const [dp,mid]=await Promise.all([sbSelect('daily_production',{ymd:'eq.'+day},'machine_code.asc',500).catch(()=>[]),sbSelect('machine_item_daily',{work_date:'eq.'+day},'machine_name.asc',300).catch(()=>[])]);
+    const m={};
+    dp.forEach(r=>{const name=MN[r.machine_code];if(!name)return;const sc=_pnScore(model,r.item_code,'');if(sc<=0)return;const o=m[name]||(m[name]={name,code:r.item_code,score:0,shot:0,day});o.score=Math.max(o.score,sc);o.shot+=(+r.shot_qty||0);});
+    mid.forEach(r=>{const sc=_pnScore(model,r.item_code,r.item_name);if(sc<=0)return;const o=m[r.machine_name]||(m[r.machine_name]={name:r.machine_name,code:r.item_code||'',score:0,shot:0,day});o.score=Math.max(o.score,sc);});
+    return Object.values(m).sort((a,b)=>b.score-a.score||b.shot-a.shot);
+  }
+  let matched=await cands(pd),usedDay=pd;
+  if(!matched.length){for(let k=1;k<=14&&!matched.length;k++){usedDay=addD(pd,-k);matched=await cands(usedDay);}}
+  return {matched,usedDay};
+}
+async function addProdDate(){
+  const model=currentModel||document.getElementById('selModel').value;
+  const d=document.getElementById('selProdDate').value;
+  if(!d){showToast('⚠ 생산일자를 먼저 고르세요');return}
+  if(PD_LIST.some(x=>x.d===d)){showToast('이미 추가한 날짜');return}
+  let ho=document.getElementById('selProdLine').value||'',code='';
+  if(model&&!ho){try{const r=await _hoCands(model,d);if(r.matched.length){ho=r.matched[0].name;code=r.matched[0].code}}catch(e){}}
+  PD_LIST.push({d,ho,code});PD_LIST.sort((a,b)=>a.d.localeCompare(b.d));paintPdMulti();
+  showToast('📆 '+d+(ho?' · '+ho:'')+' 추가 — 다음 날짜를 고르고 [＋ 생산일 추가]');
+}
+function rmProdDate(i){PD_LIST.splice(i,1);paintPdMulti();}
+function paintPdMulti(){
+  const el=document.getElementById('pdMulti');if(!el)return;
+  if(!PD_LIST.length){el.style.display='none';el.innerHTML='';return}
+  el.style.display='';
+  el.innerHTML='<b style="color:#1565c0">📆 생산일 '+PD_LIST.length+'개</b> '+PD_LIST.map((x,i)=>`<span style="display:inline-block;margin:2px 4px 2px 0;padding:2px 8px;border-radius:12px;background:#fff;border:1px solid #90caf9">${x.d.slice(5)} · ${x.ho||'호기 ?'} <a href="#" onclick="rmProdDate(${i});return false" style="color:#c62828;text-decoration:none">✕</a></span>`).join('')+
+    '<div style="color:#666;margin-top:2px">저장 시 생산일자 = 가장 이른 날, 생산호기 = '+([...new Set(PD_LIST.map(x=>x.ho).filter(Boolean))].join(',')||'-')+' · 지금 고른 날짜도 넣으려면 [＋ 생산일 추가]</div>';
+}
 async function searchProdHo(){
   /* [v4.1] 생산일자 기준 자동 입력 — 그날 MES 생산실적(daily_production 전체 작업지시 + machine_item_daily 스냅샷)에서
      기종 품번과 맞는 호기를 찾아 자동 선택. 여러 곳이면 매칭 점수 → 그날 타수 많은 호기 순으로 자동 선택(바꿀 수 있음),
@@ -670,16 +708,7 @@ async function searchProdHo(){
   if(!model)return;
   const addD=(d,n)=>{const x=new Date(d+'T00:00:00');x.setDate(x.getDate()+n);return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0')};
   try{
-    const ms=await sbSelect('machine_status',{},'machine_code.asc',100);const MN={};ms.forEach(m=>{if(m.machine_code)MN[m.machine_code]=m.machine_name});
-    async function cands(day){
-      const [dp,mid]=await Promise.all([sbSelect('daily_production',{ymd:'eq.'+day},'machine_code.asc',500).catch(()=>[]),sbSelect('machine_item_daily',{work_date:'eq.'+day},'machine_name.asc',300).catch(()=>[])]);
-      const m={};
-      dp.forEach(r=>{const name=MN[r.machine_code];if(!name)return;const sc=_pnScore(model,r.item_code,'');if(sc<=0)return;const k=name;const o=m[k]||(m[k]={name,code:r.item_code,score:0,shot:0,day});o.score=Math.max(o.score,sc);o.shot+=(+r.shot_qty||0);});
-      mid.forEach(r=>{const sc=_pnScore(model,r.item_code,r.item_name);if(sc<=0)return;const o=m[r.machine_name]||(m[r.machine_name]={name:r.machine_name,code:r.item_code||'',score:0,shot:0,day});o.score=Math.max(o.score,sc);});
-      return Object.values(m).sort((a,b)=>b.score-a.score||b.shot-a.shot);
-    }
-    let matched=await cands(pd),usedDay=pd;
-    if(!matched.length){for(let k=1;k<=14&&!matched.length;k++){usedDay=addD(pd,-k);matched=await cands(usedDay);}}   /* 레이스웨이 등 재고분 검사 — 최근 14일 안 마지막 생산 호기 */
+    const {matched,usedDay}=await _hoCands(model,pd);
     const lbl={3:'✅',2:'⭐',1:'🔸'};
     let html='<option value="">생산호기</option>';
     if(matched.length)html+='<optgroup label="🔍 '+usedDay+' 품번매칭 (MES)">'+matched.map(m=>`<option value="${m.name}">${lbl[m.score]} ${m.name} · ${m.code}${m.shot?' · '+m.shot.toLocaleString()+'타':''}</option>`).join('')+'</optgroup>';
@@ -770,7 +799,7 @@ try{await sbUpdate('defect_history',{[f]:'eq.'+from},{[f]:to});st.innerHTML='✅
 document.getElementById('rpFrom').value='';document.getElementById('rpTo').value='';
 if(typeof loadHistory==='function'&&document.getElementById('pnl1').classList.contains('on'))loadHistory()}
 catch(e){st.textContent='❌ 변경 실패: '+e.message;st.style.color='#c62828'}hideLoading()}
-async function openEditRecord(id){showLoading('불러오는 중...');try{const rows=await sbSelect('defect_history',{id:'eq.'+id},'',1);if(!rows.length){showToast('없음');hideLoading();return}const r=rows[0];document.getElementById('editRecordId').value=r.id;document.getElementById('editDate').value=r.defect_date||'';document.getElementById('editSide').value=r.side||'TOP';document.getElementById('editZone').value=r.zone_name||'';document.getElementById('editInspectQty').value=r.inspect_qty||0;document.getElementById('editQty').value=r.qty||0;document.getElementById('editNote').value=r.note||'';document.getElementById('editProdDate').value=r.prod_date||'';const allM=new Set();cachedGeneralModels.forEach(m=>allM.add(m.name));cachedModels.forEach(m=>allM.add(m.name));document.getElementById('editModel').innerHTML='<option value="">선택</option>'+[...allM].sort().map(n=>`<option value="${n}"${n===r.model_name?' selected':''}>${n}</option>`).join('');document.getElementById('editDefectType').innerHTML='<option value="">선택</option>'+cachedDefectTypes.map(t=>`<option value="${t.name}"${t.name===r.defect_type?' selected':''}>${t.name}</option>`).join('');document.getElementById('editWorker').innerHTML='<option value="">선택</option>'+cachedCommon.workers.map(w=>`<option value="${w.name}"${w.name===r.worker?' selected':''}>${w.name}</option>`).join('');document.getElementById('editInspLine').innerHTML='<option value="">선택</option>'+cachedCommon.inspLines.map(w=>`<option value="${w.name}"${w.name===r.inspect_line?' selected':''}>${w.name}</option>`).join('');const _pl=(cachedCommon.machines&&cachedCommon.machines.length)?cachedCommon.machines.slice():cachedCommon.prodLines.slice();if(r.prod_line&&!_pl.some(w=>w.name===r.prod_line))_pl.push({name:r.prod_line});document.getElementById('editProdLine').innerHTML='<option value="">선택</option>'+_pl.map(w=>`<option value="${w.name}"${w.name===r.prod_line?' selected':''}>${w.name}</option>`).join('');_editOrigCustomer=getModelCustomer(r.model_name)||'';const custSet=new Set(cachedCustomers);if(_editOrigCustomer)custSet.add(_editOrigCustomer);document.getElementById('editCustomer').innerHTML='<option value="">(미지정)</option>'+[...custSet].map(v=>`<option value="${v}"${v===_editOrigCustomer?' selected':''}>${v}</option>`).join('');document.getElementById('editCustNoteRow').style.display='none';document.getElementById('editPopupOverlay').classList.add('show')}catch(e){showToast('로드 실패: '+e.message)}hideLoading()}
+async function openEditRecord(id){showLoading('불러오는 중...');try{const rows=await sbSelect('defect_history',{id:'eq.'+id},'',1);if(!rows.length){showToast('없음');hideLoading();return}const r=rows[0];document.getElementById('editRecordId').value=r.id;document.getElementById('editDate').value=r.defect_date||'';document.getElementById('editSide').value=r.side||'TOP';document.getElementById('editZone').value=r.zone_name||'';document.getElementById('editInspectQty').value=r.inspect_qty||0;document.getElementById('editQty').value=r.qty||0;document.getElementById('editNote').value=r.note||'';document.getElementById('editProdDate').value=r.prod_date||'';const allM=new Set();cachedGeneralModels.forEach(m=>allM.add(m.name));cachedModels.forEach(m=>allM.add(m.name));document.getElementById('editModel').innerHTML='<option value="">선택</option>'+[...allM].sort().map(n=>`<option value="${n}"${n===r.model_name?' selected':''}>${n}</option>`).join('');document.getElementById('editDefectType').innerHTML='<option value="">선택</option>'+cachedDefectTypes.map(t=>`<option value="${t.name}"${t.name===r.defect_type?' selected':''}>${t.name}</option>`).join('');document.getElementById('editWorker').innerHTML='<option value="">선택</option>'+cachedCommon.workers.map(w=>`<option value="${w.name}"${w.name===r.worker?' selected':''}>${w.name}</option>`).join('');document.getElementById('editInspLine').innerHTML='<option value="">선택</option>'+cachedCommon.inspLines.map(w=>`<option value="${w.name}"${w.name===r.inspect_line?' selected':''}>${w.name}</option>`).join('');const _pl=(cachedCommon.machines&&cachedCommon.machines.length)?cachedCommon.machines.slice():cachedCommon.prodLines.slice();if(r.prod_line&&!_pl.some(w=>w.name===r.prod_line))_pl.push({name:r.prod_line});document.getElementById('editProdLine').innerHTML='<option value="">선택</option>'+(r.prod_line&&!_pl.some(w=>w.name===r.prod_line)?`<option value="${r.prod_line}" selected>${r.prod_line}${r.prod_dates?' ('+r.prod_dates+')':''}</option>`:'')+_pl.map(w=>`<option value="${w.name}"${w.name===r.prod_line?' selected':''}>${w.name}</option>`).join('');_editOrigCustomer=getModelCustomer(r.model_name)||'';const custSet=new Set(cachedCustomers);if(_editOrigCustomer)custSet.add(_editOrigCustomer);document.getElementById('editCustomer').innerHTML='<option value="">(미지정)</option>'+[...custSet].map(v=>`<option value="${v}"${v===_editOrigCustomer?' selected':''}>${v}</option>`).join('');document.getElementById('editCustNoteRow').style.display='none';document.getElementById('editPopupOverlay').classList.add('show')}catch(e){showToast('로드 실패: '+e.message)}hideLoading()}
 let _editOrigCustomer='';
 function onEditCustomerChange(){const v=document.getElementById('editCustomer').value;document.getElementById('editCustNoteRow').style.display=(v!==_editOrigCustomer)?'flex':'none'}
 /* 기종의 고객사 등록정보 변경 (defect_model / general_model_tj / model_item_map 동기화) */
