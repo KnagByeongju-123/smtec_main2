@@ -4,7 +4,7 @@
 <script src="audit.js?v=7"></script>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>불량관리 시스템 v4.4</title>
+  <title>불량관리 시스템 v4.5</title>
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
@@ -229,8 +229,9 @@
       <div class="ffld" style="min-width:90px"><label for="selInspLine">🏭 검사라인</label>
         <select id="selInspLine" onchange="saveLastSelection()"><option value="">검사라인</option></select></div>
       <div class="ffld" style="min-width:110px"><label for="selProdDate">📆 생산일자</label>
-        <input type="text" id="selProdDate" placeholder="생산일자" onfocus="this.type='date'" onblur="if(!this.value)this.type='text'" onchange="saveLastSelection();searchProdHo()" title="생산일자">
-        <button type="button" onclick="addProdDate()" title="생산일자 여러 개 — 지금 날짜를 목록에 추가" style="margin-top:4px;font-size:11px;padding:3px 8px;border-radius:12px;border:1px solid #90caf9;background:#e3f2fd;color:#1565c0;cursor:pointer">＋ 생산일 추가</button></div>
+        <div style="position:relative"><input type="text" id="selProdDate" placeholder="생산일자 (여러 날 선택)" readonly onclick="openPdCal()" title="생산일자 — 달력에서 날짜를 누를 때마다 선택/해제, 여러 날 가능" style="cursor:pointer">
+        <span id="pdMore" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:11px;font-weight:700;color:#1565c0;pointer-events:none"></span>
+        <div id="pdCal" style="display:none;position:absolute;z-index:60;top:100%;left:0;margin-top:4px;background:#fff;border:1px solid #90caf9;border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.18);padding:8px;width:268px"></div></div></div>
       <div class="ffld" style="min-width:90px"><label for="selProdLine">⚙ 생산호기</label>
         <select id="selProdLine" onchange="saveLastSelection()"><option value="">생산호기</option></select></div>
     </div>
@@ -630,7 +631,7 @@ async function saveDefect(){if(!selectedZone)return;const ent=Object.entries(def
   if(_custKey(getModelCustomer(currentModel))==='RACEWAY'||/SBC/i.test(inspLine)){if(!prodDate){showToast('⚠ Raceway는 생산일자(프레스 생산일)를 넣어 주세요');return}/* v4.3 생산호기는 필수 아님 — 생산일자로 자동 입력, 못 찾으면 비워 두고 저장 */}
   showLoading('저장...');try{let rows;if(ent.length){rows=ent.map(([type,qty],idx)=>({defect_date:dt,defect_time:tm,recorded_at:rec,model_name:currentModel,side:currentSide,zone_name:selectedZone.name,defect_type:type,qty:qty,inspect_qty:idx===0?inspectQty:0,note:note,worker:worker,inspect_line:inspLine,prod_line:prodLine,prod_date:prodDate,prod_dates:prodDates}))}else{rows=[{defect_date:dt,defect_time:tm,recorded_at:rec,model_name:currentModel,side:currentSide,zone_name:selectedZone.name,defect_type:'양품',qty:0,inspect_qty:inspectQty,note:note,worker:worker,inspect_line:inspLine,prod_line:prodLine,prod_date:prodDate,prod_dates:prodDates}]}await sbInsert('defect_history',rows);const totalDef=ent.reduce((s,[,q])=>s+q,0);showToast(totalDef>0?`✅ ${selectedZone.name} 불량 ${totalDef}건`:`✅ 양품 등록`);if(navigator.vibrate)navigator.vibrate([50,30,50]);learnItemMap(currentModel,prodLine,prodDate);closeDefectInput();loadTodayStats();
 /* ★ 등록 후 기종명·검사수·기판보드 리셋 */
-PD_LIST=[];paintPdMulti();
+PD_LIST=[];paintPdMulti();updPdMore();
 document.getElementById('selModelInput').value='';
 document.getElementById('selModel').value='';
 currentModel='';
@@ -688,13 +689,58 @@ async function addProdDate(){
   PD_LIST.push({d,ho,code});PD_LIST.sort((a,b)=>a.d.localeCompare(b.d));paintPdMulti();
   showToast('📆 '+d+(ho?' · '+ho:'')+' 추가 — 다음 날짜를 고르고 [＋ 생산일 추가]');
 }
-function rmProdDate(i){PD_LIST.splice(i,1);paintPdMulti();}
+function rmProdDate(i){PD_LIST.splice(i,1);if(PD_LIST.length===1){const d=PD_LIST[0].d;PD_LIST=[];setPdSingle(d);}else{if(PD_LIST.length)document.getElementById('selProdDate').value=PD_LIST[0].d;paintPdMulti();}updPdMore();}
+/* [v4.5] 생산일자 달력 — 날짜를 누를 때마다 선택/해제 (여러 날 가능), 기종이 정해져 있으면 그 품번이 MES에서 생산된 날에 점 표시 */
+let PD_SEL=[],PD_MON=null,PD_MARK={};
+const _ymd=x=>x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0');
+function openPdCal(){
+  const cur=document.getElementById('selProdDate').value;
+  PD_SEL=PD_LIST.length?PD_LIST.map(x=>x.d):(cur?[cur]:[]);
+  const base=PD_SEL.length?new Date(PD_SEL[PD_SEL.length-1]+'T00:00:00'):new Date();PD_MON=new Date(base.getFullYear(),base.getMonth(),1);
+  document.getElementById('pdCal').style.display='';paintPdCal();loadPdMarks();
+}
+async function loadPdMarks(){
+  const model=currentModel||document.getElementById('selModel').value;PD_MARK={};if(!model){paintPdCal();return}
+  const y=PD_MON.getFullYear(),m=PD_MON.getMonth(),a=_ymd(new Date(y,m,1)),b=_ymd(new Date(y,m+1,0));
+  try{const rows=await sbSelect('daily_production',{ymd:'gte.'+a,and:'(ymd.lte.'+b+')'},'ymd.asc',2000);rows.forEach(r=>{if(_pnScore(model,r.item_code,'')>0)PD_MARK[r.ymd]=1});}catch(e){}
+  paintPdCal();
+}
+function paintPdCal(){
+  const el=document.getElementById('pdCal');if(!el||el.style.display==='none')return;
+  const y=PD_MON.getFullYear(),m=PD_MON.getMonth(),first=new Date(y,m,1).getDay(),last=new Date(y,m+1,0).getDate(),today=_ymd(new Date());
+  let h=`<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px"><button type="button" onclick="pdMon(-1)" style="border:0;background:#e3f2fd;border-radius:6px;padding:4px 10px;cursor:pointer">‹</button><b style="font-size:14px">${y}년 ${m+1}월</b><button type="button" onclick="pdMon(1)" style="border:0;background:#e3f2fd;border-radius:6px;padding:4px 10px;cursor:pointer">›</button></div>`;
+  h+='<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:3px;text-align:center;font-size:12px">'+['일','월','화','수','목','금','토'].map((w,i)=>`<div style="color:${i===0?'#c62828':i===6?'#1565c0':'#666'};font-weight:700">${w}</div>`).join('');
+  for(let i=0;i<first;i++)h+='<div></div>';
+  for(let d=1;d<=last;d++){const ds=_ymd(new Date(y,m,d)),on=PD_SEL.includes(ds),mk=PD_MARK[ds];
+    h+=`<div onclick="pdTog('${ds}')" style="cursor:pointer;padding:6px 0;border-radius:8px;position:relative;font-weight:${on?800:500};background:${on?'#1565c0':ds===today?'#fff8e1':'transparent'};color:${on?'#fff':'#222'};border:1px solid ${on?'#1565c0':'#eee'}">${d}${mk?`<span style="position:absolute;left:50%;bottom:2px;transform:translateX(-50%);width:5px;height:5px;border-radius:50%;background:${on?'#fff':'#2e7d32'}"></span>`:''}</div>`;}
+  h+='</div><div style="font-size:11px;color:#666;margin:6px 0">날짜를 누를 때마다 선택/해제 · 선택 '+PD_SEL.length+'일'+(Object.keys(PD_MARK).length?' · <span style="color:#2e7d32">●</span> 이 기종 MES 생산일':'')+'</div>';
+  h+='<div style="display:flex;gap:6px"><button type="button" onclick="PD_SEL=[];paintPdCal()" style="flex:1;padding:7px;border-radius:8px;border:1px solid #ccc;background:#fff;cursor:pointer">선택 해제</button><button type="button" onclick="pdOk()" style="flex:2;padding:7px;border-radius:8px;border:0;background:#1565c0;color:#fff;font-weight:700;cursor:pointer">확인</button></div>';
+  el.innerHTML=h;
+}
+function pdMon(n){PD_MON=new Date(PD_MON.getFullYear(),PD_MON.getMonth()+n,1);paintPdCal();loadPdMarks();}
+function pdTog(ds){const i=PD_SEL.indexOf(ds);if(i>=0)PD_SEL.splice(i,1);else PD_SEL.push(ds);PD_SEL.sort();paintPdCal();}
+function setPdSingle(d){const e=document.getElementById('selProdDate');e.value=d||'';PD_LIST=[];paintPdMulti();updPdMore();saveLastSelection();if(d)searchProdHo();}
+function updPdMore(){const el=document.getElementById('pdMore');if(el)el.textContent=PD_LIST.length>1?'외 '+(PD_LIST.length-1)+'일':'';}
+async function pdOk(){
+  document.getElementById('pdCal').style.display='none';
+  const ds=PD_SEL.slice().sort();
+  if(ds.length<=1){setPdSingle(ds[0]||'');return}
+  const model=currentModel||document.getElementById('selModel').value;
+  document.getElementById('selProdDate').value=ds[0];saveLastSelection();
+  PD_LIST=[];
+  for(const d of ds){let ho='',code='';if(model){try{const r=await _hoCands(model,d);if(r.matched.length){ho=r.matched[0].name;code=r.matched[0].code}}catch(e){}}PD_LIST.push({d,ho,code});}
+  paintPdMulti();updPdMore();
+  const sel=document.getElementById('selProdLine'),hs=[...new Set(PD_LIST.map(x=>x.ho).filter(Boolean))];
+  if(hs.length===1&&[...sel.options].some(o=>o.value===hs[0]))sel.value=hs[0];
+  showToast('📆 생산일 '+ds.length+'개 · 호기 '+(hs.join(',')||'?'));
+}
+document.addEventListener('click',e=>{const c=document.getElementById('pdCal');if(c&&c.style.display!=='none'&&!e.target.closest('#pdCal')&&e.target.id!=='selProdDate')c.style.display='none';});
 function paintPdMulti(){
   const el=document.getElementById('pdMulti');if(!el)return;
   if(!PD_LIST.length){el.style.display='none';el.innerHTML='';return}
   el.style.display='';
   el.innerHTML='<b style="color:#1565c0">📆 생산일 '+PD_LIST.length+'개</b> '+PD_LIST.map((x,i)=>`<span style="display:inline-block;margin:2px 4px 2px 0;padding:2px 8px;border-radius:12px;background:#fff;border:1px solid #90caf9">${x.d.slice(5)} · ${x.ho||'호기 ?'} <a href="#" onclick="rmProdDate(${i});return false" style="color:#c62828;text-decoration:none">✕</a></span>`).join('')+
-    '<div style="color:#666;margin-top:2px">저장 시 생산일자 = 가장 이른 날, 생산호기 = '+([...new Set(PD_LIST.map(x=>x.ho).filter(Boolean))].join(',')||'-')+' · 지금 고른 날짜도 넣으려면 [＋ 생산일 추가]</div>';
+    '<div style="color:#666;margin-top:2px">저장 시 생산일자 = 가장 이른 날, 생산호기 = '+([...new Set(PD_LIST.map(x=>x.ho).filter(Boolean))].join(',')||'-')+' · 날짜를 바꾸려면 생산일자 칸을 눌러 달력에서 선택/해제</div>';
 }
 async function searchProdHo(){
   /* [v4.1] 생산일자 기준 자동 입력 — 그날 MES 생산실적(daily_production 전체 작업지시 + machine_item_daily 스냅샷)에서
