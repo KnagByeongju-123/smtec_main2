@@ -4,7 +4,7 @@
 <script src="audit.js?v=7"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>MES 가동설비 모니터링 v7.7</title>
+<title>MES 가동설비 모니터링 v7.8</title>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -402,7 +402,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 </style>
 </head>
 <body>
-<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v7.7</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">5분 갱신</span></div></div></div>
+<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v7.8</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">5분 갱신</span></div></div></div>
 <div class="tabs"><div class="tab active" data-tab="monitor" onclick="switchTab('monitor')">📊 모니터링</div><div class="tab" data-tab="settings" onclick="switchTab('settings')">📋 이력/설정</div></div>
 <div class="panel active" id="panel-monitor">
   <div class="stats"><div class="st"><div class="st-label">전체</div><div class="st-val" id="sTotal">-</div></div><div class="st run"><div class="st-label">가동</div><div class="st-val" id="sRun">-</div></div><div class="st stop"><div class="st-label">비가동</div><div class="st-val" id="sStop">-</div></div><div class="st warn"><div class="st-label">⏰30분이내</div><div class="st-val" id="sSoon">-</div></div><div class="st ng"><div class="st-label">NG</div><div class="st-val" id="sNg">-</div></div></div>
@@ -1112,15 +1112,23 @@ var _stopMap={
 'UL-A001':'금형셋팅 및 교환','UL-A002':'설비이상','UL-A003':'부품가공대기','UL-M007':'소재입고대기',
 'UL-Z000':'비가동','UL-Z001':'계획정지(물동)','UL-Z002':'3정5행','UL-Z003':'Try-Out','UL-Z004':'측정대기','UL-Z005':'타공정지원','UL-Z006':'휴식/식사','UL-Z010':'기타-통제불가능','UL-Z011':'조회/교육'
 };
+/* [v7.8] 아침 일 마감 때 타발 카운터가 0으로 초기화되는 것을 연동 프로그램이 '타수 증가'(is_producing)로 잡는 문제 보완
+   → 오늘 타수(shot_qty)가 0이면 추정 가동으로 보지 않음 (소재 미투입으로 실적수량을 쓰는 설비는 최근 15분 안 타수만 인정) */
+function realProducing(d){
+  if(!d||d.is_producing!==true)return false;
+  if((+d.shot_qty||0)>0)return true;
+  if(d.qty_source==='actual'&&d.last_shot_at){var m=(Date.now()-new Date(d.last_shot_at).getTime())/60000;return isFinite(m)&&m>=0&&m<=15;}
+  return false;
+}
 /* [v5.5] 가동판정: MES 'N' 이거나, 정지코드 미해제여도 최근 타수증가(is_producing)면 가동 */
 function isRunning(d){
   if(!d)return false;
   if(d.machine_status==='N')return true;
   if(d.machine_status==='M')return false;
-  return d.is_producing===true;
+  return realProducing(d);
 }
 function isInferred(d){
-  return !!d && d.machine_status!=='N' && d.machine_status!=='M' && d.is_producing===true;
+  return !!d && d.machine_status!=='N' && d.machine_status!=='M' && realProducing(d);
 }
 function shotAgoTxt(d){
   if(!d||!d.last_shot_at)return'';
