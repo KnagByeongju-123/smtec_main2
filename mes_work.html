@@ -4,7 +4,7 @@
 <script src="audit.js?v=7"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>MES 가동설비 모니터링 v7.8</title>
+<title>MES 가동설비 모니터링 v7.9</title>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -402,7 +402,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 </style>
 </head>
 <body>
-<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v7.8</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">5분 갱신</span></div></div></div>
+<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v7.9</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">5분 갱신</span></div></div></div>
 <div class="tabs"><div class="tab active" data-tab="monitor" onclick="switchTab('monitor')">📊 모니터링</div><div class="tab" data-tab="settings" onclick="switchTab('settings')">📋 이력/설정</div></div>
 <div class="panel active" id="panel-monitor">
   <div class="stats"><div class="st"><div class="st-label">전체</div><div class="st-val" id="sTotal">-</div></div><div class="st run"><div class="st-label">가동</div><div class="st-val" id="sRun">-</div></div><div class="st stop"><div class="st-label">비가동</div><div class="st-val" id="sStop">-</div></div><div class="st warn"><div class="st-label">⏰30분이내</div><div class="st-val" id="sSoon">-</div></div><div class="st ng"><div class="st-label">NG</div><div class="st-val" id="sNg">-</div></div></div>
@@ -2085,7 +2085,45 @@ async function loadProductionToday(){
     });
     var isToday=(ymd===fmtYmd(getWorkDate()));
     if(!items.length){
-      if(isToday&&m.current_item_code){renderProductionFallback(m);return}
+      // MES 일별집계가 없어도 (카운터 고장·수집 멈춤) 간이 마감:
+      //  그날 이미 저장한 마감 품번을 모두 보여주고(✅·수량), 오늘이면 현재 작업지시 품번을 한 줄 더한다.
+      //  → 저장 후 화면이 비지 않고, 작업지시가 바뀐 뒤 새 품번을 저장해도 앞 품번 마감이 지워지지 않는다.
+      var curCode=isToday?(m.current_item_code||''):'';
+      if(closes.length||curCode){
+        var seen={};
+        Object.keys(closeMap).forEach(function(k){
+          var c=closeMap[k];seen[k]=1;
+          items.push({mold:c.mold_code||'',item_code:c.item_code,item_name:c.item_name||'',work_order:'',
+            actual_qty:+c.mes_qty||0,normal_shot:+c.mes_qty||0,abnormal_shot:0,heat_nos:'',start:'',end:'',run_min:null,
+            is_current:c.item_code===curCode,adj_qty:c.actual_qty,closed_at:c.closed_at,closed_by:c.worker||''});
+        });
+        if(curCode&&!seen[curCode]){
+          // 설비 현황 실적(actual_qty)은 작업지시 누계 → 같은 작업지시의 전날까지 일별집계를 빼서 '오늘 추정'으로 보여준다
+          var wo=m.current_wo||m.work_order_no||'',cum=+m.actual_qty||0,prev=0,prevDays=0,woDay='';
+          var wm=/^WO(\d{2})([0-9A-C])(\d{2})/.exec(wo);
+          if(wm)woDay='20'+wm[1]+'-'+String(parseInt(wm[2],16)).padStart(2,'0')+'-'+wm[3];
+          if(wo){
+            try{
+              var pv=await pcGet('daily_production','select=ymd,shot_qty&machine_code=eq.'+mc+'&work_order_no=eq.'+encodeURIComponent(wo)+'&ymd=lt.'+ymd)||[];
+              pv.forEach(function(r){prev+=+r.shot_qty||0;prevDays++});
+            }catch(e){}
+          }
+          var est=cum-prev;
+          var estNote='작업지시 누계 '+cum.toLocaleString()+(prev?' − 전일까지 '+prev.toLocaleString():'')+' = 오늘 추정';
+          // 누계가 전일 집계보다 작으면(카운터 초기화 등) 추정할 수 없다 → 0 으로 보이고 경고
+          if(est<0){est=0;estNote='작업지시 누계 '+cum.toLocaleString()+' < 전일까지 '+prev.toLocaleString()+' ⚠ 오늘 추정 불가 — 실제 수량을 세어 입력';}
+          // 작업지시가 오늘 이전에 시작했는데 전날 일별집계가 하나도 없으면 누계가 그대로라 추정이 맞지 않을 수 있다
+          else if(woDay&&woDay<ymd&&!prevDays)estNote+=' ⚠ 전일 일별집계 없음 (누계 그대로)';
+          items.push({mold:m.current_mold||'',item_code:curCode,item_name:m.item_name||'',work_order:wo,
+            actual_qty:est,normal_shot:est,abnormal_shot:0,heat_nos:'',start:'',end:'',run_min:null,
+            is_current:true,adj_qty:null,closed_at:'',closed_by:'',est_note:estNote});
+        }
+        var fc=closes[0];
+        prodState.data={machine_code:m.machine_code,items:items,total_qty:items.reduce(function(a,x){return a+(+x.actual_qty||0)},0),
+          total_adj_qty:0,total_run_min:null,work_date:ymd,adj_memo:fc?(fc.memo||''):'',reason:fc?(fc.reason||''):'',fallback:true};
+        renderProductionToday(prodState.data);
+        return;
+      }
       prodState.data={machine_code:m.machine_code,items:[],total_qty:0,total_adj_qty:0,work_date:ymd,adj_memo:'',reason:'',fallback:false};
       body.innerHTML='<div class="prod-empty">'+ymd.slice(5).replace('-','/')+' 실적 없음</div>';
       return;
@@ -2154,7 +2192,8 @@ function renderProductionToday(data){
       '<div class="prod-info"><div class="pi-item">'+itemTxt+'</div>'+
       (itemNmTxt?'<div class="pi-sub">'+itemNmTxt+'</div>':'')+
       (subTxt?'<div class="pi-sub">'+subTxt+'</div>':'')+
-      (closedTxt?'<div class="pi-sub pi-closed">'+closedTxt+'</div>':'')+'</div>'+
+      (closedTxt?'<div class="pi-sub pi-closed">'+closedTxt+'</div>':'')+
+      (it.est_note?'<div class="pi-sub" style="color:#f59e0b">'+it.est_note+'</div>':'')+'</div>'+
       '<div class="prod-qty">'+mesTxt+'</div>'+
       '<div class="prod-adj">'+
         '<input type="number" inputmode="numeric" value="'+adjVal+'" placeholder="입력" data-idx="'+idx+'" data-mes="'+mesQty+'" onchange="onAdjChange(this)" oninput="onAdjChange(this)">'+
@@ -2165,6 +2204,7 @@ function renderProductionToday(data){
   var totMes=data.total_qty||0;
   var upd='';
   if(data.mes_updated){var u=new Date(data.mes_updated);if(!isNaN(u))upd=' · MES '+String(u.getHours()).padStart(2,'0')+':'+String(u.getMinutes()).padStart(2,'0')+' 기준'}
+  if(data.fallback)upd=' · 간이 (MES 일별집계 없음 · MES 칸은 오늘 추정)';
   html+='<div class="prod-foot">'+
     '<span class="pf-lb">합계 ('+items.length+'건)'+upd+'</span>'+
     '<span>MES <span class="pf-val">'+totMes.toLocaleString()+'</span> · 실제 <span class="pf-adj" id="prodTotalAdj">0</span></span>'+
