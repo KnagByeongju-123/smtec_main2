@@ -4,7 +4,7 @@
 <script src="audit.js?v=7"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>MES 가동설비 모니터링 v7.16</title>
+<title>MES 가동설비 모니터링 v7.17</title>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -404,7 +404,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 </style>
 </head>
 <body>
-<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v7.16</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">5분 갱신</span></div></div></div>
+<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v7.17</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">5분 갱신</span></div></div></div>
 <div class="tabs"><div class="tab active" data-tab="monitor" onclick="switchTab('monitor')">📊 모니터링</div><div class="tab" data-tab="settings" onclick="switchTab('settings')">📋 이력/설정</div></div>
 <div class="panel active" id="panel-monitor">
   <div class="stats"><div class="st"><div class="st-label">전체</div><div class="st-val" id="sTotal">-</div></div><div class="st run"><div class="st-label">가동</div><div class="st-val" id="sRun">-</div></div><div class="st stop"><div class="st-label">비가동</div><div class="st-val" id="sStop">-</div></div><div class="st warn"><div class="st-label">⏰30분이내</div><div class="st-val" id="sSoon">-</div></div><div class="st ng"><div class="st-label">NG</div><div class="st-val" id="sNg">-</div></div></div>
@@ -1051,7 +1051,9 @@ async function loadMonitor(){
   monBusy=true;
   timer=300;                       // 성패와 무관하게 먼저 리셋 (조기 return 대비)
   try{
+    var gsP=sbGet('machine_good_shot','select=machine_code,good_shot_at');   /* v7.17 서버 기록: 정상 타수가 마지막으로 늘어난 시각 */
     var data=await sbGet('machine_status','select=*&order=machine_code.asc');
+    try{var gs=await gsP;if(data&&gs){var gm={};gs.forEach(function(g){gm[g.machine_code]=g.good_shot_at});data.forEach(function(d){if(d)d.good_shot_at=gm[d.machine_code]||null})}}catch(e){}
     if(!data){
       monFail++;
       timer=Math.min(60*Math.pow(2,monFail-1),600);   // 60→120→240→480→600초
@@ -1142,8 +1144,11 @@ function recordShots(data){
   try{localStorage.setItem(SHOT_HIST_KEY,JSON.stringify(_shotHist))}catch(e){}
 }
 function goodShotRising(d){
-  var h=_shotHist[d.machine_code];
-  return !!(h&&h.rise&&(Date.now()-h.rise)<=20*60000);
+  /* v7.17: 서버 기록(machine_good_shot.good_shot_at — machine_status 트리거가 정상 타수 증가 때마다 기록) 우선,
+     서버 기록을 못 받았을 때만 이 브라우저가 본 값으로 판정 */
+  var t=d.good_shot_at?new Date(d.good_shot_at).getTime():0;
+  if(!t){var h=_shotHist[d.machine_code];t=h&&h.rise||0;}
+  return !!(t&&(Date.now()-t)<=20*60000);
 }
 function realProducing(d){
   if(!d||d.is_producing!==true)return false;
