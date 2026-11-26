@@ -4,7 +4,7 @@
 <script src="audit.js?v=7"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>MES 가동설비 모니터링 v7.12</title>
+<title>MES 가동설비 모니터링 v7.13</title>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -1114,16 +1114,24 @@ var _stopMap={
 };
 /* [v7.8] 아침 일 마감 때 타발 카운터가 0으로 초기화되는 것을 연동 프로그램이 '타수 증가'(is_producing)로 잡는 문제 보완
    → 오늘 타수(shot_qty)가 0이면 추정 가동으로 보지 않음 (소재 미투입으로 실적수량을 쓰는 설비는 최근 15분 안 타수만 인정) */
+/* [v7.13] MES 상태가 가동(N)이어도 오늘 타수가 있던 설비가 10분 넘게 타수가 안 오르면 '타발없음'으로 표시
+   (측정·치수조정 중 작업자가 정지코드를 풀어 두면 가동으로 뜨던 문제 · 카운터 고장 설비(오늘 타수 0)는 제외) */
+var IDLE_MIN=10;
+function idleMin(d){
+  if(!d||d.qty_source==='actual'||!((+d.shot_qty||0)>0)||!d.last_shot_at)return 0;
+  var m=(Date.now()-new Date(d.last_shot_at).getTime())/60000;
+  return (isFinite(m)&&m>IDLE_MIN)?m:0;
+}
 function realProducing(d){
   if(!d||d.is_producing!==true)return false;
-  if((+d.shot_qty||0)>0)return true;
+  if((+d.shot_qty||0)>0)return !idleMin(d);
   if(d.qty_source==='actual'&&d.last_shot_at){var m=(Date.now()-new Date(d.last_shot_at).getTime())/60000;return isFinite(m)&&m>=0&&m<=15;}
   return false;
 }
 /* [v5.5] 가동판정: MES 'N' 이거나, 정지코드 미해제여도 최근 타수증가(is_producing)면 가동 */
 function isRunning(d){
   if(!d)return false;
-  if(d.machine_status==='N')return true;
+  if(d.machine_status==='N')return !idleMin(d);
   if(d.machine_status==='M')return false;
   return realProducing(d);
 }
@@ -1155,7 +1163,10 @@ function qtyMark(d){
   return (d&&d.qty_source==='actual')
     ?'<span title="소재 미투입으로 타발수 미집계 → MES 실적수량 사용" style="color:#fbbf24;font-size:10px">\u2731</span>':'';
 }
+function idleTxt(m){return m<60?Math.round(m)+'분':(m/60).toFixed(1)+'시간'}
 function statusHtml(d){
+  var im=idleMin(d);
+  if(d.machine_status==='N'&&im)return'<span class="stop-dot" title="MES 상태는 가동(N)이지만 '+idleTxt(im)+'째 타수 증가 없음 — 측정·치수조정 등으로 멈춘 상태">\u25a0 타발없음 '+idleTxt(im)+'</span>';
   if(d.machine_status==='N')return'<span class="run-dot">\u25cf 가동</span>';
   if(isInferred(d)){
     var ago=shotAgoTxt(d);
@@ -1165,6 +1176,7 @@ function statusHtml(d){
   return'<span class="stop-dot">\u25a0 '+stopName(d.machine_status)+'</span>';
 }
 function statusText(d){
+  if(d.machine_status==='N'&&idleMin(d))return'타발없음 '+idleTxt(idleMin(d));
   if(d.machine_status==='N')return'가동중';
   if(isInferred(d))return'가동중';
   return stopName(d.machine_status);
