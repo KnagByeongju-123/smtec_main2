@@ -4,7 +4,7 @@
 <script src="audit.js?v=7"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>생산 카운터 v3.19</title>
+<title>생산 카운터 v3.20</title>
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body {
@@ -1126,7 +1126,7 @@
 </head>
 <body>
 
-<h1>🕒 생산 카운터 v3.19</h1>
+<h1>🕒 생산 카운터 v3.20</h1>
 
 <!-- ★ Supabase 연동: 호기/작업자 + 작업시작/종료 -->
 <div class="work-header">
@@ -1421,29 +1421,42 @@ setInterval(function() {
 }, 1000);
 // ============ 정지코드 마스터 (메모리 기준 표준 19개) ============
 const STOP_CODES = [
+  /* v3.20: 코드·이름을 MES 와 통일 (기존 이 화면 고유 번호 → MES 번호, 아래 STOP_CODE_OLD2NEW 로 저장값 변환)
+     구분(type)은 기존 화면 기준 유지 — planned 는 가동률 계산에서 제외 */
   // 고장정지 (CL-)
-  { code: 'CL-M001', name: '소재교환',     type: 'breakdown' },
-  { code: 'CL-M002', name: '불량발생 및 처리', type: 'breakdown' },
-  { code: 'CL-M003', name: '부품랩핑',     type: 'breakdown' },
-  { code: 'CL-M005', name: '부품연마',     type: 'breakdown' },
-  { code: 'CL-M006', name: '치수조정',     type: 'breakdown' },
-  { code: 'CL-M008', name: '금형수리',     type: 'breakdown' },
+  { code: 'CL-M001', name: '소재교환',       type: 'breakdown' },
+  { code: 'CL-M002', name: '불량발생및처리',  type: 'breakdown' },
+  { code: 'CL-M003', name: '부품래핑',       type: 'breakdown' },
+  { code: 'CL-M004', name: '부품연마',       type: 'breakdown' },
+  { code: 'CL-M006', name: '치수조정',       type: 'breakdown' },
+  { code: 'CL-M008', name: '금형수리',       type: 'breakdown' },
   // 비계획정지 (UL-)
-  { code: 'UL-A001', name: '금형셋팅 및 교체', type: 'unplanned' },
-  { code: 'UL-A003', name: '설비이상',     type: 'unplanned' },
-  { code: 'UL-A004', name: '부품가공대기',  type: 'unplanned' },
-  { code: 'UL-M007', name: '금형점검',     type: 'unplanned' },
-  { code: 'UL-M009', name: '소재입고대기',  type: 'unplanned' },
+  { code: 'UL-A001', name: '금형세팅 및 교환', type: 'unplanned' },
+  { code: 'UL-A002', name: '설비이상',       type: 'unplanned' },
+  { code: 'UL-A003', name: '부품가공대기',    type: 'unplanned' },
+  { code: 'UL-A004', name: '금형점검',       type: 'unplanned' },
+  { code: 'UL-M007', name: '소재입고대기',    type: 'unplanned' },
   // 계획정지 (UL- / 가동률 제외)
-  { code: 'UL-Z001', name: '계획정지(물동)', type: 'planned' },
-  { code: 'UL-Z002', name: '3정 5행',      type: 'planned' },
-  { code: 'UL-Z004', name: 'Try-Out',     type: 'planned' },
-  { code: 'UL-Z005', name: '측정대기',     type: 'planned' },
-  { code: 'UL-Z006', name: '타공정처리',    type: 'planned' },
-  { code: 'UL-Z007', name: '휴식 / 식사',   type: 'planned' },
-  { code: 'UL-Z010', name: '기타-통제불가능', type: 'planned' },
-  { code: 'UL-Z011', name: '조회 / 교육',   type: 'planned' }
+  { code: 'UL-Z001', name: '계획정지(물동)',  type: 'planned' },
+  { code: 'UL-Z002', name: '3정5행',         type: 'planned' },
+  { code: 'UL-Z003', name: 'Try-Out',       type: 'planned' },
+  { code: 'UL-Z004', name: '측정대기',       type: 'planned' },
+  { code: 'UL-Z005', name: '타공정지원',      type: 'planned' },
+  { code: 'UL-Z006', name: '휴식/식사',      type: 'planned' },
+  { code: 'UL-Z010', name: '기타-통제불가능',  type: 'planned' },
+  { code: 'UL-Z011', name: '조회,교육',      type: 'planned' }
 ];
+/* v3.19 이전 이 화면 코드 → MES 코드 (같은 이름끼리). 한 번에 바꿔야 함(UL-A004·UL-Z004 등은 번호가 서로 겹침) */
+const STOP_CODE_OLD2NEW = {
+  'CL-M005':'CL-M004', 'UL-A003':'UL-A002', 'UL-A004':'UL-A003', 'UL-M007':'UL-A004', 'UL-M009':'UL-M007',
+  'UL-Z004':'UL-Z003', 'UL-Z005':'UL-Z004', 'UL-Z006':'UL-Z005', 'UL-Z007':'UL-Z006'
+};
+const STOP_CODE_VER_KEY = 'stopCodeVer', STOP_CODE_VER = 'mes1';
+function migrateStopCodes(obj) {
+  const out = {};
+  Object.keys(obj || {}).forEach(k => { out[STOP_CODE_OLD2NEW[k] || k] = obj[k]; });
+  return out;
+}
 
 const LS_KEY = 'stopTimeCounter_v1';
 
@@ -1462,7 +1475,10 @@ function loadState() {
     const raw = localStorage.getItem(LS_KEY);
     if (raw) {
       state = JSON.parse(raw);
+      // v3.20: 예전 이 화면 고유 코드로 저장된 카운터를 MES 코드로 한 번 변환
+      if (localStorage.getItem(STOP_CODE_VER_KEY) !== STOP_CODE_VER) state = migrateStopCodes(state);
     }
+    try { localStorage.setItem(STOP_CODE_VER_KEY, STOP_CODE_VER); } catch (e) {}
   } catch(e) { console.error(e); }
   // 누락된 코드 초기화
   STOP_CODES.forEach(s => {
@@ -2763,7 +2779,7 @@ document.getElementById('machineSelect').addEventListener('change', async functi
 
 /* ===== MES 정지시간 자동 입력 (daily_downtime) =====
    MES 일자·호기별 정지 이벤트(stop_events + planned_events)를 사유 이름으로 이 화면의 정지코드에 맞춰 넣는다.
-   (MES 와 이 화면의 코드 번호 체계가 달라 — 예: MES UL-A003 = 부품가공대기, 여기 UL-A003 = 설비이상 — 이름으로 대조)
+   (v3.20부터 코드·이름이 MES 와 같음 — 띄어쓰기·표기 차이에 대비해 이름으로 대조)
    호기: '45호기 심팩300톤' ↔ MES machine_name '45_300' (호기 번호)
    작동 중인 카운터는 건드리지 않음 · 자동 체크 시 호기·날짜 변경과 5분마다 다시 반영 */
 const mesCanon=s=>String(s||'').replace(/[\s\/,·()]/g,'').replace('래핑','랩핑').replace('세팅','셋팅').replace('금형셋팅및교환','금형셋팅및교체').replace('타공정지원','타공정처리');
@@ -2845,7 +2861,7 @@ setInterval(()=>{ if(mesMachine()) mesApply(false); }, 5*60*1000);
 const LOT_KEY='stop_restart_lot_v1', LOT_MIN=5;   /* LOT_MIN 분 미만 짧은 정지는 LOT 유지 */
 let LOTD={}, lotMes={};               /* lotMes['ymd|ho'] = MES 이벤트 캐시 */
 const lotType=c=>(STOP_CODES.find(s=>s.code===c)||{}).type;
-const LOT_NO_SPLIT=['UL-A003'];                   /* 단순고장(설비이상)은 LOT 유지 — 소재교환(CL-M001)은 고장정지라 원래 제외 */
+const LOT_NO_SPLIT=['UL-A002'];                   /* 단순고장(설비이상)은 LOT 유지 — 소재교환(CL-M001)은 고장정지라 원래 제외 */
 const lotSplits=c=>lotType(c)==='unplanned'&&!LOT_NO_SPLIT.includes(c);   /* 정지로 LOT 를 나누는 것은 비계획 정지만 (계획정지·식사 등은 LOT 유지) */
 const hhmm=t=>{const d=new Date(t);return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');};
 function lotKey(){ const ho=mesHo(mesMachine()), d=(document.getElementById('mesDate')||{}).value||mesYmd(); return ho?d+'|'+ho:''; }
