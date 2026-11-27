@@ -4,7 +4,7 @@
 <script src="audit.js?v=7"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>MES 가동설비 모니터링 v7.17</title>
+<title>MES 가동설비 모니터링 v7.18</title>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -404,7 +404,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 </style>
 </head>
 <body>
-<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v7.17</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">5분 갱신</span></div></div></div>
+<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v7.18</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">5분 갱신</span></div></div></div>
 <div class="tabs"><div class="tab active" data-tab="monitor" onclick="switchTab('monitor')">📊 모니터링</div><div class="tab" data-tab="settings" onclick="switchTab('settings')">📋 이력/설정</div></div>
 <div class="panel active" id="panel-monitor">
   <div class="stats"><div class="st"><div class="st-label">전체</div><div class="st-val" id="sTotal">-</div></div><div class="st run"><div class="st-label">가동</div><div class="st-val" id="sRun">-</div></div><div class="st stop"><div class="st-label">비가동</div><div class="st-val" id="sStop">-</div></div><div class="st warn"><div class="st-label">⏰30분이내</div><div class="st-val" id="sSoon">-</div></div><div class="st ng"><div class="st-label">NG</div><div class="st-val" id="sNg">-</div></div></div>
@@ -2365,6 +2365,15 @@ async function saveProductionOnly(){
     return;
   }
   var m=chkState.machine;if(!m)return;
+  /* v7.18 호기 잘못 선택 방지: 오늘 MES 가동 흔적이 전혀 없는 설비(타수 0·오늘 타발 기록 없음·MES 작업자 미등록)에 마감 수량을 넣으면 한 번 더 확인
+     (11/26 28호기 작업자가 29호기에 1,082개를 잘못 마감 → 생산하지 않은 29호기 실적이 일보에 올라감. 카운터 고장 47·48호기는 MES 작업자가 등록돼 있어 해당 없음) */
+  var _its=(prodState.data.items||[]).filter(function(it){return it.adj_qty!=null&&+it.adj_qty>0});
+  var _noMes=_its.length>0&&_its.every(function(it){return !(+it.actual_qty>0)&&!(+it.normal_shot>0)&&!(+it.abnormal_shot>0)});
+  var _shotToday=!!m.last_shot_at&&new Date(m.last_shot_at).toDateString()===new Date().toDateString();
+  var _isToday=(prodState.data.work_date||prodYmd())===fmtYmd(getWorkDate());
+  if(_noMes&&_isToday&&!_shotToday&&!String(m.worker||'').trim()&&!isRunning(m)){
+    if(!confirm('⚠ '+parsePressLabel(m).replace(/<[^>]+>/g,'')+' 은(는) 오늘 MES 가동 기록이 없습니다.\n(타수 0 · MES 작업자 미등록 · '+stopName(m.machine_status)+')\n\n호기를 잘못 선택하지 않았습니까?\n이 호기에서 실제로 생산했으면 [확인], 아니면 [취소]를 누르세요.'))return;
+  }
   var btn=document.getElementById('prodSaveBtn');
   if(btn){btn.disabled=true;btn.textContent='⏳ 저장중...'}
   var now=new Date();
