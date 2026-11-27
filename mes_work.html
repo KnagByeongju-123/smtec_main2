@@ -4,7 +4,7 @@
 <script src="audit.js?v=7"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>MES 가동설비 모니터링 v7.18</title>
+<title>MES 가동설비 모니터링 v7.19</title>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -404,7 +404,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 </style>
 </head>
 <body>
-<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v7.18</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">5분 갱신</span></div></div></div>
+<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v7.19</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">5분 갱신</span></div></div></div>
 <div class="tabs"><div class="tab active" data-tab="monitor" onclick="switchTab('monitor')">📊 모니터링</div><div class="tab" data-tab="settings" onclick="switchTab('settings')">📋 이력/설정</div></div>
 <div class="panel active" id="panel-monitor">
   <div class="stats"><div class="st"><div class="st-label">전체</div><div class="st-val" id="sTotal">-</div></div><div class="st run"><div class="st-label">가동</div><div class="st-val" id="sRun">-</div></div><div class="st stop"><div class="st-label">비가동</div><div class="st-val" id="sStop">-</div></div><div class="st warn"><div class="st-label">⏰30분이내</div><div class="st-val" id="sSoon">-</div></div><div class="st ng"><div class="st-label">NG</div><div class="st-val" id="sNg">-</div></div></div>
@@ -1054,6 +1054,7 @@ async function loadMonitor(){
     var gsP=sbGet('machine_good_shot','select=machine_code,good_shot_at');   /* v7.17 서버 기록: 정상 타수가 마지막으로 늘어난 시각 */
     var data=await sbGet('machine_status','select=*&order=machine_code.asc');
     try{var gs=await gsP;if(data&&gs){var gm={};gs.forEach(function(g){gm[g.machine_code]=g.good_shot_at});data.forEach(function(d){if(d)d.good_shot_at=gm[d.machine_code]||null})}}catch(e){}
+    if(data)data.forEach(maskStaleWo);   /* v7.19 오래된 MES 잔류 작업지시 숨김 */
     if(!data){
       monFail++;
       timer=Math.min(60*Math.pow(2,monFail-1),600);   // 60→120→240→480→600초
@@ -1116,6 +1117,24 @@ var _stopMap={
 'UL-A001':'금형셋팅 및 교환','UL-A002':'설비이상','UL-A003':'부품가공대기','UL-A004':'금형점검','UL-M007':'소재입고대기',
 'UL-Z000':'비가동','UL-Z001':'계획정지(물동)','UL-Z002':'3정5행','UL-Z003':'Try-Out','UL-Z004':'측정대기','UL-Z005':'타공정지원','UL-Z006':'휴식/식사','UL-Z010':'기타-통제불가능','UL-Z011':'조회/교육'
 };
+/* [v7.19] MES 에 오래전 작업지시가 그대로 남아 있는 설비(예: 29호기 — 2/6 작업지시 WO26206…, 타발 기록 없음, 금형은 보관함)는
+   금형·품번이 걸려 있는 것처럼 보이고 생산마감도 입력할 수 있어 잘못된 실적이 올라감
+   → 작업지시 날짜가 60일 넘게 지났고 최근 60일 타발 기록도 없으면 금형·품번·수량을 비우고 '작업지시 없음'으로 표시 (가동 중이면 그대로) */
+var STALE_WO_DAYS=60;
+function woDate(wo){
+  var m=/^WO(\d\d)([1-9A-C])(\d\d)/.exec(String(wo||''));if(!m)return null;
+  var d=new Date(2000+ +m[1],parseInt(m[2],16)-1,+m[3]);return isNaN(d)?null:d;
+}
+function maskStaleWo(d){
+  if(!d||d._staleWo||d.machine_status==='N'||d.is_producing===true)return;
+  var wd=woDate(d.current_wo);if(!wd)return;
+  var lim=Date.now()-STALE_WO_DAYS*86400000;
+  if(wd.getTime()>lim)return;
+  if(d.last_shot_at&&new Date(d.last_shot_at).getTime()>lim)return;
+  d._staleWo={wo:d.current_wo,item:d.current_item_code,mold:d.current_mold,date:(wd.getMonth()+1)+'/'+wd.getDate()};
+  d.current_wo='';d.current_item_code='';d.current_mold='';d.item_name='';d.lot_no='';d.heat_no='';
+  d.target_qty=0;d.actual_qty=0;d.remaining_qty=0;d.remaining_minutes=0;d.coil_weight=0;d.unit_per_qty=0;d.ng_qty=0;
+}
 /* [v7.8] 아침 일 마감 때 타발 카운터가 0으로 초기화되는 것을 연동 프로그램이 '타수 증가'(is_producing)로 잡는 문제 보완
    → 오늘 타수(shot_qty)가 0이면 추정 가동으로 보지 않음 (소재 미투입으로 실적수량을 쓰는 설비는 최근 15분 안 타수만 인정) */
 /* [v7.13] MES 상태가 가동(N)이어도 오늘 타수가 있던 설비가 일정 시간 넘게 타수가 안 오르면 '타발없음'으로 표시
@@ -1264,7 +1283,7 @@ function renderMonitor(data){
       var rm=remStr(d.remaining_minutes);
       var tr=document.createElement('tr');
       if(!isR)tr.className='dim';
-      tr.innerHTML='<td class="c-nm">'+parsePressLabel(d)+'</td><td class="c-st">'+st+'</td><td class="c-mold">'+(d.current_mold||'-')+'</td><td class="c-item">'+(d.current_item_code||'-')+rlotHtml(d)+'</td><td class="c-pname">'+(d.item_name||'-')+'</td><td class="c-num">'+fmt(d.target_qty)+'</td><td class="c-num">'+fmt(d.actual_qty)+qtyMark(d)+'</td><td class="c-prog">'+prog+'</td><td class="c-num">'+fmt(d.remaining_qty)+'</td><td class="c-rem"><span class="'+rm.c+'">'+rm.t+'</span></td><td class="c-lot" style="color:var(--sub)">'+lotCell(d)+'</td><td class="c-coil" style="color:var(--accent)">'+(d.coil_weight>0?d.coil_weight.toFixed(0):'-')+'</td><td class="c-unit" style="color:var(--sub)">'+(d.unit_per_qty>0?d.unit_per_qty.toFixed(1):'-')+'</td><td class="c-ct">'+(d.actual_ct>0?d.actual_ct.toFixed(1):'-')+'/'+(d.target_ct>0?d.target_ct.toFixed(1):'-')+'</td><td class="c-ng">'+(d.ng_qty>0?'<span style="color:var(--red);font-weight:600">'+d.ng_qty+'</span>':'0')+'</td><td class="c-insp">'+inspH(d.inspect_top)+inspH(d.inspect_mid)+inspH(d.inspect_bottom)+'</td><td class="c-wk">'+(d.worker||'-')+'</td>';
+      tr.innerHTML='<td class="c-nm">'+parsePressLabel(d)+'</td><td class="c-st">'+st+'</td><td class="c-mold">'+(d.current_mold||'-')+'</td><td class="c-item">'+(d._staleWo?'<span style="color:var(--sub);font-weight:400;font-size:11px" title="MES 에 '+d._staleWo.date+' 작업지시('+d._staleWo.wo+' · '+d._staleWo.item+' · 금형 '+d._staleWo.mold+')가 남아 있음 — 60일 넘게 타발 기록이 없어 숨김">작업지시 없음</span>':(d.current_item_code||'-'))+rlotHtml(d)+'</td><td class="c-pname">'+(d.item_name||'-')+'</td><td class="c-num">'+fmt(d.target_qty)+'</td><td class="c-num">'+fmt(d.actual_qty)+qtyMark(d)+'</td><td class="c-prog">'+prog+'</td><td class="c-num">'+fmt(d.remaining_qty)+'</td><td class="c-rem"><span class="'+rm.c+'">'+rm.t+'</span></td><td class="c-lot" style="color:var(--sub)">'+lotCell(d)+'</td><td class="c-coil" style="color:var(--accent)">'+(d.coil_weight>0?d.coil_weight.toFixed(0):'-')+'</td><td class="c-unit" style="color:var(--sub)">'+(d.unit_per_qty>0?d.unit_per_qty.toFixed(1):'-')+'</td><td class="c-ct">'+(d.actual_ct>0?d.actual_ct.toFixed(1):'-')+'/'+(d.target_ct>0?d.target_ct.toFixed(1):'-')+'</td><td class="c-ng">'+(d.ng_qty>0?'<span style="color:var(--red);font-weight:600">'+d.ng_qty+'</span>':'0')+'</td><td class="c-insp">'+inspH(d.inspect_top)+inspH(d.inspect_mid)+inspH(d.inspect_bottom)+'</td><td class="c-wk">'+(d.worker||'-')+'</td>';
       (function(row){tr.onclick=function(){openChkModal(row)}})(d);
       tb.appendChild(tr);
     });
