@@ -4,7 +4,7 @@
 <script src="audit.js?v=7"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>MES 가동설비 모니터링 v7.19</title>
+<title>MES 가동설비 모니터링 v7.20</title>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -404,7 +404,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 </style>
 </head>
 <body>
-<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v7.19</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">5분 갱신</span></div></div></div>
+<div class="hdr"><div><h1>🏭 MES 가동설비 모니터링 v7.20</h1><div class="sub"><span id="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span><span id="lastUpdate">-</span> │ <span id="countdown">5분 갱신</span></div></div></div>
 <div class="tabs"><div class="tab active" data-tab="monitor" onclick="switchTab('monitor')">📊 모니터링</div><div class="tab" data-tab="settings" onclick="switchTab('settings')">📋 이력/설정</div></div>
 <div class="panel active" id="panel-monitor">
   <div class="stats"><div class="st"><div class="st-label">전체</div><div class="st-val" id="sTotal">-</div></div><div class="st run"><div class="st-label">가동</div><div class="st-val" id="sRun">-</div></div><div class="st stop"><div class="st-label">비가동</div><div class="st-val" id="sStop">-</div></div><div class="st warn"><div class="st-label">⏰30분이내</div><div class="st-val" id="sSoon">-</div></div><div class="st ng"><div class="st-label">NG</div><div class="st-val" id="sNg">-</div></div></div>
@@ -1055,6 +1055,9 @@ async function loadMonitor(){
     var data=await sbGet('machine_status','select=*&order=machine_code.asc');
     try{var gs=await gsP;if(data&&gs){var gm={};gs.forEach(function(g){gm[g.machine_code]=g.good_shot_at});data.forEach(function(d){if(d)d.good_shot_at=gm[d.machine_code]||null})}}catch(e){}
     if(data)data.forEach(maskStaleWo);   /* v7.19 오래된 MES 잔류 작업지시 숨김 */
+    /* v7.20 오늘 이상 타수(정지코드를 풀지 않고 친 타수) — '코드 미해제 생산' 판정용 */
+    try{var dpT=await sbGet('daily_production','select=machine_code,abnormal_shot&ymd=eq.'+fmtYmd(getWorkDate()));
+      if(data&&dpT){var am={};dpT.forEach(function(x){am[x.machine_code]=(am[x.machine_code]||0)+(+x.abnormal_shot||0)});data.forEach(function(d){if(d)d.abn_today=am[d.machine_code]||0})}}catch(e){}
     if(!data){
       monFail++;
       timer=Math.min(60*Math.pow(2,monFail-1),600);   // 60→120→240→480→600초
@@ -1175,11 +1178,22 @@ function realProducing(d){
   if(d.qty_source==='actual'&&d.last_shot_at){var m=(Date.now()-new Date(d.last_shot_at).getTime())/60000;return isFinite(m)&&m>=0&&m<=15;}
   return false;
 }
+/* [v7.20] 계획정지 등 정지코드를 풀지 않은 채 실제로 생산 중인 설비 (예: 34호기 — 11월 내내 계획정지(물동) 상태로 생산 → 정상 타수 0·이상 타수만 쌓여 MES 실적 0)
+   판정: 정지코드 상태 + 타수 증가 중(is_producing) + 오늘 정상 타수 0 + 오늘 이상 타수 50 이상 + 최근 20분 안 타발
+   (측정·치수조정 중 시험 타발은 제외 — 그 코드는 원래 조정 중이라는 뜻이므로 노랑 정지 그대로) */
+var CODE_HELD_SKIP={'UL-Z004':1,'CL-M006':1,'CL-M008':1,'UL-A001':1,'UL-A004':1,'UL-Z003':1};
+function codeHeld(d){
+  if(!d||d.machine_status==='N'||d.machine_status==='M'||CODE_HELD_SKIP[d.machine_status])return false;
+  if(d.is_producing!==true||(+d.shot_qty||0)>0||!((+d.abn_today||0)>=50)||!d.last_shot_at)return false;
+  var m=(Date.now()-new Date(d.last_shot_at).getTime())/60000;
+  return isFinite(m)&&m>=0&&m<=20;
+}
 /* [v5.5] 가동판정: MES 'N' 이거나, 정지코드 미해제여도 최근 타수증가(is_producing)면 가동 */
 function isRunning(d){
   if(!d)return false;
   if(d.machine_status==='N')return !idleMin(d);
   if(d.machine_status==='M')return false;
+  if(codeHeld(d))return true;
   return realProducing(d);
 }
 function isInferred(d){
@@ -1219,6 +1233,7 @@ function lightOf(d){
 }
 function statusHtml(d){
   var im=idleMin(d),lt=lightOf(d);
+  if(codeHeld(d))return'<span class="lt-y" title="MES 정지코드('+stopName(d.machine_status)+')를 풀지 않고 생산 중 — 오늘 이상 타수 '+fmt(d.abn_today)+' · 정상 타수 0 → MES 실적이 0으로 잡힘. 작업지시 시작·정지코드 해제 필요">\u25cf 코드 미해제 생산</span>';
   if(d.machine_status==='N'&&im)return'<span class="lt-y" title="MES 상태는 가동(N)이지만 '+idleTxt(im)+'째 타수 증가 없음 — 측정·치수조정 등으로 멈춘 상태">\u25cf 타발없음 '+idleTxt(im)+'</span>';
   if(d.machine_status==='N')return'<span class="lt-g">\u25cf 가동</span>';
   if(isInferred(d)){
@@ -1229,6 +1244,7 @@ function statusHtml(d){
   return'<span class="lt-'+lt+'" title="'+(lt==='r'?'계획정지':'수리·조정 등 정지')+'">\u25cf '+stopName(d.machine_status)+'</span>';
 }
 function statusText(d){
+  if(codeHeld(d))return'코드 미해제 생산';
   if(d.machine_status==='N'&&idleMin(d))return'타발없음 '+idleTxt(idleMin(d));
   if(d.machine_status==='N')return'가동중';
   if(isInferred(d))return'가동중';
